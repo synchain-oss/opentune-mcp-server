@@ -21,9 +21,11 @@ A method file is a JSON Schema 2020-12 document:
     "resultKind": "plain",
     "startsJob": null,
     "requiresSession": true,
+    "mainThread": false,
     "errors": [
       "INVALID_ARGUMENT",
       "NOT_FOUND",
+      "UNSUPPORTED",
       "BUSY",
       "SHUTTING_DOWN",
       "INTERNAL"
@@ -49,7 +51,8 @@ A method file is a JSON Schema 2020-12 document:
 | `x-otcp.resultKind`      | `write` (the result extends the write envelope, PROTOCOL.md section 14), `read` (the result carries `asOf` and `derived`, section 16) or `plain`.                                                                             |
 | `x-otcp.startsJob`       | Job kind the method may start, or null.                                                                                                                                                                                       |
 | `x-otcp.requiresSession` | false only for `session.hello`.                                                                                                                                                                                               |
-| `x-otcp.errors`          | Every error kind the method may return, including generic ones such as `INVALID_ARGUMENT`, `BUSY`, `SHUTTING_DOWN` and `INTERNAL`. Kinds come from `../registry/error-kinds.json`.                                            |
+| `x-otcp.mainThread`      | true when the method runs on OpenTune's main thread and may therefore return `TIMEOUT(dispatch_timeout)` (PROTOCOL.md section 13.3).                                                                                          |
+| `x-otcp.errors`          | Every error kind the method may return, generic ones included, with the rules below. Kinds come from `../registry/error-kinds.json`.                                                                                          |
 | `$defs.params`           | Schema of `params`. Closed: unknown members are invalid (PROTOCOL.md section 2.3). A method without params has an empty, closed object.                                                                                       |
 | `$defs.result`           | Schema of `result`. A `write` result composes `../schemas/common.schema.json#/$defs/writeEnvelope` with `allOf` and closes itself with `unevaluatedProperties: false`; a `read` result does the same with `#/$defs/readMeta`. |
 
@@ -57,9 +60,24 @@ Shared types are referenced as `../schemas/common.schema.json#/$defs/<name>`. Ot
 
 `x-otcp` is an annotation keyword. Validators that reject unknown keywords (for example Ajv in strict mode) need it registered, for instance with `ajv.addKeyword({ keyword: "x-otcp" })`; its content is validated against `../schemas/method-file.schema.json`.
 
+`x-otcp.errors` lists every kind explicitly, so that mocks and coverage tests can read it without knowing the generic rules:
+
+| Kind               | Listed when                                                                                                |
+| ------------------ | ---------------------------------------------------------------------------------------------------------- |
+| `INVALID_ARGUMENT` | always (malformed requests and params, PROTOCOL.md section 3.3)                                            |
+| `BUSY`             | always (`request_limit`, PROTOCOL.md section 3.3)                                                          |
+| `SHUTTING_DOWN`    | always (PROTOCOL.md section 3.6)                                                                           |
+| `INTERNAL`         | always                                                                                                     |
+| `UNSUPPORTED`      | always when the capability is not `session.v1` (`capability_missing`); otherwise if the method produces it |
+| `TIMEOUT`          | exactly when `mainThread` is true                                                                          |
+| other kinds        | the method itself can produce them                                                                         |
+
+`UNSUPPORTED(unknown_method)` concerns methods that are not defined and therefore belongs to no method file.
+
 ## Rules
 
 1. Adding a method file, or a member to one, follows the versioning rules of PROTOCOL.md section 2.2. A method file is never deleted or renamed within a major version.
 2. `index.json` and the table in PROTOCOL.md section 22 list the same methods with the same layer, capability, write classification, `since` and schema status; a method file exists exactly for the methods marked `defined`.
 3. Every method file has at least one success vector in `../vectors/`.
-4. Codes used in descriptions (error kinds, reasons, warnings) come from `../registry/`.
+4. `x-otcp.errors` follows the table above.
+5. Codes used in descriptions (error kinds, reasons, warnings) come from `../registry/`.

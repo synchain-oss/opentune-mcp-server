@@ -84,7 +84,7 @@
     "secAny": { "type": "number" },
     "secNonNegative": { "type": "number", "minimum": 0 },
     "unitName": {
-      "description": "Unit of a changed field: sec, frame, midi, hz, cents, semitones, db, linear, ms, bpm, ratio; null for unitless values.",
+      "description": "Unit of a changed field: the member's unit suffix in lower case (sec, frame, midi, hz, cents, semitones, db, linear, ms, bytes), bpm for tempo, or null for members without a unit (PROTOCOL.md sections 8.2 and 14.3).",
       "type": ["string", "null"],
       "pattern": "^[a-z]+$"
     },
@@ -552,9 +552,10 @@
         "retryable": { "type": "boolean" },
         "retryAfterMs": { "type": "integer", "minimum": 0 },
         "detail": {
-          "description": "Diagnostic text, English, at most 1024 UTF-8 bytes. Not for branching.",
+          "description": "Diagnostic text in English. Printable ASCII only, so that the limit of 1024 characters is also a limit of 1024 bytes. Not for branching.",
           "type": "string",
-          "maxLength": 1024
+          "maxLength": 1024,
+          "pattern": "^[\\x20-\\x7E]*$"
         },
         "executed": {
           "description": "false: the request changed nothing and will not run later. true: state may have changed.",
@@ -623,6 +624,7 @@
         "job": { "anyOf": [{ "$ref": "#/$defs/jobRef" }, { "type": "null" }] },
         "nullReasons": { "$ref": "#/$defs/nullReasons" }
       },
+      "$comment": "The allOf below admits exactly the four states of PROTOCOL.md section 14.2: committed with changes, committed without changes (noOp), prediction (dryRun) and work handed to a job.",
       "allOf": [
         {
           "if": { "properties": { "dryRun": { "const": true } } },
@@ -631,16 +633,53 @@
               "applied": { "const": false },
               "noOp": { "const": false },
               "undo": { "type": "null" },
-              "job": { "type": "null" }
+              "job": { "type": "null" },
+              "revisionDiff": {
+                "type": "object",
+                "properties": {
+                  "arrangement": { "type": "null" },
+                  "trackState": { "type": "null" },
+                  "contents": { "type": "array", "maxItems": 0 }
+                }
+              },
+              "dirty": {
+                "type": "object",
+                "anyOf": [
+                  {
+                    "properties": {
+                      "before": { "const": true },
+                      "after": { "const": true }
+                    }
+                  },
+                  {
+                    "properties": {
+                      "before": { "const": false },
+                      "after": { "const": false }
+                    }
+                  }
+                ]
+              }
             }
           }
+        },
+        {
+          "if": {
+            "properties": {
+              "applied": { "const": false },
+              "dryRun": { "const": false }
+            }
+          },
+          "then": { "properties": { "job": { "type": "object" } } }
         },
         {
           "if": { "properties": { "noOp": { "const": true } } },
           "then": {
             "properties": {
               "applied": { "const": true },
-              "changes": { "type": "array", "maxItems": 0 }
+              "changes": { "type": "array", "maxItems": 0 },
+              "created": { "type": "array", "maxItems": 0 },
+              "removed": { "type": "array", "maxItems": 0 },
+              "idMap": { "type": "array", "maxItems": 0 }
             }
           }
         },
@@ -653,7 +692,11 @@
             "properties": {
               "applied": { "const": false },
               "dryRun": { "const": false },
-              "undo": { "type": "null" }
+              "undo": { "type": "null" },
+              "changes": { "type": "array", "maxItems": 0 },
+              "created": { "type": "array", "maxItems": 0 },
+              "removed": { "type": "array", "maxItems": 0 },
+              "idMap": { "type": "array", "maxItems": 0 }
             }
           }
         },

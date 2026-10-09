@@ -1,0 +1,40 @@
+{
+  "$schema": "../../schemas/vector.schema.json",
+  "id": "session/unknown-method",
+  "type": "scenario",
+  "description": "A request for a method that the protocol does not define (OpenTune cannot rename tracks) is answered with UNSUPPORTED(unknown_method) and JSON-RPC code -32601.",
+  "capability": "session.v1",
+  "since": "1.0",
+  "session": "authenticated",
+  "steps": [
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 67,
+        "method": "track.rename",
+        "params": {
+          "trackId": 0
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 67,
+        "error": {
+          "code": -32601,
+          "message": "UNSUPPORTED",
+          "data": {
+            "kind": "UNSUPPORTED",
+            "reason": "unknown_method",
+            "retryable": false,
+            "detail": {
+              "$any": "string"
+            },
+            "executed": false
+          }
+        }
+      }
+    }
+  ]
+}

@@ -12,6 +12,7 @@
     "resultKind": "plain",
     "startsJob": null,
     "requiresSession": true,
+    "mainThread": false,
     "errors": [
       "INVALID_ARGUMENT",
       "NOT_FOUND",

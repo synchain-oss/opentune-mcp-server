@@ -55,14 +55,17 @@ Notation: `KIND(reason)` names an error with `data.kind` = KIND and `data.reason
 
 ### 2.2 Minor versions
 
-A minor version MAY only add: methods, optional params members, result members, capabilities, error kinds, reasons, warnings, side-effect names, job kinds, entity names and enumerated string values. It MUST NOT remove or rename anything, or change the meaning or the unit of an existing member. Such changes need a new major version.
+A minor version MAY only add: methods, optional params members, result members, members of the discovery file and of the ready file (section 5), capabilities, error kinds, reasons, warnings, side-effect names, job kinds, entity names and enumerated string values. It MUST NOT remove or rename anything, or change the meaning or the unit of an existing member. Such changes need a new major version.
+
+1. An optional params member added by a minor version MUST come with a new capability that a server reports exactly when it accepts the member. Clients send the member only to instances that report the capability, because servers reject unknown params members (section 2.3 rule 3) and clients do not decide by the minor version (section 2.3 rule 5).
+2. The params of `session.hello` are frozen for major 1: no minor version adds, removes or changes a member of them. The hello is sent before the client can know the server's minor version, so a member the server does not know would make the hello fail (section 4.2).
 
 ### 2.3 Compatibility rules
 
-1. Clients MUST ignore result members, side-effect names and capabilities they do not know.
+1. Clients MUST ignore result members, discovery-file and ready-file members, side-effect names and capabilities they do not know.
 2. Clients MUST accept error kinds, reasons, warning codes, entity names and enumerated string values they do not know. An unknown error kind MUST be handled like `INTERNAL`.
 3. Servers MUST reject unknown params members with `INVALID_ARGUMENT(invalid_params)`; they MUST NOT ignore an option that the client may believe was applied.
-4. The schemas in this directory are closed (they forbid undefined members) so that conformance tests detect mistakes. Rule 1 still applies to clients, because a newer minor version may add members.
+4. The schemas in this directory are closed (they forbid undefined members) so that conformance tests detect mistakes in what a server sends. Rule 1 still applies to clients, because a newer minor version may add members; clients MUST NOT reject a message or a file only because it has members they do not know. Where a client validates input, it uses the open form of the schema where one is defined (for example `schemas/discovery-file.schema.json#/$defs/knownMembers`).
 5. A client discovers what an instance supports from its capabilities (section 7), not from the minor version.
 
 ## 3. Transport and framing
@@ -77,7 +80,7 @@ A minor version MAY only add: methods, optional params members, result members, 
 
 1. Each message is one JSON value, encoded as UTF-8 without a byte order mark, followed by one LF. The message itself MUST NOT contain a raw LF; senders MUST NOT emit CR. Receivers MUST accept a CR immediately before the LF (it is JSON whitespace).
 2. Lines are measured in bytes, excluding the LF.
-3. A receiver MUST treat a line that is not valid UTF-8 or not valid JSON as a parse error. The server MUST also treat nesting deeper than 64 arrays or objects as a parse error. After authentication, the server answers a parse error with `INVALID_ARGUMENT(parse_error)` and `id` null and keeps the session open; before authentication, section 3.5 applies.
+3. A receiver MUST treat a line that is not valid UTF-8 or not valid JSON as a parse error. The server MUST also treat nesting deeper than 64 arrays or objects as a parse error; the outermost value has depth 1. After authentication, the server answers a parse error with `INVALID_ARGUMENT(parse_error)` and `id` null and keeps the session open; before authentication, section 3.5 applies.
 4. After authentication, the server MUST ignore lines that are empty or contain only JSON whitespace.
 5. Senders SHOULD NOT emit duplicate member names in an object; the server SHOULD treat them as a parse error.
 
@@ -88,13 +91,23 @@ A minor version MAY only add: methods, optional params members, result members, 
 3. A request is an object with exactly the members `jsonrpc` (the string `"2.0"`), `id`, `method` and optionally `params`.
    - `id` MUST be a string of 1 to 128 characters or an integer in the range -(2^53-1) to 2^53-1.
    - `params`, when present, MUST be an object. Omitting it is the same as `{}`.
-4. A request without `id` is a notification. Clients MUST NOT send notifications. The server MUST NOT execute a notification and MUST NOT respond to it.
-5. Batches are not supported. After authentication, a line that is a JSON array is answered with one error response with `id` null and `INVALID_ARGUMENT(batch_unsupported)`; none of its elements is executed.
-6. After authentication, a line that is JSON but not a valid request under rule 3 is answered with `INVALID_ARGUMENT(invalid_request)`. The response carries the request's `id` if it is valid, otherwise `id` null.
-7. A request whose `id` equals that of a request still in flight on the same session is answered with `INVALID_ARGUMENT(duplicate_id)` with `id` null and is not executed.
-8. A request for a method that this protocol does not define, or that the instance does not implement, is answered with `UNSUPPORTED(unknown_method)`. A request for a method whose capability the instance does not report is answered with `UNSUPPORTED(capability_missing)`.
-9. The server starts requests in the order it receives them on a session, and requests that need the main thread are queued to it in that order, so the writes of one session take effect in the order they were sent. Responses MAY arrive in a different order (for example a `job.get` that waits); clients MUST match responses by `id`.
-10. Each response is a success (`result`, always an object) or an error (`error`, section 17), never both.
+4. A notification is a JSON object that has no member `id`, whose `jsonrpc` is `"2.0"` and whose `method` is a string, whatever its other members. Clients MUST NOT send notifications. The server MUST NOT execute a notification and MUST NOT respond to it.
+5. After authentication the server handles each line as follows; the first case that applies decides, and every error response in this list has `executed` false:
+   1. The line is longer than `maxLineBytes`: `INVALID_ARGUMENT(line_too_long)` with `id` null, then the server closes the connection (section 3.4 rule 3).
+   2. The line is empty or contains only JSON whitespace: ignored, no response (section 3.2 rule 4).
+   3. The line is not valid UTF-8 or not valid JSON, or is nested too deeply: `INVALID_ARGUMENT(parse_error)` with `id` null (section 3.2 rule 3).
+   4. The line is a JSON array (a JSON-RPC batch). Batches are not supported: one error response `INVALID_ARGUMENT(batch_unsupported)` with `id` null; none of the elements is executed.
+   5. The line is a notification (rule 4): ignored, no response.
+   6. The line is any other value that is not a valid request under rule 3: `INVALID_ARGUMENT(invalid_request)`. The response carries the value's `id` if the value is an object whose `id` member is valid under rule 3, otherwise `id` null.
+   7. The `id` equals that of a request still in flight on the same session: `INVALID_ARGUMENT(duplicate_id)` with `id` null. The response has `id` null so that it cannot be mistaken for the response of the request in flight.
+   8. `maxInFlightPerSession` requests are already in flight on the session: `BUSY(request_limit)` (section 3.4).
+   9. The method is not defined by the session's protocol version: `UNSUPPORTED(unknown_method)`.
+   10. The instance does not report the method's capability: `UNSUPPORTED(capability_missing)`. An instance implements every method of every capability it reports, so a defined method that an instance does not implement always gives this error.
+   11. The method is `session.hello`: `INVALID_ARGUMENT(hello_repeated)` (section 4.4).
+   12. `params` does not validate against the method's params schema: `INVALID_ARGUMENT(invalid_params)`.
+   13. Otherwise the method runs. Its own checks follow, for writes in the order of section 13.1 rule 4.
+6. The server starts requests in the order it receives them on a session, and requests that need the main thread are queued to it in that order, so the writes of one session take effect in the order they were sent. Responses MAY arrive in a different order (for example a `job.get` that waits); clients MUST match responses by `id`.
+7. Each response is a success (`result`, always an object) or an error (`error`, section 17), never both.
 
 ### 3.4 Limits
 
@@ -114,7 +127,7 @@ A minor version MAY only add: methods, optional params members, result members, 
 
 1. `session.hello` and `session.info` report these values in `limits`.
 2. A request beyond `maxInFlightPerSession` is answered with `BUSY(request_limit)` and is not executed.
-3. A line longer than `maxLineBytes` is answered with `INVALID_ARGUMENT(line_too_long)` with `id` null, after which the server closes the connection. The server MUST NOT send a line longer than `maxLineBytes`; reads that could exceed it are paginated.
+3. A line longer than `maxLineBytes` is answered with `INVALID_ARGUMENT(line_too_long)` with `id` null, after which the server closes the connection. The server answers as soon as it has received more than `maxLineBytes` bytes without an LF; it does not wait for the end of the line. The server MUST NOT send a line longer than `maxLineBytes`; reads that could exceed it are paginated.
 4. A session is idle while it has no request in flight and has sent no complete line. After `idleTimeoutMs` of idleness the server closes the connection without a message.
 
 ### 3.5 Before authentication
@@ -145,10 +158,13 @@ The first request on a connection is `session.hello` (schema `methods/session.he
 
 The server MUST check, in this order:
 
-1. If params does not validate against the params schema, or the token does not equal the instance's token, send the fixed `AUTH_FAILED` response (Appendix A) and close the connection. The token comparison MUST take time independent of the content of the tokens (constant-time comparison) and MUST be performed even when other params are invalid.
+1. If `params` is absent or not an object, or `params.token` is not a string, or `params.protocol` is not a string of the form `MAJOR.MINOR` (`common.schema.json#/$defs/protocolVersion`), or the token does not equal the instance's token, send the fixed `AUTH_FAILED` response (Appendix A) and close the connection. The token comparison MUST take time independent of the content of the tokens (constant-time comparison) and MUST be performed whenever `params.token` is a string, whatever the other members are.
 2. If the major of `protocol` is not in the instance's `protocolMajors`, send the fixed `PROTOCOL_MISMATCH` response (Appendix A) and close the connection.
-3. If `maxSessions` sessions are already authenticated, answer `BUSY(session_limit)` with `retryable` true and close the connection.
-4. Otherwise the connection becomes a session. The result's `protocol` is the server's `MAJOR.MINOR` for the requested major; the session uses that major.
+3. If `params` does not validate against the `session.hello` params schema of that major, answer `INVALID_ARGUMENT(invalid_params)` and close the connection. Only a client that sent the right token gets this far, so this response may say what is wrong in `detail`.
+4. If `maxSessions` sessions are already authenticated, answer `BUSY(session_limit)` with `retryable` true and close the connection.
+5. Otherwise the connection becomes a session. The result's `protocol` is the server's `MAJOR.MINOR` for the requested major; the session uses that major.
+
+Steps 1 and 2 look only at `token` and `protocol`. Every major version of OTCP keeps these two members of `session.hello` params with the same form and meaning, so that a client of another major, whose other hello params may differ, still receives `PROTOCOL_MISMATCH` rather than `AUTH_FAILED`. Within major 1 the hello params are frozen (section 2.2 rule 2).
 
 The fixed responses are identical for every failure of their kind, apart from the echoed `id`, so that they reveal nothing about why authentication failed.
 
@@ -193,7 +209,7 @@ The file name is `<pid>.json`, where `<pid>` is the decimal process id of the in
 
 ### 5.3 Content
 
-The content is a JSON object defined by `schemas/discovery-file.schema.json`, at most 8192 bytes. Every member is always present; inapplicable values are null.
+The content is a JSON object defined by `schemas/discovery-file.schema.json`, at most 8192 bytes. Every member is always present; inapplicable values are null. A server writes exactly the members of its version, so the file validates against the closed schema. One file serves every major in `protocolMajors`; a later major keeps every member defined here with the same meaning and form, and may add members.
 
 | Member               | Meaning                                                                                                           |
 | -------------------- | ----------------------------------------------------------------------------------------------------------------- |
@@ -217,7 +233,7 @@ The content is a JSON object defined by `schemas/discovery-file.schema.json`, at
 1. On a normal stop the server MUST delete its discovery file after closing the listener. The server MUST NOT delete discovery files of other processes.
 2. A file left behind by a process that ended abnormally is stale. A client considers a file stale when no process with `pid` is running, or when a process with `pid` is running but its start time differs from `processStartTimeMs` by more than 2000 ms (the process id was reused).
 3. Clients MAY delete stale files. A client MUST NOT delete a file when it cannot determine that the file is stale, and MUST NOT connect to the port of a stale file.
-4. Clients MUST ignore files that do not validate against the schema or whose `pid` differs from the file name.
+4. Clients MUST ignore a file that is not a JSON object of at most 8192 bytes, that does not validate against `schemas/discovery-file.schema.json#/$defs/knownMembers` (every member defined by this version is present with the type and form the schema gives it), or whose `pid` differs from the file name. Clients MUST NOT ignore a file because it has members they do not know (section 2.3 rule 1); a newer minor version or another major served by the same instance may add members. The same applies to the ready file and `#/$defs/readyFileKnownMembers`.
 5. More than one instance may run at once; each has its own file. Choosing among instances is the client's responsibility.
 
 ### 5.5 Ready file
@@ -301,6 +317,8 @@ The unit of every quantity is the suffix of its member name:
 
 Tempo is `bpm`, a time signature is `{numerator, denominator}` and colours are `#RRGGBB`.
 
+Members without a physical unit carry no suffix: the normalized or dimensionless note parameters of section 8.3 (`retuneSpeed`, `vibratoDepth`, `pitchDriftScale`), whose ranges section 8.3 defines; `bpm`; counts (`*Count`), indexes and positions such as `trackId`; booleans, strings and enumerated values. Every other quantity has a suffix from the table.
+
 ### 8.3 Note parameters
 
 | Member            | Range    | Meaning                                                                                                                                                                                                |
@@ -321,22 +339,23 @@ Tempo is `bpm`, a time signature is `{numerator, denominator}` and colours are `
 | `undoId`      | `u:<instanceIdShort>:<seq>`                   | Assigned by the server to every undo entry it creates; `seq` starts at 1 and increases.                                                                                                                                                                        |
 | `jobId`       | `j:<instanceIdShort>:<seq>`                   | `seq` starts at 1 and increases with every job of the instance.                                                                                                                                                                                                |
 
-1. The server resolves handles in this order: form (else `INVALID_ARGUMENT(invalid_params)`), instance and epoch (a handle of another instance or of an earlier epoch gives `NOT_FOUND(stale_handle)`), existence (else `NOT_FOUND(unknown_handle)`).
-2. A note handle whose `atRevision` is not the content's current revision gives `REVISION_CONFLICT(content_changed)`; an index outside the notes at that revision gives `NOT_FOUND(unknown_handle)`.
-3. Handles are opaque apart from the rules above. Clients MUST NOT construct `contentId`, `placementId`, `undoId` or `jobId` values; they use values the server returned.
+1. The server resolves `contentId` and `placementId` in this order: form (else `INVALID_ARGUMENT(invalid_params)`), instance and epoch (a handle of another instance or of an earlier epoch gives `NOT_FOUND(stale_handle)`), existence (else `NOT_FOUND(unknown_handle)`).
+2. A `jobId` of valid form that names no job the instance retains gives `NOT_FOUND(job_not_found)`, whatever its instance part: a job of another instance is simply not there (section 12). An `undoId` is only ever compared with the entries of the undo history (section 15.3); it is never resolved on its own.
+3. A note handle whose `atRevision` is not the content's current revision gives `REVISION_CONFLICT(content_changed)`; an index outside the notes at that revision gives `NOT_FOUND(unknown_handle)`.
+4. Handles are opaque apart from the rules above. Clients MUST NOT construct `contentId`, `placementId`, `undoId` or `jobId` values; they use values the server returned.
 
 ## 10. Revision tokens
 
 | Token                                | Changes when                                                           | Expected-value param          |
 | ------------------------------------ | ---------------------------------------------------------------------- | ----------------------------- |
-| `revision` (per content)             | notes, corrections, note parameters or other content data change       | `expectedRevision`            |
+| `revision` (per content)             | the `notes`, `pitch` or `content` component changes (section 14.4)     | `expectedRevision`            |
 | `gridRevision` (per content)         | the time grid changes                                                  | `expectedGridRevision`        |
 | `keyRevision` (per content)          | the content's key changes                                              | `expectedKeyRevision`         |
 | `geometryHash` (per placement)       | the placement's track, timeline start, length or source window changes | `expectedGeometryHash`        |
-| `arrangementRevision` (per instance) | placements are added, removed, moved, trimmed, split or merged         | `expectedArrangementRevision` |
+| `arrangementRevision` (per instance) | placements are added, removed or changed in any property (14.4)        | `expectedArrangementRevision` |
 
 1. Tokens are opaque strings. Clients MUST compare them only for equality, and MUST NOT order, parse or compute them.
-2. A change of the key or of the time grid MUST NOT change `revision`.
+2. `revision` covers the notes and their parameters, the corrected pitch curve, and the content's audio and analysis data. A change of the key, the time grid, the pitch shift, a reference binding or reference alignment data MUST NOT change `revision`. Section 14.4 maps every component of the world revision vector to these tokens.
 3. A write that takes an expected token compares it on the main thread immediately before it applies the change. On a mismatch it fails with `REVISION_CONFLICT` and the reason of the aspect: `content_changed`, `grid_changed`, `key_changed`, `geometry_changed` or `arrangement_changed`; `executed` is false.
 4. A write depends only on the aspects it declares. Changes to other aspects MUST NOT cause a conflict; for example a key change does not invalidate `expectedRevision`.
 5. Write results return in `tokens` the tokens of every object they touched, read back from a fresh snapshot after the commit. The server MUST NOT compute them, because one operation may advance a token more than once.
@@ -385,7 +404,7 @@ Jobs belong to the instance, not to a session: every session can read and cancel
 
 `job.cancel` (schema `methods/job.cancel.schema.json`) behaves as follows:
 
-1. Unknown or no longer retained job: `NOT_FOUND(job_not_found)`.
+1. Unknown or no longer retained job, whatever the instance part of its `jobId` (section 9 rule 2): `NOT_FOUND(job_not_found)`.
 2. Terminal job: success with `cancelRequested` false; nothing changes.
 3. Cancellation already requested: success with `cancelRequested` true (idempotent).
 4. Job not cancellable now (`cancellable` false): `UNSUPPORTED(job_not_cancellable)`; the job continues unchanged.
@@ -416,7 +435,7 @@ A terminal job is retained for at least `jobRetentionMs` (30 minutes) after `fin
 1. Every operation that reads or changes project or content state runs on the main thread, one at a time, in the order the requests were received.
 2. A request that has not started on the main thread within `dispatchTimeoutMs` is abandoned and answered with `TIMEOUT(dispatch_timeout)` with `executed` false. An abandoned request MUST never execute later; the server marks it abandoned before answering and checks the mark when the request would start.
 3. Once a request has started on the main thread it runs to completion and returns its real result. Work that can take long runs as a job (section 12), so started requests finish quickly.
-4. A write checks, in this order: params against the schema; the method's capability; handles (section 9); busy state (13.2); the readiness gate (section 11); expected tokens (section 10); method-specific validation; then it applies the change. Each failed check returns its error with `executed` false.
+4. After the checks of section 3.3 rule 5, which include the capability and the params schema, a write checks, in this order: handles (section 9); busy state (13.2); the readiness gate (section 11); expected tokens (section 10); method-specific validation; then it applies the change. Each failed check returns its error with `executed` false.
 
 ### 13.2 Busy checks
 
@@ -434,7 +453,9 @@ These checks run on the main thread, immediately before the write applies. The s
 
 ### 13.3 Reads
 
-Reads, `session.*` and `job.*` methods never return `BUSY` because of the UI and never wait for a UI operation to finish. They may still return `BUSY(request_limit)` or `TIMEOUT`. All values in one read result come from one consistent state, taken in one main-thread step.
+1. Reads, `session.*` and `job.*` methods never return `BUSY` because of the UI and never wait for a UI operation to finish. They may still return `BUSY(request_limit)` (section 3.3).
+2. A method runs on the main thread, and may therefore return `TIMEOUT(dispatch_timeout)`, exactly when its schema file says `mainThread: true` (`methods/README.md`). Every read of project or content state and `session.info` run on the main thread. `session.hello`, `job.get` and `job.cancel` never wait for the main thread and never return `TIMEOUT`.
+3. All values in one read result come from one consistent state, taken in one main-thread step.
 
 ### 13.4 UI priority and residual windows
 
@@ -473,7 +494,7 @@ A write result MAY also carry `nullReasons` (section 16) and the method-specific
 
 ### 14.2 States
 
-Exactly one of these holds for every write result:
+Exactly one of these holds for every write result; `common.schema.json#/$defs/writeEnvelope` rejects every other combination:
 
 | State                           | `applied` | `noOp` | `dryRun` | `job`         | `undo`                                                                 |
 | ------------------------------- | --------- | ------ | -------- | ------------- | ---------------------------------------------------------------------- |
@@ -482,9 +503,9 @@ Exactly one of these holds for every write result:
 | prediction (`dryRun` requested) | false     | false  | true     | null          | null                                                                   |
 | work handed to a job            | false     | false  | false    | job reference | null                                                                   |
 
-1. `noOp: true` is a success, not an error, and still reports the current state (for example setting the key a clip already has).
+1. `noOp: true` is a success, not an error, and still reports the current state (for example setting the key a clip already has). `changes`, `created`, `removed` and `idMap` are empty.
 2. A prediction lists the predicted `changes` and `sideEffects`; `revisionDiff` is empty, `tokens` are the current tokens, and `dirty.before` equals `dirty.after`.
-3. When work is handed to a job, `changes` is empty; the job's `result` carries the write envelope of the committed work.
+3. When work is handed to a job, `changes`, `created`, `removed` and `idMap` are empty; the job's `result` carries the write envelope of the committed work.
 
 ### 14.3 changes[]
 
@@ -493,17 +514,32 @@ Each entry is `{entity, ref, label, fields}`:
 - `entity` names the kind of entity: `note`, `placement`, `track`, `timeHandle`, `key`, `pitchShift`, `content`, `preference`, `tempo`, `transport`, `project`, `dialog` (more MAY be added).
 - `ref` identifies it with handles (`common.schema.json#/$defs/entityRef`).
 - `label` is a short display label generated from positions and values, or null. It never contains names taken from files or projects (section 20).
-- `fields` maps each changed member name to `{before, after, unit}`, where `unit` is the unit suffix in lower case (`sec`, `midi`, `cents`, `db`, …) or null.
+- `fields` maps each changed member name to `{before, after, unit}`, where `unit` is the member's unit suffix in lower case (`sec`, `frame`, `midi`, `hz`, `cents`, `semitones`, `db`, `linear`, `ms`, `bytes`), `bpm` for tempo, or null for members without a unit (section 8.2).
 
 A write that changes many entities MAY be paginated by its method; the method schema then defines how the remainder is read.
 
 ### 14.4 revisionDiff
 
-The world revision vector consists of: the arrangement revision, a hash of all track states (mute, solo, volume, colour, visibility), and for every content its `notes`, `pitch`, `grid`, `content`, `key`, `pitchShift` and `reference` components. The server captures it on the main thread immediately before and immediately after the write. `revisionDiff` lists only the components that differ: `{arrangement, trackState, contents[]}`, where `arrangement` and `trackState` are `{before, after}` or null, and each `contents[]` entry is `{contentId, changed}` with one `{before, after}` per changed component (`before` null for a new content, `after` null for a removed one).
+The world revision vector consists of the components below. The server captures it on the main thread immediately before and immediately after the write. `revisionDiff` lists only the components that differ: `{arrangement, trackState, contents[]}`, where `arrangement` and `trackState` are `{before, after}` or null, and each `contents[]` entry is `{contentId, changed}` with one `{before, after}` per changed component (`before` null for a new content, `after` null for a removed one).
 
-1. Every write result MUST contain `revisionDiff`, including results of `edit.undo`, `edit.redo` and selection changes, so that no side effect on project state is hidden.
-2. `revisionDiff` is empty when `arrangement` and `trackState` are null and `contents` is empty.
-3. Every change that `revisionDiff` shows MUST be explained by `changes`, `created`, `removed` or `sideEffects`.
+| Component               | Covers                                                                                        | Values                       |
+| ----------------------- | --------------------------------------------------------------------------------------------- | ---------------------------- |
+| `arrangement`           | the placements and their properties: position, length, source window, gain, fades, references | `arrangementRevision` values |
+| `trackState`            | the states of all tracks: mute, solo, volume, colour, visibility                              | opaque hash                  |
+| `contents[].notes`      | the notes and their parameters                                                                | opaque, part of `revision`   |
+| `contents[].pitch`      | the corrected pitch curve                                                                     | opaque, part of `revision`   |
+| `contents[].content`    | the content's audio and analysis data, for example a finished pitch analysis                  | opaque, part of `revision`   |
+| `contents[].grid`       | the time grid                                                                                 | `gridRevision` values        |
+| `contents[].key`        | the key                                                                                       | `keyRevision` values         |
+| `contents[].pitchShift` | the clip pitch shift                                                                          | opaque                       |
+| `contents[].reference`  | the content's reference alignment data                                                        | opaque                       |
+
+1. `revision` changes exactly when the `notes`, `pitch` or `content` component changes; the values of these components are not `revision` values.
+2. A change of a placement's geometry, and with it of its `geometryHash`, is an `arrangement` change; `geometryHash` has no component of its own.
+3. Opaque component values are compared only for equality, like tokens. Clients MUST NOT send them as expected values.
+4. Every write result MUST contain `revisionDiff`, including results of `edit.undo`, `edit.redo` and selection changes, so that no side effect on project state is hidden.
+5. `revisionDiff` is empty when `arrangement` and `trackState` are null and `contents` is empty.
+6. Every change that `revisionDiff` shows MUST be explained by `changes`, `created`, `removed` or `sideEffects`.
 
 ### 14.5 tokens
 
@@ -590,16 +626,16 @@ After every change that is saved with the project, the server marks the project 
 
 An error response carries `error: {code, message, data}` (`common.schema.json#/$defs/errorObject`):
 
-| Member              | Meaning                                                                                                                                                                        |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `code`              | JSON-RPC error code (17.2).                                                                                                                                                    |
-| `message`           | Equal to `data.kind`.                                                                                                                                                          |
-| `data.kind`         | Error kind from `registry/error-kinds.json`. Clients branch on the kind only.                                                                                                  |
-| `data.reason`       | Optional reason from `registry/reasons.json`, scoped to the kind. It refines the kind for diagnostics and for actionable messages.                                             |
-| `data.retryable`    | Whether repeating the same request later can succeed.                                                                                                                          |
-| `data.retryAfterMs` | Optional hint: wait at least this long before retrying.                                                                                                                        |
-| `data.detail`       | Diagnostic text in English, at most 1024 UTF-8 bytes. Clients MUST NOT parse it. It never contains secrets (section 4.5) or strings taken from files or projects (section 20). |
-| `data.executed`     | false: the request changed nothing and will never run later. true: state may have changed; the client must re-read before deciding what to do.                                 |
+| Member              | Meaning                                                                                                                                                                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `code`              | JSON-RPC error code (17.2).                                                                                                                                                                                                                        |
+| `message`           | Equal to `data.kind`.                                                                                                                                                                                                                              |
+| `data.kind`         | Error kind from `registry/error-kinds.json`. Clients branch on the kind only.                                                                                                                                                                      |
+| `data.reason`       | Optional reason from `registry/reasons.json`, scoped to the kind. It refines the kind for diagnostics and for actionable messages.                                                                                                                 |
+| `data.retryable`    | Whether repeating the same request later can succeed.                                                                                                                                                                                              |
+| `data.retryAfterMs` | Optional hint: wait at least this long before retrying.                                                                                                                                                                                            |
+| `data.detail`       | Diagnostic text in English, printable ASCII (U+0020 to U+007E), at most 1024 characters and therefore at most 1024 bytes. Clients MUST NOT parse it. It never contains secrets (section 4.5) or strings taken from files or projects (section 20). |
+| `data.executed`     | false: the request changed nothing and will never run later. true: state may have changed; the client must re-read before deciding what to do.                                                                                                     |
 
 ### 17.2 JSON-RPC codes
 
@@ -609,7 +645,7 @@ Each kind has a default code in `registry/error-kinds.json`: `AUTH_FAILED` -3200
 
 | Kind                | Typical cause                                                                         | `retryable` by default |
 | ------------------- | ------------------------------------------------------------------------------------- | ---------------------- |
-| `AUTH_FAILED`       | wrong or malformed hello (fixed response, connection closed)                          | false                  |
+| `AUTH_FAILED`       | wrong token, or hello without a usable token or protocol (fixed response, closed)     | false                  |
 | `PROTOCOL_MISMATCH` | unsupported protocol major (fixed response, connection closed)                        | false                  |
 | `SHUTTING_DOWN`     | the server is stopping                                                                | false                  |
 | `INVALID_ARGUMENT`  | malformed message or params, invalid path, missing confirmation                       | false                  |
@@ -646,10 +682,10 @@ The value in each error instance is authoritative; for example `NOT_READY(f0_fai
 
 ## 19. Export contract
 
-`export.start` (schema added in a later release candidate of 1.0.0) writes a WAV file of a clip, a track or the master mix as a job. Its params are `kind` (`clip`, `track` or `master`), `target` (`{placementId}` for a clip, `{trackId}` for a track), `path` (absolute, `.wav`), `ifExists` (`error`, `rename` or `overwrite`; default `error`) and `allowDry` (default false). The contract exists so that an export never silently contains uncorrected ("dry") or outdated audio.
+`export.start` (schema `methods/export.start.schema.json`, status in section 22) writes a WAV file of a clip, a track or the master mix as a job. Its params are `kind` (`clip`, `track` or `master`), `target` (`{placementId}` for a clip, `{trackId}` for a track), `path` (absolute, `.wav`), `ifExists` (`error`, `rename` or `overwrite`; default `error`) and `allowDry` (default false). The contract exists so that an export never silently contains uncorrected ("dry") or outdated audio.
 
 1. Before creating the job, the server validates `path` (section 20). It MUST NOT write to a loaded source file or a file of the current project's media, whatever `ifExists` says: `INVALID_ARGUMENT(target_is_loaded_media)`.
-2. If the target exists: `error` fails with `ALREADY_EXISTS(target_exists)`; `rename` writes to the first free name `<stem> (2).wav`, `<stem> (3).wav`, …; `overwrite` replaces the file at the final rename.
+2. If the target exists: `error` fails with `ALREADY_EXISTS(target_exists)`; `rename` writes to the first free name of `<stem> (2).wav`, `<stem> (3).wav`, … up to `<stem> (999).wav`, and fails with `ALREADY_EXISTS(target_exists)` if all are taken; `overwrite` replaces the file at the final rename. The check is repeated at the final rename, so that a file created while the job ran is replaced only with `overwrite`.
 3. The UI and this API share one export lock. While it is held, `export.start` fails with `BUSY(export_in_progress)`.
 4. A call with the same normalized params as an export job that is not terminal returns that job (section 12.5).
 5. For every content in the export, a main-thread timer decides:
@@ -659,10 +695,10 @@ The value in each error instance is authoritative; for example `NOT_READY(f0_fai
    - a render block failed: queue it again once; if it fails again, fail with `RENDER_FAILED(render_chunk_failed)`;
    - render work pending: wait;
    - otherwise the content is ready only when its audible render is settled at its current revision.
-     If the contents are not all ready within 120 s, the job fails with `NOT_READY(export_wait_timeout)`.
-6. The server records the revision of every content when the job starts and starts writing only after all contents are ready. It writes to a temporary file in the target directory. Back on the main thread it compares the revisions again: if any changed, the job fails with `REVISION_CONFLICT(changed_during_export)`, the temporary file is deleted and the target is not touched. Otherwise the temporary file is renamed to the final path.
-7. Cancellation is possible until the final rename (section 12.3).
-8. The result reports the final `path`, `sampleRateHz` (44100), the channel count (1 for clip and track exports, 2 for the master mix), `sampleFormat` (`float32`), `durationSec`, `startTimelineSec` (0 for master and track exports, the clip start for clip exports, section 8.1), `dryContents[]`, and `processing` with the vocoder weight, hybrid mode, backend and `tuningHz` that produced it.
+6. If the contents are not all ready within 120 s of the start of the job, whichever case of rule 5 they are waiting in, the job fails with `NOT_READY(export_wait_timeout)` and the target is not touched.
+7. The server records the revision of every content when the job starts and starts writing only after all contents are ready. It writes to a temporary file in the target directory. Back on the main thread it compares the revisions again: if any changed, the job fails with `REVISION_CONFLICT(changed_during_export)`, the temporary file is deleted and the target is not touched. Otherwise the temporary file is renamed to the final path.
+8. Cancellation is possible until the final rename (section 12.3).
+9. The result reports the final `path`, `sampleRateHz` (44100), the channel count (1 for clip and track exports, 2 for the master mix), `sampleFormat` (`float32`), `durationSec`, `startTimelineSec` (0 for master and track exports, the clip start for clip exports, section 8.1), `dryContents[]`, and `processing` with the vocoder weight, hybrid mode, backend and `tuningHz` that produced it.
 
 ## 20. Paths and untrusted strings
 
@@ -681,6 +717,10 @@ Windows, checked in this order:
 | matches `^[A-Za-z]:\\`                                              | `path_not_absolute`      |
 | no further `:` (alternate data streams)                             | `path_alternate_stream`  |
 | no `/`, and no empty, `.` or `..` segment                           | `path_not_normalized`    |
+| no segment that ends in `.` or a space                              | `path_not_normalized`    |
+| no segment with a reserved device name                              | `path_reserved_name`     |
+
+Segments are the parts between backslashes after the drive. Windows removes trailing dots and spaces from a segment, so such a path would reach a file other than the one named. A segment has a reserved device name when the part before its first `.`, without trailing spaces and compared without regard to case, is `CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM0` to `COM9`, `LPT0` to `LPT9`, or `COM`/`LPT` followed by `¹`, `²` or `³`; Windows maps such names to devices, also with an extension (for example `NUL.wav`).
 
 POSIX: no control characters (`path_invalid_character`); starts with `/` (`path_not_absolute`); no empty, `.` or `..` segment (`path_not_normalized`).
 
@@ -690,7 +730,8 @@ Extensions, compared without regard to case (`path_bad_extension`): exports acce
 
 1. Track, clip, file and project names, file metadata, paths and log lines come from files and projects that may contain text written to manipulate an AI. The server returns them only as JSON string values of members defined for them. It MUST NOT place them in `label`, `detail`, warning codes or any member meant for display composed by the server.
 2. Clients MUST treat these strings as data, never as instructions. A destructive operation requires the end user's consent; text from a result never counts as consent.
-3. `app.getLog` removes the token, the server proof and the user's home directory from the lines it returns.
+3. Operations that destroy work beyond undo need an explicit param. `track.delete`, and `project.saveAs` when it replaces another existing project file, fail with `INVALID_ARGUMENT(confirm_required)` and change nothing unless params contain `confirm: true`. A method that would discard unsaved changes, such as `project.open`, fails with `UNSAVED_CHANGES(project_dirty)` unless its params explicitly allow discarding them. The method schemas define these params. Clients set them only when the end user explicitly agreed to that operation.
+4. `app.getLog` removes the token, the server proof and the user's home directory from the lines it returns.
 
 ## 21. Editing schemes
 
@@ -723,7 +764,7 @@ The scheme changes what some operations do. The protocol never hides these diffe
 
 `ui.onboardingClose` is an additional capability of `ui.dismiss`: without it, `ui.dismiss` can prevent the first-run overlay but not close one that is already showing.
 
-Every method of version 1 (also in `methods/index.json`). Write: `yes` changes state, `conditional` changes state only for some params or as a reported side effect, `no` never does. Schema: `defined` means `methods/<method>.schema.json` is normative; `pending` means the schema is added before the `1.0.0-rc.1` tag; `planned` means it is added in a later `1.0.0` release candidate. Until its schema is defined, a method has no normative shape, and implementations of it are provisional.
+Every method of version 1 (also in `methods/index.json`). Write: `yes` changes state, `conditional` changes state only for some params or as a reported side effect, `no` never does. Schema: `defined` means `methods/<method>.schema.json` is normative; `pending` means the schema is added before the `1.0.0-rc.1` tag; `planned` means it is added in a later `1.0.0` release candidate. Until its schema is defined, a method has no normative shape: an implementation MAY provide it provisionally, following this document, for development against a release candidate, and MUST change it to match the schema once the schema is defined. The final `1.0.0` defines a schema for every method in this table.
 
 | Method                     | Layer | Capability       | Write       | Since | Schema  | Purpose                                                                                    |
 | -------------------------- | ----- | ---------------- | ----------- | ----- | ------- | ------------------------------------------------------------------------------------------ |
@@ -773,8 +814,8 @@ Every method of version 1 (also in `methods/index.json`). Write: `yes` changes s
 
 ## 23. Method schema files and test vectors
 
-1. Each method has one file `methods/<method>.schema.json`, a JSON Schema 2020-12 document with the params and result schemas in `$defs` and the method's metadata (layer, capability, `since`, write, result kind, job kind, possible error kinds) in the annotation `x-otcp`. The format is defined in `methods/README.md` and `schemas/method-file.schema.json`.
-2. Test vectors in `vectors/` describe requests with expected responses and multi-step scenarios, with matchers for values that differ between runs. The format is defined in `vectors/README.md` and `schemas/vector.schema.json`. Every method with a defined schema has at least one success vector, and every error behaviour of the session layer has a vector.
+1. Each method has one file `methods/<method>.schema.json`, a JSON Schema 2020-12 document with the params and result schemas in `$defs` and the method's metadata (layer, capability, `since`, write, result kind, job kind, whether it runs on the main thread, possible error kinds) in the annotation `x-otcp`. The format is defined in `methods/README.md` and `schemas/method-file.schema.json`.
+2. Test vectors in `vectors/` describe requests with expected responses and multi-step scenarios, with matchers for values that differ between runs. The format is defined in `vectors/README.md` and `schemas/vector.schema.json`. Every method with a defined schema has at least one success vector, and the session-layer behaviours listed in `vectors/README.md` ("Coverage") each have a vector.
 
 ## Appendix A. Fixed responses
 

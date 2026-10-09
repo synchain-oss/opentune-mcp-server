@@ -1,5 +1,5 @@
 {
-  "description": "Every method of OTCP v1 (PROTOCOL.md section 22). schema: defined = methods/<method>.schema.json exists and is normative; pending = the schema is added before the 1.0.0-rc.1 tag; planned = the schema is added in a later 1.0.0 release candidate. A method may be implemented only once its schema is defined.",
+  "description": "Every method of OTCP v1 (PROTOCOL.md section 22). schema: defined = methods/<method>.schema.json exists and is normative; pending = the schema is added before the 1.0.0-rc.1 tag; planned = the schema is added in a later 1.0.0 release candidate. Until its schema is defined, a method has no normative shape; an implementation may provide it provisionally for development against a release candidate and must change it to match the schema once the schema is defined (PROTOCOL.md section 22).",
   "methods": [
     {
       "method": "session.hello",

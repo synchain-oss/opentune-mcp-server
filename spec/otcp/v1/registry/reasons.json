@@ -90,7 +90,13 @@
       "code": "path_not_normalized",
       "scope": "INVALID_ARGUMENT",
       "since": "1.0",
-      "description": "The path contains a \".\" or \"..\" segment or an empty segment."
+      "description": "The path is not in the exact form the server requires: it contains an empty, \".\" or \"..\" segment, on Windows a \"/\", or a segment that ends in a dot or a space."
+    },
+    {
+      "code": "path_reserved_name",
+      "scope": "INVALID_ARGUMENT",
+      "since": "1.0",
+      "description": "On Windows, a path segment is a reserved device name such as CON, NUL, COM1 or LPT1, also with an extension."
     },
     {
       "code": "path_invalid_character",

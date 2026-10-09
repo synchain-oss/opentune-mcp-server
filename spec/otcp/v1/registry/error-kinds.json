@@ -8,7 +8,7 @@
       "since": "1.0",
       "jsonrpcCode": -32001,
       "retryable": false,
-      "description": "The session.hello token is missing, malformed or wrong. Sent only as the fixed pre-authentication response; the server closes the connection after sending it."
+      "description": "The session.hello token is wrong, or params has no string token or no protocol of the form MAJOR.MINOR. Sent only as the fixed pre-authentication response; the server closes the connection after sending it."
     },
     {
       "code": "PROTOCOL_MISMATCH",

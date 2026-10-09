@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://otcp.invalid/v1/methods/session.hello.schema.json",
   "title": "session.hello",
-  "description": "Authenticates the connection and negotiates the protocol version. Must be the first line on a connection (PROTOCOL.md sections 3.5 and 4). The client must check that serverProof, instanceId and pid in the result equal the values in the discovery file before sending anything else.",
+  "description": "Authenticates the connection and negotiates the protocol version. Must be the first line on a connection (PROTOCOL.md sections 3.5 and 4). The server checks token and protocol before the other params (section 4.2); the params are frozen for major 1 (section 2.2). The client must check that serverProof, instanceId and pid in the result equal the values in the discovery file before sending anything else.",
   "x-otcp": {
     "method": "session.hello",
     "layer": "L2",
@@ -12,6 +12,7 @@
     "resultKind": "plain",
     "startsJob": null,
     "requiresSession": false,
+    "mainThread": false,
     "errors": [
       "AUTH_FAILED",
       "PROTOCOL_MISMATCH",
