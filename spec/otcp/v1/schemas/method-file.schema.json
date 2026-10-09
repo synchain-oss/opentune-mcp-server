@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://otcp.invalid/v1/schemas/method-file.schema.json",
+  "title": "OTCP method schema file",
+  "description": "Shape of methods/<method>.schema.json (methods/README.md). Each method file is itself a JSON Schema 2020-12 document whose $defs hold params and result, plus the x-otcp annotation with the method's metadata.",
+  "type": "object",
+  "required": ["$schema", "$id", "title", "description", "x-otcp", "$defs"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "const": "https://json-schema.org/draft/2020-12/schema" },
+    "$id": {
+      "type": "string",
+      "pattern": "^https://otcp\\.invalid/v1/methods/[a-z][a-zA-Z0-9]*\\.[a-z][a-zA-Z0-9]*\\.schema\\.json$"
+    },
+    "title": { "$ref": "common.schema.json#/$defs/methodName" },
+    "description": { "type": "string", "minLength": 1 },
+    "x-otcp": { "$ref": "#/$defs/otcpMeta" },
+    "$defs": {
+      "type": "object",
+      "required": ["params", "result"],
+      "properties": {
+        "params": { "type": "object" },
+        "result": { "type": "object" }
+      }
+    }
+  },
+  "$defs": {
+    "otcpMeta": {
+      "type": "object",
+      "required": [
+        "method",
+        "layer",
+        "capability",
+        "since",
+        "write",
+        "resultKind",
+        "startsJob",
+        "requiresSession",
+        "errors"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "method": { "$ref": "common.schema.json#/$defs/methodName" },
+        "layer": { "type": "string", "pattern": "^L[2-8]$" },
+        "capability": { "$ref": "common.schema.json#/$defs/capability" },
+        "since": { "$ref": "common.schema.json#/$defs/protocolVersion" },
+        "write": {
+          "description": "yes: changes project, content, file or preference state. conditional: changes state only for some params or as a reported side effect. no: never changes such state.",
+          "enum": ["yes", "no", "conditional"]
+        },
+        "resultKind": {
+          "description": "write: the result extends the write envelope. read: the result carries asOf and derived. plain: neither.",
+          "enum": ["write", "read", "plain"]
+        },
+        "startsJob": {
+          "description": "Job kind the method may start, or null.",
+          "anyOf": [
+            { "$ref": "common.schema.json#/$defs/jobKind" },
+            { "type": "null" }
+          ]
+        },
+        "requiresSession": {
+          "description": "false only for session.hello, which is sent before authentication.",
+          "type": "boolean"
+        },
+        "errors": {
+          "description": "Every error kind the method may return, including the generic ones.",
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "common.schema.json#/$defs/errorKind" }
+        }
+      }
+    }
+  }
+}
