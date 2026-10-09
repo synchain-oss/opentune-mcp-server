@@ -1,0 +1,13 @@
+version = 1
+
+# ① 兜底(必须放最前;后匹配者优先)。本仓 SPDX = MIT(MIT 单许可仓;spec/ 下的 OTCP 规范同为 MIT)。
+#    兜底让 reuse lint 对无头文件(README / .md / .json / 配置文件等)可达;能加头的源文件仍逐个加
+#    `SPDX-License-Identifier: MIT` 头,两者不互相替代。
+[[annotations]]
+path = "**"
+SPDX-FileCopyrightText = "Copyright (c) 2026 Synchain"
+SPDX-License-Identifier = "MIT"
+
+# ② 特例块写在兜底之后(后匹配者优先)。例如之后加入的测试人声(CC0-1.0 / CC-BY-4.0)
+#    要在这里单独登记,并把对应许可证全文放进 LICENSES/。只登记实际存在的路径与许可证:
+#    reuse lint 会把 LICENSES/ 里未被引用的许可证判为错误。

@@ -1,0 +1,17 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 2
+
+# Markdown 保留行尾两空格(软换行),关闭 trim
+[*.md]
+trim_trailing_whitespace = false
+
+# PowerShell 用 CRLF(与 .gitattributes 同款约定)
+[*.ps1]
+end_of_line = crlf

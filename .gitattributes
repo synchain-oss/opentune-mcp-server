@@ -1,0 +1,10 @@
+# 文本一律 LF:Windows 默认 core.autocrlf=true 会检出 CRLF,导致 prettier --check 与 ubuntu CI 结果不一致;
+# 而且 spec/otcp/v1/ 在 fork 中有逐字节副本(按 sha256 锁定),行尾不固定就无法比对。
+* text=auto eol=lf
+*.ps1 text eol=crlf
+*.md linguist-documentation
+
+# 二进制:不做任何行尾转换
+*.wav binary
+*.mcpb binary
+*.tgz binary
