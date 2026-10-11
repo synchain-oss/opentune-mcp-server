@@ -84,7 +84,7 @@ Vectors are written so that they hold against any target: mock, a window-less te
 A mock used for contract tests SHOULD additionally be deterministic, so that its full transcripts can be compared byte for byte:
 
 1. `--seed <n>` seeds every random choice the mock makes, except the token and the server proof, which always come from a cryptographically secure generator and are read from the discovery file.
-2. A fixed `instanceId` can be configured, so that `contentId`, `undoId` and `jobId` values repeat.
+2. A fixed `instanceId` can be configured, so that `contentId`, `placementId`, `undoId` and `jobId` values repeat.
 3. `jobId` and `undoId` sequence numbers start at 1 and increase by 1.
 4. The clock is injectable: timestamps and timeouts come from it, so that tests of waits and timeouts do not depend on real time.
 
@@ -98,3 +98,4 @@ A mock used for contract tests SHOULD additionally be deterministic, so that its
    - request ids (section 3.3 rule 3): number ids written with a fraction or an exponent, the bounds of number ids, string ids measured in code points, ids that are not valid, and the plain integer literal in responses, also in a fixed response.
 3. Behaviours that need long real-time waits or a stopping server (the idle timeout, `TIMEOUT(dispatch_timeout)`, `SHUTTING_DOWN`) have no vectors in this version; implementations test them with an injectable clock and their own shutdown tests.
 4. Every error vector's kind and reason are registered, and its `code` and `message` follow PROTOCOL.md section 17.
+5. Handle kinds (PROTOCOL.md section 9 rule 1): a `contentId` passed where a `placementId` is expected, and the reverse, get `INVALID_ARGUMENT(invalid_params)`. No method with a defined schema in this release candidate takes either handle, so these vectors are added together with the schemas of the first methods that do (for example `content.getNotes` and `export.start`). Until then the guarantee rests on the handle patterns of `../schemas/common.schema.json`, whose type prefixes make them disjoint.

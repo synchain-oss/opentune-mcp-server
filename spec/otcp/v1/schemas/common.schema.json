@@ -47,16 +47,16 @@
       "pattern": "^[A-Za-z0-9._:-]{1,128}$"
     },
     "contentId": {
-      "description": "<instanceIdShort>:<contentEpoch>:<objectId> (PROTOCOL.md section 9).",
+      "description": "c:<instanceIdShort>:<contentEpoch>:<objectId> (PROTOCOL.md section 9). The type prefix c: keeps the form disjoint from placementId (p:), undoId (u:) and jobId (j:).",
       "type": "string",
-      "pattern": "^[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
-      "examples": ["01234567:0:1"]
+      "pattern": "^c:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+      "examples": ["c:01234567:0:1"]
     },
     "placementId": {
-      "description": "<instanceIdShort>:<contentEpoch>:<placementSerial> (PROTOCOL.md section 9). instanceIdShort and contentEpoch as for contentId; placementSerial is never reused within an epoch. Same form as contentId: the member that carries it says which kind of handle it is.",
+      "description": "p:<instanceIdShort>:<contentEpoch>:<placementSerial> (PROTOCOL.md section 9). instanceIdShort and contentEpoch as for contentId; placementSerial is never reused within an epoch. The type prefix p: keeps the form disjoint from contentId (c:), undoId (u:) and jobId (j:).",
       "type": "string",
-      "pattern": "^[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
-      "examples": ["01234567:0:3"]
+      "pattern": "^p:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+      "examples": ["p:01234567:0:3"]
     },
     "trackId": {
       "description": "Zero-based track position. Positional: deleting a track shifts later tracks down.",
@@ -72,8 +72,18 @@
         "atRevision": { "$ref": "#/$defs/revisionToken" }
       }
     },
-    "undoId": { "type": "string", "pattern": "^u:[0-9a-f]{8}:[1-9][0-9]*$" },
-    "jobId": { "type": "string", "pattern": "^j:[0-9a-f]{8}:[1-9][0-9]*$" },
+    "undoId": {
+      "description": "u:<instanceIdShort>:<seq> (PROTOCOL.md section 9).",
+      "type": "string",
+      "pattern": "^u:[0-9a-f]{8}:[1-9][0-9]*$",
+      "examples": ["u:01234567:1"]
+    },
+    "jobId": {
+      "description": "j:<instanceIdShort>:<seq> (PROTOCOL.md section 9).",
+      "type": "string",
+      "pattern": "^j:[0-9a-f]{8}:[1-9][0-9]*$",
+      "examples": ["j:01234567:1"]
+    },
     "timestampMs": {
       "description": "Milliseconds since the Unix epoch (UTC).",
       "type": "integer",
