@@ -10,7 +10,10 @@ const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 
 // Files that must each reach 90% (statements, branches, functions, lines) on top of the global
 // 85%: input sanitizing, error construction, OTCP message framing, analysis and result rendering.
 // The globs match nothing until those modules exist; new modules in these areas inherit the
-// stricter bar automatically.
+// stricter bar automatically. The directory globs follow the module layout. OTCP framing has
+// no directory of its own, so the bar keys on a naming convention: the NDJSON framing code
+// lives in src/otcp/framing.ts or under src/otcp/framing/. Code placed elsewhere silently
+// escapes the 90% bar, so keep to that name (or update these keys in the same change).
 const strictPerFile = { statements: 90, branches: 90, functions: 90, lines: 90, perFile: true };
 
 export default defineConfig({
@@ -47,7 +50,8 @@ export default defineConfig({
         lines: 85,
         'src/sanitize/**': strictPerFile,
         'src/errors/**': strictPerFile,
-        'src/otcp/framing*.ts': strictPerFile,
+        'src/otcp/framing.ts': strictPerFile,
+        'src/otcp/framing/**': strictPerFile,
         'src/analysis/**': strictPerFile,
         'src/render/**': strictPerFile,
       },

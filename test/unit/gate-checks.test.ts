@@ -9,7 +9,9 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BIN,
+  GIT_LOG_FORMAT,
   PACKED_FILES,
+  WEB_MERGE_COMMITTER_EMAIL,
   checkBundleShape,
   checkCommits,
   checkLockfile,
@@ -242,6 +244,16 @@ describe('scanPrivacy', () => {
     [join('file:///C:', '/', 'Users', '/', name, '/x')],
     [join('C:', '\\', 'Users', '\\', '用户甲', '\\', 'x')],
     [join('/', 'home', '/', '_', name)],
+    // Windows home directories as Git Bash / MSYS2, Cygwin and WSL print them.
+    [join('/c', '/', 'Users', '/', name, '/repo')],
+    [join('cd /C', '/', 'users', '/', name)],
+    [join('/mnt/c', '/', 'Users', '/', name, '/x')],
+    [join('"/cygdrive/d', '/', 'Users', '/', name, '"')],
+    [join('file:///c', '/', 'Users', '/', name, '/x')],
+    // A WSL distribution's home directory reached from Windows.
+    [join('\\\\wsl$', '\\', 'Ubuntu', '\\', 'home', '\\', name, '\\x')],
+    [join('"\\\\\\\\wsl.localhost', '\\\\', 'Debian', '\\\\', 'home', '\\\\', name, '"')],
+    [join('//wsl$', '/', 'Ubuntu', '/', 'home', '/', name, '/x')],
   ])('finds the personal path in %s', (text) => {
     expect(scanPrivacy(text, 'f')).toHaveLength(1);
   });
@@ -258,6 +270,12 @@ describe('scanPrivacy', () => {
     ['C:/Users/.../AppData'],
     ['C:\\Users\\…\\AppData'],
     ['/home/.../.npm'],
+    ['/c/Users/Public/Music'],
+    ['/mnt/c/Users/<name>/x'],
+    ['/mnt/d/Music/take1.wav'],
+    ['https://example.com/c/Users/someone/profile'],
+    ['\\\\wsl$\\Ubuntu\\home\\<name>\\x'],
+    ['//wsl.localhost/Ubuntu/home/runner/x'],
   ])('accepts the neutral path %s', (text) => {
     expect(scanPrivacy(text, 'f')).toEqual([]);
   });
@@ -268,6 +286,14 @@ describe('scanPrivacy', () => {
     ).toEqual([]);
     const foreign = join(name, '@', 'example', '.com');
     expect(scanPrivacy(`mail ${foreign}`, 'f')).toEqual([`f:1: e-mail address "${foreign}" is not a project address`]);
+  });
+
+  it('accepts further addresses only when the caller allows them', () => {
+    const foreign = join(name, '@', 'example', '.com');
+    expect(scanPrivacy(`mail ${foreign.toUpperCase()}`, 'f', { allowEmails: [foreign] })).toEqual([]);
+    expect(scanPrivacy(`mail ${foreign}`, 'f', { allowEmails: [join('other', '@', 'example', '.com')] })).toHaveLength(
+      1,
+    );
   });
 
   it('does not mistake package specs for e-mail addresses', () => {
@@ -298,34 +324,65 @@ describe('parseGitLog / checkCommits', () => {
   const GITHUB_NOREPLY = join('140901583+DLsnows', '@', 'users.noreply.github.com');
   const outsider = join('contributor', '@', 'example', '.org');
   const signoff = (email: string) => `Signed-off-by: Someone <${email}>`;
-  const commit = (over: Partial<{ sha: string; parents: string[]; name: string; email: string; body: string }>) => ({
+  const commit = (
+    over: Partial<{
+      sha: string;
+      parents: string[];
+      name: string;
+      email: string;
+      committerName: string;
+      committerEmail: string;
+      body: string;
+    }>,
+  ) => ({
     sha: 'a'.repeat(40),
     parents: ['b'.repeat(40)],
     name: 'DLsnows',
     email: PROJECT,
+    committerName: 'DLsnows',
+    committerEmail: PROJECT,
     body: `chore: x\n\n${signoff(PROJECT)}`,
     ...over,
   });
+  // An outside contributor's own commit, signed off and committed with their own address.
+  const outsiderCommit = (over: Parameters<typeof commit>[0] = {}) =>
+    commit({
+      name: 'Contributor',
+      email: outsider,
+      committerName: 'Contributor',
+      committerEmail: outsider,
+      body: `fix: y\n\n${signoff(outsider)}`,
+      ...over,
+    });
 
   it('parses the git log records', () => {
-    const text = `${'a'.repeat(40)}${US}${'b'.repeat(40)} ${'c'.repeat(40)}${US}Name${US}${PROJECT}${US}merge: y\n${RS}\n`;
+    const text =
+      `${'a'.repeat(40)}${US}${'b'.repeat(40)} ${'c'.repeat(40)}${US}Name${US}${PROJECT}` +
+      `${US}GitHub${US}${WEB_MERGE_COMMITTER_EMAIL}${US}merge: y\n${RS}\n`;
     expect(parseGitLog(text)).toEqual([
       {
         sha: 'a'.repeat(40),
         parents: ['b'.repeat(40), 'c'.repeat(40)],
         name: 'Name',
         email: PROJECT,
+        committerName: 'GitHub',
+        committerEmail: WEB_MERGE_COMMITTER_EMAIL,
         body: 'merge: y',
       },
     ]);
     expect(parseGitLog('')).toEqual([]);
   });
 
-  it('accepts signed-off commits, including web squash merges signed off with another project address', () => {
+  it('reads the fields that GIT_LOG_FORMAT asks git for, in that order', () => {
+    expect(GIT_LOG_FORMAT).toBe('%H%x1f%P%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%B%x1e');
+  });
+
+  it('accepts signed-off project commits, including web squash merges committed by GitHub', () => {
     expect(checkCommits([commit({})])).toEqual([]);
-    expect(checkCommits([commit({ email: GITHUB_NOREPLY })])).toEqual([]);
     expect(
-      checkCommits([commit({ name: 'Contributor', email: outsider, body: `fix: y\n\n${signoff(outsider)}` })]),
+      checkCommits([
+        commit({ email: GITHUB_NOREPLY, committerName: 'GitHub', committerEmail: WEB_MERGE_COMMITTER_EMAIL }),
+      ]),
     ).toEqual([]);
   });
 
@@ -339,22 +396,78 @@ describe('parseGitLog / checkCommits', () => {
     expect(checkCommits([commit({ parents: ['b'.repeat(40), 'c'.repeat(40)], body: 'Merge x' })])).toEqual([]);
   });
 
-  it("rejects an outside author's commit signed off by someone else", () => {
-    const problems = checkCommits([
-      commit({ name: 'Contributor', email: outsider, body: `fix: y\n\n${signoff(PROJECT)}` }),
-    ]);
-    expect(problems).toEqual([`commit aaaaaaaa: [signoff-identity] Signed-off-by email not allowed: ${PROJECT}`]);
-  });
-
   it('rejects AI attribution trailers', () => {
-    const trailer = join('Co-Authored', '-By: ', 'Cla', 'ude <', 'x', '@', 'example.invalid>');
+    const trailer = join('Co-Authored', '-By: ', 'Cla', 'ude');
     const problems = checkCommits([commit({ body: `chore: x\n\n${signoff(PROJECT)}\n${trailer}` })]);
     expect(problems).toHaveLength(1);
     expect(problems[0]).toMatch(/^commit aaaaaaaa: \[co-authored-claude\]/);
   });
 
+  it('rejects a commit made with a misconfigured identity, even when it is signed off consistently', () => {
+    // A personal name and address from a global git config, signed off by that same address.
+    expect(checkCommits([outsiderCommit()])).toEqual([
+      `commit aaaaaaaa: author "Contributor <${outsider}>" is not a project address` +
+        ' (commit as DLsnows <noreply@synchain.ca>; --allow-external-authors checks a contributor branch)',
+      `commit aaaaaaaa: committer "Contributor <${outsider}>" is not a project address`,
+      `commit aaaaaaaa message:3: e-mail address "${outsider}" is not a project address`,
+    ]);
+  });
+
   it('rejects maintainer commits from an address that is not a project address', () => {
-    const problems = checkCommits([commit({ email: outsider, body: `chore: x\n\n${signoff(outsider)}` })]);
-    expect(problems).toEqual([`commit aaaaaaaa: DLsnows must commit as a project address, not ${outsider}`]);
+    const problems = checkCommits([
+      commit({ email: outsider, committerEmail: outsider, body: `chore: x\n\n${signoff(outsider)}` }),
+    ]);
+    expect(problems).toContain(`commit aaaaaaaa: DLsnows must commit as a project address, not ${outsider}`);
+    // The maintainer's name never qualifies as an outside author.
+    expect(
+      checkCommits([commit({ email: outsider, committerEmail: outsider, body: `chore: x\n\n${signoff(outsider)}` })], {
+        allowExternalAuthors: true,
+      }),
+    ).toEqual(problems);
+  });
+
+  it('rejects a project-authored commit whose committer is not a project address', () => {
+    expect(checkCommits([commit({ committerName: 'Someone', committerEmail: outsider })])).toEqual([
+      `commit aaaaaaaa: committer "Someone <${outsider}>" is not a project address`,
+    ]);
+  });
+
+  it('rejects personal paths and foreign addresses in the commit message', () => {
+    const home = join('C:', '\\', 'Users', '\\', 'al', 'ice');
+    expect(checkCommits([commit({ body: `fix: crash in ${home}\\repo\n\n${signoff(PROJECT)}` })])).toEqual([
+      `commit aaaaaaaa message:1: personal path "${home}"`,
+    ]);
+  });
+
+  describe('with allowExternalAuthors (a contributor branch)', () => {
+    const options = { allowExternalAuthors: true };
+
+    it("accepts an outside author's commit signed off with their own address", () => {
+      expect(checkCommits([outsiderCommit()], options)).toEqual([]);
+      // ... also when the maintainer committed it (for example a cherry-pick).
+      expect(checkCommits([outsiderCommit({ committerName: 'DLsnows', committerEmail: PROJECT })], options)).toEqual(
+        [],
+      );
+    });
+
+    it("rejects an outside author's commit signed off by someone else", () => {
+      expect(checkCommits([outsiderCommit({ body: `fix: y\n\n${signoff(PROJECT)}` })], options)).toEqual([
+        `commit aaaaaaaa: [signoff-identity] Signed-off-by email not allowed: ${PROJECT}`,
+      ]);
+    });
+
+    it('rejects a committer who is neither the author nor a project address', () => {
+      const third = join('third', '@', 'example', '.net');
+      expect(checkCommits([outsiderCommit({ committerName: 'Third', committerEmail: third })], options)).toEqual([
+        `commit aaaaaaaa: committer "Third <${third}>" is not a project address`,
+      ]);
+    });
+
+    it("rejects other people's addresses in an outside author's message", () => {
+      const third = join('third', '@', 'example', '.net');
+      expect(
+        checkCommits([outsiderCommit({ body: `fix: y (reported by ${third})\n\n${signoff(outsider)}` })], options),
+      ).toEqual([`commit aaaaaaaa message:1: e-mail address "${third}" is not a project address`]);
+    });
   });
 });

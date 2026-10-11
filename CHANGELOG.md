@@ -20,5 +20,5 @@ versioned separately and has its own changelog.
   [ADR 0001](docs/adr/0001-single-file-bundle.md).
 - Local gates, `npm run gates`: lint, formatting, typecheck, unit tests with coverage, build, bundle shape, package
   contents, `npm audit`, third-party notices, stdio smoke test, gitleaks (version and sha256 pinned in
-  `scripts/tools.lock.json`), privacy, AI attribution and sign-off, README heading parity, and the
+  `scripts/tools.lock.json`), privacy, AI attribution, sign-off and commit identity, README heading parity, and the
   `pull_request_target` ban. It prints a PASS / FAIL / SKIP table for the current commit.

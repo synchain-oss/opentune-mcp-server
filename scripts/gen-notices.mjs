@@ -120,7 +120,12 @@ export async function generateNotices(root = ROOT) {
   return { text: renderNotices(packages), packages };
 }
 
-/** Returns null when the committed file matches, else a short description of the difference. */
+/**
+ * Compares the committed THIRD-PARTY-NOTICES.md with a fresh rendering.
+ * @returns {Promise<{ ok: boolean, packages: { name: string, version: string, license: string }[], detail: string }>}
+ *   `packages` lists what the bundle contains; `detail` describes the difference when `ok` is
+ *   false and is empty otherwise
+ */
 export async function checkNotices(root = ROOT) {
   const { text, packages } = await generateNotices(root);
   let committed;

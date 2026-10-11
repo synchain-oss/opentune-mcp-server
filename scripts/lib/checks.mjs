@@ -248,54 +248,92 @@ const NEUTRAL_LINUX_USERS = new Set(['runner', 'node', 'username', 'user', 'your
 // quote or a character that only placeholders use, so placeholders (`<name>`, `%USERNAME%`,
 // `$HOME`, `{user}`, `...`, `…`) never match.
 const NAME = String.raw`([\p{L}\p{N}_][^\\/\s"'\x60<>|:*?%$\{\}\[\]()]*)`;
-const WINDOWS_HOME_RE = new RegExp(String.raw`(?<![A-Za-z])[A-Za-z]:(?:\\+|/+)Users(?:\\+|/+)${NAME}`, 'giu');
-// The look-behind skips URL paths (`example.com/Users/<name>`) and drive paths
-// (`C:/Users/<name>`, already reported by the Windows pattern).
+// One or more path separators of either kind (JSON and source strings double the backslash).
+const SEP = String.raw`(?:\\+|/+)`;
+const WINDOWS_HOME_RE = new RegExp(String.raw`(?<![A-Za-z])[A-Za-z]:${SEP}Users${SEP}${NAME}`, 'giu');
+// The same Windows home directories in the POSIX form that Git Bash / MSYS2 (`/c/Users/<name>`),
+// Cygwin (`/cygdrive/c/Users/<name>`) and WSL (`/mnt/c/Users/<name>`) print. Windows paths are
+// case-insensitive, so `/C/users/<name>` counts too. The look-behind skips URL paths
+// (`example.com/c/Users/<name>`).
+const POSIX_DRIVE_HOME_RE = new RegExp(
+  String.raw`(?<![A-Za-z0-9.:\-])/(?:mnt/|cygdrive/)?[A-Za-z]/Users/${NAME}`,
+  'giu',
+);
+// The look-behind skips URL paths (`example.com/Users/<name>`), drive paths (`C:/Users/<name>`,
+// already reported by the Windows pattern) and POSIX drive paths (`/c/Users/<name>`, reported
+// by the pattern above).
 const MAC_HOME_RE = new RegExp(String.raw`(?<![A-Za-z0-9.:\-])/Users/${NAME}`, 'gu');
 const LINUX_HOME_RE = new RegExp(String.raw`(?<![A-Za-z0-9.:\-])/home/${NAME}`, 'gu');
+// A WSL distribution's home directory reached from Windows: `\\wsl$\<distro>\home\<name>`,
+// `\\wsl.localhost\<distro>\home\<name>`, or the same with forward slashes.
+const WSL_HOME_RE = new RegExp(
+  String.raw`(?:\\{2,}|/{2,})wsl(?:\$|\.localhost)${SEP}[^\\/\s]+${SEP}home${SEP}${NAME}`,
+  'giu',
+);
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+
+/** Each home-directory pattern with the account names that are placeholders, not people. */
+const isNeutralWindowsUser = (user) => NEUTRAL_WINDOWS_USERS.has(user.toLowerCase());
+const HOME_PATTERNS = Object.freeze([
+  { re: WINDOWS_HOME_RE, isNeutral: isNeutralWindowsUser },
+  { re: POSIX_DRIVE_HOME_RE, isNeutral: isNeutralWindowsUser },
+  { re: MAC_HOME_RE, isNeutral: (user) => NEUTRAL_MAC_USERS.has(user) },
+  { re: LINUX_HOME_RE, isNeutral: (user) => NEUTRAL_LINUX_USERS.has(user) },
+  { re: WSL_HOME_RE, isNeutral: (user) => NEUTRAL_LINUX_USERS.has(user) },
+]);
 
 /**
  * Finds personal paths (home directories that name a real user) and e-mail addresses other
  * than the project's own.
  * @param {string} text
  * @param {string} source path shown in the report
+ * @param {{ allowEmails?: string[] }} [options] further addresses to accept (lowercase), such as
+ *   an outside contributor's own address in their commit message
  * @returns {string[]}
  */
-export function scanPrivacy(text, source) {
+export function scanPrivacy(text, source, { allowEmails = [] } = {}) {
   const problems = [];
   text.split('\n').forEach((line, i) => {
     const where = `${source}:${i + 1}`;
-    for (const m of line.matchAll(WINDOWS_HOME_RE)) {
-      if (!NEUTRAL_WINDOWS_USERS.has(m[1].toLowerCase())) problems.push(`${where}: personal path "${m[0]}"`);
-    }
-    for (const m of line.matchAll(MAC_HOME_RE)) {
-      if (!NEUTRAL_MAC_USERS.has(m[1])) problems.push(`${where}: personal path "${m[0]}"`);
-    }
-    for (const m of line.matchAll(LINUX_HOME_RE)) {
-      if (!NEUTRAL_LINUX_USERS.has(m[1])) problems.push(`${where}: personal path "${m[0]}"`);
+    for (const { re, isNeutral } of HOME_PATTERNS) {
+      for (const m of line.matchAll(re)) {
+        if (!isNeutral(m[1])) problems.push(`${where}: personal path "${m[0]}"`);
+      }
     }
     for (const m of line.matchAll(EMAIL_RE)) {
-      if (!ALLOWED_EMAILS.includes(m[0].toLowerCase()))
+      const email = m[0].toLowerCase();
+      if (!ALLOWED_EMAILS.includes(email) && !allowEmails.includes(email))
         problems.push(`${where}: e-mail address "${m[0]}" is not a project address`);
     }
   });
   return problems;
 }
 
-/** `git log --format` read by parseGitLog: unit separator between fields, record separator after each commit. */
-export const GIT_LOG_FORMAT = '%H%x1f%P%x1f%an%x1f%ae%x1f%B%x1e';
+/**
+ * `git log --format` read by parseGitLog: author and committer name and address, then the
+ * message; unit separator between fields, record separator after each commit.
+ */
+export const GIT_LOG_FORMAT = '%H%x1f%P%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%B%x1e';
 
 /** The maintainer's git name. Their commits must use a project address. */
 export const MAINTAINER_NAME = 'DLsnows';
 
 /**
+ * The committer GitHub records when a pull request is merged on the web (merge, squash or
+ * rebase). It is GitHub's own address and names no person. It is assembled from its parts so
+ * that this file passes the privacy scan, which accepts only the project's addresses in files.
+ */
+export const WEB_MERGE_COMMITTER_EMAIL = ['noreply', 'github.com'].join('@');
+
+/**
  * @typedef {object} CommitInfo
  * @property {string} sha
  * @property {string[]} parents
- * @property {string} name   author name
- * @property {string} email  author e-mail address
- * @property {string} body   full commit message
+ * @property {string} name            author name
+ * @property {string} email           author e-mail address
+ * @property {string} committerName
+ * @property {string} committerEmail
+ * @property {string} body            full commit message
  */
 
 /**
@@ -308,27 +346,41 @@ export function parseGitLog(text) {
     .map((record) => record.trim())
     .filter(Boolean)
     .map((record) => {
-      const [sha = '', parents = '', name = '', email = '', body = ''] = record.split('\x1f');
-      return { sha, parents: parents.split(/\s+/).filter(Boolean), name, email, body };
+      const [sha = '', parents = '', name = '', email = '', committerName = '', committerEmail = '', body = ''] =
+        record.split('\x1f');
+      return { sha, parents: parents.split(/\s+/).filter(Boolean), name, email, committerName, committerEmail, body };
     });
 }
 
 /**
- * Commit policy: no AI attribution in any message, and a DCO sign-off on every commit that is
- * not a merge. The sign-off must carry the author's own address, with one exception: a commit
- * authored by a project address may be signed off with any project address, because GitHub's
- * web merge authors squash commits with the maintainer's GitHub noreply address while the
- * sign-off keeps noreply@synchain.ca. The maintainer must commit as a project address.
+ * Commit policy, for every commit in the range:
+ * - no AI attribution in the message, and a DCO sign-off unless it is a merge commit;
+ * - identity: the author and the committer are project addresses (the committer may also be
+ *   GitHub's web-merge committer). This branch belongs to this repository, so a commit made with
+ *   a misconfigured git identity (a personal name and address) fails here, before it is pushed.
+ *   With `allowExternalAuthors` (an outside contributor's branch), other authors are accepted
+ *   when the sign-off carries their own address and they committed it themselves or the
+ *   maintainer did; the maintainer's name still requires a project address;
+ * - the message holds no personal path, and no e-mail address other than the project's (or,
+ *   for an outside author, their own).
+ * A commit authored by a project address may be signed off with any project address, because
+ * GitHub's web merge authors squash commits with the maintainer's GitHub noreply address while
+ * the sign-off keeps noreply@synchain.ca.
  * @param {CommitInfo[]} commits
- * @param {{ patterns?: { id: string, re: RegExp }[] }} [options] defaults to scripts/attribution-patterns.txt
+ * @param {{ patterns?: { id: string, re: RegExp }[], allowExternalAuthors?: boolean }} [options]
+ *   patterns default to scripts/attribution-patterns.txt
  * @returns {string[]}
  */
-export function checkCommits(commits, { patterns } = {}) {
+export function checkCommits(commits, { patterns, allowExternalAuthors = false } = {}) {
   const problems = [];
   for (const commit of commits) {
     const short = commit.sha.slice(0, 8);
     const isMerge = commit.parents.length > 1;
-    const projectAuthor = ALLOWED_EMAILS.includes(commit.email.toLowerCase());
+    const author = commit.email.toLowerCase();
+    const committer = commit.committerEmail.toLowerCase();
+    const projectAuthor = ALLOWED_EMAILS.includes(author);
+    const externalAuthor = !projectAuthor && allowExternalAuthors && commit.name !== MAINTAINER_NAME;
+
     const result = checkText(commit.body, {
       ...(patterns ? { patterns } : {}),
       requireSignoff: !isMerge,
@@ -336,9 +388,28 @@ export function checkCommits(commits, { patterns } = {}) {
       source: `commit ${short}`,
     });
     problems.push(...result.violations.map((v) => `commit ${short}: [${v.rule}] ${v.text}`));
-    if (commit.name === MAINTAINER_NAME && !projectAuthor) {
-      problems.push(`commit ${short}: ${MAINTAINER_NAME} must commit as a project address, not ${commit.email}`);
+
+    if (!projectAuthor && !externalAuthor) {
+      problems.push(
+        commit.name === MAINTAINER_NAME
+          ? `commit ${short}: ${MAINTAINER_NAME} must commit as a project address, not ${commit.email}`
+          : `commit ${short}: author "${commit.name} <${commit.email}>" is not a project address` +
+              ' (commit as DLsnows <noreply@synchain.ca>; --allow-external-authors checks a contributor branch)',
+      );
     }
+    const committerOk =
+      ALLOWED_EMAILS.includes(committer) ||
+      committer === WEB_MERGE_COMMITTER_EMAIL ||
+      (externalAuthor && committer === author);
+    if (!committerOk) {
+      problems.push(
+        `commit ${short}: committer "${commit.committerName} <${commit.committerEmail}>" is not a project address`,
+      );
+    }
+
+    problems.push(
+      ...scanPrivacy(commit.body, `commit ${short} message`, { allowEmails: externalAuthor ? [author] : [] }),
+    );
   }
   return problems;
 }
