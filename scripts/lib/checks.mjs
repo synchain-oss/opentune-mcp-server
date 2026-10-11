@@ -272,8 +272,9 @@ const WSL_HOME_RE = new RegExp(
 );
 const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
 
-/** Each home-directory pattern with the account names that are placeholders, not people. */
+// Windows account names compare case-insensitively, like the paths they appear in.
 const isNeutralWindowsUser = (user) => NEUTRAL_WINDOWS_USERS.has(user.toLowerCase());
+/** Each home-directory pattern with the test for account names that are placeholders, not people. */
 const HOME_PATTERNS = Object.freeze([
   { re: WINDOWS_HOME_RE, isNeutral: isNeutralWindowsUser },
   { re: POSIX_DRIVE_HOME_RE, isNeutral: isNeutralWindowsUser },
