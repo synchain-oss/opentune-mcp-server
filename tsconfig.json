@@ -1,0 +1,31 @@
+{
+  // Type checking only. The published artifact is a single esbuild bundle (scripts/build.mjs),
+  // so tsc never emits. NodeNext keeps the sources honest about real Node ESM semantics
+  // (explicit `.js` extensions, package `exports` conditions) even though esbuild could also
+  // resolve looser specifiers; code that typechecks here would also run unbundled.
+  "compilerOptions": {
+    // ES2024 is the newest edition Node 22 (the minimum supported runtime) implements in full;
+    // scripts/build.mjs bundles for `node22` to match. @types/node is pinned to the 22 line so
+    // APIs added in later Node releases do not typecheck either.
+    "target": "ES2024",
+    "lib": ["ES2024"],
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "types": ["node"],
+    // Tests import the plain-JS gate checks in scripts/; their types are inferred, not checked.
+    "allowJs": true,
+    "checkJs": false,
+    "strict": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true
+  },
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts"]
+}

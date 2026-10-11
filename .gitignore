@@ -4,6 +4,9 @@ dist/
 coverage/
 *.tsbuildinfo
 
+# 本地缓存:按 sha256 校验后下载的工具(scripts/fetch-tool.mjs)、esbuild metafile、gates 的临时报告
+.cache/
+
 # 打包产物(npm pack 的 tarball、MCPB 包):只作为 CI 产物与 Release 附件分发,不入库
 *.tgz
 *.mcpb
