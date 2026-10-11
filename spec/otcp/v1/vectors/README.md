@@ -64,6 +64,7 @@ Matching rules:
 3. Names are `[A-Za-z][A-Za-z0-9_]*`, optionally with one `.` part. Names with the prefixes `discovery.` and `runner.` are bound by the runner:
    - `discovery.<member>`: the member of the discovery file of the instance under test, for example `discovery.token`, `discovery.instanceId`, `discovery.build`.
    - `runner.wrongToken`: a value generated at run time with the same length as the discovery token, which differs from it. Vectors never contain real or fake secrets.
+4. Where an expected response has a number `id`, the runner also checks how the received line writes it: as a plain integer literal, without a fraction, an exponent or a sign (PROTOCOL.md section 3.3 rule 3). The runner reads the literal from the top-level `id` member of the line. This is the only check of how a value is written; everywhere else numbers match by value.
 
 ## Preconditions (`given`)
 
@@ -93,6 +94,7 @@ A mock used for contract tests SHOULD additionally be deterministic, so that its
 2. Each of these session-layer behaviours has at least one vector:
    - before authentication (PROTOCOL.md sections 3.4 and 3.5): a first line that is not a `session.hello` request (an HTTP request; another method); no complete line within `helloTimeoutMs`; no LF within `preAuthReadBytes`; more than `maxPreAuthConnections` waiting connections;
    - `session.hello` (sections 4.2 and 4.4): success; `AUTH_FAILED` for a wrong and for a malformed token; `PROTOCOL_MISMATCH`, also for a hello shaped by another major; `INVALID_ARGUMENT(invalid_params)` with the right token; `BUSY(session_limit)`; `INVALID_ARGUMENT(hello_repeated)`;
-   - every case of section 3.3 rule 5 that does not run a method: `line_too_long`, ignored blank lines (and a CR before the LF), `parse_error` (invalid JSON, invalid UTF-8, nesting deeper than 64), `batch_unsupported`, an ignored notification, `invalid_request`, `duplicate_id`, `BUSY(request_limit)`, `UNSUPPORTED(unknown_method)`, `UNSUPPORTED(capability_missing)` and `INVALID_ARGUMENT(invalid_params)`.
+   - every case of section 3.3 rule 5 that does not run a method: `line_too_long`, ignored blank lines (and a CR before the LF), `parse_error` (invalid JSON, invalid UTF-8, nesting deeper than 64), `batch_unsupported`, an ignored notification, `invalid_request` (also for a `method` that is missing or not a string), `duplicate_id`, `BUSY(request_limit)`, `UNSUPPORTED(unknown_method)` (also for a name without a namespace and for the empty string), `UNSUPPORTED(capability_missing)` and `INVALID_ARGUMENT(invalid_params)`;
+   - request ids (section 3.3 rule 3): number ids written with a fraction or an exponent, the bounds of number ids, string ids measured in code points, ids that are not valid, and the plain integer literal in responses, also in a fixed response.
 3. Behaviours that need long real-time waits or a stopping server (the idle timeout, `TIMEOUT(dispatch_timeout)`, `SHUTTING_DOWN`) have no vectors in this version; implementations test them with an injectable clock and their own shutdown tests.
 4. Every error vector's kind and reason are registered, and its `code` and `message` follow PROTOCOL.md section 17.

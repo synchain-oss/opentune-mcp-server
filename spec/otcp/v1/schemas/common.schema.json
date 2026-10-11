@@ -10,6 +10,7 @@
       "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
     },
     "methodName": {
+      "description": "Form of the names of defined methods (methods/README.md). Requests do not use it: any string is a valid method member, and a string that names no defined method gets UNSUPPORTED(unknown_method) (PROTOCOL.md section 3.3).",
       "type": "string",
       "pattern": "^[a-z][a-zA-Z0-9]*\\.[a-z][a-zA-Z0-9]*$"
     },
@@ -22,14 +23,10 @@
     },
     "camelName": { "type": "string", "pattern": "^[a-z][A-Za-z0-9]*$" },
     "requestId": {
-      "description": "JSON-RPC id: a string of 1 to 128 characters or an integer within the IEEE 754 safe range. null is not allowed in requests.",
+      "description": "JSON-RPC id: a string of 1 to 128 Unicode code points, or a number whose value is an integer from 0 to 2^53-1 (1.0 and 1e2 are the integers 1 and 100). Responses write a number id as a plain integer literal. null is not allowed in requests (PROTOCOL.md section 3.3 rule 3).",
       "oneOf": [
         { "type": "string", "minLength": 1, "maxLength": 128 },
-        {
-          "type": "integer",
-          "minimum": -9007199254740991,
-          "maximum": 9007199254740991
-        }
+        { "type": "integer", "minimum": 0, "maximum": 9007199254740991 }
       ]
     },
     "hex128": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
@@ -50,14 +47,16 @@
       "pattern": "^[A-Za-z0-9._:-]{1,128}$"
     },
     "contentId": {
-      "description": "<instanceIdShort>:<contentEpoch>:<objectId>.",
+      "description": "<instanceIdShort>:<contentEpoch>:<objectId> (PROTOCOL.md section 9).",
       "type": "string",
-      "pattern": "^[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$"
+      "pattern": "^[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+      "examples": ["01234567:0:1"]
     },
     "placementId": {
-      "description": "<contentEpoch>:<placementSerial>.",
+      "description": "<instanceIdShort>:<contentEpoch>:<placementSerial> (PROTOCOL.md section 9). instanceIdShort and contentEpoch as for contentId; placementSerial is never reused within an epoch. Same form as contentId: the member that carries it says which kind of handle it is.",
       "type": "string",
-      "pattern": "^(0|[1-9][0-9]*):(0|[1-9][0-9]*)$"
+      "pattern": "^[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+      "examples": ["01234567:0:3"]
     },
     "trackId": {
       "description": "Zero-based track position. Positional: deleting a track shifts later tracks down.",
@@ -320,13 +319,17 @@
       "additionalProperties": { "$ref": "#/$defs/reasonCode" }
     },
     "revert": {
-      "description": "A complete request that restores the previous state when sent as is.",
+      "description": "A request that restores the previous state (PROTOCOL.md section 15.2). params never contains a member that expresses the end user's consent (confirm, or a name starting with discard). When requiresConsent is true, the client adds the method's consent params itself, and only after the end user explicitly agreed; otherwise the recipe is complete and is sent as is.",
       "type": "object",
       "required": ["method", "params"],
       "additionalProperties": false,
       "properties": {
         "method": { "$ref": "#/$defs/methodName" },
-        "params": { "type": "object" }
+        "params": {
+          "type": "object",
+          "propertyNames": { "not": { "pattern": "^(confirm$|discard)" } }
+        },
+        "requiresConsent": { "type": "boolean", "default": false }
       }
     },
     "undoable": {
@@ -774,7 +777,10 @@
       "properties": {
         "jsonrpc": { "const": "2.0" },
         "id": { "$ref": "#/$defs/requestId" },
-        "method": { "$ref": "#/$defs/methodName" },
+        "method": {
+          "description": "Any string, including the empty string. A string that names no method of the session's protocol version gets UNSUPPORTED(unknown_method); a missing or non-string method gets INVALID_ARGUMENT(invalid_request).",
+          "type": "string"
+        },
         "params": { "type": "object" }
       }
     },

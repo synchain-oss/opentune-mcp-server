@@ -15,7 +15,7 @@
       "scope": "INVALID_ARGUMENT",
       "since": "1.0",
       "jsonrpcCode": -32600,
-      "description": "The line is JSON but not a request that this profile of JSON-RPC 2.0 accepts."
+      "description": "The line is JSON but not a request that this profile of JSON-RPC 2.0 accepts, for example because method is missing or not a string, or id is not a valid id."
     },
     {
       "code": "batch_unsupported",
@@ -54,7 +54,7 @@
       "code": "confirm_required",
       "scope": "INVALID_ARGUMENT",
       "since": "1.0",
-      "description": "The request is destructive and needs confirm: true."
+      "description": "The request is destructive (for example it deletes a track, or saves over an existing file other than the current project file) and needs confirm: true."
     },
     {
       "code": "path_not_absolute",
@@ -114,7 +114,7 @@
       "code": "target_is_loaded_media",
       "scope": "INVALID_ARGUMENT",
       "since": "1.0",
-      "description": "The target is a loaded source file or a file of the current project's media; it is never written."
+      "description": "The target is, by file identity, a loaded source file or a media file of the current project; it is never written."
     },
     {
       "code": "stale_handle",
@@ -264,7 +264,7 @@
       "code": "target_exists",
       "scope": "ALREADY_EXISTS",
       "since": "1.0",
-      "description": "The target file already exists."
+      "description": "The target file already exists, and the operation was not asked to replace it."
     },
     {
       "code": "pointer_down",
@@ -330,20 +330,20 @@
       "code": "read_failed",
       "scope": "IO_ERROR",
       "since": "1.0",
-      "description": "Reading a file failed."
+      "description": "Reading a file, or determining the identity of a file, failed."
     },
     {
       "code": "write_failed",
       "scope": "IO_ERROR",
       "since": "1.0",
-      "description": "Writing a file failed."
+      "description": "Writing a file failed, including when the target's file system offers no rename that never replaces an existing file."
     },
     {
       "code": "unknown_method",
       "scope": "UNSUPPORTED",
       "since": "1.0",
       "jsonrpcCode": -32601,
-      "description": "The method is not defined by this protocol version or not implemented by this instance."
+      "description": "The method member is a string that names no method defined by the session's protocol version, for example \"foo\" or the empty string. A defined method that the instance does not implement gives capability_missing instead."
     },
     {
       "code": "capability_missing",

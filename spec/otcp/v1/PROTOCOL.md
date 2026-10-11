@@ -89,8 +89,11 @@ A minor version MAY only add: methods, optional params members, result members, 
 1. Messages follow JSON-RPC 2.0 with the restrictions below.
 2. Requests flow only from client to server and responses only from server to client. The server sends no requests and no notifications. Version 1 has no server-initiated messages; long-running work is observed by polling `job.get` (section 12).
 3. A request is an object with exactly the members `jsonrpc` (the string `"2.0"`), `id`, `method` and optionally `params`.
-   - `id` MUST be a string of 1 to 128 characters or an integer in the range -(2^53-1) to 2^53-1.
+   - `id` MUST be a string or a number. A string `id` has 1 to 128 Unicode code points, counted after JSON escapes are decoded; bytes and UTF-16 code units are not what is counted. A number `id` MUST have an integer value from 0 to 2^53-1 (9007199254740991).
+   - The value of a number `id` is decided after conversion to an IEEE 754 binary64 number (round to nearest, ties to even), as common JSON parsers produce it, not by how the number is written: `1.0` and `1e2` are the integer ids 1 and 100, while `1.5`, `-1` and `9007199254740992` are not valid ids. Clients SHOULD write number ids as plain integer literals.
+   - `method` MUST be a string. Any string is a valid `method` member, including the empty string; whether it names a method is decided by rule 5.
    - `params`, when present, MUST be an object. Omitting it is the same as `{}`.
+   - A response carries the `id` of its request, except where rule 5 gives it `id` null. It writes a string `id` as a JSON string with the same value, and a number `id` as its integer value in a plain JSON integer literal, without a fraction, an exponent or a sign: a request with `id` `1.0` is answered with `"id":1`. This applies to every response, including the fixed responses of Appendix A.
 4. A notification is a JSON object that has no member `id`, whose `jsonrpc` is `"2.0"` and whose `method` is a string, whatever its other members. Clients MUST NOT send notifications. The server MUST NOT execute a notification and MUST NOT respond to it.
 5. After authentication the server handles each line as follows; the first case that applies decides, and every error response in this list has `executed` false:
    1. The line is longer than `maxLineBytes`: `INVALID_ARGUMENT(line_too_long)` with `id` null, then the server closes the connection (section 3.4 rule 3).
@@ -99,9 +102,9 @@ A minor version MAY only add: methods, optional params members, result members, 
    4. The line is a JSON array (a JSON-RPC batch). Batches are not supported: one error response `INVALID_ARGUMENT(batch_unsupported)` with `id` null; none of the elements is executed.
    5. The line is a notification (rule 4): ignored, no response.
    6. The line is any other value that is not a valid request under rule 3: `INVALID_ARGUMENT(invalid_request)`. The response carries the value's `id` if the value is an object whose `id` member is valid under rule 3, otherwise `id` null.
-   7. The `id` equals that of a request still in flight on the same session: `INVALID_ARGUMENT(duplicate_id)` with `id` null. The response has `id` null so that it cannot be mistaken for the response of the request in flight.
+   7. The `id` equals that of a request still in flight on the same session: `INVALID_ARGUMENT(duplicate_id)` with `id` null. Ids are compared by the values of rule 3, so the number `1.0` equals `1`, and a number never equals a string. The response has `id` null so that it cannot be mistaken for the response of the request in flight.
    8. `maxInFlightPerSession` requests are already in flight on the session: `BUSY(request_limit)` (section 3.4).
-   9. The method is not defined by the session's protocol version: `UNSUPPORTED(unknown_method)`.
+   9. `method` is not the name of a method defined by the session's protocol version (section 22), whatever the string is, for example `"foo"` or the empty string: `UNSUPPORTED(unknown_method)`. A `method` member that is missing or not a string is case 6.
    10. The instance does not report the method's capability: `UNSUPPORTED(capability_missing)`. An instance implements every method of every capability it reports, so a defined method that an instance does not implement always gives this error.
    11. The method is `session.hello`: `INVALID_ARGUMENT(hello_repeated)` (section 4.4).
    12. `params` does not validate against the method's params schema: `INVALID_ARGUMENT(invalid_params)`.
@@ -203,7 +206,7 @@ The file name is `<pid>.json`, where `<pid>` is the decimal process id of the in
 
 1. On POSIX systems the server MUST create missing directories of D with mode 0700. Before writing, it MUST verify that D is a directory and not a symbolic link, that it is owned by the effective user, and that it is not writable by group or others. If a check fails, the server MUST NOT start (section 6.4).
 2. On POSIX systems the server MUST write the content to a new temporary file in D, opened with `O_CREAT|O_EXCL|O_NOFOLLOW` and mode 0600, flush it to disk, and then rename it to `<pid>.json`.
-3. On Windows the server MUST write the content to a new temporary file in D, flush it, and then rename it to `<pid>.json`, replacing any existing file of that name. The default D lies in the user's local application data folder, which only that user can access.
+3. On Windows the server MUST create a new temporary file in D with an explicit discretionary access control list (DACL) that is protected from inheritance and grants access only to the user the process runs as (the user SID of its access token) and, optionally, to the operating system account `SYSTEM` (S-1-5-18). It MUST pass this security descriptor when it creates the file (for example in the `lpSecurityAttributes` of `CreateFileW` with `CREATE_NEW`), so that the file never exists with other access rights. It then writes the content, flushes it, and renames the file to `<pid>.json`, replacing any existing file of that name; a rename within one volume keeps the DACL. Like mode 0600 in rule 2, this protects the file whatever directory D is (section 5.1). The default D lies in the user's local application data folder, which only that user can access.
 4. Temporary files MUST NOT end in `.json`. Clients ignore files whose names do not match `^[1-9][0-9]*\.json$`.
 5. The file is written only after the listener accepts connections.
 
@@ -238,7 +241,7 @@ The content is a JSON object defined by `schemas/discovery-file.schema.json`, at
 
 ### 5.5 Ready file
 
-If the option `--control-api-ready-file=<path>` is given, the server writes `{pid, instanceId}` (`schemas/discovery-file.schema.json#/$defs/readyFile`) to that path after the discovery file is in place, using a temporary file in the same directory and a rename. The ready file contains no secrets. A launcher uses it to learn which discovery file belongs to the process it started. If writing it fails, the server logs the failure and keeps running.
+If the option `--control-api-ready-file=<path>` is given, the server writes `{pid, instanceId}` (`schemas/discovery-file.schema.json#/$defs/readyFile`) to that path after the discovery file is in place, using a temporary file in the same directory and a rename that replaces any existing file of that name. The temporary file is created with the same protection as that of the discovery file: on POSIX systems with `O_CREAT|O_EXCL|O_NOFOLLOW` and mode 0600 (section 5.2 rule 2), on Windows with the DACL of section 5.2 rule 3. The ready file contains no secrets. A launcher uses it to learn which discovery file belongs to the process it started. If writing it fails, the server logs the failure and keeps running.
 
 ## 6. Enabling the control API
 
@@ -330,19 +333,20 @@ Members without a physical unit carry no suffix: the normalized or dimensionless
 
 ## 9. Handles
 
-| Handle        | Form                                          | Rules                                                                                                                                                                                                                                                          |
-| ------------- | --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `contentId`   | `<instanceIdShort>:<contentEpoch>:<objectId>` | `instanceIdShort` is the first 8 characters of `instanceId`. `contentEpoch` increases whenever the instance discards all contents at once, which happens when a project is opened.                                                                             |
-| `placementId` | `<contentEpoch>:<placementSerial>` (a string) | Unique within an instance and epoch; never reused within an epoch.                                                                                                                                                                                             |
-| `trackId`     | integer, 0-based position                     | Positional. Deleting a track moves every later track down by one; every result that moves tracks returns `trackIdMap` (`[{before, after}]`, `after` null for the deleted track). The display label `Track N` (N = `trackId` + 1) is derived from the position. |
-| note          | `{index, atRevision}`                         | `index` is the 0-based position of the note in the content's notes ordered by start time, at content revision `atRevision`. Results add a `label` such as `#12 A4 41.20-41.85s` for display only.                                                              |
-| `undoId`      | `u:<instanceIdShort>:<seq>`                   | Assigned by the server to every undo entry it creates; `seq` starts at 1 and increases.                                                                                                                                                                        |
-| `jobId`       | `j:<instanceIdShort>:<seq>`                   | `seq` starts at 1 and increases with every job of the instance.                                                                                                                                                                                                |
+| Handle        | Form                                                 | Rules                                                                                                                                                                                                                                                          |
+| ------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `contentId`   | `<instanceIdShort>:<contentEpoch>:<objectId>`        | `instanceIdShort` is the first 8 characters of `instanceId`. `contentEpoch` increases whenever the instance discards all contents at once, which happens when a project is opened.                                                                             |
+| `placementId` | `<instanceIdShort>:<contentEpoch>:<placementSerial>` | `instanceIdShort` and `contentEpoch` as for `contentId`. `placementSerial` is unique within the instance and epoch and never reused within an epoch.                                                                                                           |
+| `trackId`     | integer, 0-based position                            | Positional. Deleting a track moves every later track down by one; every result that moves tracks returns `trackIdMap` (`[{before, after}]`, `after` null for the deleted track). The display label `Track N` (N = `trackId` + 1) is derived from the position. |
+| note          | `{index, atRevision}`                                | `index` is the 0-based position of the note in the content's notes ordered by start time, at content revision `atRevision`. Results add a `label` such as `#12 A4 41.20-41.85s` for display only.                                                              |
+| `undoId`      | `u:<instanceIdShort>:<seq>`                          | Assigned by the server to every undo entry it creates; `seq` starts at 1 and increases.                                                                                                                                                                        |
+| `jobId`       | `j:<instanceIdShort>:<seq>`                          | `seq` starts at 1 and increases with every job of the instance.                                                                                                                                                                                                |
 
 1. The server resolves `contentId` and `placementId` in this order: form (else `INVALID_ARGUMENT(invalid_params)`), instance and epoch (a handle of another instance or of an earlier epoch gives `NOT_FOUND(stale_handle)`), existence (else `NOT_FOUND(unknown_handle)`).
 2. A `jobId` of valid form that names no job the instance retains gives `NOT_FOUND(job_not_found)`, whatever its instance part: a job of another instance is simply not there (section 12). An `undoId` is only ever compared with the entries of the undo history (section 15.3); it is never resolved on its own.
 3. A note handle whose `atRevision` is not the content's current revision gives `REVISION_CONFLICT(content_changed)`; an index outside the notes at that revision gives `NOT_FOUND(unknown_handle)`.
 4. Handles are opaque apart from the rules above. Clients MUST NOT construct `contentId`, `placementId`, `undoId` or `jobId` values; they use values the server returned.
+5. A `contentId` and a `placementId` have the same form and can be equal as strings. The member that carries a handle says which kind it is; clients MUST NOT pass a value returned as one kind in a member of the other kind.
 
 ## 10. Revision tokens
 
@@ -503,7 +507,7 @@ Exactly one of these holds for every write result; `common.schema.json#/$defs/wr
 | prediction (`dryRun` requested) | false     | false  | true     | null          | null                                                                   |
 | work handed to a job            | false     | false  | false    | job reference | null                                                                   |
 
-1. `noOp: true` is a success, not an error, and still reports the current state (for example setting the key a clip already has). `changes`, `created`, `removed` and `idMap` are empty.
+1. `noOp: true` is a success, not an error, and still reports the current state (for example setting the key a clip already has). `changes`, `created`, `removed` and `idMap` are empty. `dirty` can still change: for example an undo step that changes nothing is used up and marks the project as changed (section 15.3 rule 5).
 2. A prediction lists the predicted `changes` and `sideEffects`; `revisionDiff` is empty, `tokens` are the current tokens, and `dirty.before` equals `dirty.after`.
 3. When work is handed to a job, `changes`, `created`, `removed` and `idMap` are empty; the job's `result` carries the write envelope of the committed work.
 
@@ -581,11 +585,13 @@ Undo entries created through this API use the same kinds of undo actions as the 
 
 ### 15.2 Revert recipes
 
-A revert recipe is `{method, params}`: a complete request that restores the state before the change when it is sent unchanged.
+A revert recipe is `{method, params, requiresConsent}` (`common.schema.json#/$defs/revert`): a request that restores the state before the change. `requiresConsent` is optional and defaults to false. A recipe without `requiresConsent: true` is a complete request that restores the state when it is sent unchanged.
 
-1. Whenever a change is not undoable but can be restored (for example the previous key, a track's previous volume, deleting imported clips), the server MUST provide a revert recipe in `undo.revert`. Side effects follow the same rule in `sideEffects.<name>.revert`.
+1. Whenever a change is not undoable but can be restored (for example the previous key, a track's previous volume, deleting imported clips), the server MUST provide a revert recipe in `undo.revert`.
 2. `revert` is null only when no request of this protocol can restore the state. A not-undoable change that can be neither undone nor reverted MUST carry the warning `IRREVERSIBLE`.
 3. A revert recipe SHOULD carry the expected tokens of the state right after the change, so that it fails with `REVISION_CONFLICT` instead of overwriting later changes.
+4. The `params` of a revert recipe MUST NOT contain any member by which a method takes the end user's consent (section 20.2 rule 3): `confirm`, any member whose name starts with `discard`, and any member that a later version defines for the same purpose. If the method of the recipe needs such consent to restore the state, the recipe carries `requiresConsent: true`. A client MUST NOT send such a recipe until the end user has explicitly agreed to that restoration; only then does the client add the method's consent members itself. A recipe never counts as consent, like any other part of a result.
+5. Rules 1 to 4 apply equally to the revert recipes of side effects (`sideEffects.<name>.revert`, section 14.6).
 
 ### 15.3 edit.undo and edit.redo
 
@@ -684,21 +690,25 @@ The value in each error instance is authoritative; for example `NOT_READY(f0_fai
 
 `export.start` (schema `methods/export.start.schema.json`, status in section 22) writes a WAV file of a clip, a track or the master mix as a job. Its params are `kind` (`clip`, `track` or `master`), `target` (`{placementId}` for a clip, `{trackId}` for a track), `path` (absolute, `.wav`), `ifExists` (`error`, `rename` or `overwrite`; default `error`) and `allowDry` (default false). The contract exists so that an export never silently contains uncorrected ("dry") or outdated audio.
 
-1. Before creating the job, the server validates `path` (section 20). It MUST NOT write to a loaded source file or a file of the current project's media, whatever `ifExists` says: `INVALID_ARGUMENT(target_is_loaded_media)`.
-2. If the target exists: `error` fails with `ALREADY_EXISTS(target_exists)`; `rename` writes to the first free name of `<stem> (2).wav`, `<stem> (3).wav`, … up to `<stem> (999).wav`, and fails with `ALREADY_EXISTS(target_exists)` if all are taken; `overwrite` replaces the file at the final rename. The check is repeated at the final rename, so that a file created while the job ran is replaced only with `overwrite`.
-3. The UI and this API share one export lock. While it is held, `export.start` fails with `BUSY(export_in_progress)`.
-4. A call with the same normalized params as an export job that is not terminal returns that job (section 12.5).
-5. For every content in the export, a main-thread timer decides:
+1. Before creating the job, the server validates `path` (section 20.1).
+2. The server MUST NOT write to a loaded source file or a media file of the current project, whatever `ifExists` says. Whether a target is such a file is decided by file identity (section 20.3), never by comparing path strings. The check is made before the job is created, in which case `export.start` fails with `INVALID_ARGUMENT(target_is_loaded_media)` and no job starts. It is made again for the name actually used immediately before the final rename, in which case the job fails with the same error, the temporary file is deleted and the target is not touched.
+3. The output is moved into place by the final rename of section 20.4, which depends on `ifExists`:
+   - `error`: a rename that never replaces. If it fails because the target exists, the job fails with `ALREADY_EXISTS(target_exists)`. The server SHOULD also fail `export.start` at once with `ALREADY_EXISTS(target_exists)` if the target already exists when the job would be created, so that no rendering is wasted; this early answer never takes the place of the rename's own failure.
+   - `rename`: a rename that never replaces, first to the target path and then, each time it fails because the name exists, to the next of `<stem> (2).wav`, `<stem> (3).wav`, … `<stem> (999).wav`, where `<stem>` is the target's file name without `.wav`. Rule 2 applies to every name before it is tried. If `<stem> (999).wav` exists as well, the job fails with `ALREADY_EXISTS(target_exists)`. The result's `path` is the name that was written.
+   - `overwrite`: a rename that replaces an existing target.
+4. The UI and this API share one export lock. While it is held, `export.start` fails with `BUSY(export_in_progress)`.
+5. A call with the same normalized params as an export job that is not terminal returns that job (section 12.5).
+6. For every content in the export, a main-thread timer decides:
    - pitch analysis not finished: wait;
    - analysis found no voiced audio, or the content has nothing to render: export that content uncorrected and list it in `dryContents[]` of the result;
    - analysis failed for another reason: fail with `ANALYSIS_FAILED(f0_failed)`, unless `allowDry` is true, in which case export it uncorrected and list it in `dryContents[]`;
    - a render block failed: queue it again once; if it fails again, fail with `RENDER_FAILED(render_chunk_failed)`;
    - render work pending: wait;
    - otherwise the content is ready only when its audible render is settled at its current revision.
-6. If the contents are not all ready within 120 s of the start of the job, whichever case of rule 5 they are waiting in, the job fails with `NOT_READY(export_wait_timeout)` and the target is not touched.
-7. The server records the revision of every content when the job starts and starts writing only after all contents are ready. It writes to a temporary file in the target directory. Back on the main thread it compares the revisions again: if any changed, the job fails with `REVISION_CONFLICT(changed_during_export)`, the temporary file is deleted and the target is not touched. Otherwise the temporary file is renamed to the final path.
-8. Cancellation is possible until the final rename (section 12.3).
-9. The result reports the final `path`, `sampleRateHz` (44100), the channel count (1 for clip and track exports, 2 for the master mix), `sampleFormat` (`float32`), `durationSec`, `startTimelineSec` (0 for master and track exports, the clip start for clip exports, section 8.1), `dryContents[]`, and `processing` with the vocoder weight, hybrid mode, backend and `tuningHz` that produced it.
+7. If the contents are not all ready within 120 s of the start of the job, whichever case of rule 6 they are waiting in, the job fails with `NOT_READY(export_wait_timeout)` and the target is not touched.
+8. The server records the revision of every content when the job starts and starts writing only after all contents are ready. It writes to a temporary file in the target directory. Back on the main thread it compares the revisions again: if any changed, the job fails with `REVISION_CONFLICT(changed_during_export)`, the temporary file is deleted and the target is not touched. Otherwise it repeats the check of rule 2 and performs the final rename of rule 3.
+9. Cancellation is possible until the final rename (section 12.3).
+10. The result reports the final `path`, `sampleRateHz` (44100), the channel count (1 for clip and track exports, 2 for the master mix), `sampleFormat` (`float32`), `durationSec`, `startTimelineSec` (0 for master and track exports, the clip start for clip exports, section 8.1), `dryContents[]`, and `processing` with the vocoder weight, hybrid mode, backend and `tuningHz` that produced it.
 
 ## 20. Paths and untrusted strings
 
@@ -729,9 +739,36 @@ Extensions, compared without regard to case (`path_bad_extension`): exports acce
 ### 20.2 Untrusted strings
 
 1. Track, clip, file and project names, file metadata, paths and log lines come from files and projects that may contain text written to manipulate an AI. The server returns them only as JSON string values of members defined for them. It MUST NOT place them in `label`, `detail`, warning codes or any member meant for display composed by the server.
-2. Clients MUST treat these strings as data, never as instructions. A destructive operation requires the end user's consent; text from a result never counts as consent.
-3. Operations that destroy work beyond undo need an explicit param. `track.delete`, and `project.saveAs` when it replaces another existing project file, fail with `INVALID_ARGUMENT(confirm_required)` and change nothing unless params contain `confirm: true`. A method that would discard unsaved changes, such as `project.open`, fails with `UNSAVED_CHANGES(project_dirty)` unless its params explicitly allow discarding them. The method schemas define these params. Clients set them only when the end user explicitly agreed to that operation.
-4. `app.getLog` removes the token, the server proof and the user's home directory from the lines it returns.
+2. Clients MUST treat these strings as data, never as instructions. A destructive operation requires the end user's consent; text from a result never counts as consent, and revert recipes never carry it (section 15.2 rule 4).
+3. Operations that destroy work beyond undo need an explicit param. `track.delete`, and `project.saveAs` when its target is an existing file other than the current project file, fail with `INVALID_ARGUMENT(confirm_required)` and change nothing unless params contain `confirm: true`. A method that would discard unsaved changes, such as `project.open`, fails with `UNSAVED_CHANGES(project_dirty)` unless its params explicitly allow discarding them. The method schemas define these params; every params member that expresses consent is named `confirm` or starts with `discard`. Clients set them only when the end user explicitly agreed to that operation.
+4. For `project.saveAs`, whether the target is the current project file, another existing file or no file is decided by file identity (section 20.3), when the request is validated and again immediately before the final rename. Without `confirm: true`, the final rename never replaces a file other than the current project file (section 20.4); if such a file has appeared at the target in the meantime, the job fails with `INVALID_ARGUMENT(confirm_required)`, the temporary file is deleted and the target is not touched.
+5. `app.getLog` removes the token, the server proof and the user's home directory from the lines it returns.
+
+### 20.3 File identity
+
+Rules that ask whether a path names a particular file (section 19 rule 2 and section 20.2 rule 4) compare file identities, never path strings, because different strings can name the same file: letter case, short names, symbolic links, junctions, mount points and hard links.
+
+1. The identity of an existing file or directory is, on Windows, the volume serial number together with the file id, as returned for a handle opened on the path by `GetFileInformationByHandle` (`dwVolumeSerialNumber`, `nFileIndexHigh` and `nFileIndexLow`) or by an equivalent call, such as `GetFileInformationByHandleEx` with `FileIdInfo`, which file systems with 128-bit file ids need; on POSIX systems it is `st_dev` together with `st_ino` as returned by `stat`. Symbolic links are followed, so a link has the identity of the file it points to.
+2. Two existing files are the same file exactly when their identities are equal. A hard link to a file is therefore that file.
+3. A path at which no file exists has no identity, so rule 2 does not apply to it. Instead, such a path names the same file as another path when the parent directories of both paths exist and have equal identities and the last segments of both paths are equal, compared as the file system compares names (on Windows without regard to case). This is how a target is compared with a media file of the project that is missing.
+4. If an identity that a check needs cannot be determined for a reason other than the file not existing, the check fails: the operation is refused with `IO_ERROR(read_failed)` and changes nothing.
+5. A check is made when the request is validated and again on the main thread immediately before the final rename (section 20.4). The result of the first check never stands in for the second.
+
+### 20.4 Final rename
+
+Exports and project saves write to a temporary file in the target directory and then move it to the target path with one rename, so the rename never moves data between volumes. Where the target must not be replaced, the server MUST NOT test whether the target exists and then rename, because a file can appear between the two steps. It MUST use a rename that fails atomically when the target exists:
+
+| System           | Rename that never replaces                                                        | Rename that replaces                           |
+| ---------------- | --------------------------------------------------------------------------------- | ---------------------------------------------- |
+| Windows          | `MoveFileExW` without `MOVEFILE_REPLACE_EXISTING`                                 | `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING` |
+| Linux            | `renameat2` with `RENAME_NOREPLACE`                                               | `rename`                                       |
+| macOS            | `renamex_np` with `RENAME_EXCL`                                                   | `rename`                                       |
+| any POSIX system | `link` from the temporary file to the target, then `unlink` of the temporary file | `rename`                                       |
+
+The server MAY use the last row on any POSIX system, for example on a file system that does not support `RENAME_NOREPLACE`.
+
+1. A rename that fails because the target exists leaves the target untouched; what happens next is defined by the operation (section 19 rule 3, section 20.2 rule 4).
+2. If the file system of the target supports none of the renames that never replace (for example a file system without hard links on which `RENAME_NOREPLACE` is not supported), the operation fails with `IO_ERROR(write_failed)`, the temporary file is deleted and the target is not touched. The server MUST NOT fall back to a test followed by a rename that replaces.
 
 ## 21. Editing schemes
 
@@ -819,7 +856,7 @@ Every method of version 1 (also in `methods/index.json`). Write: `yes` changes s
 
 ## Appendix A. Fixed responses
 
-The server sends these lines exactly, with `<id>` replaced by the JSON serialization of the request's `id`, followed by LF, and then closes the connection.
+The server sends these lines exactly, with `<id>` replaced by the request's `id` as section 3.3 rule 3 requires for every response, followed by LF, and then closes the connection. A number `id` is written as a plain integer literal (a hello with `id` `1e2` is answered with `"id":100`); a string `id` is written as a JSON string with the same value.
 
 `AUTH_FAILED`:
 
