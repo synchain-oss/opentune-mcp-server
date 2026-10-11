@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// check-attribution — the single implementation of the "zero AI attribution" check
-// (plan §0.1, §5.3, §5.4). Self-contained (Node >= 22, no dependencies) so that the
-// MCP repo and the fork can carry byte-identical copies next to attribution-patterns.txt.
+// check-attribution — the single implementation of the "zero AI attribution" check: commit
+// messages, pull request text and repository files must not credit an AI tool, and commits
+// carry a DCO sign-off. Self-contained (Node >= 22, no dependencies) so that the MCP repo
+// and the fork can carry byte-identical copies next to attribution-patterns.txt.
 //
 // Library:
 //   import { checkText, loadPatterns, stripCommitMessage } from './check-attribution.mjs'
