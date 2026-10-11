@@ -47,7 +47,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run --coverage",
     "test:unit": "vitest run --coverage --project unit",
-    "test:stdio": "vitest run --project stdio"
+    "test:stdio": "vitest run --project stdio",
+    "gates": "node scripts/gates.mjs"
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",

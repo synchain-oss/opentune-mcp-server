@@ -1,0 +1,404 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
+// SPDX-License-Identifier: MIT
+
+// Pure checks used by scripts/gates.mjs. They take text or parsed JSON and return a list of
+// problems (an empty list means the check passes), so each one is unit-tested with planted
+// violations in test/unit/gate-checks.test.ts.
+
+import { checkText } from '../check-attribution.mjs';
+
+/** The exact contents of the published package, besides package.json (which npm always adds). */
+export const PACKED_FILES = Object.freeze([
+  'dist/opentune-mcp.mjs',
+  'README.md',
+  'README.zh-CN.md',
+  'LICENSE',
+  'THIRD-PARTY-NOTICES.md',
+]);
+
+/** The only bin entry. */
+export const BIN = Object.freeze({ 'opentune-mcp': 'dist/opentune-mcp.mjs' });
+
+/** Dependency fields that would make npm install something next to the bundle. */
+export const DEPENDENCY_FIELDS = Object.freeze([
+  'dependencies',
+  'optionalDependencies',
+  'peerDependencies',
+  'bundleDependencies',
+  'bundledDependencies',
+]);
+
+/**
+ * Scripts that npm runs by itself on install, pack or publish (in this package or for its
+ * consumers). None may exist: the published package has no lifecycle scripts, and keeping
+ * them out of the source package.json too means `npm ci` / `npm pack` run nothing implicit.
+ */
+export const LIFECYCLE_SCRIPTS = Object.freeze([
+  'preinstall',
+  'install',
+  'postinstall',
+  'preuninstall',
+  'uninstall',
+  'postuninstall',
+  'preprepare',
+  'prepare',
+  'postprepare',
+  'prepack',
+  'pack',
+  'postpack',
+  'prepublish',
+  'prepublishOnly',
+  'publish',
+  'postpublish',
+  'dependencies',
+]);
+
+const EXACT_VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
+
+function sameSet(a, b) {
+  const sa = [...new Set(a)].sort();
+  const sb = [...new Set(b)].sort();
+  return sa.length === a.length && sa.length === sb.length && sa.every((v, i) => v === sb[i]);
+}
+
+/**
+ * package.json policy: no dependencies of any kind, no lifecycle scripts, devDependencies
+ * pinned to exact versions, `files` and `bin` exactly as published.
+ * @param {Record<string, unknown>} pkg
+ * @returns {string[]}
+ */
+export function checkPackageJson(pkg) {
+  const problems = [];
+  for (const field of DEPENDENCY_FIELDS) {
+    if (field in pkg) problems.push(`package.json must not have "${field}" (the bundle has no runtime dependencies)`);
+  }
+  const scripts = /** @type {Record<string, string>} */ (pkg.scripts ?? {});
+  for (const name of Object.keys(scripts)) {
+    if (LIFECYCLE_SCRIPTS.includes(name) || /^(?:pre|post)?publish/.test(name)) {
+      problems.push(`package.json must not define the lifecycle script "${name}"`);
+    }
+  }
+  const dev = /** @type {Record<string, string>} */ (pkg.devDependencies ?? {});
+  for (const [name, range] of Object.entries(dev)) {
+    if (!EXACT_VERSION_RE.test(range))
+      problems.push(`devDependency ${name} must be pinned to an exact version (found "${range}")`);
+  }
+  const files = Array.isArray(pkg.files) ? pkg.files : [];
+  if (!sameSet(files, PACKED_FILES)) {
+    problems.push(
+      `package.json "files" must be exactly ${JSON.stringify(PACKED_FILES)} (found ${JSON.stringify(pkg.files ?? null)})`,
+    );
+  }
+  if (JSON.stringify(pkg.bin ?? null) !== JSON.stringify(BIN)) {
+    problems.push(`package.json "bin" must be ${JSON.stringify(BIN)} (found ${JSON.stringify(pkg.bin ?? null)})`);
+  }
+  return problems;
+}
+
+/**
+ * The root entry of package-lock.json mirrors package.json: it must not list runtime
+ * dependencies either.
+ * @param {{ packages?: Record<string, Record<string, unknown>> }} lock
+ */
+export function checkLockfile(lock) {
+  const rootEntry = lock.packages?.[''];
+  if (!rootEntry) return ['package-lock.json has no root package entry (lockfileVersion 3 expected)'];
+  return DEPENDENCY_FIELDS.filter((field) => field in rootEntry).map(
+    (field) => `package-lock.json root entry must not have "${field}"`,
+  );
+}
+
+/**
+ * Compares the output of `npm pack --dry-run --json` with the whitelist.
+ * @param {unknown} packJson
+ */
+export function checkPackList(packJson) {
+  const entry = Array.isArray(packJson) ? packJson[0] : undefined;
+  if (!entry || !Array.isArray(entry.files)) return ['npm pack --dry-run --json returned no file list'];
+  const actual = entry.files.map((f) => String(f.path).replace(/\\/g, '/'));
+  const expected = [...PACKED_FILES, 'package.json'];
+  const extra = actual.filter((f) => !expected.includes(f));
+  const missing = expected.filter((f) => !actual.includes(f));
+  return [
+    ...extra.map((f) => `packed but not whitelisted: ${f}`),
+    ...missing.map((f) => `whitelisted but not packed: ${f}`),
+  ];
+}
+
+/**
+ * Markdown heading outline: ATX (`#`) and setext (`===` / `---`) headings, ignoring fenced code
+ * blocks and HTML comments.
+ * @param {string} text
+ * @returns {{ level: number, text: string, line: number }[]}
+ */
+export function markdownHeadings(text) {
+  const lines = text.split(/\r?\n/);
+  const headings = [];
+  let fence = null;
+  let inComment = false;
+  let previous = null; // previous line if it could be a setext heading's text
+  for (const [i, line] of lines.entries()) {
+    if (fence) {
+      if (new RegExp(`^ {0,3}${fence[0]}{${fence.length},}\\s*$`).test(line)) fence = null;
+      previous = null;
+      continue;
+    }
+    if (inComment) {
+      if (line.includes('-->')) inComment = false;
+      previous = null;
+      continue;
+    }
+    const fenceOpen = /^ {0,3}(`{3,}|~{3,})/.exec(line);
+    if (fenceOpen) {
+      fence = fenceOpen[1];
+      previous = null;
+      continue;
+    }
+    if (/^ {0,3}<!--/.test(line)) {
+      if (!line.includes('-->')) inComment = true;
+      previous = null;
+      continue;
+    }
+    const atx = /^ {0,3}(#{1,6})(?:[ \t]+(.*?))?[ \t]*#*[ \t]*$/.exec(line);
+    if (atx) {
+      headings.push({ level: atx[1].length, text: (atx[2] ?? '').trim(), line: i + 1 });
+      previous = null;
+      continue;
+    }
+    const setext = /^ {0,3}(=+|-+)[ \t]*$/.exec(line);
+    if (setext && previous !== null) {
+      headings.push({ level: setext[1].startsWith('=') ? 1 : 2, text: previous.trim(), line: i });
+      previous = null;
+      continue;
+    }
+    const isParagraphText = line.trim() !== '' && !/^ {0,3}(?:[-*+]\s|\d+[.)]\s|>|\|)/.test(line);
+    previous = isParagraphText ? line : null;
+  }
+  return headings;
+}
+
+/**
+ * README.md and README.zh-CN.md must have the same heading outline: the same number of
+ * headings, at the same levels, in the same order. Text is not compared (it is translated).
+ * @param {string} english
+ * @param {string} chinese
+ */
+export function compareHeadingOutlines(english, chinese) {
+  const a = markdownHeadings(english);
+  const b = markdownHeadings(chinese);
+  const problems = [];
+  const n = Math.max(a.length, b.length);
+  for (let i = 0; i < n; i++) {
+    const x = a[i];
+    const y = b[i];
+    if (!x || !y || x.level !== y.level) {
+      const fmt = (h, file) => (h ? `${file}:${h.line} ${'#'.repeat(h.level)} ${h.text}` : `${file}: (no heading)`);
+      problems.push(`heading #${i + 1} differs: ${fmt(x, 'README.md')} vs ${fmt(y, 'README.zh-CN.md')}`);
+      break;
+    }
+  }
+  if (a.length !== b.length) problems.push(`README.md has ${a.length} headings, README.zh-CN.md has ${b.length}`);
+  return problems;
+}
+
+/**
+ * The `pull_request_target` ban (CLAUDE.md, security rule 4): the same three anchored
+ * alternatives as the documented grep, for the block-mapping key, the inline `on:` value or flow
+ * sequence, and the block-sequence item. Comment lines explaining the rule do not match.
+ */
+export const PULL_REQUEST_TARGET_RE =
+  /^[ \t\r\n\v\f]*pull_request_target:|^[ \t\r\n\v\f]*on:.*pull_request_target|^[ \t\r\n\v\f]*-[ \t\r\n\v\f]*pull_request_target/;
+
+/**
+ * @param {{ path: string, text: string }[]} files
+ * @returns {string[]}
+ */
+export function findPullRequestTarget(files) {
+  const hits = [];
+  for (const { path, text } of files) {
+    text.split('\n').forEach((line, i) => {
+      if (PULL_REQUEST_TARGET_RE.test(line)) hits.push(`${path}:${i + 1}: ${line.trim()}`);
+    });
+  }
+  return hits;
+}
+
+/** The project's own addresses. Any other e-mail address in a tracked file is reported. */
+export const ALLOWED_EMAILS = Object.freeze([
+  'contact@synchain.ca',
+  'noreply@synchain.ca',
+  '140901583+dlsnows@users.noreply.github.com',
+]);
+
+// Placeholder or system account names that are not a person's home directory.
+const NEUTRAL_WINDOWS_USERS = new Set([
+  'public',
+  'default',
+  'all',
+  'runneradmin',
+  'username',
+  'user',
+  'yourname',
+  'example',
+]);
+const NEUTRAL_MAC_USERS = new Set(['Shared', 'runner', 'username', 'user', 'yourname', 'example']);
+const NEUTRAL_LINUX_USERS = new Set(['runner', 'node', 'username', 'user', 'yourname', 'example']);
+
+// A user name starts with a letter, digit or underscore and stops at a separator, whitespace,
+// quote or a character that only placeholders use, so placeholders (`<name>`, `%USERNAME%`,
+// `$HOME`, `{user}`, `...`, `…`) never match.
+const NAME = String.raw`([\p{L}\p{N}_][^\\/\s"'\x60<>|:*?%$\{\}\[\]()]*)`;
+const WINDOWS_HOME_RE = new RegExp(String.raw`(?<![A-Za-z])[A-Za-z]:(?:\\+|/+)Users(?:\\+|/+)${NAME}`, 'giu');
+// The look-behind skips URL paths (`example.com/Users/<name>`) and drive paths
+// (`C:/Users/<name>`, already reported by the Windows pattern).
+const MAC_HOME_RE = new RegExp(String.raw`(?<![A-Za-z0-9.:\-])/Users/${NAME}`, 'gu');
+const LINUX_HOME_RE = new RegExp(String.raw`(?<![A-Za-z0-9.:\-])/home/${NAME}`, 'gu');
+const EMAIL_RE = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+
+/**
+ * Finds personal paths (home directories that name a real user) and e-mail addresses other
+ * than the project's own.
+ * @param {string} text
+ * @param {string} source path shown in the report
+ * @returns {string[]}
+ */
+export function scanPrivacy(text, source) {
+  const problems = [];
+  text.split('\n').forEach((line, i) => {
+    const where = `${source}:${i + 1}`;
+    for (const m of line.matchAll(WINDOWS_HOME_RE)) {
+      if (!NEUTRAL_WINDOWS_USERS.has(m[1].toLowerCase())) problems.push(`${where}: personal path "${m[0]}"`);
+    }
+    for (const m of line.matchAll(MAC_HOME_RE)) {
+      if (!NEUTRAL_MAC_USERS.has(m[1])) problems.push(`${where}: personal path "${m[0]}"`);
+    }
+    for (const m of line.matchAll(LINUX_HOME_RE)) {
+      if (!NEUTRAL_LINUX_USERS.has(m[1])) problems.push(`${where}: personal path "${m[0]}"`);
+    }
+    for (const m of line.matchAll(EMAIL_RE)) {
+      if (!ALLOWED_EMAILS.includes(m[0].toLowerCase()))
+        problems.push(`${where}: e-mail address "${m[0]}" is not a project address`);
+    }
+  });
+  return problems;
+}
+
+/** `git log --format` read by parseGitLog: unit separator between fields, record separator after each commit. */
+export const GIT_LOG_FORMAT = '%H%x1f%P%x1f%an%x1f%ae%x1f%B%x1e';
+
+/** The maintainer's git name. Their commits must use a project address. */
+export const MAINTAINER_NAME = 'DLsnows';
+
+/**
+ * @typedef {object} CommitInfo
+ * @property {string} sha
+ * @property {string[]} parents
+ * @property {string} name   author name
+ * @property {string} email  author e-mail address
+ * @property {string} body   full commit message
+ */
+
+/**
+ * @param {string} text output of `git log --format=${GIT_LOG_FORMAT}`
+ * @returns {CommitInfo[]}
+ */
+export function parseGitLog(text) {
+  return text
+    .split('\x1e')
+    .map((record) => record.trim())
+    .filter(Boolean)
+    .map((record) => {
+      const [sha = '', parents = '', name = '', email = '', body = ''] = record.split('\x1f');
+      return { sha, parents: parents.split(/\s+/).filter(Boolean), name, email, body };
+    });
+}
+
+/**
+ * Commit policy: no AI attribution in any message, and a DCO sign-off on every commit that is
+ * not a merge. The sign-off must carry the author's own address, with one exception: a commit
+ * authored by a project address may be signed off with any project address, because GitHub's
+ * web merge authors squash commits with the maintainer's GitHub noreply address while the
+ * sign-off keeps noreply@synchain.ca. The maintainer must commit as a project address.
+ * @param {CommitInfo[]} commits
+ * @param {{ patterns?: { id: string, re: RegExp }[] }} [options] defaults to scripts/attribution-patterns.txt
+ * @returns {string[]}
+ */
+export function checkCommits(commits, { patterns } = {}) {
+  const problems = [];
+  for (const commit of commits) {
+    const short = commit.sha.slice(0, 8);
+    const isMerge = commit.parents.length > 1;
+    const projectAuthor = ALLOWED_EMAILS.includes(commit.email.toLowerCase());
+    const result = checkText(commit.body, {
+      ...(patterns ? { patterns } : {}),
+      requireSignoff: !isMerge,
+      signoffEmails: isMerge ? null : projectAuthor ? [...ALLOWED_EMAILS] : [commit.email],
+      source: `commit ${short}`,
+    });
+    problems.push(...result.violations.map((v) => `commit ${short}: [${v.rule}] ${v.text}`));
+    if (commit.name === MAINTAINER_NAME && !projectAuthor) {
+      problems.push(`commit ${short}: ${MAINTAINER_NAME} must commit as a project address, not ${commit.email}`);
+    }
+  }
+  return problems;
+}
+
+/**
+ * stdout carries MCP frames only, and that applies to bundled dependencies too. These console
+ * methods write to stdout in Node; console.error / warn / trace / assert write to stderr.
+ */
+export const STDOUT_CONSOLE_RE =
+  /\bconsole\s*\.\s*(log|info|debug|dir|dirxml|table|count|group|groupCollapsed|timeEnd|timeLog)\b/g;
+
+/**
+ * @param {string} bundleText
+ * @returns {string[]}
+ */
+export function findStdoutConsoleCalls(bundleText) {
+  const hits = [];
+  bundleText.split('\n').forEach((line, i) => {
+    for (const m of line.matchAll(STDOUT_CONSOLE_RE)) hits.push(`line ${i + 1}: console.${m[1]}`);
+  });
+  return hits;
+}
+
+/**
+ * Bundle shape: dist/ holds exactly the bundle, the bundle starts with the shebang, every
+ * import left in it is a `node:` built-in, and no `require()` was left for esbuild's runtime
+ * shim (which throws "Dynamic require of ... is not supported" inside an ES module).
+ * @param {{ distFiles: string[], bundleText: string, imports: string[] }} input
+ * @returns {string[]}
+ */
+export function checkBundleShape({ distFiles, bundleText, imports }) {
+  const problems = [];
+  const normalized = distFiles.map((f) => f.replace(/\\/g, '/'));
+  if (normalized.length !== 1 || normalized[0] !== 'opentune-mcp.mjs') {
+    problems.push(`dist/ must contain only opentune-mcp.mjs (found ${JSON.stringify(normalized)})`);
+  }
+  const firstLine = bundleText.split('\n', 1)[0];
+  if (firstLine !== '#!/usr/bin/env node')
+    problems.push(`first line must be "#!/usr/bin/env node" (found ${JSON.stringify(firstLine)})`);
+  for (const spec of imports) {
+    if (!spec.startsWith('node:')) problems.push(`bundle imports a non-built-in module: ${JSON.stringify(spec)}`);
+  }
+  if (bundleText.includes('Dynamic require of '))
+    problems.push('bundle contains an unresolved require() (esbuild dynamic-require shim)');
+  return problems;
+}
+
+/**
+ * Parses `sha256sum`-style lines ("<hex>  <path>").
+ * @param {string} text
+ * @returns {Map<string, string>} path -> lowercase hex digest
+ */
+export function parseSha256File(text) {
+  const out = new Map();
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith('#')) continue;
+    const m = /^([0-9a-fA-F]{64})\s+\*?(.+)$/.exec(line);
+    if (!m) throw new Error(`malformed sha256 line: ${raw}`);
+    out.set(m[2].trim(), m[1].toLowerCase());
+  }
+  return out;
+}
