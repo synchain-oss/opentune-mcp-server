@@ -203,10 +203,13 @@ async function bundleShape() {
 async function bundleStdoutHygiene() {
   const bundleText = await fs.readFile(path.join(ROOT, BUNDLE), 'utf8').catch(() => '');
   if (!bundleText) return { result: 'FAIL', note: `${BUNDLE} is missing` };
+  // A heuristic text scan, not a proof: it checks the common forms (direct call, bracket access,
+  // destructuring) of the console methods that write to stdout; aliases are not followed.
   const hits = findStdoutConsoleCalls(bundleText);
   return verdict(
     hits.map((h) => `${BUNDLE} ${h}`),
-    'no stdout-writing console calls in the bundle (first-party or bundled dependencies)',
+    'heuristic scan of the whole bundle, bundled dependencies included: no stdout-writing console method ' +
+      'reached directly (console.log), by bracket access (console["log"]) or by destructuring ({ log } = console)',
   );
 }
 
@@ -329,7 +332,7 @@ async function attribution(base, allowExternalAuthors) {
   return verdict(
     problems,
     `checker sha256 pinned; ${commits.length} commits in ${base}..HEAD: signed off, ` +
-      `${allowExternalAuthors ? 'project or signed-off outside' : 'project'} author and committer, ` +
+      `${allowExternalAuthors ? 'project or signed-off outside' : 'project'} author and committer (name and address), ` +
       `no AI attribution or personal data in messages; ${files.length} text files clean`,
   );
 }
@@ -429,7 +432,10 @@ async function main() {
     ['attribution, sign-off + identity', () => attribution(base, allowExternalAuthors)],
     ['README en/zh-CN heading outline', readmeParity],
     ['no pull_request_target', pullRequestTarget],
-    ['contract vectors (mock)', notYet('not yet: no OTCP spec or mock in the repository')],
+    [
+      'contract vectors (mock)',
+      notYet('not yet: spec/otcp/v1 has vectors, but there is no mock or OTCP client to run them against'),
+    ],
     ['tools/list size gate', notYet('not yet: no tools are registered')],
     ['token canary', notYet('not yet: no OTCP client or mock to carry a token')],
     ['output budget', notYet('not yet: no read tools or mock')],

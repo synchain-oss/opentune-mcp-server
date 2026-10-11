@@ -320,11 +320,29 @@ export const GIT_LOG_FORMAT = '%H%x1f%P%x1f%an%x1f%ae%x1f%cn%x1f%ce%x1f%B%x1e';
 export const MAINTAINER_NAME = 'DLsnows';
 
 /**
+ * The maintainer's GitHub noreply address. GitHub's web merge records it as the author of the
+ * commits it creates; a local commit must never use it.
+ */
+export const MAINTAINER_GITHUB_NOREPLY = '140901583+dlsnows@users.noreply.github.com';
+
+/**
+ * The project addresses a local commit may carry, as author or committer. Each of them belongs
+ * to the maintainer, so it is only valid together with MAINTAINER_NAME.
+ */
+export const LOCAL_COMMIT_EMAILS = Object.freeze(ALLOWED_EMAILS.filter((email) => email !== MAINTAINER_GITHUB_NOREPLY));
+
+/**
  * The committer GitHub records when a pull request is merged on the web (merge, squash or
  * rebase). It is GitHub's own address and names no person. It is assembled from its parts so
  * that this file passes the privacy scan, which accepts only the project's addresses in files.
  */
 export const WEB_MERGE_COMMITTER_EMAIL = ['noreply', 'github.com'].join('@');
+
+/** The committer name GitHub records together with WEB_MERGE_COMMITTER_EMAIL. */
+export const WEB_MERGE_COMMITTER_NAME = 'GitHub';
+
+// An outside contributor must not pass as the maintainer by changing the case of the name.
+const isMaintainerName = (name) => name.toLowerCase() === MAINTAINER_NAME.toLowerCase();
 
 /**
  * @typedef {object} CommitInfo
@@ -354,14 +372,90 @@ export function parseGitLog(text) {
 }
 
 /**
+ * Author identity: a project address under the maintainer's name, the maintainer's GitHub
+ * noreply address on a commit GitHub's web merge created, or (only with `externalAuthor`) an
+ * outside contributor's own address.
+ * @param {CommitInfo} commit
+ * @param {boolean} externalAuthor
+ * @returns {string[]}
+ */
+function checkAuthorIdentity(commit, externalAuthor) {
+  const where = `commit ${commit.sha.slice(0, 8)}`;
+  const author = commit.email.toLowerCase();
+  const who = `"${commit.name} <${commit.email}>"`;
+  if (LOCAL_COMMIT_EMAILS.includes(author)) {
+    return commit.name === MAINTAINER_NAME
+      ? []
+      : [`${where}: author ${who} uses a project address under a name other than ${MAINTAINER_NAME}`];
+  }
+  if (author === MAINTAINER_GITHUB_NOREPLY) {
+    return commit.committerEmail.toLowerCase() === WEB_MERGE_COMMITTER_EMAIL
+      ? []
+      : [
+          `${where}: author ${who} is the GitHub noreply address, which only GitHub's web merge may record` +
+            ` (committer "${commit.committerName} <${commit.committerEmail}>"); commit locally as` +
+            ` ${MAINTAINER_NAME} <noreply@synchain.ca>`,
+        ];
+  }
+  if (externalAuthor) return [];
+  return [
+    isMaintainerName(commit.name)
+      ? `${where}: ${MAINTAINER_NAME} must commit as a project address, not ${commit.email}`
+      : `${where}: author ${who} is not a project address` +
+        ' (commit as DLsnows <noreply@synchain.ca>; --allow-external-authors checks a contributor branch)',
+  ];
+}
+
+/**
+ * Committer identity: a local project address under the maintainer's name, GitHub's web-merge
+ * committer under GitHub's name, or (only with `externalAuthor`) the outside author themselves.
+ * The maintainer's GitHub noreply address never commits: GitHub's web merge records its own
+ * committer, so that address as committer means a local commit.
+ * @param {CommitInfo} commit
+ * @param {boolean} externalAuthor
+ * @returns {string[]}
+ */
+function checkCommitterIdentity(commit, externalAuthor) {
+  const where = `commit ${commit.sha.slice(0, 8)}`;
+  const committer = commit.committerEmail.toLowerCase();
+  const who = `"${commit.committerName} <${commit.committerEmail}>"`;
+  if (LOCAL_COMMIT_EMAILS.includes(committer)) {
+    return commit.committerName === MAINTAINER_NAME
+      ? []
+      : [`${where}: committer ${who} uses a project address under a name other than ${MAINTAINER_NAME}`];
+  }
+  if (committer === WEB_MERGE_COMMITTER_EMAIL) {
+    return commit.committerName === WEB_MERGE_COMMITTER_NAME
+      ? []
+      : [
+          `${where}: committer ${who} uses GitHub's web-merge address under a name other than ${WEB_MERGE_COMMITTER_NAME}`,
+        ];
+  }
+  if (committer === MAINTAINER_GITHUB_NOREPLY) {
+    return [
+      `${where}: committer ${who} is the GitHub noreply address, which no commit may use as committer` +
+        ` (GitHub's web merge commits as ${WEB_MERGE_COMMITTER_NAME}); commit locally as` +
+        ` ${MAINTAINER_NAME} <noreply@synchain.ca>`,
+    ];
+  }
+  if (externalAuthor && committer === commit.email.toLowerCase()) return [];
+  return [`${where}: committer ${who} is not a project address`];
+}
+
+/**
  * Commit policy, for every commit in the range:
  * - no AI attribution in the message, and a DCO sign-off unless it is a merge commit;
- * - identity: the author and the committer are project addresses (the committer may also be
- *   GitHub's web-merge committer). This branch belongs to this repository, so a commit made with
- *   a misconfigured git identity (a personal name and address) fails here, before it is pushed.
- *   With `allowExternalAuthors` (an outside contributor's branch), other authors are accepted
- *   when the sign-off carries their own address and they committed it themselves or the
- *   maintainer did; the maintainer's name still requires a project address;
+ * - identity (name and address of the author and of the committer):
+ *   - a local project address (noreply@synchain.ca, contact@synchain.ca) is valid only under
+ *     the maintainer's exact name, as author and as committer;
+ *   - the maintainer's GitHub noreply address is valid only as the author of a commit whose
+ *     committer is GitHub's web merge (WEB_MERGE_COMMITTER_EMAIL); a local commit never uses it;
+ *   - GitHub's web-merge address is valid as committer only under WEB_MERGE_COMMITTER_NAME.
+ *   This branch belongs to this repository, so a commit made with a misconfigured git identity
+ *   (a personal name or address) fails here, before it is pushed. With `allowExternalAuthors`
+ *   (an outside contributor's branch), other authors are accepted when the sign-off carries
+ *   their own address and they committed it themselves or the maintainer did; the maintainer's
+ *   name, in any letter case, still requires a project address;
  * - the message holds no personal path, and no e-mail address other than the project's (or,
  *   for an outside author, their own).
  * A commit authored by a project address may be signed off with any project address, because
@@ -378,9 +472,8 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false }
     const short = commit.sha.slice(0, 8);
     const isMerge = commit.parents.length > 1;
     const author = commit.email.toLowerCase();
-    const committer = commit.committerEmail.toLowerCase();
     const projectAuthor = ALLOWED_EMAILS.includes(author);
-    const externalAuthor = !projectAuthor && allowExternalAuthors && commit.name !== MAINTAINER_NAME;
+    const externalAuthor = !projectAuthor && allowExternalAuthors && !isMaintainerName(commit.name);
 
     const result = checkText(commit.body, {
       ...(patterns ? { patterns } : {}),
@@ -389,25 +482,7 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false }
       source: `commit ${short}`,
     });
     problems.push(...result.violations.map((v) => `commit ${short}: [${v.rule}] ${v.text}`));
-
-    if (!projectAuthor && !externalAuthor) {
-      problems.push(
-        commit.name === MAINTAINER_NAME
-          ? `commit ${short}: ${MAINTAINER_NAME} must commit as a project address, not ${commit.email}`
-          : `commit ${short}: author "${commit.name} <${commit.email}>" is not a project address` +
-              ' (commit as DLsnows <noreply@synchain.ca>; --allow-external-authors checks a contributor branch)',
-      );
-    }
-    const committerOk =
-      ALLOWED_EMAILS.includes(committer) ||
-      committer === WEB_MERGE_COMMITTER_EMAIL ||
-      (externalAuthor && committer === author);
-    if (!committerOk) {
-      problems.push(
-        `commit ${short}: committer "${commit.committerName} <${commit.committerEmail}>" is not a project address`,
-      );
-    }
-
+    problems.push(...checkAuthorIdentity(commit, externalAuthor), ...checkCommitterIdentity(commit, externalAuthor));
     problems.push(
       ...scanPrivacy(commit.body, `commit ${short} message`, { allowEmails: externalAuthor ? [author] : [] }),
     );
@@ -419,19 +494,52 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false }
  * stdout carries MCP frames only, and that applies to bundled dependencies too. These console
  * methods write to stdout in Node; console.error / warn / trace / assert write to stderr.
  */
-export const STDOUT_CONSOLE_RE =
-  /\bconsole\s*\.\s*(log|info|debug|dir|dirxml|table|count|group|groupCollapsed|timeEnd|timeLog)\b/g;
+export const STDOUT_CONSOLE_METHODS = Object.freeze([
+  'log',
+  'info',
+  'debug',
+  'dir',
+  'dirxml',
+  'table',
+  'count',
+  'group',
+  'groupCollapsed',
+  'timeEnd',
+  'timeLog',
+]);
+
+const STDOUT_METHOD = `(${STDOUT_CONSOLE_METHODS.join('|')})`;
+
+/**
+ * Heuristic text patterns for the common ways of reaching a stdout console method: a direct call
+ * (`console.log`), bracket access with a string (`console["log"]`) and destructuring
+ * (`{ log } = console`). Aliases (`const c = console; c.log()`) and computed names are not
+ * caught. Each pattern scans the whole text, so a call split across lines is still found.
+ */
+export const STDOUT_CONSOLE_PATTERNS = Object.freeze([
+  { re: new RegExp(String.raw`\bconsole\s*\.\s*${STDOUT_METHOD}\b`, 'g'), show: (m) => `console.${m[1]}` },
+  {
+    re: new RegExp(String.raw`\bconsole\s*\[\s*(['"\x60])${STDOUT_METHOD}\1\s*\]`, 'g'),
+    show: (m) => `console[${m[1]}${m[2]}${m[1]}]`,
+  },
+  {
+    re: new RegExp(String.raw`\{[^{}]*\b${STDOUT_METHOD}\b[^{}]*\}\s*=\s*console\b`, 'g'),
+    show: (m) => `{ ${m[1]} } = console`,
+  },
+]);
 
 /**
  * @param {string} bundleText
- * @returns {string[]}
+ * @returns {string[]} one entry per hit, in source order
  */
 export function findStdoutConsoleCalls(bundleText) {
   const hits = [];
-  bundleText.split('\n').forEach((line, i) => {
-    for (const m of line.matchAll(STDOUT_CONSOLE_RE)) hits.push(`line ${i + 1}: console.${m[1]}`);
-  });
-  return hits;
+  for (const { re, show } of STDOUT_CONSOLE_PATTERNS) {
+    for (const m of bundleText.matchAll(re)) hits.push({ index: m.index, text: show(m) });
+  }
+  return hits
+    .sort((a, b) => a.index - b.index)
+    .map(({ index, text }) => `line ${bundleText.slice(0, index).split('\n').length}: ${text}`);
 }
 
 /**

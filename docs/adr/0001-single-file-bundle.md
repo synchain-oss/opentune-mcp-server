@@ -43,8 +43,9 @@ The server needs very little at runtime: the MCP TypeScript SDK and zod.
 
 - bundle shape: `dist/` contains only the bundle, its first line is the shebang, every import left in it is a `node:`
   built-in, and no `require()` was left for esbuild's runtime shim;
-- bundle stdout hygiene: no console method that writes to stdout appears anywhere in the bundle, bundled dependencies
-  included;
+- bundle stdout hygiene: a heuristic text scan of the bundle, bundled dependencies included, finds no console method
+  that writes to stdout in the common forms: a direct call (`console.log`), bracket access (`console["log"]`) or
+  destructuring (`{ log } = console`). Aliases such as `const c = console; c.log()` are not followed;
 - `npm pack --dry-run --json` lists exactly the whitelist;
 - `package.json` and the lockfile's root entry declare no dependencies, `package.json` defines no lifecycle scripts,
   and every devDependency is an exact version;

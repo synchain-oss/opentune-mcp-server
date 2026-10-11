@@ -10,8 +10,10 @@ import { describe, expect, it } from 'vitest';
 import {
   BIN,
   GIT_LOG_FORMAT,
+  MAINTAINER_NAME,
   PACKED_FILES,
   WEB_MERGE_COMMITTER_EMAIL,
+  WEB_MERGE_COMMITTER_NAME,
   checkBundleShape,
   checkCommits,
   checkLockfile,
@@ -167,6 +169,35 @@ describe('findStdoutConsoleCalls', () => {
   it('ignores console methods that write to stderr', () => {
     expect(findStdoutConsoleCalls('console.error(1); console.warn(2); console.trace(); console.assert(x)')).toEqual([]);
   });
+
+  it('finds a call split across lines', () => {
+    expect(findStdoutConsoleCalls('x();\nconsole\n  .log(1);')).toEqual(['line 2: console.log']);
+  });
+
+  it('finds bracket access with a string', () => {
+    expect(findStdoutConsoleCalls(`console['log'](1);\nconsole[ "info" ](2); console[\`table\`]([])`)).toEqual([
+      "line 1: console['log']",
+      'line 2: console["info"]',
+      'line 2: console[`table`]',
+    ]);
+  });
+
+  it('finds methods destructured from console', () => {
+    expect(
+      findStdoutConsoleCalls(
+        'const { log } = console;\nlet {\n  error,\n  debug: d,\n} = console;\nconst { dir }=console',
+      ),
+    ).toEqual(['line 1: { log } = console', 'line 2: { debug } = console', 'line 6: { dir } = console']);
+  });
+
+  it('ignores the stderr methods and unrelated code in the other forms', () => {
+    expect(
+      findStdoutConsoleCalls(
+        "console['error'](1); console[\"warn\"](2); console['trace'](); const { error, warn, trace } = console;" +
+          ' const { log } = logger; if ({ log } === console) {} const { info } = consoleLike; myconsole.log(1)',
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe('markdownHeadings / compareHeadingOutlines', () => {
@@ -321,6 +352,7 @@ describe('parseGitLog / checkCommits', () => {
   const US = '\x1f';
   const RS = '\x1e';
   const PROJECT = 'noreply@synchain.ca';
+  const CONTACT = 'contact@synchain.ca';
   const GITHUB_NOREPLY = join('140901583+DLsnows', '@', 'users.noreply.github.com');
   const outsider = join('contributor', '@', 'example', '.org');
   const signoff = (email: string) => `Signed-off-by: Someone <${email}>`;
@@ -432,6 +464,78 @@ describe('parseGitLog / checkCommits', () => {
     ]);
   });
 
+  describe('names that go with the project addresses', () => {
+    it('accepts a commit rebase-merged on the web: project author, GitHub as committer', () => {
+      expect(
+        checkCommits([commit({ committerName: WEB_MERGE_COMMITTER_NAME, committerEmail: WEB_MERGE_COMMITTER_EMAIL })]),
+      ).toEqual([]);
+    });
+
+    it.each([
+      [PROJECT, 'Someone'],
+      [PROJECT, 'dlsnows'],
+      [PROJECT, `${MAINTAINER_NAME} (laptop)`],
+      [CONTACT, 'Someone'],
+    ])('rejects the author %s under the name %j', (email, name) => {
+      expect(checkCommits([commit({ name, email })])).toEqual([
+        `commit aaaaaaaa: author "${name} <${email}>" uses a project address under a name other than DLsnows`,
+      ]);
+    });
+
+    it.each([
+      [PROJECT, 'Someone'],
+      [PROJECT, 'DLSNOWS'],
+      [CONTACT, 'Someone'],
+    ])('rejects the committer %s under the name %j', (committerEmail, committerName) => {
+      expect(checkCommits([commit({ committerName, committerEmail })])).toEqual([
+        `commit aaaaaaaa: committer "${committerName} <${committerEmail}>" uses a project address` +
+          ' under a name other than DLsnows',
+      ]);
+    });
+
+    it("rejects GitHub's web-merge committer address under another name", () => {
+      expect(
+        checkCommits([
+          commit({ email: GITHUB_NOREPLY, committerName: 'Someone', committerEmail: WEB_MERGE_COMMITTER_EMAIL }),
+        ]),
+      ).toEqual([
+        `commit aaaaaaaa: committer "Someone <${WEB_MERGE_COMMITTER_EMAIL}>" uses GitHub's web-merge address` +
+          ' under a name other than GitHub',
+      ]);
+    });
+  });
+
+  describe("the maintainer's GitHub noreply address", () => {
+    it('is accepted as the author of a web merge only (committer GitHub)', () => {
+      expect(
+        checkCommits([
+          commit({
+            email: GITHUB_NOREPLY,
+            committerName: WEB_MERGE_COMMITTER_NAME,
+            committerEmail: WEB_MERGE_COMMITTER_EMAIL,
+          }),
+        ]),
+      ).toEqual([]);
+    });
+
+    it('is rejected as the author of a local commit', () => {
+      expect(checkCommits([commit({ email: GITHUB_NOREPLY })])).toEqual([
+        `commit aaaaaaaa: author "DLsnows <${GITHUB_NOREPLY}>" is the GitHub noreply address, which only GitHub's` +
+          ` web merge may record (committer "DLsnows <${PROJECT}>"); commit locally as DLsnows <${PROJECT}>`,
+      ]);
+    });
+
+    it('is rejected as a committer', () => {
+      expect(checkCommits([commit({ email: GITHUB_NOREPLY, committerEmail: GITHUB_NOREPLY })])).toEqual([
+        `commit aaaaaaaa: author "DLsnows <${GITHUB_NOREPLY}>" is the GitHub noreply address, which only GitHub's` +
+          ` web merge may record (committer "DLsnows <${GITHUB_NOREPLY}>"); commit locally as DLsnows <${PROJECT}>`,
+        `commit aaaaaaaa: committer "DLsnows <${GITHUB_NOREPLY}>" is the GitHub noreply address, which no commit` +
+          ` may use as committer (GitHub's web merge commits as GitHub); commit locally as DLsnows <${PROJECT}>`,
+      ]);
+      expect(checkCommits([commit({ committerEmail: GITHUB_NOREPLY })])).toHaveLength(1);
+    });
+  });
+
   it('rejects personal paths and foreign addresses in the commit message', () => {
     const home = join('C:', '\\', 'Users', '\\', 'al', 'ice');
     expect(checkCommits([commit({ body: `fix: crash in ${home}\\repo\n\n${signoff(PROJECT)}` })])).toEqual([
@@ -449,6 +553,17 @@ describe('parseGitLog / checkCommits', () => {
         [],
       );
     });
+
+    it.each(['DLsnows', 'dlsnows', 'DLSNOWS'])(
+      'treats the name %j as the maintainer, who must use a project address',
+      (name) => {
+        expect(checkCommits([outsiderCommit({ name })], options)).toEqual([
+          `commit aaaaaaaa: DLsnows must commit as a project address, not ${outsider}`,
+          `commit aaaaaaaa: committer "Contributor <${outsider}>" is not a project address`,
+          `commit aaaaaaaa message:3: e-mail address "${outsider}" is not a project address`,
+        ]);
+      },
+    );
 
     it("rejects an outside author's commit signed off by someone else", () => {
       expect(checkCommits([outsiderCommit({ body: `fix: y\n\n${signoff(PROJECT)}` })], options)).toEqual([
