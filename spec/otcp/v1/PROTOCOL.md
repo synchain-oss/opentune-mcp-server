@@ -1,6 +1,6 @@
 # OpenTune Control Protocol (OTCP), version 1
 
-Status: `1.0.0-rc.1`, draft. This release candidate defines the transport, the session, discovery, the result-clarity conventions and the core methods; the remaining method schemas are added in later release candidates (section 22).
+Status: `1.0.0-rc.1`, draft. This release candidate defines the transport, the session, discovery, the result-clarity conventions and the methods of layers L2 to L5; the schemas of the methods of layers L6 and L8 and of the UI-bridge methods are added in a later release candidate (section 22).
 
 OTCP is a local control interface built into OpenTune Standalone. A client on the same computer, for example an MCP server, uses it to perform operations that a person can perform in the OpenTune window and to receive clear, structured results. OTCP is JSON-RPC 2.0 over TCP on the loopback address, one JSON message per line.
 
@@ -339,7 +339,7 @@ Members without a physical unit carry no suffix: the normalized or dimensionless
 | `placementId` | `p:<instanceIdShort>:<contentEpoch>:<placementSerial>` | `instanceIdShort` and `contentEpoch` as for `contentId`. `placementSerial` is unique within the instance and epoch and never reused within an epoch.                                                                                                           |
 | `trackId`     | integer, 0-based position                              | Positional. Deleting a track moves every later track down by one; every result that moves tracks returns `trackIdMap` (`[{before, after}]`, `after` null for the deleted track). The display label `Track N` (N = `trackId` + 1) is derived from the position. |
 | note          | `{index, atRevision}`                                  | `index` is the 0-based position of the note in the content's notes ordered by start time, at content revision `atRevision`. Results add a `label` such as `#12 A4 41.20-41.85s` for display only.                                                              |
-| `undoId`      | `u:<instanceIdShort>:<seq>`                            | Assigned by the server to every undo entry it creates; `seq` starts at 1 and increases.                                                                                                                                                                        |
+| `undoId`      | `u:<instanceIdShort>:<seq>`                            | Assigned by the server to every undo entry it creates, and to an entry created in the OpenTune UI when `edit.undo` or `edit.redo` applies it (section 15.3 rule 8); `seq` starts at 1 and increases.                                                           |
 | `jobId`       | `j:<instanceIdShort>:<seq>`                            | `seq` starts at 1 and increases with every job of the instance.                                                                                                                                                                                                |
 
 1. The server resolves `contentId` and `placementId` in this order: form (else `INVALID_ARGUMENT(invalid_params)`), instance and epoch (a handle of another instance or of an earlier epoch gives `NOT_FOUND(stale_handle)`), existence (else `NOT_FOUND(unknown_handle)`). The type prefixes `c:`, `p:`, `u:` and `j:` make the forms of the four string handles disjoint, so a handle of one kind passed where another kind is expected always fails the form check.
@@ -385,15 +385,15 @@ Work that can take longer than a request should block runs as a job. The method 
 
 The job object is `common.schema.json#/$defs/job`:
 
-| Member                                       | Meaning                                                                                                                                                                                                                                                              |
-| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `jobId`, `kind`                              | Handle (section 9) and kind (table in 12.3).                                                                                                                                                                                                                         |
-| `state`                                      | `queued`, `running`, `succeeded`, `failed` or `cancelled`. The last three are terminal and never change again.                                                                                                                                                       |
-| `cancellable`                                | true if `job.cancel` would request cancellation now. false once cancellation was requested and in every terminal state.                                                                                                                                              |
-| `createdAtMs`, `updatedAtMs`, `finishedAtMs` | Creation, last change of state or progress, and terminal time (null until terminal).                                                                                                                                                                                 |
-| `progress`                                   | `{fraction, phase, itemsDone, itemsTotal}`; members are null when unknown or not applicable.                                                                                                                                                                         |
-| `result`                                     | Kind-specific result defined by the starting method's schema. null until terminal. For a job that changes project state, the result is a write envelope (section 14). A failed or cancelled job MAY carry a result that reports work it committed before it stopped. |
-| `error`                                      | The error object (section 17) of a failed job, `CANCELLED(cancelled_by_request)` for a cancelled job, else null.                                                                                                                                                     |
+| Member                                       | Meaning                                                                                                                                                                                                                                                                                  |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jobId`, `kind`                              | Handle (section 9) and kind (table in 12.3).                                                                                                                                                                                                                                             |
+| `state`                                      | `queued`, `running`, `succeeded`, `failed` or `cancelled`. The last three are terminal and never change again.                                                                                                                                                                           |
+| `cancellable`                                | true if `job.cancel` would request cancellation now. false once cancellation was requested and in every terminal state.                                                                                                                                                                  |
+| `createdAtMs`, `updatedAtMs`, `finishedAtMs` | Creation, last change of state or progress, and terminal time (null until terminal).                                                                                                                                                                                                     |
+| `progress`                                   | `{fraction, phase, itemsDone, itemsTotal}`; members are null when unknown or not applicable.                                                                                                                                                                                             |
+| `result`                                     | Kind-specific result defined by the starting method's schema (`$defs.jobResult`). null until terminal. For a job that changes project state, the result is a write envelope (section 14). A failed or cancelled job MAY carry a result that reports work it committed before it stopped. |
+| `error`                                      | The error object (section 17) of a failed job, `CANCELLED(cancelled_by_request)` for a cancelled job, else null.                                                                                                                                                                         |
 
 Jobs belong to the instance, not to a session: every session can read and cancel every job, and closing a connection never cancels a job.
 
@@ -519,6 +519,8 @@ Each entry is `{entity, ref, label, fields}`:
 - `label` is a short display label generated from positions and values, or null. It never contains names taken from files or projects (section 20).
 - `fields` maps each changed member name to `{before, after, unit}`, where `unit` is the member's unit suffix in lower case (`sec`, `frame`, `midi`, `hz`, `cents`, `semitones`, `db`, `linear`, `ms`, `bytes`), `bpm` for tempo, or null for members without a unit (section 8.2).
 
+A note in `changes` or `created` is referenced at the content revision after the write, so that the reference can be used at once; a note in `removed` is referenced at the revision before the write, at which it existed. A prediction (`dryRun`) references notes at the current revision.
+
 A write that changes many entities MAY be paginated by its method; the method schema then defines how the remainder is read.
 
 ### 14.4 revisionDiff
@@ -601,6 +603,7 @@ A revert recipe is `{method, params, requiresConsent}` (`common.schema.json#/$de
 5. If the step changes nothing (`revisionDiff` is empty), the result is a success with `applied: true`, `noOp: true` and the warning `UNDO_NO_EFFECT`. The step is still used up and the project is still marked as changed, as in the OpenTune UI.
 6. An entry recorded through this API before a track was deleted, whose track has since moved, fails with `UNDO_CONFLICT(stale_entry)` unless `force` is true. An entry recorded in the UI before a track was deleted is applied and carries the warning `UNDO_ENTRY_POSSIBLY_STALE`.
 7. Like the UI, the server refreshes derived state after the step; any work this queues is reported in `sideEffects`.
+8. When `edit.undo` or `edit.redo` applies an entry that has no `undoId` (an entry created in the OpenTune UI, applied with `force`), the server assigns it one and reports it in the result's `entry`. The entry keeps that `undoId` while it stays in the history, so the revert recipe (`edit.redo` for an undo, `edit.undo` for a redo) and later calls can name it without `force`.
 
 ### 15.4 Known OpenTune behaviours
 
@@ -806,29 +809,29 @@ Every method of version 1 (also in `methods/index.json`). Write: `yes` changes s
 | -------------------------- | ----- | ---------------- | ----------- | ----- | ------- | ------------------------------------------------------------------------------------------ |
 | `session.hello`            | L2    | `session.v1`     | no          | 1.0   | defined | Authenticate and negotiate the version.                                                    |
 | `session.info`             | L2    | `session.v1`     | no          | 1.0   | defined | Build, runtime, device, processing settings, capabilities, import and export capabilities. |
-| `project.get`              | L2    | `read.v1`        | no          | 1.0   | pending | Tracks, placements, selection, transport, history, project path and dirty flag.            |
-| `content.getNotes`         | L2    | `read.v1`        | no          | 1.0   | pending | Notes with times, detected and target pitch, parameters.                                   |
-| `content.getPitchCurve`    | L2    | `read.v1`        | no          | 1.0   | pending | Original and corrected pitch curves, paginated.                                            |
-| `content.segmentNotes`     | L2    | `read.v1`        | no          | 1.0   | pending | Read-only note segmentation of the original pitch, for analysis.                           |
-| `content.getDetails`       | L2    | `read.v1`        | no          | 1.0   | pending | Key, pitch shift, analysis and render state, time grid, reference, AUTO modes.             |
-| `transport.get`            | L2    | `read.v1`        | no          | 1.0   | pending | Play state, position, tempo, time signature, loop flag.                                    |
-| `prefs.get`                | L2    | `read.v1`        | no          | 1.0   | pending | Preferences and recent projects.                                                           |
-| `app.getLog`               | L2    | `read.v1`        | no          | 1.0   | pending | Tail of OpenTune's log, redacted.                                                          |
+| `project.get`              | L2    | `read.v1`        | no          | 1.0   | defined | Tracks, placements, selection, transport, history, project path and dirty flag.            |
+| `content.getNotes`         | L2    | `read.v1`        | no          | 1.0   | defined | Notes with times, detected and target pitch, parameters.                                   |
+| `content.getPitchCurve`    | L2    | `read.v1`        | no          | 1.0   | defined | Original and corrected pitch curves, paginated.                                            |
+| `content.segmentNotes`     | L2    | `read.v1`        | no          | 1.0   | defined | Read-only note segmentation of the original pitch, for analysis.                           |
+| `content.getDetails`       | L2    | `read.v1`        | no          | 1.0   | defined | Key, pitch shift, analysis and render state, time grid, reference, AUTO modes.             |
+| `transport.get`            | L2    | `read.v1`        | no          | 1.0   | defined | Play state, position, tempo, time signature, loop flag.                                    |
+| `prefs.get`                | L2    | `read.v1`        | no          | 1.0   | defined | Preferences and recent projects.                                                           |
+| `app.getLog`               | L2    | `read.v1`        | no          | 1.0   | defined | Tail of OpenTune's log, redacted.                                                          |
 | `job.get`                  | L3    | `jobs.v1`        | no          | 1.0   | defined | Read a job, optionally waiting up to 30 s.                                                 |
 | `job.cancel`               | L3    | `jobs.v1`        | no          | 1.0   | defined | Request cancellation of a job.                                                             |
-| `import.start`             | L3    | `import.v1`      | yes         | 1.0   | pending | Import audio files (single, sequential, one track per file) as a job.                      |
-| `export.start`             | L3    | `export.v1`      | yes         | 1.0   | pending | Export a clip, a track or the master mix as a job (section 19).                            |
+| `import.start`             | L3    | `import.v1`      | yes         | 1.0   | defined | Import audio files (single, sequential, one track per file) as a job.                      |
+| `export.start`             | L3    | `export.v1`      | yes         | 1.0   | defined | Export a clip, a track or the master mix as a job (section 19).                            |
 | `ui.getState`              | L3    | `ui.bridge`      | no          | 1.0   | planned | Busy state, dialogs, view, selection.                                                      |
 | `ui.dismiss`               | L3    | `ui.bridge`      | conditional | 1.0   | planned | Close dialogs or the first-run overlay.                                                    |
-| `content.setKey`           | L4    | `edit.v1`        | yes         | 1.0   | pending | Set a clip's key (not undoable, with revert recipe).                                       |
-| `content.autoTune`         | L4    | `edit.v1`        | yes         | 1.0   | pending | AUTO on ranges with an explicit mode, scale and parameters.                                |
-| `content.editNotes`        | L4    | `edit.v1`        | yes         | 1.0   | pending | Target pitch, cent shift, snap and parameters of selected notes.                           |
-| `content.setPitchShift`    | L4    | `edit.v1`        | yes         | 1.0   | pending | Clip pitch shift.                                                                          |
-| `edit.getHistory`          | L4    | `history.v1`     | no          | 1.0   | pending | Top entries of the undo and redo history.                                                  |
-| `edit.undo`                | L4    | `history.v1`     | yes         | 1.0   | pending | Undo the expected entry (section 15.3).                                                    |
-| `edit.redo`                | L4    | `history.v1`     | yes         | 1.0   | pending | Redo the expected entry (section 15.3).                                                    |
-| `content.shiftTiming`      | L5    | `timing.v1`      | yes         | 1.0   | pending | Shift a section earlier or later.                                                          |
-| `content.editTimeGrid`     | L5    | `timing.v1`      | yes         | 1.0   | pending | Seed time-grid anchors (job) and move handles.                                             |
+| `content.setKey`           | L4    | `edit.v1`        | yes         | 1.0   | defined | Set a clip's key (not undoable, with revert recipe).                                       |
+| `content.autoTune`         | L4    | `edit.v1`        | yes         | 1.0   | defined | AUTO on ranges with an explicit mode, scale and parameters.                                |
+| `content.editNotes`        | L4    | `edit.v1`        | yes         | 1.0   | defined | Target pitch, cent shift, snap and parameters of selected notes.                           |
+| `content.setPitchShift`    | L4    | `edit.v1`        | yes         | 1.0   | defined | Clip pitch shift.                                                                          |
+| `edit.getHistory`          | L4    | `history.v1`     | no          | 1.0   | defined | Top entries of the undo and redo history.                                                  |
+| `edit.undo`                | L4    | `history.v1`     | yes         | 1.0   | defined | Undo the expected entry (section 15.3).                                                    |
+| `edit.redo`                | L4    | `history.v1`     | yes         | 1.0   | defined | Redo the expected entry (section 15.3).                                                    |
+| `content.shiftTiming`      | L5    | `timing.v1`      | yes         | 1.0   | defined | Shift a section earlier or later.                                                          |
+| `content.editTimeGrid`     | L5    | `timing.v1`      | yes         | 1.0   | defined | Seed time-grid anchors (job) and move handles.                                             |
 | `transport.control`        | L6    | `transport.v1`   | yes         | 1.0   | planned | Play, pause, stop, seek.                                                                   |
 | `transport.setTempo`       | L6    | `transport.v1`   | yes         | 1.0   | planned | Tempo and time signature.                                                                  |
 | `transport.setLoop`        | L6    | `transport.v1`   | yes         | 1.0   | planned | Loop flag.                                                                                 |
@@ -850,8 +853,8 @@ Every method of version 1 (also in `methods/index.json`). Write: `yes` changes s
 
 ## 23. Method schema files and test vectors
 
-1. Each method has one file `methods/<method>.schema.json`, a JSON Schema 2020-12 document with the params and result schemas in `$defs` and the method's metadata (layer, capability, `since`, write, result kind, job kind, whether it runs on the main thread, possible error kinds) in the annotation `x-otcp`. The format is defined in `methods/README.md` and `schemas/method-file.schema.json`.
-2. Test vectors in `vectors/` describe requests with expected responses and multi-step scenarios, with matchers for values that differ between runs. The format is defined in `vectors/README.md` and `schemas/vector.schema.json`. Every method with a defined schema has at least one success vector, and the session-layer behaviours listed in `vectors/README.md` ("Coverage") each have a vector.
+1. Each method has one file `methods/<method>.schema.json`, a JSON Schema 2020-12 document with the params and result schemas (and, for a method that starts a job, the job's result) in `$defs` and the method's metadata (layer, capability, `since`, write, result kind, job kind, whether it runs on the main thread, possible error kinds of the method and of its job) in the annotation `x-otcp`. The format is defined in `methods/README.md` and `schemas/method-file.schema.json`.
+2. Test vectors in `vectors/` describe requests with expected responses and multi-step scenarios, with preconditions and with matchers for values that differ between runs. The format is defined in `vectors/README.md` and `schemas/vector.schema.json`. Every method with a defined schema has at least one success vector, and the behaviours listed in `vectors/README.md` ("Coverage") each have a vector.
 
 ## Appendix A. Fixed responses
 

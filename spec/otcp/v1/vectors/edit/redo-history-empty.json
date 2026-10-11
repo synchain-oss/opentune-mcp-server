@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/vector.schema.json",
+  "id": "edit/redo-history-empty",
+  "type": "request",
+  "description": "Nothing to redo: UNDO_CONFLICT(history_empty).",
+  "capability": "history.v1",
+  "since": "1.0",
+  "method": "edit.redo",
+  "session": "authenticated",
+  "given": { "history": { "undo": [], "redo": [] } },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "edit.redo",
+    "params": { "expectedUndoId": "u:00000000:1" }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "error": {
+      "code": -32000,
+      "message": "UNDO_CONFLICT",
+      "data": {
+        "kind": "UNDO_CONFLICT",
+        "reason": "history_empty",
+        "retryable": false,
+        "detail": { "$any": "string" },
+        "executed": false
+      }
+    }
+  },
+  "connectionAfter": "open"
+}

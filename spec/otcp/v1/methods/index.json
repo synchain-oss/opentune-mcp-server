@@ -23,7 +23,7 @@
       "capability": "read.v1",
       "write": "no",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "content.getNotes",
@@ -31,7 +31,7 @@
       "capability": "read.v1",
       "write": "no",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "content.getPitchCurve",
@@ -39,7 +39,7 @@
       "capability": "read.v1",
       "write": "no",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "content.segmentNotes",
@@ -47,7 +47,7 @@
       "capability": "read.v1",
       "write": "no",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "content.getDetails",
@@ -55,7 +55,7 @@
       "capability": "read.v1",
       "write": "no",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "transport.get",
@@ -63,7 +63,7 @@
       "capability": "read.v1",
       "write": "no",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "prefs.get",
@@ -71,7 +71,7 @@
       "capability": "read.v1",
       "write": "no",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "app.getLog",
@@ -79,7 +79,7 @@
       "capability": "read.v1",
       "write": "no",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "job.get",
@@ -103,7 +103,7 @@
       "capability": "import.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "export.start",
@@ -111,7 +111,7 @@
       "capability": "export.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "ui.getState",
@@ -135,7 +135,7 @@
       "capability": "edit.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "content.autoTune",
@@ -143,7 +143,7 @@
       "capability": "edit.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "content.editNotes",
@@ -151,7 +151,7 @@
       "capability": "edit.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "content.setPitchShift",
@@ -159,7 +159,7 @@
       "capability": "edit.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "edit.getHistory",
@@ -167,7 +167,7 @@
       "capability": "history.v1",
       "write": "no",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "edit.undo",
@@ -175,7 +175,7 @@
       "capability": "history.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "edit.redo",
@@ -183,7 +183,7 @@
       "capability": "history.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "content.shiftTiming",
@@ -191,7 +191,7 @@
       "capability": "timing.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "content.editTimeGrid",
@@ -199,7 +199,7 @@
       "capability": "timing.v1",
       "write": "yes",
       "since": "1.0",
-      "schema": "pending"
+      "schema": "defined"
     },
     {
       "method": "transport.control",

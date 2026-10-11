@@ -1,0 +1,51 @@
+{
+  "$schema": "../../schemas/vector.schema.json",
+  "id": "edit/undo-top-mismatch",
+  "type": "request",
+  "description": "The top of the undo history is an entry the user made in the OpenTune UI, not the expected one: UNDO_CONFLICT(top_mismatch), and the user's change stays. Only force, which needs the end user's explicit request, would undo it.",
+  "capability": "history.v1",
+  "since": "1.0",
+  "method": "edit.undo",
+  "session": "authenticated",
+  "given": {
+    "clips": [
+      {
+        "bind": "clip",
+        "trackId": 0,
+        "startTimelineSec": 2,
+        "durationSec": 6,
+        "analysis": "ready",
+        "notes": [
+          { "startContentSec": 0.5, "endContentSec": 1.5, "targetMidi": 64 },
+          { "startContentSec": 2, "endContentSec": 3, "targetMidi": 69 }
+        ]
+      }
+    ],
+    "history": {
+      "undo": [{ "origin": "ui", "action": "noteEdit", "clip": "clip" }],
+      "redo": []
+    }
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "edit.undo",
+    "params": { "expectedUndoId": "u:00000000:1" }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "error": {
+      "code": -32000,
+      "message": "UNDO_CONFLICT",
+      "data": {
+        "kind": "UNDO_CONFLICT",
+        "reason": "top_mismatch",
+        "retryable": false,
+        "detail": { "$any": "string" },
+        "executed": false
+      }
+    }
+  },
+  "connectionAfter": "open"
+}

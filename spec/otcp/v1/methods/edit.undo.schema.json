@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://otcp.invalid/v1/methods/edit.undo.schema.json",
+  "title": "edit.undo",
+  "description": "Undoes the entry on top of OpenTune's undo history if it is the entry that expectedUndoId names (PROTOCOL.md section 15.3). Otherwise the call fails with UNDO_CONFLICT(top_mismatch), unless force is true; clients set force only when the end user explicitly asked to undo a change that was not made through the client. An empty history gives UNDO_CONFLICT(history_empty), also with force; an entry recorded through this API before a track was deleted gives UNDO_CONFLICT(stale_entry) unless force is true; a clip split, merge or delete gives UNSUPPORTED(undo_unsafe_build), also with force. An entry recorded in the UI before a track was deleted is applied with the warning UNDO_ENTRY_POSSIBLY_STALE. A step that changes nothing still succeeds, with noOp true and the warning UNDO_NO_EFFECT; as in OpenTune, the step is used up and the project is marked as changed. entry is the entry that was applied; if it had no undoId, the server assigns one now (section 15.3 rule 8). revisionDiff and changes describe the effect, from snapshots taken before and after the step; a content whose notes or pitch curve changed is listed as an entry of entity content with the field revision. Like the UI, the server then refreshes derived state; work this queues is reported in sideEffects. The step creates no undo entry of its own (undo reason ui_parity); its revert recipe is edit.redo with the entry's undoId.",
+  "x-otcp": {
+    "method": "edit.undo",
+    "layer": "L4",
+    "capability": "history.v1",
+    "since": "1.0",
+    "write": "yes",
+    "resultKind": "write",
+    "startsJob": null,
+    "requiresSession": true,
+    "mainThread": true,
+    "errors": [
+      "INVALID_ARGUMENT",
+      "UNDO_CONFLICT",
+      "UNSUPPORTED",
+      "BUSY",
+      "TIMEOUT",
+      "SHUTTING_DOWN",
+      "INTERNAL"
+    ]
+  },
+  "$defs": {
+    "params": {
+      "type": "object",
+      "required": ["expectedUndoId"],
+      "additionalProperties": false,
+      "properties": {
+        "expectedUndoId": {
+          "$ref": "../schemas/common.schema.json#/$defs/undoId"
+        },
+        "force": { "type": "boolean", "default": false }
+      }
+    },
+    "result": {
+      "type": "object",
+      "allOf": [
+        { "$ref": "../schemas/common.schema.json#/$defs/writeEnvelope" }
+      ],
+      "required": ["entry"],
+      "properties": {
+        "entry": { "$ref": "../schemas/common.schema.json#/$defs/historyEntry" }
+      },
+      "unevaluatedProperties": false
+    }
+  }
+}

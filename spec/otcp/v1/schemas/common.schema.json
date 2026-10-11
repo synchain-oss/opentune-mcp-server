@@ -140,6 +140,216 @@
       "description": "notRequested, extracting, ready or failed.",
       "$ref": "#/$defs/camelName"
     },
+    "path": {
+      "description": "A local file path. In params, an absolute path that the server accepts exactly as given or rejects (PROTOCOL.md section 20.1). In results, untrusted data (section 20.2).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096
+    },
+    "cursor": {
+      "description": "Opaque pagination cursor, bound to the tokens of the read that issued it (PROTOCOL.md section 10 rule 6).",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512
+    },
+    "scaleName": {
+      "description": "Scale of a key: major, minor, chromatic, harmonicMinor, dorian, mixolydian, pentatonicMajor or pentatonicMinor.",
+      "$ref": "#/$defs/camelName"
+    },
+    "keyInput": {
+      "description": "A key as params give it. root is the pitch class of the tonic: 0 = C, 1 = C sharp, ..., 11 = B.",
+      "type": "object",
+      "required": ["root", "scale"],
+      "additionalProperties": false,
+      "properties": {
+        "root": { "type": "integer", "minimum": 0, "maximum": 11 },
+        "scale": {
+          "enum": [
+            "major",
+            "minor",
+            "chromatic",
+            "harmonicMinor",
+            "dorian",
+            "mixolydian",
+            "pentatonicMajor",
+            "pentatonicMinor"
+          ]
+        }
+      }
+    },
+    "key": {
+      "description": "The key of a content. root as in keyInput. origin is automatic (detected from the pitch analysis) or manual (chosen in OpenTune or set with content.setKey). confidence is the detector's confidence as OpenTune reports it, null for a manual key.",
+      "type": "object",
+      "required": ["root", "scale", "origin", "confidence"],
+      "additionalProperties": false,
+      "properties": {
+        "root": { "type": "integer", "minimum": 0, "maximum": 11 },
+        "scale": { "$ref": "#/$defs/scaleName" },
+        "origin": { "$ref": "#/$defs/camelName" },
+        "confidence": { "type": ["number", "null"] }
+      }
+    },
+    "pitchShift": {
+      "description": "Pitch shift of a content: whole semitones plus cents.",
+      "type": "object",
+      "required": ["semitones", "cents"],
+      "additionalProperties": false,
+      "properties": {
+        "semitones": { "type": "integer", "minimum": -24, "maximum": 24 },
+        "cents": { "type": "integer", "minimum": -99, "maximum": 99 }
+      }
+    },
+    "retuneSpeed": {
+      "description": "0 keeps the natural pitch contour, 1 flattens the note to its target (PROTOCOL.md section 8.3).",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "vibratoDepth": {
+      "description": "Added vibrato depth; 100 is plus or minus one semitone.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100
+    },
+    "vibratoRateHz": { "type": "number", "minimum": 3, "maximum": 12 },
+    "pitchDriftScale": {
+      "description": "Scale of the natural pitch drift; 1 keeps it unchanged.",
+      "type": "number",
+      "minimum": -2,
+      "maximum": 3
+    },
+    "noteSplitCents": {
+      "description": "Note-split sensitivity of OpenTune's note generator.",
+      "type": "number",
+      "minimum": 0,
+      "maximum": 200
+    },
+    "handleId": {
+      "description": "Opaque identifier of a time-grid handle, unique within its content's time grid.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "timeHandle": {
+      "description": "A time-grid handle: the point at contentSec of the source audio plays at outputSec.",
+      "type": "object",
+      "required": ["handleId", "contentSec", "outputSec"],
+      "additionalProperties": false,
+      "properties": {
+        "handleId": { "$ref": "#/$defs/handleId" },
+        "contentSec": { "$ref": "#/$defs/secNonNegative" },
+        "outputSec": { "$ref": "#/$defs/secNonNegative" }
+      }
+    },
+    "clampedMove": {
+      "description": "A handle move that was limited by the minimum spacing to its neighbours; the handle moved to appliedOutputSec.",
+      "type": "object",
+      "required": ["handleId", "requestedOutputSec", "appliedOutputSec"],
+      "additionalProperties": false,
+      "properties": {
+        "handleId": { "$ref": "#/$defs/handleId" },
+        "requestedOutputSec": { "$ref": "#/$defs/secAny" },
+        "appliedOutputSec": { "$ref": "#/$defs/secNonNegative" }
+      }
+    },
+    "transport": {
+      "description": "Transport state. playStartTimelineSec is where \"play from start\" returns to: the position of the last play or seek, not 0 (PROTOCOL.md section 15.4 rule 5). lastControl is the last transport call (from the UI or this API) as OpenTune records it, null if there was none since OpenTune started.",
+      "type": "object",
+      "required": [
+        "playing",
+        "positionTimelineSec",
+        "playStartTimelineSec",
+        "loopEnabled",
+        "bpm",
+        "timeSignature",
+        "audioDeviceRunning",
+        "lastControl"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "playing": { "type": "boolean" },
+        "positionTimelineSec": { "$ref": "#/$defs/secNonNegative" },
+        "playStartTimelineSec": { "$ref": "#/$defs/secNonNegative" },
+        "loopEnabled": {
+          "description": "The loop flag. It has no audible effect in OpenTune Standalone.",
+          "type": "boolean"
+        },
+        "bpm": { "type": "number", "minimum": 1, "maximum": 999 },
+        "timeSignature": {
+          "type": "object",
+          "required": ["numerator", "denominator"],
+          "additionalProperties": false,
+          "properties": {
+            "numerator": { "type": "integer", "minimum": 1 },
+            "denominator": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "audioDeviceRunning": {
+          "description": "false: playback does not advance and nothing is heard.",
+          "type": "boolean"
+        },
+        "lastControl": {
+          "anyOf": [
+            {
+              "type": "object",
+              "required": ["call", "atMs"],
+              "additionalProperties": false,
+              "properties": {
+                "call": { "type": "string", "minLength": 1, "maxLength": 64 },
+                "atMs": { "$ref": "#/$defs/timestampMs" }
+              }
+            },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "historyEntry": {
+      "description": "An entry of OpenTune's undo or redo history. undoId is null for an entry created in the OpenTune UI that edit.undo or edit.redo has not applied (PROTOCOL.md section 15.3 rule 8). origin is control (created through this API) or ui. possiblyStale: the entry was recorded before a track was deleted and may target a track that has since moved (section 15.3 rule 6). unsafe: the entry is a clip split, merge or delete, which edit.undo and edit.redo refuse (section 15.4 rule 1).",
+      "type": "object",
+      "required": [
+        "undoId",
+        "description",
+        "origin",
+        "possiblyStale",
+        "unsafe"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "undoId": {
+          "anyOf": [{ "$ref": "#/$defs/undoId" }, { "type": "null" }]
+        },
+        "description": { "type": "string", "maxLength": 200 },
+        "origin": { "$ref": "#/$defs/camelName" },
+        "possiblyStale": { "type": "boolean" },
+        "unsafe": { "type": "boolean" }
+      }
+    },
+    "history": {
+      "description": "The tops of the undo and redo histories. undoCount and redoCount are the numbers of entries; a top is null when its history is empty.",
+      "type": "object",
+      "required": [
+        "canUndo",
+        "canRedo",
+        "undoCount",
+        "redoCount",
+        "undoTop",
+        "redoTop"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "canUndo": { "type": "boolean" },
+        "canRedo": { "type": "boolean" },
+        "undoCount": { "type": "integer", "minimum": 0 },
+        "redoCount": { "type": "integer", "minimum": 0 },
+        "undoTop": {
+          "anyOf": [{ "$ref": "#/$defs/historyEntry" }, { "type": "null" }]
+        },
+        "redoTop": {
+          "anyOf": [{ "$ref": "#/$defs/historyEntry" }, { "type": "null" }]
+        }
+      }
+    },
     "entityRef": {
       "type": "object",
       "minProperties": 1,

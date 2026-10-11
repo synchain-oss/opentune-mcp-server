@@ -53,10 +53,12 @@ A method file is a JSON Schema 2020-12 document:
 | `x-otcp.requiresSession` | false only for `session.hello`.                                                                                                                                                                                                                                                                   |
 | `x-otcp.mainThread`      | true when the method runs on OpenTune's main thread and may therefore return `TIMEOUT(dispatch_timeout)` (PROTOCOL.md section 13.3).                                                                                                                                                              |
 | `x-otcp.errors`          | Every error kind the method may return, generic ones included, with the rules below. Kinds come from `../registry/error-kinds.json`.                                                                                                                                                              |
+| `x-otcp.jobErrors`       | Present exactly when `startsJob` is not null: every error kind a job that the method starts may end with (the job's `error`, PROTOCOL.md section 12.1). `INTERNAL` always, `CANCELLED` when the job kind can be cancelled (section 12.3), and the kinds the job itself can produce.               |
 | `$defs.params`           | Schema of `params`. Closed: unknown members are invalid (PROTOCOL.md section 2.3). A method without params has an empty, closed object.                                                                                                                                                           |
 | `$defs.result`           | Schema of `result`. A `write` result composes `../schemas/common.schema.json#/$defs/writeEnvelope` with `allOf` and closes itself with `unevaluatedProperties: false`; a `read` result does the same with `#/$defs/readMeta`.                                                                     |
+| `$defs.jobResult`        | Present exactly when `startsJob` is not null: schema of the `result` of a job the method starts. For a job that changes project state it extends the write envelope like `$defs.result`.                                                                                                          |
 
-Shared types are referenced as `../schemas/common.schema.json#/$defs/<name>`. Other documents refer to a method's schemas as `<method>.schema.json#/$defs/params` and `#/$defs/result`.
+Shared types are referenced as `../schemas/common.schema.json#/$defs/<name>`. Other documents refer to a method's schemas as `<method>.schema.json#/$defs/params`, `#/$defs/result` and `#/$defs/jobResult`. A method file may define further `$defs` for its own use.
 
 `x-otcp` is an annotation keyword. Validators that reject unknown keywords (for example Ajv in strict mode) need it registered, for instance with `ajv.addKeyword({ keyword: "x-otcp" })`; its content is validated against `../schemas/method-file.schema.json`.
 
@@ -79,5 +81,6 @@ Shared types are referenced as `../schemas/common.schema.json#/$defs/<name>`. Ot
 1. Adding a method file, or a member to one, follows the versioning rules of PROTOCOL.md section 2.2. A method file is never deleted or renamed within a major version.
 2. `index.json` and the table in PROTOCOL.md section 22 list the same methods with the same layer, capability, write classification, `since` and schema status; a method file exists exactly for the methods marked `defined`.
 3. Every method file has at least one success vector in `../vectors/`.
-4. `x-otcp.errors` follows the table above.
+4. `x-otcp.errors` and `x-otcp.jobErrors` follow the rules above.
 5. Codes used in descriptions (error kinds, reasons, warnings) come from `../registry/`.
+6. In params, a member whose values select what the method does (`op`, `mode`, `kind`, `layout`) lists them with `enum` or `const`, and each value has a success vector (`../vectors/README.md`, "Coverage"). Results use open forms such as `camelName` for enumerated strings, because clients accept values they do not know (PROTOCOL.md section 2.3).

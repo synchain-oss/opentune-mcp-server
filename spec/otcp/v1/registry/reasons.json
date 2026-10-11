@@ -434,6 +434,42 @@
       "scope": "null",
       "since": "1.0",
       "description": "The value cannot be determined at this time."
+    },
+    {
+      "code": "grid_not_seeded",
+      "scope": "NOT_READY",
+      "since": "1.0",
+      "description": "The content's time grid has no handles yet. Seed it with content.editTimeGrid (op seed) first. Not retryable: waiting does not seed the grid."
+    },
+    {
+      "code": "track_capacity",
+      "scope": "INVALID_ARGUMENT",
+      "since": "1.0",
+      "description": "The import needs more tracks after the target track than OpenTune has."
+    },
+    {
+      "code": "reference_not_bound",
+      "scope": "INVALID_ARGUMENT",
+      "since": "1.0",
+      "description": "AUTO in reference mode needs a reference binding on the placement, and it has none."
+    },
+    {
+      "code": "audio_too_long",
+      "scope": "INVALID_ARGUMENT",
+      "since": "1.0",
+      "description": "The audio file is longer than session.info import.maxAnalysisSec."
+    },
+    {
+      "code": "unsupported_format",
+      "scope": "UNSUPPORTED",
+      "since": "1.0",
+      "description": "OpenTune cannot decode the file's audio format."
+    },
+    {
+      "code": "too_many_channels",
+      "scope": "UNSUPPORTED",
+      "since": "1.0",
+      "description": "The audio file has more channels than session.info import.maxChannels."
     }
   ]
 }
