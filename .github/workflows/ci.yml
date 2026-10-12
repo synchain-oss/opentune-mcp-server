@@ -1,0 +1,375 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
+# SPDX-License-Identifier: MIT
+name: CI
+
+# 判据一律来自 scripts/gates.mjs（与本地 `npm run gates` 同一套检查，按 --only 拆到各 job）与
+# scripts/ci-checks.mjs（需要事件上下文的部分）；workflow 只负责装环境、传上下文，不另写一套判据。
+#
+# 两档：
+# - 完整档：PR → dev / prod；push → dev、feature/**。
+#   checks（ubuntu × Node 22/24 + windows × Node 24；覆盖率门槛在 ubuntu / Node 24 上强制）、
+#   protocol（ubuntu + windows）、package、audit、compliance、docs。
+# - 轻量档：PR → feature/**（子 PR）。单条 ubuntu job：lint、format、typecheck、单测 + 覆盖率、隐私、
+#   禁止新增音频文件、提交署名 / sign-off / 身份、PR 标题与正文署名、pull_request_target 零命中。
+#   完整套件在本地 gates 与 PR → dev 上跑。
+# 两档都产生同名聚合检查 mcp-gate（dev / prod 唯一必需的 CI 检查）：按档核对每个 job，该跑的必须
+# success，不该跑的必须 skipped；任一失败、取消或缺席都失败。mcp-gate 不加 paths:。
+#
+# types 含 edited：PR 改了 base（例如子 PR 改投 dev）时按新 base 的档位重跑，不让轻量档的 mcp-gate
+# 结果留在完整档的 PR 上；改 PR 标题 / 正文后也重新核对署名。
+# 本 workflow 不读任何 secret；fork PR（经维护者批准运行）同样可以跑。
+on:
+  pull_request:
+    branches: [dev, prod, "feature/**"]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+  push:
+    branches: [dev, "feature/**"]
+
+permissions:
+  contents: read
+
+# PR：同一 PR 的新运行取消旧运行。push：每个提交单独成组。若按分支成组，同组里还在排队的运行会被
+# 新排队的那次取代（cancel-in-progress 管不到这一点），连续几次 push 时中间那次带来的提交就没有任何
+# 运行检查过。
+concurrency:
+  group: ci-${{ github.event.pull_request.number || format('{0}@{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    # 显式写 bash：Windows 上同样用 bash，且 GitHub 只在显式指定时带上 -eo pipefail（| tee 不会吞掉失败）。
+    shell: bash
+
+# 档位判定（三处必须一致：light 的 if、其余 job 的 if、mcp-gate 的 TIER）：
+#   轻量 = github.event_name == 'pull_request' && startsWith(github.base_ref, 'feature/')
+#   完整 = 其否定
+#
+# npm ci 一律 --ignore-scripts：依赖的安装脚本不在 runner 上执行（esbuild 靠平台可选依赖即可工作）；
+# 本包自身也没有生命周期脚本（gates 的 package.json 检查强制）。
+# --base HEAD：只在不读提交范围的 job 里用，满足 gates 的参数校验；读提交范围的 job 由
+# `ci-checks.mjs scope` 给出真实的 base。
+jobs:
+  light:
+    name: light (lint, typecheck, unit tests, privacy, audio, attribution)
+    if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'feature/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # 提交检查看 PR 自己的提交（不是 GitHub 生成的测试合并提交），并且需要 origin/<base>：取 PR head、拉全历史。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Commit range and identity rules
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: node scripts/ci-checks.mjs scope >> "$GITHUB_OUTPUT"
+      - name: Gates (lint, format, typecheck, unit tests + coverage, privacy, audio, attribution, pull_request_target)
+        env:
+          BASE: ${{ steps.scope.outputs.base }}
+          ALLOW_EXTERNAL_AUTHORS: ${{ steps.scope.outputs.allow_external_authors }}
+          ALLOW_DEPENDABOT: ${{ steps.scope.outputs.allow_dependabot }}
+        run: |
+          args=(--base "$BASE")
+          if [ "$ALLOW_EXTERNAL_AUTHORS" = true ]; then args+=(--allow-external-authors); fi
+          if [ "$ALLOW_DEPENDABOT" = true ]; then args+=(--allow-dependabot); fi
+          node scripts/gates.mjs "${args[@]}" \
+            --only "lint (eslint),format:check,typecheck,unit tests,privacy,no new audio files,attribution,no pull_request_target" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # PR 标题与正文是不可信文本：只经 env: 传入，由署名检查的正本从 stdin 读。
+      # Dependabot 的 PR 同样检查，理由见 branch-gate.yml 的同名步骤。
+      - name: PR title and body carry no AI attribution
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" | node scripts/check-attribution.mjs -
+
+  checks:
+    name: checks (${{ matrix.os }}, Node ${{ matrix.node }})
+    if: github.event_name != 'pull_request' || !startsWith(github.base_ref, 'feature/')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 22
+            coverage: false
+          - os: ubuntu-latest
+            node: 24
+            coverage: true
+          - os: windows-latest
+            node: 24
+            coverage: false
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Gates (lint, format, typecheck, unit tests + coverage, build)
+        if: matrix.coverage
+        run: |
+          node scripts/gates.mjs --base HEAD --only "lint (eslint),format:check,typecheck,unit tests,build (esbuild)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # 其余两格同样跑全部单测，但不强制覆盖率门槛（门槛只在 ubuntu / Node 24 上强制）。
+      - name: Gates (lint, format, typecheck, build)
+        if: ${{ !matrix.coverage }}
+        run: |
+          node scripts/gates.mjs --base HEAD --only "lint (eslint),format:check,typecheck,build (esbuild)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Unit tests (no coverage thresholds)
+        if: ${{ !matrix.coverage }}
+        run: npx vitest run --project unit
+
+  protocol:
+    name: protocol (${{ matrix.os }})
+    if: github.event_name != 'pull_request' || !startsWith(github.base_ref, 'feature/')
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      # 契约向量对 mock、Inspector CLI --strict、tools/list 体积门禁、token 金丝雀、输出预算还没有可运行的
+      # 对象，gates 如实报 SKIP（附原因）；它们落地后在 gates 里实现，本 job 无需改动。
+      - name: Gates (stdio smoke, contract vectors, Inspector, size gate, token canary, output budget)
+        run: |
+          node scripts/gates.mjs --base HEAD \
+            --only "stdio smoke,contract vectors,tools/list size gate,token canary,output budget,Inspector CLI" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  package:
+    name: package
+    if: github.event_name != 'pull_request' || !startsWith(github.base_ref, 'feature/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Gates (build, bundle shape, stdout hygiene, pack list, package.json policy, notices)
+        run: |
+          node scripts/gates.mjs --base HEAD \
+            --only "build (esbuild),bundle shape,bundle stdout hygiene,npm pack --dry-run,package.json:,THIRD-PARTY-NOTICES" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # 用户怎么装就怎么验：打出 tarball，装进一个空目录，确认没有带进任何依赖、bin 入口可执行。
+      - name: Install the packed tarball into an empty directory
+        id: install
+        run: |
+          pack_dir="$RUNNER_TEMP/pack"
+          consumer="$RUNNER_TEMP/consumer"
+          mkdir -p "$pack_dir" "$consumer"
+          npm pack --ignore-scripts --pack-destination "$pack_dir"
+          shopt -s nullglob
+          tarballs=("$pack_dir"/*.tgz)
+          if [ "${#tarballs[@]}" -ne 1 ]; then
+            echo "::error::expected one tarball, found ${#tarballs[@]}"
+            exit 1
+          fi
+          expected_version=$(node -p 'require(process.argv[1]).version' "$PWD/package.json")
+          cd "$consumer"
+          printf '{ "name": "consumer", "version": "0.0.0", "private": true }\n' > package.json
+          npm install --ignore-scripts --no-audit --no-fund "${tarballs[0]}"
+          # 发布包零运行时依赖：npm ls 只能列出空目录自己与本包两项。
+          installed=$(npm ls --all --parseable)
+          printf '%s\n' "$installed"
+          if [ "$(printf '%s\n' "$installed" | wc -l)" -ne 2 ]; then
+            echo "::error::installing the tarball pulled in other packages"
+            exit 1
+          fi
+          version=$(node_modules/.bin/opentune-mcp --version)
+          if [ "$version" != "$expected_version" ]; then
+            echo "::error::the installed bin prints version '$version', package.json says '$expected_version'"
+            exit 1
+          fi
+          echo "bundle=$consumer/node_modules/@synchain/opentune-mcp/dist/opentune-mcp.mjs" >> "$GITHUB_OUTPUT"
+      # 与 gates 的 stdio 冒烟同一组测试，只是指向装好的那一份 bundle。
+      - name: stdio smoke against the installed copy (initialize, tools/list)
+        env:
+          SMOKE_BUNDLE: ${{ steps.install.outputs.bundle }}
+        run: npm run test:stdio
+
+  audit:
+    name: audit
+    if: github.event_name != 'pull_request' || !startsWith(github.base_ref, 'feature/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Gates (npm audit, devDependencies included)
+        run: node scripts/gates.mjs --base HEAD --only "npm audit" | tee -a "$GITHUB_STEP_SUMMARY"
+
+  compliance:
+    name: compliance
+    if: github.event_name != 'pull_request' || !startsWith(github.base_ref, 'feature/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # 提交检查看 PR 自己的提交（push 时就是推上来的提交），需要全历史与 origin/<base>。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: npm ci --ignore-scripts
+      # reuse 的版本与每个依赖的 sha256 锁在 scripts/requirements/（--require-hashes --no-deps）；
+      # reuse 只有源码包可用，先装锁定的构建后端，再关掉构建隔离来构建，免得 pip 去拉未锁定的构建依赖。
+      - name: Install reuse (pinned versions and sha256)
+        run: |
+          python -m venv "$RUNNER_TEMP/reuse"
+          pip=("$RUNNER_TEMP/reuse/bin/python" -m pip --disable-pip-version-check --no-input)
+          "${pip[@]}" install --require-hashes --no-deps --only-binary=:all: -r scripts/requirements/reuse-build.txt
+          "${pip[@]}" install --require-hashes --no-deps --no-build-isolation -r scripts/requirements/reuse.txt
+          "${pip[@]}" check
+          "$RUNNER_TEMP/reuse/bin/reuse" --version
+          echo "$RUNNER_TEMP/reuse/bin" >> "$GITHUB_PATH"
+      # push 的范围是 before..HEAD；新建分支、或 push 改写了分支（before 已不在全历史里）时改与默认分支比较，
+      # 默认分支本身被改写则报错（规则见 scripts/lib/checks.mjs 的 commitCheckScope）。
+      - name: Commit range and identity rules
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+          REF_NAME: ${{ github.ref_name }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REPO: ${{ github.repository }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: node scripts/ci-checks.mjs scope >> "$GITHUB_OUTPUT"
+      - name: Gates (gitleaks, privacy, audio, attribution, pull_request_target, reuse lint)
+        env:
+          BASE: ${{ steps.scope.outputs.base }}
+          ALLOW_EXTERNAL_AUTHORS: ${{ steps.scope.outputs.allow_external_authors }}
+          ALLOW_DEPENDABOT: ${{ steps.scope.outputs.allow_dependabot }}
+        run: |
+          args=(--base "$BASE")
+          if [ "$ALLOW_EXTERNAL_AUTHORS" = true ]; then args+=(--allow-external-authors); fi
+          if [ "$ALLOW_DEPENDABOT" = true ]; then args+=(--allow-dependabot); fi
+          # gitleaks 由 gates 经 scripts/fetch-tool.mjs 下载，版本与 sha256 来自 scripts/tools.lock.json。
+          node scripts/gates.mjs "${args[@]}" \
+            --only "gitleaks,privacy,no new audio files,attribution,no pull_request_target,reuse lint" \
+            | tee "$RUNNER_TEMP/compliance.md" | tee -a "$GITHUB_STEP_SUMMARY"
+          # 这些检查在 CI 里都必须真正执行：出现 SKIP（例如 reuse 没有装上）也算失败。
+          if grep -q '| SKIP |' "$RUNNER_TEMP/compliance.md"; then
+            echo "::error::a compliance check was skipped; every compliance check must run in CI"
+            exit 1
+          fi
+
+  docs:
+    name: docs
+    if: github.event_name != 'pull_request' || !startsWith(github.base_ref, 'feature/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      # docs/reference.md 与 TROUBLESHOOTING 尚不存在，文档一致性如实报 SKIP。
+      - name: Gates (README en/zh-CN outline, docs consistency)
+        run: |
+          node scripts/gates.mjs --base HEAD --only "README en/zh-CN heading outline,docs consistency" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # 聚合检查：dev / prod 唯一必需的 CI 检查，两档同名。needs 必须列全所有 job，否则漏列的 job
+  # 红了也能合并；always() 让依赖失败、取消时它照样运行并给出失败。
+  mcp-gate:
+    name: mcp-gate
+    needs: [light, checks, protocol, package, audit, compliance, docs]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Every job of this tier succeeded, and only those ran
+        env:
+          TIER: ${{ (github.event_name == 'pull_request' && startsWith(github.base_ref, 'feature/')) && 'light' || 'full' }}
+          NEEDS: ${{ toJSON(needs) }}
+        run: |
+          if [ "$TIER" = light ]; then
+            required=(light)
+            not_run=(checks protocol package audit compliance docs)
+          else
+            required=(checks protocol package audit compliance docs)
+            not_run=(light)
+          fi
+          result() { jq -r --arg job "$1" '.[$job].result // "missing"' <<< "$NEEDS"; }
+          status=0
+          for job in "${required[@]}"; do
+            r=$(result "$job")
+            echo "$job: $r"
+            if [ "$r" != success ]; then
+              echo "::error::$job: $r (must succeed in the $TIER tier)"
+              status=1
+            fi
+          done
+          for job in "${not_run[@]}"; do
+            r=$(result "$job")
+            echo "$job: $r"
+            if [ "$r" != skipped ]; then
+              echo "::error::$job: $r (belongs to the other tier and must be skipped in the $TIER tier)"
+              status=1
+            fi
+          done
+          # needs 里多出、不属于任何一档的 job 同样算错：新增 job 时必须在上面登记它的档位。
+          listed=" ${required[*]} ${not_run[*]} "
+          for job in $(jq -r 'keys[]' <<< "$NEEDS"); do
+            case "$listed" in
+              *" $job "*) ;;
+              *)
+                echo "::error::$job is in needs but in neither tier list"
+                status=1
+                ;;
+            esac
+          done
+          exit "$status"

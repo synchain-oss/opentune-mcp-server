@@ -344,6 +344,15 @@ export const WEB_MERGE_COMMITTER_NAME = 'GitHub';
 // An outside contributor must not pass as the maintainer by changing the case of the name.
 const isMaintainerName = (name) => name.toLowerCase() === MAINTAINER_NAME.toLowerCase();
 
+/** Dependabot's git name. */
+export const DEPENDABOT_NAME = 'dependabot[bot]';
+
+/**
+ * Dependabot's git address (the GitHub noreply address of the bot account), assembled from its
+ * parts like WEB_MERGE_COMMITTER_EMAIL.
+ */
+export const DEPENDABOT_EMAIL = ['49699333+dependabot[bot]', 'users.noreply.github.com'].join('@');
+
 /**
  * @typedef {object} CommitInfo
  * @property {string} sha
@@ -443,6 +452,22 @@ function checkCommitterIdentity(commit, externalAuthor) {
 }
 
 /**
+ * A commit made by Dependabot: its name and address as author, and as committer either GitHub
+ * (Dependabot creates its commits through the API) or Dependabot itself. Anyone can write these
+ * fields into a commit, so a check may skip such commits only where the pull request itself was
+ * opened by Dependabot or the commits are already merged (see commitCheckScope).
+ * @param {CommitInfo} commit
+ */
+export function isDependabotCommit(commit) {
+  if (commit.name !== DEPENDABOT_NAME || commit.email.toLowerCase() !== DEPENDABOT_EMAIL) return false;
+  const committer = commit.committerEmail.toLowerCase();
+  return (
+    (commit.committerName === WEB_MERGE_COMMITTER_NAME && committer === WEB_MERGE_COMMITTER_EMAIL) ||
+    (commit.committerName === DEPENDABOT_NAME && committer === DEPENDABOT_EMAIL)
+  );
+}
+
+/**
  * Commit policy, for every commit in the range:
  * - no AI attribution in the message, and a DCO sign-off unless it is a merge commit;
  * - identity (name and address of the author and of the committer):
@@ -461,14 +486,23 @@ function checkCommitterIdentity(commit, externalAuthor) {
  * A commit authored by a project address may be signed off with any project address, because
  * GitHub's web merge authors squash commits with the maintainer's GitHub noreply address while
  * the sign-off keeps noreply@synchain.ca.
+ * With `allowDependabot`, commits Dependabot made (isDependabotCommit) are not checked: GitHub
+ * writes their message, which quotes upstream release notes and commit lists (other people's
+ * addresses, any tool's name), and the maintainer supplies the message of the squash commit that
+ * lands. Other commits in the range are still checked. The title and body of Dependabot's pull
+ * request stay checked (branch-gate.yml, ci.yml) even though the body quotes the same release
+ * notes: a commit message can only be changed by rewriting Dependabot's branch, which takes the
+ * pull request away from Dependabot, while the maintainer can edit the body on the pull request
+ * page, and the `edited` event runs the check again.
  * @param {CommitInfo[]} commits
- * @param {{ patterns?: { id: string, re: RegExp }[], allowExternalAuthors?: boolean }} [options]
- *   patterns default to scripts/attribution-patterns.txt
+ * @param {{ patterns?: { id: string, re: RegExp }[], allowExternalAuthors?: boolean,
+ *   allowDependabot?: boolean }} [options] patterns default to scripts/attribution-patterns.txt
  * @returns {string[]}
  */
-export function checkCommits(commits, { patterns, allowExternalAuthors = false } = {}) {
+export function checkCommits(commits, { patterns, allowExternalAuthors = false, allowDependabot = false } = {}) {
   const problems = [];
   for (const commit of commits) {
+    if (allowDependabot && isDependabotCommit(commit)) continue;
     const short = commit.sha.slice(0, 8);
     const isMerge = commit.parents.length > 1;
     const author = commit.email.toLowerCase();
@@ -488,6 +522,300 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false }
     );
   }
   return problems;
+}
+
+/**
+ * @typedef {object} CommitScope
+ * @property {string} base                   commits in <base>..HEAD are checked
+ * @property {boolean} allowExternalAuthors  checkCommits option
+ * @property {boolean} allowDependabot       checkCommits option
+ * @property {string} reason                 one line for the log
+ */
+
+/**
+ * Which commits the sign-off, attribution and identity check covers in CI, and how strictly.
+ * - A pull request checks its own commits against `origin/<base>`:
+ *   - from a branch of this repository: author and committer must be project identities (a
+ *     contributor never pushes here), except that Dependabot's own pull requests may carry its
+ *     commits;
+ *   - from a fork: an outside author's commits are accepted when signed off with their own address;
+ *   - into prod: the commits are dev's history, which reached dev through gated pull requests and
+ *     may include contributors' and Dependabot's merged commits.
+ * - A push checks the commits it added (`before`..HEAD). They arrived through merged pull requests,
+ *   so contributors and Dependabot are allowed. A push that creates the branch, or that rewrote it
+ *   so that `before` is no longer in the clone (`beforeAvailable` false), is compared with the
+ *   default branch instead; a rewritten default branch has nothing to compare with and is an error.
+ * @param {{ event: string, baseRef?: string, before?: string, beforeAvailable?: boolean,
+ *   refName?: string, defaultBranch?: string, repo: string, headRepo?: string, headRef?: string,
+ *   prAuthor?: string }} context GitHub event context; `refName` is the pushed branch
+ * @returns {CommitScope}
+ */
+export function commitCheckScope({
+  event,
+  baseRef,
+  before,
+  beforeAvailable = true,
+  refName,
+  defaultBranch,
+  repo,
+  headRepo,
+  headRef,
+  prAuthor,
+}) {
+  if (event === 'push') {
+    const creates = !before || /^0+$/.test(before);
+    if (!creates) {
+      if (!/^[0-9a-f]{40}$/.test(before))
+        throw new Error(`push "before" is not a commit SHA: ${JSON.stringify(before)}`);
+      if (beforeAvailable) {
+        return {
+          base: before,
+          allowExternalAuthors: true,
+          allowDependabot: true,
+          reason: 'push: the commits this push added, which arrived through merged pull requests',
+        };
+      }
+    }
+    if (!defaultBranch) throw new Error('push without a usable "before": the default branch is unknown');
+    if (!creates && (!refName || refName === defaultBranch)) {
+      throw new Error(
+        `push to ${refName || 'an unknown branch'}: its previous tip ${before} is not in this clone, so the push ` +
+          'rewrote the history of the default branch and the commits it added cannot be told apart',
+      );
+    }
+    return {
+      base: `origin/${defaultBranch}`,
+      allowExternalAuthors: true,
+      allowDependabot: true,
+      reason: creates
+        ? `push that creates the branch: commits not on ${defaultBranch}`
+        : `push that rewrote the branch (its previous tip ${before.slice(0, 8)} is gone): commits not on ${defaultBranch}`,
+    };
+  }
+  if (event === 'pull_request') {
+    if (!baseRef) throw new Error('pull request without a base branch');
+    const base = `origin/${baseRef}`;
+    if (baseRef === 'prod') {
+      return {
+        base,
+        allowExternalAuthors: true,
+        allowDependabot: true,
+        reason: "pull request into prod: dev's history",
+      };
+    }
+    if (headRepo !== repo) {
+      return {
+        base,
+        allowExternalAuthors: true,
+        allowDependabot: false,
+        reason: `pull request from a fork (${headRepo || 'deleted repository'}): outside authors sign off with their own address`,
+      };
+    }
+    const fromDependabot = prAuthor === DEPENDABOT_NAME && /^dependabot\//.test(headRef ?? '');
+    return {
+      base,
+      allowExternalAuthors: false,
+      allowDependabot: fromDependabot,
+      reason: fromDependabot
+        ? "Dependabot's pull request: its own commits are exempt, any other commit must be a project identity"
+        : 'pull request from a branch of this repository: project identities only',
+    };
+  }
+  throw new Error(`unsupported event ${JSON.stringify(event)}`);
+}
+
+/**
+ * Source branch rules for a pull request into dev or prod (CLAUDE.md §1):
+ * - prod only takes dev of this repository;
+ * - a branch of this repository goes into dev only from feat/*, feature/* or dependabot/*;
+ * - a fork may use any branch name except this repository's long-lived ones (dev, prod and the
+ *   feature/* trunks), so that it cannot pose as a promotion.
+ * Other bases have no rule here (branch-gate runs for dev and prod only).
+ * @param {{ baseRef: string, headRef: string, headRepo: string, repo: string }} pr
+ * @returns {string[]}
+ */
+export function checkBranchRule({ baseRef, headRef, headRepo, repo }) {
+  const fork = headRepo !== repo;
+  if (baseRef === 'prod') {
+    return !fork && headRef === 'dev'
+      ? []
+      : [`only dev of ${repo} may be merged into prod (found ${headRepo || '(deleted repository)'}:${headRef})`];
+  }
+  if (fork) {
+    return /^(?:dev|prod|feature\/.*)$/.test(headRef)
+      ? [`a pull request from a fork must not use the branch name "${headRef}" (reserved for long-lived branches)`]
+      : [];
+  }
+  if (baseRef === 'dev' && !/^(?:feat|feature|dependabot)\/./.test(headRef)) {
+    return [`only feat/*, feature/* or dependabot/* branches may be merged into dev (found "${headRef}")`];
+  }
+  return [];
+}
+
+/**
+ * Frozen contract surfaces (CLAUDE.md §5): the OTCP specification and the golden snapshots, which
+ * hold the tool catalog, the rendered outputs and the MCP instructions.
+ */
+export const FROZEN_PATHS = Object.freeze([/^spec\//, /^test\/golden\//]);
+
+const CONTRACT_CHANGE_RE = /^docs\/contract-changes\/(\d{4})(\d{2})(\d{2})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/;
+
+/**
+ * True for docs/contract-changes/<YYYYMMDD>-<slug>.md with a real calendar date and a slug of
+ * lowercase letters, digits and single hyphens.
+ * @param {string} path
+ */
+export function isContractChangeRecord(path) {
+  const m = CONTRACT_CHANGE_RE.exec(path);
+  if (!m) return false;
+  const [year, month, day] = m.slice(1, 4).map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+/**
+ * Parses `git diff --name-status -z` output. A rename or copy (only reported without
+ * --no-renames) yields both of its paths.
+ * @param {string} text
+ * @returns {{ status: string, path: string }[]}
+ */
+export function parseNameStatus(text) {
+  const fields = text.split('\0');
+  if (fields.at(-1) === '') fields.pop();
+  const out = [];
+  for (let i = 0; i < fields.length;) {
+    const status = fields[i++] ?? '';
+    const paths = /^[RC]/.test(status) ? 2 : 1;
+    if (!/^[A-Z]/.test(status) || i + paths > fields.length)
+      throw new Error(`malformed name-status output near ${JSON.stringify(status)}`);
+    for (let k = 0; k < paths; k++) out.push({ status: status[0], path: fields[i++] ?? '' });
+  }
+  return out;
+}
+
+/**
+ * Frozen-contract guard: a change to a frozen file (added, modified or deleted) needs a contract
+ * change record added in the same pull request (docs/contract-changes/<YYYYMMDD>-<slug>.md).
+ * Only an added record counts: editing an older one does not document a new change.
+ * @param {{ status: string, path: string }[]} changes the pull request's changes against the merge base
+ * @returns {string[]}
+ */
+export function checkFrozenContract(changes) {
+  const frozen = changes.filter((c) => FROZEN_PATHS.some((re) => re.test(c.path)));
+  if (frozen.length === 0) return [];
+  if (changes.some((c) => c.status === 'A' && isContractChangeRecord(c.path))) return [];
+  const misnamed = changes.filter(
+    (c) => c.status !== 'D' && c.path.startsWith('docs/contract-changes/') && !isContractChangeRecord(c.path),
+  );
+  return [
+    `${frozen.length} frozen contract file(s) changed without a contract change record: ` +
+      `${frozen.map((c) => `${c.path} (${c.status})`).join(', ')}; add docs/contract-changes/<YYYYMMDD>-<slug>.md ` +
+      'to this pull request (CLAUDE.md §5)',
+    ...misnamed.map(
+      (c) =>
+        `${c.path} does not count as a contract change record: the name must be ` +
+        'docs/contract-changes/<YYYYMMDD>-<slug>.md (a real date, a lowercase slug)',
+    ),
+  ];
+}
+
+/**
+ * The repository holds no recordings (CLAUDE.md §7, rule 9). The one exception is this directory,
+ * for licensed test vocals; each of them is registered with its license in REUSE.toml.
+ */
+export const AUDIO_FIXTURE_DIR = 'test/fixtures/vocals/';
+
+/** File name extensions of audio formats, lowercase. */
+export const AUDIO_EXTENSIONS = Object.freeze([
+  '.aac',
+  '.aif',
+  '.aifc',
+  '.aiff',
+  '.amr',
+  '.ape',
+  '.au',
+  '.bwf',
+  '.caf',
+  '.flac',
+  '.m4a',
+  '.m4b',
+  '.mka',
+  '.mp2',
+  '.mp3',
+  '.oga',
+  '.ogg',
+  '.opus',
+  '.rf64',
+  '.snd',
+  '.w64',
+  '.wav',
+  '.wave',
+  '.wma',
+  '.wv',
+]);
+
+/** How many leading bytes of a file audioKind looks at. */
+export const AUDIO_SNIFF_BYTES = 12;
+
+/** True when `bytes` holds the ASCII `text` at `offset`. */
+const hasAscii = (bytes, offset, text) => [...text].every((ch, i) => bytes[offset + i] === ch.charCodeAt(0));
+
+/**
+ * Signatures at the start of common audio files, each tightened beyond its magic string (a
+ * version or size byte that text never has) so that a text file starting with the same letters
+ * does not match. Raw MPEG frames (no ID3 tag) have no signature that random binary data lacks,
+ * so those are recognised by their extension only.
+ */
+const AUDIO_SIGNATURES = Object.freeze([
+  {
+    format: 'WAV',
+    test: (b) => ['RIFF', 'RF64', 'BW64'].some((magic) => hasAscii(b, 0, magic)) && hasAscii(b, 8, 'WAVE'),
+  },
+  { format: 'AIFF', test: (b) => hasAscii(b, 0, 'FORM') && (hasAscii(b, 8, 'AIFF') || hasAscii(b, 8, 'AIFC')) },
+  { format: 'FLAC', test: (b) => hasAscii(b, 0, 'fLaC') && ((b[4] ?? 0xff) & 0x7f) === 0 },
+  { format: 'Ogg', test: (b) => hasAscii(b, 0, 'OggS') && b[4] === 0 },
+  { format: 'MP3 (ID3 tag)', test: (b) => hasAscii(b, 0, 'ID3') && [2, 3, 4].includes(b[3] ?? -1) },
+  {
+    format: 'MPEG-4 audio',
+    test: (b) => hasAscii(b, 4, 'ftyp') && ['M4A ', 'M4B ', 'M4P '].some((brand) => hasAscii(b, 8, brand)),
+  },
+  { format: 'CAF', test: (b) => hasAscii(b, 0, 'caff') && b[4] === 0 && b[5] === 1 },
+  { format: 'WavPack', test: (b) => hasAscii(b, 0, 'wvpk') },
+  { format: 'AMR', test: (b) => hasAscii(b, 0, '#!AMR\n') || hasAscii(b, 0, '#!AMR-WB\n') },
+  { format: 'Sun audio', test: (b) => hasAscii(b, 0, '.snd') && b[4] === 0 && b[5] === 0 },
+]);
+
+/**
+ * Why a file counts as audio: its extension, or the signature in its first bytes (so a renamed
+ * recording still counts). Null for anything else.
+ * @param {string} path
+ * @param {Uint8Array} head the first AUDIO_SNIFF_BYTES bytes of the file (fewer if it is shorter)
+ * @returns {string | null}
+ */
+export function audioKind(path, head) {
+  const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
+  const dot = name.lastIndexOf('.');
+  const extension = dot > 0 ? name.slice(dot) : '';
+  if (AUDIO_EXTENSIONS.includes(extension)) return `audio file extension ${extension}`;
+  const signature = AUDIO_SIGNATURES.find(({ test }) => test(head));
+  return signature ? `${signature.format} data` : null;
+}
+
+/**
+ * Added-audio guard: no file that is new against the merge base (committed or not) may be audio,
+ * except under AUDIO_FIXTURE_DIR. Audio files that are already on the base branch are not
+ * reported again; a move counts as an addition at the new path.
+ * @param {{ path: string, head: Uint8Array }[]} added
+ * @returns {string[]}
+ */
+export function checkNoNewAudio(added) {
+  return added.flatMap(({ path, head }) => {
+    if (path.startsWith(AUDIO_FIXTURE_DIR)) return [];
+    const kind = audioKind(path, head);
+    return kind
+      ? [`${path}: new audio file (${kind}); audio may only be added under ${AUDIO_FIXTURE_DIR} (licensed test vocals)`]
+      : [];
+  });
 }
 
 /**

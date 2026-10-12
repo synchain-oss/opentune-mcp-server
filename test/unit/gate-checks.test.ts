@@ -8,22 +8,35 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AUDIO_EXTENSIONS,
+  AUDIO_FIXTURE_DIR,
+  AUDIO_SNIFF_BYTES,
   BIN,
+  DEPENDABOT_EMAIL,
+  DEPENDABOT_NAME,
   GIT_LOG_FORMAT,
   MAINTAINER_NAME,
   PACKED_FILES,
   WEB_MERGE_COMMITTER_EMAIL,
   WEB_MERGE_COMMITTER_NAME,
+  audioKind,
+  checkBranchRule,
   checkBundleShape,
   checkCommits,
+  checkFrozenContract,
   checkLockfile,
+  checkNoNewAudio,
   checkPackList,
   checkPackageJson,
+  commitCheckScope,
   compareHeadingOutlines,
   findPullRequestTarget,
   findStdoutConsoleCalls,
+  isContractChangeRecord,
+  isDependabotCommit,
   markdownHeadings,
   parseGitLog,
+  parseNameStatus,
   parseSha256File,
   scanPrivacy,
 } from '../../scripts/lib/checks.mjs';
@@ -584,5 +597,353 @@ describe('parseGitLog / checkCommits', () => {
         checkCommits([outsiderCommit({ body: `fix: y (reported by ${third})\n\n${signoff(outsider)}` })], options),
       ).toEqual([`commit aaaaaaaa message:1: e-mail address "${third}" is not a project address`]);
     });
+  });
+
+  describe('Dependabot commits', () => {
+    // What GitHub writes for Dependabot: release notes that quote other people's addresses and an
+    // upstream commit list with a co-author trailer, signed off by the bot's support address.
+    const trailer = join('Co-Authored', '-By: ', 'Cla', 'ude <x', '@', 'example.com>');
+    const bot = (over: Parameters<typeof commit>[0] = {}) =>
+      commit({
+        name: DEPENDABOT_NAME,
+        email: DEPENDABOT_EMAIL,
+        committerName: WEB_MERGE_COMMITTER_NAME,
+        committerEmail: WEB_MERGE_COMMITTER_EMAIL,
+        body: `chore(deps): bump x\n\nRelease notes by ${outsider}\n${trailer}\n\n${signoff(join('support', '@', 'github.com'))}`,
+        ...over,
+      });
+
+    it('recognizes the bot as author, with GitHub or the bot as committer', () => {
+      expect(isDependabotCommit(bot())).toBe(true);
+      expect(isDependabotCommit(bot({ committerName: DEPENDABOT_NAME, committerEmail: DEPENDABOT_EMAIL }))).toBe(true);
+      expect(isDependabotCommit(bot({ email: DEPENDABOT_EMAIL.toUpperCase() }))).toBe(true);
+    });
+
+    it.each([
+      ['another name with the address', { name: 'dependabot' }],
+      ['the name with another address', { email: outsider }],
+      ['a committer that is neither GitHub nor the bot', { committerName: 'DLsnows', committerEmail: PROJECT }],
+      ["GitHub's address under another committer name", { committerName: 'Someone' }],
+    ])('does not recognize %s', (_label, over) => {
+      expect(isDependabotCommit(bot(over))).toBe(false);
+    });
+
+    it('checks them like any other commit unless allowDependabot is set', () => {
+      expect(checkCommits([bot()]).length).toBeGreaterThan(0);
+      expect(checkCommits([bot()], { allowExternalAuthors: true }).length).toBeGreaterThan(0);
+      expect(checkCommits([bot()], { allowDependabot: true })).toEqual([]);
+    });
+
+    it('still checks the other commits in the range when allowDependabot is set', () => {
+      expect(checkCommits([bot(), commit({ body: 'chore: x' })], { allowDependabot: true })).toEqual([
+        'commit aaaaaaaa: [missing-signoff] no Signed-off-by trailer (use git commit -s)',
+      ]);
+      // A commit that only borrows the bot's name is not exempt.
+      expect(checkCommits([bot({ email: outsider })], { allowDependabot: true }).length).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe('commitCheckScope', () => {
+  const repo = 'synchain-oss/opentune-mcp-server';
+  const sha = 'c'.repeat(40);
+
+  it('checks the commits a push added, allowing merged contributions', () => {
+    expect(commitCheckScope({ event: 'push', before: sha, defaultBranch: 'dev', repo })).toMatchObject({
+      base: sha,
+      allowExternalAuthors: true,
+      allowDependabot: true,
+    });
+  });
+
+  it('compares a push that creates a branch with the default branch', () => {
+    expect(commitCheckScope({ event: 'push', before: '0'.repeat(40), defaultBranch: 'dev', repo })).toMatchObject({
+      base: 'origin/dev',
+    });
+    expect(() => commitCheckScope({ event: 'push', before: '0'.repeat(40), repo })).toThrow(/default branch/);
+  });
+
+  it('refuses a push "before" that is not a commit SHA', () => {
+    expect(() => commitCheckScope({ event: 'push', before: '--all', defaultBranch: 'dev', repo })).toThrow(/SHA/);
+    expect(() =>
+      commitCheckScope({ event: 'push', before: '--all', beforeAvailable: false, defaultBranch: 'dev', repo }),
+    ).toThrow(/SHA/);
+  });
+
+  it('compares a push that rewrote its branch with the default branch', () => {
+    const push = { event: 'push', before: sha, beforeAvailable: false, defaultBranch: 'dev', repo };
+    const scope = commitCheckScope({ ...push, refName: 'feature/v2' });
+    expect(scope).toMatchObject({ base: 'origin/dev', allowExternalAuthors: true, allowDependabot: true });
+    expect(scope.reason).toContain('rewrote the branch');
+  });
+
+  it('refuses a push that rewrote the default branch, or a branch it cannot name', () => {
+    const push = { event: 'push', before: sha, beforeAvailable: false, defaultBranch: 'dev', repo };
+    expect(() => commitCheckScope({ ...push, refName: 'dev' })).toThrow(/rewrote the history of the default branch/);
+    expect(() => commitCheckScope(push)).toThrow(/unknown branch/);
+    expect(() => commitCheckScope({ ...push, refName: 'feature/v2', defaultBranch: '' })).toThrow(/default branch/);
+  });
+
+  it('holds a pull request from a branch of this repository to project identities', () => {
+    expect(
+      commitCheckScope({ event: 'pull_request', baseRef: 'feature/v1', repo, headRepo: repo, headRef: 'feat/x' }),
+    ).toMatchObject({ base: 'origin/feature/v1', allowExternalAuthors: false, allowDependabot: false });
+  });
+
+  it("exempts Dependabot's commits only in Dependabot's own pull request", () => {
+    const pr = { event: 'pull_request', baseRef: 'dev', repo, headRepo: repo, headRef: 'dependabot/npm_and_yarn/x' };
+    expect(commitCheckScope({ ...pr, prAuthor: DEPENDABOT_NAME })).toMatchObject({
+      allowExternalAuthors: false,
+      allowDependabot: true,
+    });
+    // The branch name or the author alone is not enough.
+    expect(commitCheckScope({ ...pr, prAuthor: 'DLsnows' })).toMatchObject({ allowDependabot: false });
+    expect(commitCheckScope({ ...pr, headRef: 'feat/x', prAuthor: DEPENDABOT_NAME })).toMatchObject({
+      allowDependabot: false,
+    });
+  });
+
+  it('accepts signed-off outside authors from a fork, but never exempts Dependabot there', () => {
+    expect(
+      commitCheckScope({
+        event: 'pull_request',
+        baseRef: 'dev',
+        repo,
+        headRepo: 'someone/fork',
+        headRef: 'dependabot/x',
+        prAuthor: DEPENDABOT_NAME,
+      }),
+    ).toMatchObject({ base: 'origin/dev', allowExternalAuthors: true, allowDependabot: false });
+    // A fork that was deleted has no head repository.
+    expect(commitCheckScope({ event: 'pull_request', baseRef: 'dev', repo, headRef: 'x' })).toMatchObject({
+      allowExternalAuthors: true,
+    });
+  });
+
+  it("treats a pull request into prod as dev's already gated history", () => {
+    expect(
+      commitCheckScope({ event: 'pull_request', baseRef: 'prod', repo, headRepo: repo, headRef: 'dev' }),
+    ).toMatchObject({ base: 'origin/prod', allowExternalAuthors: true, allowDependabot: true });
+  });
+
+  it('rejects other events and pull requests without a base', () => {
+    expect(() => commitCheckScope({ event: 'workflow_dispatch', repo })).toThrow(/unsupported event/);
+    expect(() => commitCheckScope({ event: 'pull_request', repo, headRepo: repo })).toThrow(/base/);
+  });
+});
+
+describe('checkBranchRule', () => {
+  const repo = 'synchain-oss/opentune-mcp-server';
+  const fork = 'someone/opentune-mcp-server';
+
+  it.each(['feat/M02-ci', 'feature/v1', 'dependabot/npm_and_yarn/zod-4.7.0'])(
+    'lets the branch %s of this repository into dev',
+    (headRef) => {
+      expect(checkBranchRule({ baseRef: 'dev', headRef, headRepo: repo, repo })).toEqual([]);
+    },
+  );
+
+  it.each(['main', 'fix/x', 'feat/', 'prod', 'features/x', 'my-feat/x'])(
+    'keeps the branch %s of this repository out of dev',
+    (headRef) => {
+      expect(checkBranchRule({ baseRef: 'dev', headRef, headRepo: repo, repo })).toEqual([
+        `only feat/*, feature/* or dependabot/* branches may be merged into dev (found "${headRef}")`,
+      ]);
+    },
+  );
+
+  it('lets only dev of this repository into prod', () => {
+    expect(checkBranchRule({ baseRef: 'prod', headRef: 'dev', headRepo: repo, repo })).toEqual([]);
+    expect(checkBranchRule({ baseRef: 'prod', headRef: 'feature/v1', headRepo: repo, repo })).toHaveLength(1);
+    expect(checkBranchRule({ baseRef: 'prod', headRef: 'dev', headRepo: fork, repo })).toEqual([
+      `only dev of ${repo} may be merged into prod (found ${fork}:dev)`,
+    ]);
+    expect(checkBranchRule({ baseRef: 'prod', headRef: 'dev', headRepo: '', repo })).toHaveLength(1);
+  });
+
+  it('lets a fork use any branch name except the long-lived ones', () => {
+    expect(checkBranchRule({ baseRef: 'dev', headRef: 'fix-typo', headRepo: fork, repo })).toEqual([]);
+    expect(checkBranchRule({ baseRef: 'dev', headRef: 'main', headRepo: fork, repo })).toEqual([]);
+    for (const headRef of ['dev', 'prod', 'feature/v1', 'feature/v2']) {
+      expect(checkBranchRule({ baseRef: 'dev', headRef, headRepo: fork, repo })).toEqual([
+        `a pull request from a fork must not use the branch name "${headRef}" (reserved for long-lived branches)`,
+      ]);
+    }
+  });
+
+  it('has no rule for other bases', () => {
+    expect(checkBranchRule({ baseRef: 'feature/v1', headRef: 'anything', headRepo: repo, repo })).toEqual([]);
+  });
+});
+
+describe('contract change records and the frozen-contract guard', () => {
+  it.each([
+    ['docs/contract-changes/20261011-otcp-initial.md', true],
+    ['docs/contract-changes/20240229-leap-day.md', true],
+    ['docs/contract-changes/20261011-x.md', true],
+    ['docs/contract-changes/20230229-not-a-leap-year.md', false],
+    ['docs/contract-changes/20261301-bad-month.md', false],
+    ['docs/contract-changes/20261032-bad-day.md', false],
+    ['docs/contract-changes/2026101-short.md', false],
+    ['docs/contract-changes/20261011-Upper.md', false],
+    ['docs/contract-changes/20261011-double--hyphen.md', false],
+    ['docs/contract-changes/20261011-.md', false],
+    ['docs/contract-changes/20261011-slug.txt', false],
+    ['docs/contract-changes/sub/20261011-slug.md', false],
+    ['docs/20261011-slug.md', false],
+  ])('%s is a record: %s', (path, expected) => {
+    expect(isContractChangeRecord(path)).toBe(expected);
+  });
+
+  it('parses git diff --name-status -z output', () => {
+    expect(parseNameStatus('M\0spec/a.md\0A\0docs/b c.md\0R100\0old.md\0new.md\0D\0x\0')).toEqual([
+      { status: 'M', path: 'spec/a.md' },
+      { status: 'A', path: 'docs/b c.md' },
+      { status: 'R', path: 'old.md' },
+      { status: 'R', path: 'new.md' },
+      { status: 'D', path: 'x' },
+    ]);
+    expect(parseNameStatus('')).toEqual([]);
+    expect(() => parseNameStatus('M\0')).toThrow(/malformed/);
+    expect(() => parseNameStatus('spec/a.md\0M\0')).toThrow(/malformed/);
+  });
+
+  const record = { status: 'A', path: 'docs/contract-changes/20261011-add-method.md' };
+
+  it('passes changes that touch no frozen file', () => {
+    expect(
+      checkFrozenContract([
+        { status: 'M', path: 'src/server.ts' },
+        { status: 'A', path: 'specs.md' },
+      ]),
+    ).toEqual([]);
+    expect(checkFrozenContract([])).toEqual([]);
+  });
+
+  it.each([
+    ['M', 'spec/otcp/v1/PROTOCOL.md'],
+    ['A', 'spec/otcp/v1/methods/x.schema.json'],
+    ['D', 'spec/otcp/v1/vectors/y.json'],
+    ['M', 'test/golden/tools-list.json'],
+    ['A', 'test/golden/instructions.txt'],
+  ])('requires a record for %s %s', (status, path) => {
+    expect(checkFrozenContract([{ status, path }])).toEqual([
+      `1 frozen contract file(s) changed without a contract change record: ${path} (${status}); ` +
+        'add docs/contract-changes/<YYYYMMDD>-<slug>.md to this pull request (CLAUDE.md §5)',
+    ]);
+    expect(checkFrozenContract([{ status, path }, record])).toEqual([]);
+  });
+
+  it('counts only a record added in this pull request, with a valid name', () => {
+    const change = { status: 'M', path: 'spec/otcp/v1/PROTOCOL.md' };
+    expect(checkFrozenContract([change, { ...record, status: 'M' }])).toHaveLength(1);
+    expect(checkFrozenContract([change, { ...record, status: 'D' }])).toHaveLength(1);
+    const misnamed = { status: 'A', path: 'docs/contract-changes/notes.md' };
+    expect(checkFrozenContract([change, misnamed])).toEqual([
+      expect.stringMatching(/^1 frozen contract file\(s\) changed/),
+      'docs/contract-changes/notes.md does not count as a contract change record: the name must be ' +
+        'docs/contract-changes/<YYYYMMDD>-<slug>.md (a real date, a lowercase slug)',
+    ]);
+  });
+
+  it('does not treat look-alike paths as frozen', () => {
+    expect(
+      checkFrozenContract([
+        { status: 'M', path: 'docs/spec/x.md' },
+        { status: 'M', path: 'test/goldenfile.json' },
+        { status: 'M', path: 'specification/x.md' },
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe('audioKind / checkNoNewAudio', () => {
+  /** Bytes from ASCII strings and byte arrays, in order. */
+  const bytes = (...parts: (string | number[])[]) =>
+    Uint8Array.from(parts.flatMap((p) => (typeof p === 'string' ? Array.from(Buffer.from(p, 'latin1')) : p)));
+  const wav = bytes('RIFF', [0x24, 0, 0, 0], 'WAVE');
+  const source = bytes('import x fro');
+
+  it('lists the common audio extensions', () => {
+    expect(AUDIO_EXTENSIONS).toEqual(expect.arrayContaining(['.wav', '.flac', '.mp3', '.ogg', '.aiff', '.m4a']));
+    expect(AUDIO_SNIFF_BYTES).toBeGreaterThanOrEqual(12);
+  });
+
+  it.each(['take1.wav', 'vocals/Lead.FLAC', 'a/b.mp3', 'x.m4a', 'x.aiff', 'x.ogg', 'x.opus', 'dir.wav/x.Wave'])(
+    'treats %s as audio by its extension',
+    (path) => {
+      expect(audioKind(path, source)).toMatch(/^audio file extension \.[a-z0-9]+$/);
+    },
+  );
+
+  it.each([
+    ['WAV', wav],
+    ['WAV', bytes('RF64', [0xff, 0xff, 0xff, 0xff], 'WAVE')],
+    ['AIFF', bytes('FORM', [0, 0, 0, 0x2e], 'AIFF')],
+    ['AIFF', bytes('FORM', [0, 0, 0, 0x2e], 'AIFC')],
+    ['FLAC', bytes('fLaC', [0x00, 0, 0, 0x22])],
+    ['FLAC', bytes('fLaC', [0x80, 0, 0, 0x22])],
+    ['Ogg', bytes('OggS', [0, 2])],
+    ['MP3 (ID3 tag)', bytes('ID3', [4, 0])],
+    ['MPEG-4 audio', bytes([0, 0, 0, 0x20], 'ftypM4A ')],
+    ['CAF', bytes('caff', [0, 1, 0, 0])],
+    ['WavPack', bytes('wvpk', [0x20, 0, 0, 0])],
+    ['AMR', bytes('#!AMR\n')],
+    ['AMR', bytes('#!AMR-WB\n')],
+    ['Sun audio', bytes('.snd', [0, 0, 0, 24])],
+  ])('recognises %s data whatever the file is called', (format, head) => {
+    expect(audioKind('renamed.dat', head)).toBe(`${format} data`);
+  });
+
+  it.each([
+    ['README.md', bytes('# OpenTune M')],
+    ['notes.txt', bytes('ID3 tags are')],
+    ['notes.txt', bytes('OggS is the ')],
+    ['notes.txt', bytes('fLaC streams')],
+    ['notes.txt', bytes('caffeine is ')],
+    ['notes.txt', bytes('.snd files a')],
+    ['notes.txt', bytes('RIFF chunks ')],
+    ['notes.txt', bytes('#!AMR is a f')],
+    ['image.png', bytes([0x89], 'PNG\r\n', [0x1a, 0x0a])],
+    ['video.mp4', bytes([0, 0, 0, 0x20], 'ftypisom')],
+    ['src/wave.ts', source],
+    ['wav', source],
+    ['empty', new Uint8Array()],
+  ])('does not treat %s (%j) as audio', (path, head) => {
+    expect(audioKind(path, head)).toBeNull();
+  });
+
+  it(`allows new audio only under ${AUDIO_FIXTURE_DIR}`, () => {
+    expect(
+      checkNoNewAudio([
+        { path: 'test/fixtures/vocals/take1.wav', head: wav },
+        { path: 'test/fixtures/vocals/sub/take2.flac', head: bytes('fLaC', [0, 0, 0, 0x22]) },
+        { path: 'src/server.ts', head: source },
+      ]),
+    ).toEqual([]);
+    expect(checkNoNewAudio([])).toEqual([]);
+  });
+
+  it('reports new audio anywhere else, by extension or by signature', () => {
+    expect(
+      checkNoNewAudio([
+        { path: 'test/fixtures/take1.wav', head: wav },
+        { path: 'docs/sample.bin', head: wav },
+      ]),
+    ).toEqual([
+      'test/fixtures/take1.wav: new audio file (audio file extension .wav); audio may only be added under ' +
+        'test/fixtures/vocals/ (licensed test vocals)',
+      'docs/sample.bin: new audio file (WAV data); audio may only be added under test/fixtures/vocals/ ' +
+        '(licensed test vocals)',
+    ]);
+  });
+
+  it('does not extend the exception to look-alike directories', () => {
+    const lookAlikes = [
+      'test/fixtures/vocals-extra/x.wav',
+      'Test/Fixtures/Vocals/x.wav',
+      'x/test/fixtures/vocals/y.wav',
+    ];
+    expect(checkNoNewAudio(lookAlikes.map((path) => ({ path, head: wav })))).toHaveLength(lookAlikes.length);
   });
 });
