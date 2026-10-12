@@ -489,7 +489,11 @@ export function isDependabotCommit(commit) {
  * With `allowDependabot`, commits Dependabot made (isDependabotCommit) are not checked: GitHub
  * writes their message, which quotes upstream release notes and commit lists (other people's
  * addresses, any tool's name), and the maintainer supplies the message of the squash commit that
- * lands. Other commits in the range are still checked.
+ * lands. Other commits in the range are still checked. The title and body of Dependabot's pull
+ * request stay checked (branch-gate.yml, ci.yml) even though the body quotes the same release
+ * notes: a commit message can only be changed by rewriting Dependabot's branch, which takes the
+ * pull request away from Dependabot, while the maintainer can edit the body on the pull request
+ * page, and the `edited` event runs the check again.
  * @param {CommitInfo[]} commits
  * @param {{ patterns?: { id: string, re: RegExp }[], allowExternalAuthors?: boolean,
  *   allowDependabot?: boolean }} [options] patterns default to scripts/attribution-patterns.txt
@@ -537,30 +541,55 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false, 
  *   - from a fork: an outside author's commits are accepted when signed off with their own address;
  *   - into prod: the commits are dev's history, which reached dev through gated pull requests and
  *     may include contributors' and Dependabot's merged commits.
- * - A push checks the commits it added (`before`..HEAD; from the default branch when it creates the
- *   branch). They arrived through merged pull requests, so contributors and Dependabot are allowed.
- * @param {{ event: string, baseRef?: string, before?: string, defaultBranch?: string, repo: string,
- *   headRepo?: string, headRef?: string, prAuthor?: string }} context GitHub event context
+ * - A push checks the commits it added (`before`..HEAD). They arrived through merged pull requests,
+ *   so contributors and Dependabot are allowed. A push that creates the branch, or that rewrote it
+ *   so that `before` is no longer in the clone (`beforeAvailable` false), is compared with the
+ *   default branch instead; a rewritten default branch has nothing to compare with and is an error.
+ * @param {{ event: string, baseRef?: string, before?: string, beforeAvailable?: boolean,
+ *   refName?: string, defaultBranch?: string, repo: string, headRepo?: string, headRef?: string,
+ *   prAuthor?: string }} context GitHub event context; `refName` is the pushed branch
  * @returns {CommitScope}
  */
-export function commitCheckScope({ event, baseRef, before, defaultBranch, repo, headRepo, headRef, prAuthor }) {
+export function commitCheckScope({
+  event,
+  baseRef,
+  before,
+  beforeAvailable = true,
+  refName,
+  defaultBranch,
+  repo,
+  headRepo,
+  headRef,
+  prAuthor,
+}) {
   if (event === 'push') {
-    if (before && !/^0+$/.test(before)) {
+    const creates = !before || /^0+$/.test(before);
+    if (!creates) {
       if (!/^[0-9a-f]{40}$/.test(before))
         throw new Error(`push "before" is not a commit SHA: ${JSON.stringify(before)}`);
-      return {
-        base: before,
-        allowExternalAuthors: true,
-        allowDependabot: true,
-        reason: 'push: the commits this push added, which arrived through merged pull requests',
-      };
+      if (beforeAvailable) {
+        return {
+          base: before,
+          allowExternalAuthors: true,
+          allowDependabot: true,
+          reason: 'push: the commits this push added, which arrived through merged pull requests',
+        };
+      }
     }
-    if (!defaultBranch) throw new Error('push that creates a branch: the default branch is unknown');
+    if (!defaultBranch) throw new Error('push without a usable "before": the default branch is unknown');
+    if (!creates && (!refName || refName === defaultBranch)) {
+      throw new Error(
+        `push to ${refName || 'an unknown branch'}: its previous tip ${before} is not in this clone, so the push ` +
+          'rewrote the history of the default branch and the commits it added cannot be told apart',
+      );
+    }
     return {
       base: `origin/${defaultBranch}`,
       allowExternalAuthors: true,
       allowDependabot: true,
-      reason: `push that creates the branch: commits not on ${defaultBranch}`,
+      reason: creates
+        ? `push that creates the branch: commits not on ${defaultBranch}`
+        : `push that rewrote the branch (its previous tip ${before.slice(0, 8)} is gone): commits not on ${defaultBranch}`,
     };
   }
   if (event === 'pull_request') {
@@ -688,6 +717,105 @@ export function checkFrozenContract(changes) {
         'docs/contract-changes/<YYYYMMDD>-<slug>.md (a real date, a lowercase slug)',
     ),
   ];
+}
+
+/**
+ * The repository holds no recordings (CLAUDE.md §7, rule 9). The one exception is this directory,
+ * for licensed test vocals; each of them is registered with its license in REUSE.toml.
+ */
+export const AUDIO_FIXTURE_DIR = 'test/fixtures/vocals/';
+
+/** File name extensions of audio formats, lowercase. */
+export const AUDIO_EXTENSIONS = Object.freeze([
+  '.aac',
+  '.aif',
+  '.aifc',
+  '.aiff',
+  '.amr',
+  '.ape',
+  '.au',
+  '.bwf',
+  '.caf',
+  '.flac',
+  '.m4a',
+  '.m4b',
+  '.mka',
+  '.mp2',
+  '.mp3',
+  '.oga',
+  '.ogg',
+  '.opus',
+  '.rf64',
+  '.snd',
+  '.w64',
+  '.wav',
+  '.wave',
+  '.wma',
+  '.wv',
+]);
+
+/** How many leading bytes of a file audioKind looks at. */
+export const AUDIO_SNIFF_BYTES = 12;
+
+/** True when `bytes` holds the ASCII `text` at `offset`. */
+const hasAscii = (bytes, offset, text) => [...text].every((ch, i) => bytes[offset + i] === ch.charCodeAt(0));
+
+/**
+ * Signatures at the start of common audio files, each tightened beyond its magic string (a
+ * version or size byte that text never has) so that a text file starting with the same letters
+ * does not match. Raw MPEG frames (no ID3 tag) have no signature that random binary data lacks,
+ * so those are recognised by their extension only.
+ */
+const AUDIO_SIGNATURES = Object.freeze([
+  {
+    format: 'WAV',
+    test: (b) => ['RIFF', 'RF64', 'BW64'].some((magic) => hasAscii(b, 0, magic)) && hasAscii(b, 8, 'WAVE'),
+  },
+  { format: 'AIFF', test: (b) => hasAscii(b, 0, 'FORM') && (hasAscii(b, 8, 'AIFF') || hasAscii(b, 8, 'AIFC')) },
+  { format: 'FLAC', test: (b) => hasAscii(b, 0, 'fLaC') && ((b[4] ?? 0xff) & 0x7f) === 0 },
+  { format: 'Ogg', test: (b) => hasAscii(b, 0, 'OggS') && b[4] === 0 },
+  { format: 'MP3 (ID3 tag)', test: (b) => hasAscii(b, 0, 'ID3') && [2, 3, 4].includes(b[3] ?? -1) },
+  {
+    format: 'MPEG-4 audio',
+    test: (b) => hasAscii(b, 4, 'ftyp') && ['M4A ', 'M4B ', 'M4P '].some((brand) => hasAscii(b, 8, brand)),
+  },
+  { format: 'CAF', test: (b) => hasAscii(b, 0, 'caff') && b[4] === 0 && b[5] === 1 },
+  { format: 'WavPack', test: (b) => hasAscii(b, 0, 'wvpk') },
+  { format: 'AMR', test: (b) => hasAscii(b, 0, '#!AMR\n') || hasAscii(b, 0, '#!AMR-WB\n') },
+  { format: 'Sun audio', test: (b) => hasAscii(b, 0, '.snd') && b[4] === 0 && b[5] === 0 },
+]);
+
+/**
+ * Why a file counts as audio: its extension, or the signature in its first bytes (so a renamed
+ * recording still counts). Null for anything else.
+ * @param {string} path
+ * @param {Uint8Array} head the first AUDIO_SNIFF_BYTES bytes of the file (fewer if it is shorter)
+ * @returns {string | null}
+ */
+export function audioKind(path, head) {
+  const name = path.slice(path.lastIndexOf('/') + 1).toLowerCase();
+  const dot = name.lastIndexOf('.');
+  const extension = dot > 0 ? name.slice(dot) : '';
+  if (AUDIO_EXTENSIONS.includes(extension)) return `audio file extension ${extension}`;
+  const signature = AUDIO_SIGNATURES.find(({ test }) => test(head));
+  return signature ? `${signature.format} data` : null;
+}
+
+/**
+ * Added-audio guard: no file that is new against the merge base (committed or not) may be audio,
+ * except under AUDIO_FIXTURE_DIR. Audio files that are already on the base branch are not
+ * reported again; a move counts as an addition at the new path.
+ * @param {{ path: string, head: Uint8Array }[]} added
+ * @returns {string[]}
+ */
+export function checkNoNewAudio(added) {
+  return added.flatMap(({ path, head }) => {
+    if (path.startsWith(AUDIO_FIXTURE_DIR)) return [];
+    const kind = audioKind(path, head);
+    return kind
+      ? [`${path}: new audio file (${kind}); audio may only be added under ${AUDIO_FIXTURE_DIR} (licensed test vocals)`]
+      : [];
+  });
 }
 
 /**

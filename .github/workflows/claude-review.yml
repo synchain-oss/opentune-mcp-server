@@ -40,7 +40,8 @@ jobs:
       # 标题、正文等不可信文本只经 gh 写进文件，不进入任何 shell 展开。
       # PR 含符号链接就不做 AI 审查（本步 exit 1，job 失败，结果可见）：PR 可以提交指向 /proc/self/environ、.git/config
       # 或 runner 凭据的符号链接，再诱导模型用 Read 去读；deny 规则对符号链接按请求路径还是目标路径判定，
-      # 在本仓钉的 Claude Code 版本上没有保证。
+      # 在本仓钉的 Claude Code 版本上没有保证。检查只看得到此刻检出的提交，而 action 随后会自己再检出一次
+      # PR head，所以检查之后关掉 core.symlinks：之后检出的提交里即使多出符号链接，也只会写成普通文件。
       # 前提：本仓目前没有符号链接；将来若需要入库符号链接，要先重新评估这条规则。
       # 本步与 review-dispatch.yml 的同名步骤逐字相同（只有 PR_NUMBER 的来源不同），改动时两边同步（单测会比对）。
       - name: Prepare PR context for the reviewer
@@ -52,7 +53,7 @@ jobs:
         run: |
           # 用 git 索引判断（mode 120000 = 符号链接），不依赖工作树；pipefail 让 git 出错时本步失败，而不是当作“没有符号链接”放行。
           set -o pipefail
-          symlinks=$(git ls-files -s | awk '$1 == "120000" {print $4}')
+          symlinks=$(git ls-files -s | awk -F'\t' '$1 ~ /^120000 / {print $2}')
           if [ -n "$symlinks" ]; then
             # 文件名是不可信文本：打印期间停用 workflow 命令解析，防止文件名被当成 ::命令:: 执行。
             stop_token=$(openssl rand -hex 16)
@@ -65,6 +66,8 @@ jobs:
             echo "::error::该 PR 含符号链接，按安全策略不做 AI 审查，请维护者本地人工审。"
             exit 1
           fi
+          # 从这里起，本工作区的检出（包括 action 自己的那次）把符号链接写成内容为链接目标的普通文件。
+          git config core.symlinks false
           # 先删再建：PR 可能自带 .ot-review/ 下的符号链接，> 会顺着链接写到工作区外。
           rm -rf .ot-review
           mkdir .ot-review
@@ -160,7 +163,12 @@ jobs:
           #   以及家目录根上的点文件（~/.gitconfig、~/.npmrc、~/.git-credentials 等）。
           #   路径黑名单要随 runner 镜像与 action 升级复查。
           #   已知前提：/home/runner/work/_actions/**（action 自身的公开代码）对模型可读。
-          #   PR 自带的符号链接由前置步骤整体拒绝（见该步骤上方注释），不依赖 deny 规则对链接的判定。
+          #   PR 自带的符号链接由前置步骤整体拒绝，之后的检出又关掉了 core.symlinks（见该步骤上方注释），
+          #   不依赖 deny 规则对链接的判定。
+          # - 已知前提（检查与使用之间的时间差）：action 在 tag 模式下会再 fetch 一次 PR head 并检出 PR 分支
+          #   （src/github/operations/branch.ts），模型读到的提交未必是前置步骤检查的那一份。本 workflow 只审同仓 PR，
+          #   能往 PR 分支推提交的人本就有写权限，这个时间差不给他新的能力，不做事后核对；review-dispatch.yml
+          #   会审 fork PR，在 action 之后核对模型读到的提交。
           # - job 有 actions: read 时，action 还会挂只读的 mcp__github_ci__* 工具（查 CI 状态与 run 详情；
           #   download_job_log 只把日志写到本地磁盘，日志里的 secret 已打码），不构成对外写出口。
           # - 真正挡住推送的最后一道是 job 级 contents: read——不要改成 write。

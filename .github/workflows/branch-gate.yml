@@ -9,10 +9,12 @@ name: Branch Gate
 #      但不得用 dev、prod、feature/*（长期分支名，不能冒充晋升）。
 #   ② 提交：DCO（合并提交免 sign-off，但仍核对身份与署名）、提交信息无 AI 署名与个人路径 / 邮箱；
 #      同仓 PR 的作者与提交者必须是项目身份；fork PR 与 dev → prod 允许外部作者以本人地址签署；
-#      Dependabot 自己开的 PR 里，它的提交免查（正文是 GitHub 生成的上游 release notes）。
+#      Dependabot 自己开的 PR 里，它的提交免查（提交信息由 GitHub 生成、引用上游 release notes，
+#      要改只能改写 Dependabot 的分支）。
 #   ③ 冻结契约：改动 spec/** 或 test/golden/**（含 MCP instructions 快照）时，同一 PR 必须新增
 #      docs/contract-changes/<YYYYMMDD>-<slug>.md（CLAUDE.md §5）。
-#   ④ PR 标题与正文无 AI 署名（不可信文本，只经 env: 传入）。
+#   ④ PR 标题与正文无 AI 署名（不可信文本，只经 env: 传入）。Dependabot 的 PR 也查：正文同样引用上游
+#      release notes，但维护者可以在 PR 页面直接改正文，edited 事件会重跑本检查，不必动它的分支。
 # types 含 edited：改了 base、标题或正文都会重跑。
 # 本 workflow 不读任何 secret，只需 contents: read；fork PR（经维护者批准运行）同样可跑。
 on:
@@ -70,6 +72,8 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: node scripts/ci-checks.mjs frozen
+      # 不对 Dependabot 豁免（与上面提交检查的豁免不同）：命中时维护者在 PR 页面编辑正文即可重跑；
+      # Dependabot 之后又改写正文（例如升到更新的版本）时，再编辑一次。
       - name: PR title and body carry no AI attribution
         if: ${{ !cancelled() }}
         env:

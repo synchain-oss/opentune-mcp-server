@@ -10,8 +10,8 @@ name: CI
 #   checks（ubuntu × Node 22/24 + windows × Node 24；覆盖率门槛在 ubuntu / Node 24 上强制）、
 #   protocol（ubuntu + windows）、package、audit、compliance、docs。
 # - 轻量档：PR → feature/**（子 PR）。单条 ubuntu job：lint、format、typecheck、单测 + 覆盖率、隐私、
-#   提交署名 / sign-off / 身份、PR 标题与正文署名、pull_request_target 零命中。完整套件在本地 gates
-#   与 PR → dev 上跑。
+#   禁止新增音频文件、提交署名 / sign-off / 身份、PR 标题与正文署名、pull_request_target 零命中。
+#   完整套件在本地 gates 与 PR → dev 上跑。
 # 两档都产生同名聚合检查 mcp-gate（dev / prod 唯一必需的 CI 检查）：按档核对每个 job，该跑的必须
 # success，不该跑的必须 skipped；任一失败、取消或缺席都失败。mcp-gate 不加 paths:。
 #
@@ -28,9 +28,11 @@ on:
 permissions:
   contents: read
 
+# PR：同一 PR 的新运行取消旧运行。push：每个提交单独成组。若按分支成组，同组里还在排队的运行会被
+# 新排队的那次取代（cancel-in-progress 管不到这一点），连续几次 push 时中间那次带来的提交就没有任何
+# 运行检查过。
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
-  # PR 上新推送取代旧运行；push 到 dev / 主支线的每次运行都保留结果。
+  group: ci-${{ github.event.pull_request.number || format('{0}@{1}', github.ref, github.sha) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 defaults:
@@ -48,7 +50,7 @@ defaults:
 # `ci-checks.mjs scope` 给出真实的 base。
 jobs:
   light:
-    name: light (lint, typecheck, unit tests, privacy, attribution)
+    name: light (lint, typecheck, unit tests, privacy, audio, attribution)
     if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'feature/')
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -74,7 +76,7 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: node scripts/ci-checks.mjs scope >> "$GITHUB_OUTPUT"
-      - name: Gates (lint, format, typecheck, unit tests + coverage, privacy, attribution, pull_request_target)
+      - name: Gates (lint, format, typecheck, unit tests + coverage, privacy, audio, attribution, pull_request_target)
         env:
           BASE: ${{ steps.scope.outputs.base }}
           ALLOW_EXTERNAL_AUTHORS: ${{ steps.scope.outputs.allow_external_authors }}
@@ -84,9 +86,10 @@ jobs:
           if [ "$ALLOW_EXTERNAL_AUTHORS" = true ]; then args+=(--allow-external-authors); fi
           if [ "$ALLOW_DEPENDABOT" = true ]; then args+=(--allow-dependabot); fi
           node scripts/gates.mjs "${args[@]}" \
-            --only "lint (eslint),format:check,typecheck,unit tests,privacy,attribution,no pull_request_target" \
+            --only "lint (eslint),format:check,typecheck,unit tests,privacy,no new audio files,attribution,no pull_request_target" \
             | tee -a "$GITHUB_STEP_SUMMARY"
       # PR 标题与正文是不可信文本：只经 env: 传入，由署名检查的正本从 stdin 读。
+      # Dependabot 的 PR 同样检查，理由见 branch-gate.yml 的同名步骤。
       - name: PR title and body carry no AI attribution
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -265,19 +268,22 @@ jobs:
           "${pip[@]}" check
           "$RUNNER_TEMP/reuse/bin/reuse" --version
           echo "$RUNNER_TEMP/reuse/bin" >> "$GITHUB_PATH"
+      # push 的范围是 before..HEAD；新建分支、或 push 改写了分支（before 已不在全历史里）时改与默认分支比较，
+      # 默认分支本身被改写则报错（规则见 scripts/lib/checks.mjs 的 commitCheckScope）。
       - name: Commit range and identity rules
         id: scope
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
           BEFORE: ${{ github.event.before }}
+          REF_NAME: ${{ github.ref_name }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REPO: ${{ github.repository }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           HEAD_REF: ${{ github.head_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: node scripts/ci-checks.mjs scope >> "$GITHUB_OUTPUT"
-      - name: Gates (gitleaks, privacy, attribution, pull_request_target, reuse lint)
+      - name: Gates (gitleaks, privacy, audio, attribution, pull_request_target, reuse lint)
         env:
           BASE: ${{ steps.scope.outputs.base }}
           ALLOW_EXTERNAL_AUTHORS: ${{ steps.scope.outputs.allow_external_authors }}
@@ -288,7 +294,7 @@ jobs:
           if [ "$ALLOW_DEPENDABOT" = true ]; then args+=(--allow-dependabot); fi
           # gitleaks 由 gates 经 scripts/fetch-tool.mjs 下载，版本与 sha256 来自 scripts/tools.lock.json。
           node scripts/gates.mjs "${args[@]}" \
-            --only "gitleaks,privacy,attribution,no pull_request_target,reuse lint" \
+            --only "gitleaks,privacy,no new audio files,attribution,no pull_request_target,reuse lint" \
             | tee "$RUNNER_TEMP/compliance.md" | tee -a "$GITHUB_STEP_SUMMARY"
           # 这些检查在 CI 里都必须真正执行：出现 SKIP（例如 reuse 没有装上）也算失败。
           if grep -q '| SKIP |' "$RUNNER_TEMP/compliance.md"; then

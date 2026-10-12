@@ -8,6 +8,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  AUDIO_EXTENSIONS,
+  AUDIO_FIXTURE_DIR,
+  AUDIO_SNIFF_BYTES,
   BIN,
   DEPENDABOT_EMAIL,
   DEPENDABOT_NAME,
@@ -16,11 +19,13 @@ import {
   PACKED_FILES,
   WEB_MERGE_COMMITTER_EMAIL,
   WEB_MERGE_COMMITTER_NAME,
+  audioKind,
   checkBranchRule,
   checkBundleShape,
   checkCommits,
   checkFrozenContract,
   checkLockfile,
+  checkNoNewAudio,
   checkPackList,
   checkPackageJson,
   commitCheckScope,
@@ -660,6 +665,23 @@ describe('commitCheckScope', () => {
 
   it('refuses a push "before" that is not a commit SHA', () => {
     expect(() => commitCheckScope({ event: 'push', before: '--all', defaultBranch: 'dev', repo })).toThrow(/SHA/);
+    expect(() =>
+      commitCheckScope({ event: 'push', before: '--all', beforeAvailable: false, defaultBranch: 'dev', repo }),
+    ).toThrow(/SHA/);
+  });
+
+  it('compares a push that rewrote its branch with the default branch', () => {
+    const push = { event: 'push', before: sha, beforeAvailable: false, defaultBranch: 'dev', repo };
+    const scope = commitCheckScope({ ...push, refName: 'feature/v2' });
+    expect(scope).toMatchObject({ base: 'origin/dev', allowExternalAuthors: true, allowDependabot: true });
+    expect(scope.reason).toContain('rewrote the branch');
+  });
+
+  it('refuses a push that rewrote the default branch, or a branch it cannot name', () => {
+    const push = { event: 'push', before: sha, beforeAvailable: false, defaultBranch: 'dev', repo };
+    expect(() => commitCheckScope({ ...push, refName: 'dev' })).toThrow(/rewrote the history of the default branch/);
+    expect(() => commitCheckScope(push)).toThrow(/unknown branch/);
+    expect(() => commitCheckScope({ ...push, refName: 'feature/v2', defaultBranch: '' })).toThrow(/default branch/);
   });
 
   it('holds a pull request from a branch of this repository to project identities', () => {
@@ -832,5 +854,96 @@ describe('contract change records and the frozen-contract guard', () => {
         { status: 'M', path: 'specification/x.md' },
       ]),
     ).toEqual([]);
+  });
+});
+
+describe('audioKind / checkNoNewAudio', () => {
+  /** Bytes from ASCII strings and byte arrays, in order. */
+  const bytes = (...parts: (string | number[])[]) =>
+    Uint8Array.from(parts.flatMap((p) => (typeof p === 'string' ? Array.from(Buffer.from(p, 'latin1')) : p)));
+  const wav = bytes('RIFF', [0x24, 0, 0, 0], 'WAVE');
+  const source = bytes('import x fro');
+
+  it('lists the common audio extensions', () => {
+    expect(AUDIO_EXTENSIONS).toEqual(expect.arrayContaining(['.wav', '.flac', '.mp3', '.ogg', '.aiff', '.m4a']));
+    expect(AUDIO_SNIFF_BYTES).toBeGreaterThanOrEqual(12);
+  });
+
+  it.each(['take1.wav', 'vocals/Lead.FLAC', 'a/b.mp3', 'x.m4a', 'x.aiff', 'x.ogg', 'x.opus', 'dir.wav/x.Wave'])(
+    'treats %s as audio by its extension',
+    (path) => {
+      expect(audioKind(path, source)).toMatch(/^audio file extension \.[a-z0-9]+$/);
+    },
+  );
+
+  it.each([
+    ['WAV', wav],
+    ['WAV', bytes('RF64', [0xff, 0xff, 0xff, 0xff], 'WAVE')],
+    ['AIFF', bytes('FORM', [0, 0, 0, 0x2e], 'AIFF')],
+    ['AIFF', bytes('FORM', [0, 0, 0, 0x2e], 'AIFC')],
+    ['FLAC', bytes('fLaC', [0x00, 0, 0, 0x22])],
+    ['FLAC', bytes('fLaC', [0x80, 0, 0, 0x22])],
+    ['Ogg', bytes('OggS', [0, 2])],
+    ['MP3 (ID3 tag)', bytes('ID3', [4, 0])],
+    ['MPEG-4 audio', bytes([0, 0, 0, 0x20], 'ftypM4A ')],
+    ['CAF', bytes('caff', [0, 1, 0, 0])],
+    ['WavPack', bytes('wvpk', [0x20, 0, 0, 0])],
+    ['AMR', bytes('#!AMR\n')],
+    ['AMR', bytes('#!AMR-WB\n')],
+    ['Sun audio', bytes('.snd', [0, 0, 0, 24])],
+  ])('recognises %s data whatever the file is called', (format, head) => {
+    expect(audioKind('renamed.dat', head)).toBe(`${format} data`);
+  });
+
+  it.each([
+    ['README.md', bytes('# OpenTune M')],
+    ['notes.txt', bytes('ID3 tags are')],
+    ['notes.txt', bytes('OggS is the ')],
+    ['notes.txt', bytes('fLaC streams')],
+    ['notes.txt', bytes('caffeine is ')],
+    ['notes.txt', bytes('.snd files a')],
+    ['notes.txt', bytes('RIFF chunks ')],
+    ['notes.txt', bytes('#!AMR is a f')],
+    ['image.png', bytes([0x89], 'PNG\r\n', [0x1a, 0x0a])],
+    ['video.mp4', bytes([0, 0, 0, 0x20], 'ftypisom')],
+    ['src/wave.ts', source],
+    ['wav', source],
+    ['empty', new Uint8Array()],
+  ])('does not treat %s (%j) as audio', (path, head) => {
+    expect(audioKind(path, head)).toBeNull();
+  });
+
+  it(`allows new audio only under ${AUDIO_FIXTURE_DIR}`, () => {
+    expect(
+      checkNoNewAudio([
+        { path: 'test/fixtures/vocals/take1.wav', head: wav },
+        { path: 'test/fixtures/vocals/sub/take2.flac', head: bytes('fLaC', [0, 0, 0, 0x22]) },
+        { path: 'src/server.ts', head: source },
+      ]),
+    ).toEqual([]);
+    expect(checkNoNewAudio([])).toEqual([]);
+  });
+
+  it('reports new audio anywhere else, by extension or by signature', () => {
+    expect(
+      checkNoNewAudio([
+        { path: 'test/fixtures/take1.wav', head: wav },
+        { path: 'docs/sample.bin', head: wav },
+      ]),
+    ).toEqual([
+      'test/fixtures/take1.wav: new audio file (audio file extension .wav); audio may only be added under ' +
+        'test/fixtures/vocals/ (licensed test vocals)',
+      'docs/sample.bin: new audio file (WAV data); audio may only be added under test/fixtures/vocals/ ' +
+        '(licensed test vocals)',
+    ]);
+  });
+
+  it('does not extend the exception to look-alike directories', () => {
+    const lookAlikes = [
+      'test/fixtures/vocals-extra/x.wav',
+      'Test/Fixtures/Vocals/x.wav',
+      'x/test/fixtures/vocals/y.wav',
+    ];
+    expect(checkNoNewAudio(lookAlikes.map((path) => ({ path, head: wav })))).toHaveLength(lookAlikes.length);
   });
 });

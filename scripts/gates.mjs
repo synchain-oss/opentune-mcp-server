@@ -8,7 +8,8 @@
 // Usage: node scripts/gates.mjs [--base <ref>] [--only <names>] [--allow-external-authors]
 //                               [--allow-dependabot]
 //   --base   branch the current branch will be merged into; the commits in <ref>..HEAD are
-//            checked for attribution, sign-off and identity (default: origin/feature/v1)
+//            checked for attribution, sign-off and identity, and the files that are new since
+//            the merge base must not be audio (default: origin/feature/v1)
 //   --only   comma-separated, case-insensitive substrings of check names; runs just those checks
 //            (for re-running one failure). A table from a partial run is not a gates result.
 //   --allow-external-authors
@@ -32,10 +33,13 @@ import { checkNotices } from './gen-notices.mjs';
 import { fetchTool } from './fetch-tool.mjs';
 import {
   ALLOWED_EMAILS,
+  AUDIO_FIXTURE_DIR,
+  AUDIO_SNIFF_BYTES,
   GIT_LOG_FORMAT,
   checkBundleShape,
   checkCommits,
   checkLockfile,
+  checkNoNewAudio,
   checkPackageJson,
   checkPackList,
   compareHeadingOutlines,
@@ -342,6 +346,30 @@ async function attribution(base, allowExternalAuthors, allowDependabot) {
   );
 }
 
+async function noNewAudio(base) {
+  // Against the merge base, like a pull request diff, and over the working tree (tracked and
+  // untracked, not ignored), so that a recording is caught locally before it is committed.
+  const mergeBase = git(['merge-base', base, 'HEAD']).trim();
+  const atBase = new Set(git(['ls-tree', '-r', '-z', '--name-only', mergeBase]).split('\0').filter(Boolean));
+  const added = [];
+  for (const file of await repoFiles()) {
+    if (atBase.has(file)) continue;
+    const handle = await fs.open(path.join(ROOT, file), 'r');
+    try {
+      const head = Buffer.alloc(AUDIO_SNIFF_BYTES);
+      const { bytesRead } = await handle.read(head, 0, head.length, 0);
+      added.push({ path: file, head: head.subarray(0, bytesRead) });
+    } finally {
+      await handle.close();
+    }
+  }
+  return verdict(
+    checkNoNewAudio(added),
+    `${added.length} file(s) new since the merge base with ${base}: no audio (by extension or signature) ` +
+      `outside ${AUDIO_FIXTURE_DIR}`,
+  );
+}
+
 async function readmeParity() {
   const en = await fs.readFile(path.join(ROOT, 'README.md'), 'utf8');
   const zh = await fs.readFile(path.join(ROOT, 'README.zh-CN.md'), 'utf8');
@@ -436,6 +464,7 @@ async function main() {
     ],
     ['gitleaks', () => gitleaks(base)],
     ['privacy', privacy],
+    ['no new audio files (outside test/fixtures/vocals/)', () => noNewAudio(base)],
     ['attribution, sign-off + identity', () => attribution(base, allowExternalAuthors, allowDependabot)],
     ['README en/zh-CN heading outline', readmeParity],
     ['no pull_request_target', pullRequestTarget],

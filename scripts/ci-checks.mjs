@@ -10,7 +10,8 @@
 // Usage: node scripts/ci-checks.mjs <check>
 //   scope    the commit range and identity rules of this event for the attribution check, printed
 //            as base=…, allow_external_authors=…, allow_dependabot=… lines for $GITHUB_OUTPUT
-//            (env: EVENT_NAME, BASE_REF, BEFORE, DEFAULT_BRANCH, REPO, HEAD_REPO, HEAD_REF, PR_AUTHOR)
+//            (env: EVENT_NAME, BASE_REF, BEFORE, REF_NAME, DEFAULT_BRANCH, REPO, HEAD_REPO, HEAD_REF,
+//            PR_AUTHOR)
 //   branch   source branch rules of a pull request into dev or prod
 //            (env: BASE_REF, HEAD_REF, HEAD_REPO, REPO)
 //   commits  sign-off, attribution and identity of every commit in origin/<base>..HEAD of a pull
@@ -52,11 +53,24 @@ function git(args) {
   return result.stdout;
 }
 
+/** True when the commit is in this clone (`sha` must already be validated as a full SHA). */
+function commitExists(sha) {
+  const result = spawnSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: ROOT, stdio: 'ignore' });
+  if (result.error) throw result.error;
+  return result.status === 0;
+}
+
 function scopeFromEnv(defaultEvent) {
+  const before = env('BEFORE', { required: false });
+  // A push that rewrote its branch leaves `before` unreachable, so the full-history checkout does
+  // not have it. Only a well-formed SHA reaches git; commitCheckScope rejects anything else.
+  const beforeAvailable = /^[0-9a-f]{40}$/.test(before) && !/^0+$/.test(before) ? commitExists(before) : true;
   return commitCheckScope({
     event: process.env.EVENT_NAME || defaultEvent,
     baseRef: env('BASE_REF', { required: false }),
-    before: env('BEFORE', { required: false }),
+    before,
+    beforeAvailable,
+    refName: env('REF_NAME', { required: false }),
     defaultBranch: env('DEFAULT_BRANCH', { required: false }),
     repo: env('REPO'),
     headRepo: env('HEAD_REPO', { required: false }),
