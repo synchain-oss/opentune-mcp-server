@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "content/set-key-ok",
   "type": "request",
-  "description": "Setting A minor to C major. As in the OpenTune UI the change has no undo entry; the revert recipe sets A minor again and carries the key revision after the change. Only the key aspect changes: revision and gridRevision stay as they were (PROTOCOL.md section 10 rule 2).",
+  "description": "Setting A minor to C major. As in the OpenTune UI the change has no undo entry; the revert recipe sets A minor again and carries the key revision after the change. The revert is partial: the restored key is a manual key, without the origin and confidence of a detected key. Only the key aspect changes: revision and gridRevision stay as they were (PROTOCOL.md section 10 rule 2).",
   "capability": "edit.v1",
   "since": "1.0",
   "method": "content.setKey",

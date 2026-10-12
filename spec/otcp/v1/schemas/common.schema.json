@@ -305,7 +305,7 @@
       }
     },
     "historyEntry": {
-      "description": "An entry of OpenTune's undo or redo history. undoId is null for an entry created in the OpenTune UI that edit.undo or edit.redo has not applied (PROTOCOL.md section 15.3 rule 8). origin is control (created through this API) or ui. possiblyStale: the entry was recorded before a track was deleted and may target a track that has since moved (section 15.3 rule 6). unsafe: the entry is a clip split, merge or delete, which edit.undo and edit.redo refuse (section 15.4 rule 1).",
+      "description": "An entry of OpenTune's undo or redo history. undoId is null for an entry created in the OpenTune UI that edit.undo or edit.redo has not applied (PROTOCOL.md section 15.3 rule 8). origin is control (created through this API) or ui. possiblyStale: a track was deleted after the entry was recorded, so it may target a track that has since moved, and no call with force has applied the entry since that deletion (section 15.3 rule 6). unsafe: the entry is a clip split, merge or delete, which edit.undo and edit.redo refuse (section 15.4 rule 1).",
       "type": "object",
       "required": [
         "undoId",

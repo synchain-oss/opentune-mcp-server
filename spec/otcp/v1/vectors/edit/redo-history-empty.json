@@ -2,17 +2,38 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "edit/redo-history-empty",
   "type": "request",
-  "description": "Nothing to redo: UNDO_CONFLICT(history_empty).",
+  "description": "Nothing to redo: the redo history is empty, and the entry the client names is on the undo history. UNDO_CONFLICT(history_empty), and nothing changes.",
   "capability": "history.v1",
   "since": "1.0",
   "method": "edit.redo",
   "session": "authenticated",
-  "given": { "history": { "undo": [], "redo": [] } },
+  "given": {
+    "clips": [
+      {
+        "bind": "clip",
+        "trackId": 0,
+        "startTimelineSec": 2,
+        "durationSec": 6,
+        "analysis": "ready"
+      }
+    ],
+    "history": {
+      "undo": [
+        {
+          "bind": "u1",
+          "origin": "control",
+          "action": "pitchShift",
+          "clip": "clip"
+        }
+      ],
+      "redo": []
+    }
+  },
   "request": {
     "jsonrpc": "2.0",
     "id": 1,
     "method": "edit.redo",
-    "params": { "expectedUndoId": "u:00000000:1" }
+    "params": { "expectedUndoId": { "$ref": "u1" } }
   },
   "response": {
     "jsonrpc": "2.0",

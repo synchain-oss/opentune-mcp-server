@@ -228,7 +228,7 @@
       "code": "changed_during_export",
       "scope": "REVISION_CONFLICT",
       "since": "1.0",
-      "description": "A content revision changed while the export was running. The temporary file was deleted and the target was not touched."
+      "description": "A content revision changed while the export wrote its file, after all contents were ready. The temporary file was deleted and the target was not touched."
     },
     {
       "code": "cursor_stale",
@@ -476,6 +476,18 @@
       "scope": "INVALID_ARGUMENT",
       "since": "1.0",
       "description": "import.start named the idempotencyKey of a retained import job, but with other params than that job. Nothing was started; use a new key for a different import."
+    },
+    {
+      "code": "placement_content_mismatch",
+      "scope": "INVALID_ARGUMENT",
+      "since": "1.0",
+      "description": "The request names a placement that does not show the content it names, for example AUTO in reference mode with the placement of another clip."
+    },
+    {
+      "code": "duplicate_handle",
+      "scope": "INVALID_ARGUMENT",
+      "since": "1.0",
+      "description": "The request names the same time-grid handle more than once, for example twice in the moves of content.editTimeGrid. Nothing was changed."
     }
   ]
 }

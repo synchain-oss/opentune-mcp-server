@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "edit/undo-no-effect",
   "type": "request",
-  "description": "With force the stale clip move is applied, but it changes nothing (the revision vector difference is empty). As in OpenTune the step is used up and the project is marked as changed: noOp is true and the warning UNDO_NO_EFFECT says so.",
+  "description": "With force the stale clip move is applied, but it changes nothing (the revision vector difference is empty). As in OpenTune the step is used up and the project is marked as changed: noOp is true and the warning UNDO_NO_EFFECT says so. The call with force clears the entry's possiblyStale (PROTOCOL.md section 15.3 rule 6), so the revert recipe, edit.redo with the entry's undoId and without force, can be sent unchanged (edit/undo-stale-entry-revert).",
   "capability": "history.v1",
   "since": "1.0",
   "method": "edit.undo",
@@ -71,7 +71,7 @@
         "undoId": { "$ref": "moveEntry" },
         "description": { "$any": "string" },
         "origin": "control",
-        "possiblyStale": true,
+        "possiblyStale": false,
         "unsafe": false
       }
     }
