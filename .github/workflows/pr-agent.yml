@@ -1,0 +1,68 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
+# SPDX-License-Identifier: MIT
+name: PR Agent
+
+# Qodo PR-Agent（DeepSeek，按量计费），结构取自 Synchain 其他仓库的同名 workflow。
+# - 默认关闭：只有仓库变量 ENABLE_PR_AGENT 为 'true' 时运行；开启前要先在仓库 secrets 里配好 DEEPSEEK_KEY。
+#   它永远不是必需检查。
+# - 只审 base = dev 的 PR（PR → dev 的每次推送都会复审）；子 PR（base = feature/*）由 claude-review 审查。
+#   用 job 级 if: 判断 base，而不是触发器的 branches 过滤。
+# - fork PR 与 Dependabot 的 PR 不跑：pull_request 事件不向它们下发本仓 secrets。
+# - 容器（Docker）action：需要带 docker daemon 的 ubuntu-latest。
+on:
+  pull_request:
+    types: [opened, reopened, ready_for_review, synchronize]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-agent-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  pr-agent:
+    if: >
+      vars.ENABLE_PR_AGENT == 'true' &&
+      github.event.pull_request.base.ref == 'dev' &&
+      github.event.pull_request.draft == false &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.actor != 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read # 故意不给 contents: write，收窄爆炸半径
+      issues: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: qodo-ai/pr-agent@8e4d32e5497defd43c023a404f73560c62728961 # v0.39.0
+        env:
+          # ANTHROPIC.KEY / ANTHROPIC.API_BASE 是 pr-agent 自己的点号配置项：它会用自己 settings 里的 api_key
+          # 覆盖 litellm 的环境变量，只设 ANTHROPIC_API_KEY 会被空值覆盖（DeepSeek 返回 "api key invalid"）。
+          ANTHROPIC.KEY: ${{ secrets.DEEPSEEK_KEY }}
+          ANTHROPIC.API_BASE: https://api.deepseek.com/anthropic
+          # litellm 兜底：缺一同样会返回 "api key invalid"。
+          ANTHROPIC_API_KEY: ${{ secrets.DEEPSEEK_KEY }}
+          ANTHROPIC_API_BASE: https://api.deepseek.com/anthropic
+          GITHUB.USER_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # action 入口读标准的 GITHUB_TOKEN
+          # litellm 不认 [1M] 这类括号后缀，模型一律写裸名。
+          config.model: anthropic/deepseek-flash
+          config.fallback_models: anthropic/deepseek-v4-flash
+          # 1M 上下文档：输入与输出共用窗口，max_model_tokens 给输出留出余量；换成不带 1M 上下文的模型时三项一起改。
+          config.custom_model_max_tokens: 1000000
+          config.max_model_tokens: 850000
+          # 不设则请求不带输出上限；该模型开推理，上限太低时推理会吃光输出，留下空审查。按实际用量计费。
+          config.max_output_tokens: "131072"
+          # 默认 120 s；输出上限高且带推理时，大 PR 单次生成可能超过 120 s，超时同样是「不出内容而 job 报绿」。
+          config.ai_timeout: 300
+          # 必须显式含 synchronize，否则推送更新 PR 时不复审。
+          github_action_config.pr_actions: '["opened", "reopened", "ready_for_review", "synchronize"]'
+          github_action_config.auto_review: "true"
+          github_action_config.auto_describe: "true"
+          github_action_config.auto_improve: "true"
+          github_action_config.enable_output_relevant: "true"

@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
+# SPDX-License-Identifier: MIT
+name: Branch Gate
+
+# PR → dev / prod 的两条必需检查之一（另一条是 ci.yml 的 mcp-gate）。job 名固定为 branch-gate，
+# 永不改名、不加 if:；子 PR（base = feature/*）不受本门禁约束（轻量档的 mcp-gate 另查署名）。
+# 判据都在 scripts/ci-checks.mjs 与 scripts/lib/checks.mjs（单测覆盖），这里只传上下文：
+#   ① 来源分支：dev ← 本仓 feat/* / feature/* / dependabot/*；prod ← 本仓 dev；fork PR 可用任意分支名，
+#      但不得用 dev、prod、feature/*（长期分支名，不能冒充晋升）。
+#   ② 提交：DCO（合并提交免 sign-off，但仍核对身份与署名）、提交信息无 AI 署名与个人路径 / 邮箱；
+#      同仓 PR 的作者与提交者必须是项目身份；fork PR 与 dev → prod 允许外部作者以本人地址签署；
+#      Dependabot 自己开的 PR 里，它的提交免查（正文是 GitHub 生成的上游 release notes）。
+#   ③ 冻结契约：改动 spec/** 或 test/golden/**（含 MCP instructions 快照）时，同一 PR 必须新增
+#      docs/contract-changes/<YYYYMMDD>-<slug>.md（CLAUDE.md §5）。
+#   ④ PR 标题与正文无 AI 署名（不可信文本，只经 env: 传入）。
+# types 含 edited：改了 base、标题或正文都会重跑。
+# 本 workflow 不读任何 secret，只需 contents: read；fork PR（经维护者批准运行）同样可跑。
+on:
+  pull_request:
+    branches: [dev, prod]
+    types: [opened, synchronize, reopened, ready_for_review, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: branch-gate-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash # 显式 bash：GitHub 只在显式指定时带上 -eo pipefail
+
+jobs:
+  branch-gate:
+    name: branch-gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # 看 PR 自己的提交（不是 GitHub 生成的测试合并提交），并且需要 origin/<base>：取 PR head、拉全历史。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      # 检查脚本只用 Node 内置模块，不需要 npm ci。
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      # 后面各步用 !cancelled()：一条失败时其余照样跑完，一次报出全部问题。
+      - name: Source branch
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+        run: node scripts/ci-checks.mjs branch
+      - name: Commits (DCO, attribution, identity)
+        if: ${{ !cancelled() }}
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          HEAD_REF: ${{ github.head_ref }}
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          REPO: ${{ github.repository }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+        run: node scripts/ci-checks.mjs commits
+      - name: Frozen contract guard
+        if: ${{ !cancelled() }}
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: node scripts/ci-checks.mjs frozen
+      - name: PR title and body carry no AI attribution
+        if: ${{ !cancelled() }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s\n\n%s\n' "$PR_TITLE" "$PR_BODY" | node scripts/check-attribution.mjs -

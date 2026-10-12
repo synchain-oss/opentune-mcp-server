@@ -6,6 +6,7 @@
 // tool output go to stderr. Exits 1 if any check fails.
 //
 // Usage: node scripts/gates.mjs [--base <ref>] [--only <names>] [--allow-external-authors]
+//                               [--allow-dependabot]
 //   --base   branch the current branch will be merged into; the commits in <ref>..HEAD are
 //            checked for attribution, sign-off and identity (default: origin/feature/v1)
 //   --only   comma-separated, case-insensitive substrings of check names; runs just those checks
@@ -14,6 +15,9 @@
 //            accept commits authored by outside contributors (signed off with their own
 //            address). Without it every author and committer must be a project address, which
 //            is the rule for this repository's own branches.
+//   --allow-dependabot
+//            skip the commits Dependabot made (its pull requests, and dev's history once they are
+//            merged); CI decides when this applies (scripts/ci-checks.mjs scope).
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -305,7 +309,7 @@ async function privacy() {
   );
 }
 
-async function attribution(base, allowExternalAuthors) {
+async function attribution(base, allowExternalAuthors, allowDependabot) {
   // 1. The checker and its pattern list are byte-identical copies of the maintainer's canonical
   //    files; the pinned digests detect any local edit.
   const pinned = parseSha256File(await fs.readFile(path.join(ROOT, PATTERNS_SHA_FILE), 'utf8'));
@@ -321,7 +325,7 @@ async function attribution(base, allowExternalAuthors) {
 
   // 2. Commit messages and identities (author and committer) on this branch.
   const commits = parseGitLog(git(['log', `--format=${GIT_LOG_FORMAT}`, `${base}..HEAD`]));
-  problems.push(...checkCommits(commits, { patterns, allowExternalAuthors }));
+  problems.push(...checkCommits(commits, { patterns, allowExternalAuthors, allowDependabot }));
 
   // 3. Repository text files (the pattern list itself is excluded: it contains the patterns).
   const files = (await repoTextFiles()).filter((f) => f.path !== PATTERNS_FILE);
@@ -331,7 +335,8 @@ async function attribution(base, allowExternalAuthors) {
   }
   return verdict(
     problems,
-    `checker sha256 pinned; ${commits.length} commits in ${base}..HEAD: signed off, ` +
+    `checker sha256 pinned; ${commits.length} commits in ${base}..HEAD` +
+      `${allowDependabot ? " (Dependabot's own commits exempt)" : ''}: signed off, ` +
       `${allowExternalAuthors ? 'project or signed-off outside' : 'project'} author and committer (name and address), ` +
       `no AI attribution or personal data in messages; ${files.length} text files clean`,
   );
@@ -386,13 +391,15 @@ function notYet(reason) {
 // ---------------------------------------------------------------------------------------------
 // main
 
-const USAGE = 'usage: node scripts/gates.mjs [--base <ref>] [--only <names>] [--allow-external-authors]';
+const USAGE =
+  'usage: node scripts/gates.mjs [--base <ref>] [--only <names>] [--allow-external-authors] [--allow-dependabot]';
 
 function parseArgs(argv) {
-  const options = { base: DEFAULT_BASE, only: null, allowExternalAuthors: false };
+  const options = { base: DEFAULT_BASE, only: null, allowExternalAuthors: false, allowDependabot: false };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--base' && argv[i + 1]) options.base = argv[++i];
     else if (argv[i] === '--allow-external-authors') options.allowExternalAuthors = true;
+    else if (argv[i] === '--allow-dependabot') options.allowDependabot = true;
     else if (argv[i] === '--only' && argv[i + 1]) {
       options.only = argv[++i]
         .split(',')
@@ -404,7 +411,7 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  const { base, only, allowExternalAuthors } = parseArgs(process.argv.slice(2));
+  const { base, only, allowExternalAuthors, allowDependabot } = parseArgs(process.argv.slice(2));
   try {
     git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
   } catch {
@@ -429,7 +436,7 @@ async function main() {
     ],
     ['gitleaks', () => gitleaks(base)],
     ['privacy', privacy],
-    ['attribution, sign-off + identity', () => attribution(base, allowExternalAuthors)],
+    ['attribution, sign-off + identity', () => attribution(base, allowExternalAuthors, allowDependabot)],
     ['README en/zh-CN heading outline', readmeParity],
     ['no pull_request_target', pullRequestTarget],
     [
@@ -475,7 +482,8 @@ async function main() {
   const table = [
     `### Local gates: \`${sha}\`${dirty ? ' (with uncommitted changes)' : ''}${partial}`,
     '',
-    `Branch \`${branch}\`, base \`${base}\`${allowExternalAuthors ? ', outside authors allowed' : ''}; ` +
+    `Branch \`${branch}\`, base \`${base}\`${allowExternalAuthors ? ', outside authors allowed' : ''}` +
+      `${allowDependabot ? ", Dependabot's commits exempt" : ''}; ` +
       `Node ${process.version}, ${process.platform}-${process.arch}.`,
     '',
     '| Check | Result | Notes |',

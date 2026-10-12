@@ -12,7 +12,9 @@ import { describe, expect, it } from 'vitest';
 
 import { LineClient, isJsonRpcMessage } from '../support/jsonrpc-lines.js';
 
-const BUNDLE = fileURLToPath(new URL('../../dist/opentune-mcp.mjs', import.meta.url));
+// SMOKE_BUNDLE points the same tests at another copy of the bundle: CI's package job installs the
+// packed tarball into an empty directory and runs them against the installed file.
+const BUNDLE = process.env.SMOKE_BUNDLE ?? fileURLToPath(new URL('../../dist/opentune-mcp.mjs', import.meta.url));
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 const EXIT_TIMEOUT_MS = 10_000;
 

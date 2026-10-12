@@ -1,0 +1,33 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
+# SPDX-License-Identifier: MIT
+#
+# 每个生态每月一个分组 PR（open-pull-requests-limit: 1 + 全部依赖进同一个分组），开到默认分支 dev。
+# 依赖升级只在维护者预览与批准后合入。安全更新由仓库的 Dependabot security updates 另行发起。
+# workflow 里的 action 都 pin 了 40 位 SHA，行尾注释写版本号，Dependabot 会连同注释一起更新。
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      github-actions:
+        patterns: ["*"]
+    labels: ["type/deps"]
+    commit-message:
+      prefix: ci
+      include: scope
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: monthly
+    open-pull-requests-limit: 1
+    groups:
+      npm:
+        patterns: ["*"]
+    labels: ["type/deps"]
+    commit-message:
+      prefix: chore
+      include: scope

@@ -75,10 +75,10 @@ npm run gates
 | --- | --- | --- |
 | `ci.yml` | PR → `dev` / `prod`(完整);PR → `feature/**`(轻量:单条 ubuntu 跑 lint / 类型检查 / 单测 / 合规 / 署名);push → `dev`、`feature/**`(完整) | `checks`(ubuntu × Node 22/24 + windows × Node 24;覆盖率在 ubuntu Node 24 上强制)、`protocol`(ubuntu + windows:stdio `tools/list` 对 golden、Inspector CLI `--strict`、契约向量对 mock、场景转录、instructions 快照、token 金丝雀、体积门禁、每个 op / 动作枚举值至少一个成功向量、规范方法闭包)、`package`(bundle 形状;空目录安装 tarball 后 `tools/list`;`mcpb validate`)、`audit`(含 devDependencies)、`compliance`(gitleaks、reuse lint、隐私、禁止新增音频文件、署名)、`docs`(README 中英结构一致、`docs/reference.md` 与生成结果一致、每个错误 kind / 状态 / doctor 检查 ID 都有 TROUBLESHOOTING 锚点);聚合 job `mcp-gate`(`if: always()`,唯一必需的 CI 检查) |
 | `branch-gate.yml` | PR → `dev` / `prod`(含 `edited`) | 分支命名(`dev` ← `feat/*` / `feature/*` / `dependabot/*`;`prod` ← `dev`)、fork 来源规则、DCO(豁免合并提交)、冻结契约守卫(§5)、PR 正文与提交的署名检查、same-repo PR 的提交身份白名单。job 名固定为 `branch-gate`,不加 `if:` |
-| 署名检查 | PR → `feature/**`(含 `edited`) | 只做署名检查,结果汇入 `mcp-gate` |
-| `claude-review.yml` | 所有 same-repo、非草稿 PR(dependabot 经 `allowed_bots`) | 无 `id-token`;action 锁定 release SHA;中文分级;MCP 专项:stdout 污染、schema 兼容、描述即 prompt、路径与覆盖、提示注入、回环与 token、错误可操作性、结果清晰约定;不给 `gh pr comment` 写通道;prompt 末尾带不可信数据声明 |
-| `review-dispatch.yml` | `issue_comment`:`/review`,评论者 ∈ {OWNER, MEMBER, COLLABORATOR} | fork PR 的人工触发 AI review;diff 碰到 `.github/workflows/` 即中止 |
-| `pr-agent.yml` | pull_request | 仓库变量 `ENABLE_PR_AGENT == 'true'` 才运行(默认关);永不设为必需 |
+| 署名检查 | PR → `feature/**`(含 `edited`) | 在 `ci.yml` 轻量档的 `light` job 里检查提交与 PR 标题 / 正文,结果汇入 `mcp-gate` |
+| `claude-review.yml` | 所有 same-repo、非草稿 PR(dependabot 经 `allowed_bots`) | 无 `id-token`;action 锁定 release SHA;中文分级;MCP 专项:stdout 污染、schema 兼容、描述即 prompt、路径与覆盖、提示注入、回环与 token、错误可操作性、结果清晰约定;不给 `gh pr comment` 写通道;PR 含被 git 跟踪的符号链接时拒审;prompt 末尾带不可信数据声明 |
+| `review-dispatch.yml` | `issue_comment`:`/review`,评论者 ∈ {OWNER, MEMBER, COLLABORATOR} | fork PR 的人工触发 AI review;diff 碰到 `.github/workflows/` 即中止;prompt、工具边界与前置步骤与 `claude-review.yml` 逐字一致(单测比对) |
+| `pr-agent.yml` | PR → `dev`(job 级 `if:`) | 仓库变量 `ENABLE_PR_AGENT == 'true'` 才运行(默认关);永不设为必需 |
 | `release.yml` | push tag `v*`;`workflow_dispatch`(在分支上永远 dry-run) | build job(无 `id-token`):tag 与 `package.json` 一致且位于 `prod`、经 `workflow_call` 跑全套 gate、bundle / pack / sha256 / MCPB / `server.json`、生成的正文过署名检查、草稿 Release;publish job(唯一带 `environment: npm-publish` 与 `id-token: write` 的 job):`sha256sum -c`、幂等守卫、`npm publish --provenance`、Release 转正 |
 | `dependabot.yml` | – | actions 每月;npm 每月分组;每个生态同时最多一个分组 PR |
 

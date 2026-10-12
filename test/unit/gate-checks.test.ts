@@ -9,21 +9,29 @@ import { describe, expect, it } from 'vitest';
 
 import {
   BIN,
+  DEPENDABOT_EMAIL,
+  DEPENDABOT_NAME,
   GIT_LOG_FORMAT,
   MAINTAINER_NAME,
   PACKED_FILES,
   WEB_MERGE_COMMITTER_EMAIL,
   WEB_MERGE_COMMITTER_NAME,
+  checkBranchRule,
   checkBundleShape,
   checkCommits,
+  checkFrozenContract,
   checkLockfile,
   checkPackList,
   checkPackageJson,
+  commitCheckScope,
   compareHeadingOutlines,
   findPullRequestTarget,
   findStdoutConsoleCalls,
+  isContractChangeRecord,
+  isDependabotCommit,
   markdownHeadings,
   parseGitLog,
+  parseNameStatus,
   parseSha256File,
   scanPrivacy,
 } from '../../scripts/lib/checks.mjs';
@@ -584,5 +592,245 @@ describe('parseGitLog / checkCommits', () => {
         checkCommits([outsiderCommit({ body: `fix: y (reported by ${third})\n\n${signoff(outsider)}` })], options),
       ).toEqual([`commit aaaaaaaa message:1: e-mail address "${third}" is not a project address`]);
     });
+  });
+
+  describe('Dependabot commits', () => {
+    // What GitHub writes for Dependabot: release notes that quote other people's addresses and an
+    // upstream commit list with a co-author trailer, signed off by the bot's support address.
+    const trailer = join('Co-Authored', '-By: ', 'Cla', 'ude <x', '@', 'example.com>');
+    const bot = (over: Parameters<typeof commit>[0] = {}) =>
+      commit({
+        name: DEPENDABOT_NAME,
+        email: DEPENDABOT_EMAIL,
+        committerName: WEB_MERGE_COMMITTER_NAME,
+        committerEmail: WEB_MERGE_COMMITTER_EMAIL,
+        body: `chore(deps): bump x\n\nRelease notes by ${outsider}\n${trailer}\n\n${signoff(join('support', '@', 'github.com'))}`,
+        ...over,
+      });
+
+    it('recognizes the bot as author, with GitHub or the bot as committer', () => {
+      expect(isDependabotCommit(bot())).toBe(true);
+      expect(isDependabotCommit(bot({ committerName: DEPENDABOT_NAME, committerEmail: DEPENDABOT_EMAIL }))).toBe(true);
+      expect(isDependabotCommit(bot({ email: DEPENDABOT_EMAIL.toUpperCase() }))).toBe(true);
+    });
+
+    it.each([
+      ['another name with the address', { name: 'dependabot' }],
+      ['the name with another address', { email: outsider }],
+      ['a committer that is neither GitHub nor the bot', { committerName: 'DLsnows', committerEmail: PROJECT }],
+      ["GitHub's address under another committer name", { committerName: 'Someone' }],
+    ])('does not recognize %s', (_label, over) => {
+      expect(isDependabotCommit(bot(over))).toBe(false);
+    });
+
+    it('checks them like any other commit unless allowDependabot is set', () => {
+      expect(checkCommits([bot()]).length).toBeGreaterThan(0);
+      expect(checkCommits([bot()], { allowExternalAuthors: true }).length).toBeGreaterThan(0);
+      expect(checkCommits([bot()], { allowDependabot: true })).toEqual([]);
+    });
+
+    it('still checks the other commits in the range when allowDependabot is set', () => {
+      expect(checkCommits([bot(), commit({ body: 'chore: x' })], { allowDependabot: true })).toEqual([
+        'commit aaaaaaaa: [missing-signoff] no Signed-off-by trailer (use git commit -s)',
+      ]);
+      // A commit that only borrows the bot's name is not exempt.
+      expect(checkCommits([bot({ email: outsider })], { allowDependabot: true }).length).toBeGreaterThan(0);
+    });
+  });
+});
+
+describe('commitCheckScope', () => {
+  const repo = 'synchain-oss/opentune-mcp-server';
+  const sha = 'c'.repeat(40);
+
+  it('checks the commits a push added, allowing merged contributions', () => {
+    expect(commitCheckScope({ event: 'push', before: sha, defaultBranch: 'dev', repo })).toMatchObject({
+      base: sha,
+      allowExternalAuthors: true,
+      allowDependabot: true,
+    });
+  });
+
+  it('compares a push that creates a branch with the default branch', () => {
+    expect(commitCheckScope({ event: 'push', before: '0'.repeat(40), defaultBranch: 'dev', repo })).toMatchObject({
+      base: 'origin/dev',
+    });
+    expect(() => commitCheckScope({ event: 'push', before: '0'.repeat(40), repo })).toThrow(/default branch/);
+  });
+
+  it('refuses a push "before" that is not a commit SHA', () => {
+    expect(() => commitCheckScope({ event: 'push', before: '--all', defaultBranch: 'dev', repo })).toThrow(/SHA/);
+  });
+
+  it('holds a pull request from a branch of this repository to project identities', () => {
+    expect(
+      commitCheckScope({ event: 'pull_request', baseRef: 'feature/v1', repo, headRepo: repo, headRef: 'feat/x' }),
+    ).toMatchObject({ base: 'origin/feature/v1', allowExternalAuthors: false, allowDependabot: false });
+  });
+
+  it("exempts Dependabot's commits only in Dependabot's own pull request", () => {
+    const pr = { event: 'pull_request', baseRef: 'dev', repo, headRepo: repo, headRef: 'dependabot/npm_and_yarn/x' };
+    expect(commitCheckScope({ ...pr, prAuthor: DEPENDABOT_NAME })).toMatchObject({
+      allowExternalAuthors: false,
+      allowDependabot: true,
+    });
+    // The branch name or the author alone is not enough.
+    expect(commitCheckScope({ ...pr, prAuthor: 'DLsnows' })).toMatchObject({ allowDependabot: false });
+    expect(commitCheckScope({ ...pr, headRef: 'feat/x', prAuthor: DEPENDABOT_NAME })).toMatchObject({
+      allowDependabot: false,
+    });
+  });
+
+  it('accepts signed-off outside authors from a fork, but never exempts Dependabot there', () => {
+    expect(
+      commitCheckScope({
+        event: 'pull_request',
+        baseRef: 'dev',
+        repo,
+        headRepo: 'someone/fork',
+        headRef: 'dependabot/x',
+        prAuthor: DEPENDABOT_NAME,
+      }),
+    ).toMatchObject({ base: 'origin/dev', allowExternalAuthors: true, allowDependabot: false });
+    // A fork that was deleted has no head repository.
+    expect(commitCheckScope({ event: 'pull_request', baseRef: 'dev', repo, headRef: 'x' })).toMatchObject({
+      allowExternalAuthors: true,
+    });
+  });
+
+  it("treats a pull request into prod as dev's already gated history", () => {
+    expect(
+      commitCheckScope({ event: 'pull_request', baseRef: 'prod', repo, headRepo: repo, headRef: 'dev' }),
+    ).toMatchObject({ base: 'origin/prod', allowExternalAuthors: true, allowDependabot: true });
+  });
+
+  it('rejects other events and pull requests without a base', () => {
+    expect(() => commitCheckScope({ event: 'workflow_dispatch', repo })).toThrow(/unsupported event/);
+    expect(() => commitCheckScope({ event: 'pull_request', repo, headRepo: repo })).toThrow(/base/);
+  });
+});
+
+describe('checkBranchRule', () => {
+  const repo = 'synchain-oss/opentune-mcp-server';
+  const fork = 'someone/opentune-mcp-server';
+
+  it.each(['feat/M02-ci', 'feature/v1', 'dependabot/npm_and_yarn/zod-4.7.0'])(
+    'lets the branch %s of this repository into dev',
+    (headRef) => {
+      expect(checkBranchRule({ baseRef: 'dev', headRef, headRepo: repo, repo })).toEqual([]);
+    },
+  );
+
+  it.each(['main', 'fix/x', 'feat/', 'prod', 'features/x', 'my-feat/x'])(
+    'keeps the branch %s of this repository out of dev',
+    (headRef) => {
+      expect(checkBranchRule({ baseRef: 'dev', headRef, headRepo: repo, repo })).toEqual([
+        `only feat/*, feature/* or dependabot/* branches may be merged into dev (found "${headRef}")`,
+      ]);
+    },
+  );
+
+  it('lets only dev of this repository into prod', () => {
+    expect(checkBranchRule({ baseRef: 'prod', headRef: 'dev', headRepo: repo, repo })).toEqual([]);
+    expect(checkBranchRule({ baseRef: 'prod', headRef: 'feature/v1', headRepo: repo, repo })).toHaveLength(1);
+    expect(checkBranchRule({ baseRef: 'prod', headRef: 'dev', headRepo: fork, repo })).toEqual([
+      `only dev of ${repo} may be merged into prod (found ${fork}:dev)`,
+    ]);
+    expect(checkBranchRule({ baseRef: 'prod', headRef: 'dev', headRepo: '', repo })).toHaveLength(1);
+  });
+
+  it('lets a fork use any branch name except the long-lived ones', () => {
+    expect(checkBranchRule({ baseRef: 'dev', headRef: 'fix-typo', headRepo: fork, repo })).toEqual([]);
+    expect(checkBranchRule({ baseRef: 'dev', headRef: 'main', headRepo: fork, repo })).toEqual([]);
+    for (const headRef of ['dev', 'prod', 'feature/v1', 'feature/v2']) {
+      expect(checkBranchRule({ baseRef: 'dev', headRef, headRepo: fork, repo })).toEqual([
+        `a pull request from a fork must not use the branch name "${headRef}" (reserved for long-lived branches)`,
+      ]);
+    }
+  });
+
+  it('has no rule for other bases', () => {
+    expect(checkBranchRule({ baseRef: 'feature/v1', headRef: 'anything', headRepo: repo, repo })).toEqual([]);
+  });
+});
+
+describe('contract change records and the frozen-contract guard', () => {
+  it.each([
+    ['docs/contract-changes/20261011-otcp-initial.md', true],
+    ['docs/contract-changes/20240229-leap-day.md', true],
+    ['docs/contract-changes/20261011-x.md', true],
+    ['docs/contract-changes/20230229-not-a-leap-year.md', false],
+    ['docs/contract-changes/20261301-bad-month.md', false],
+    ['docs/contract-changes/20261032-bad-day.md', false],
+    ['docs/contract-changes/2026101-short.md', false],
+    ['docs/contract-changes/20261011-Upper.md', false],
+    ['docs/contract-changes/20261011-double--hyphen.md', false],
+    ['docs/contract-changes/20261011-.md', false],
+    ['docs/contract-changes/20261011-slug.txt', false],
+    ['docs/contract-changes/sub/20261011-slug.md', false],
+    ['docs/20261011-slug.md', false],
+  ])('%s is a record: %s', (path, expected) => {
+    expect(isContractChangeRecord(path)).toBe(expected);
+  });
+
+  it('parses git diff --name-status -z output', () => {
+    expect(parseNameStatus('M\0spec/a.md\0A\0docs/b c.md\0R100\0old.md\0new.md\0D\0x\0')).toEqual([
+      { status: 'M', path: 'spec/a.md' },
+      { status: 'A', path: 'docs/b c.md' },
+      { status: 'R', path: 'old.md' },
+      { status: 'R', path: 'new.md' },
+      { status: 'D', path: 'x' },
+    ]);
+    expect(parseNameStatus('')).toEqual([]);
+    expect(() => parseNameStatus('M\0')).toThrow(/malformed/);
+    expect(() => parseNameStatus('spec/a.md\0M\0')).toThrow(/malformed/);
+  });
+
+  const record = { status: 'A', path: 'docs/contract-changes/20261011-add-method.md' };
+
+  it('passes changes that touch no frozen file', () => {
+    expect(
+      checkFrozenContract([
+        { status: 'M', path: 'src/server.ts' },
+        { status: 'A', path: 'specs.md' },
+      ]),
+    ).toEqual([]);
+    expect(checkFrozenContract([])).toEqual([]);
+  });
+
+  it.each([
+    ['M', 'spec/otcp/v1/PROTOCOL.md'],
+    ['A', 'spec/otcp/v1/methods/x.schema.json'],
+    ['D', 'spec/otcp/v1/vectors/y.json'],
+    ['M', 'test/golden/tools-list.json'],
+    ['A', 'test/golden/instructions.txt'],
+  ])('requires a record for %s %s', (status, path) => {
+    expect(checkFrozenContract([{ status, path }])).toEqual([
+      `1 frozen contract file(s) changed without a contract change record: ${path} (${status}); ` +
+        'add docs/contract-changes/<YYYYMMDD>-<slug>.md to this pull request (CLAUDE.md §5)',
+    ]);
+    expect(checkFrozenContract([{ status, path }, record])).toEqual([]);
+  });
+
+  it('counts only a record added in this pull request, with a valid name', () => {
+    const change = { status: 'M', path: 'spec/otcp/v1/PROTOCOL.md' };
+    expect(checkFrozenContract([change, { ...record, status: 'M' }])).toHaveLength(1);
+    expect(checkFrozenContract([change, { ...record, status: 'D' }])).toHaveLength(1);
+    const misnamed = { status: 'A', path: 'docs/contract-changes/notes.md' };
+    expect(checkFrozenContract([change, misnamed])).toEqual([
+      expect.stringMatching(/^1 frozen contract file\(s\) changed/),
+      'docs/contract-changes/notes.md does not count as a contract change record: the name must be ' +
+        'docs/contract-changes/<YYYYMMDD>-<slug>.md (a real date, a lowercase slug)',
+    ]);
+  });
+
+  it('does not treat look-alike paths as frozen', () => {
+    expect(
+      checkFrozenContract([
+        { status: 'M', path: 'docs/spec/x.md' },
+        { status: 'M', path: 'test/goldenfile.json' },
+        { status: 'M', path: 'specification/x.md' },
+      ]),
+    ).toEqual([]);
   });
 });
