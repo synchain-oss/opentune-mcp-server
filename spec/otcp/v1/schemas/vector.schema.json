@@ -15,6 +15,13 @@
     "type": { "enum": ["request", "scenario"] },
     "description": { "type": "string", "minLength": 1 },
     "capability": { "$ref": "common.schema.json#/$defs/capability" },
+    "extraCapabilities": {
+      "description": "Further capabilities the vector needs, for example those of the methods a scenario calls to prepare state. A runner skips the vector unless the instance reports all of them.",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "$ref": "common.schema.json#/$defs/capability" }
+    },
     "since": { "$ref": "common.schema.json#/$defs/protocolVersion" },
     "method": { "$ref": "common.schema.json#/$defs/methodName" },
     "session": {
@@ -58,6 +65,103 @@
       "type": "string",
       "pattern": "^[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z][A-Za-z0-9_]*)?$"
     },
+    "bindName": {
+      "description": "A name that the runner extends with a dot and a member name, so it has no dot of its own.",
+      "type": "string",
+      "pattern": "^[A-Za-z][A-Za-z0-9_]*$"
+    },
+    "givenClip": {
+      "description": "A clip (placement and content) the project contains (vectors/README.md, \"Preconditions\").",
+      "type": "object",
+      "required": [
+        "bind",
+        "trackId",
+        "startTimelineSec",
+        "durationSec",
+        "analysis"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "bind": { "$ref": "#/$defs/bindName" },
+        "trackId": { "$ref": "common.schema.json#/$defs/trackId" },
+        "startTimelineSec": {
+          "$ref": "common.schema.json#/$defs/secNonNegative"
+        },
+        "durationSec": { "type": "number", "exclusiveMinimum": 0 },
+        "analysis": { "enum": ["ready", "running", "failed", "unvoiced"] },
+        "notes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["startContentSec", "endContentSec", "targetMidi"],
+            "additionalProperties": false,
+            "properties": {
+              "startContentSec": {
+                "$ref": "common.schema.json#/$defs/secNonNegative"
+              },
+              "endContentSec": {
+                "$ref": "common.schema.json#/$defs/secNonNegative"
+              },
+              "targetMidi": { "type": "number", "minimum": 0, "maximum": 127 }
+            }
+          }
+        },
+        "key": { "$ref": "common.schema.json#/$defs/keyInput" },
+        "pitchShift": { "$ref": "common.schema.json#/$defs/pitchShift" },
+        "timeGrid": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["bind", "contentSec"],
+            "additionalProperties": false,
+            "properties": {
+              "bind": { "$ref": "#/$defs/name" },
+              "contentSec": {
+                "$ref": "common.schema.json#/$defs/secNonNegative"
+              }
+            }
+          }
+        },
+        "referenceClip": { "$ref": "#/$defs/bindName" }
+      }
+    },
+    "givenFile": {
+      "type": "object",
+      "required": ["bind", "kind"],
+      "additionalProperties": false,
+      "properties": {
+        "bind": { "$ref": "#/$defs/name" },
+        "kind": {
+          "enum": ["audio", "absent", "existing", "noAccess", "undecodable"]
+        },
+        "extension": {
+          "description": "Default .wav.",
+          "type": "string",
+          "pattern": "^\\.[a-z0-9]{1,8}$"
+        },
+        "durationSec": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "if": { "properties": { "kind": { "const": "existing" } } },
+      "then": {
+        "description": "The runner also binds <bind>.next, so bind has no dot of its own.",
+        "properties": { "bind": { "$ref": "#/$defs/bindName" } }
+      }
+    },
+    "givenHistoryEntry": {
+      "type": "object",
+      "required": ["origin", "action", "clip"],
+      "additionalProperties": false,
+      "properties": {
+        "bind": { "$ref": "#/$defs/name" },
+        "origin": { "enum": ["control", "ui"] },
+        "action": {
+          "enum": ["noteEdit", "pitchShift", "clipMove", "clipSplit"]
+        },
+        "clip": { "$ref": "#/$defs/bindName" },
+        "trackDeletedAfter": { "type": "boolean" }
+      }
+    },
     "given": {
       "description": "Preconditions the runner must establish before the vector starts. A runner that cannot establish them reports the vector as skipped with the reason.",
       "type": "object",
@@ -73,7 +177,42 @@
               "bind": { "$ref": "#/$defs/name" },
               "kind": { "$ref": "common.schema.json#/$defs/jobKind" },
               "state": { "$ref": "common.schema.json#/$defs/jobState" },
-              "cancellable": { "type": "boolean" }
+              "cancellable": { "type": "boolean" },
+              "error": {
+                "description": "For a failed or cancelled job: the kind and reason of its error.",
+                "type": "object",
+                "required": ["kind"],
+                "additionalProperties": false,
+                "properties": {
+                  "kind": { "$ref": "common.schema.json#/$defs/errorKind" },
+                  "reason": { "$ref": "common.schema.json#/$defs/reasonCode" }
+                }
+              }
+            }
+          }
+        },
+        "editingScheme": { "enum": ["openTune", "openDyne"] },
+        "dirty": { "type": "boolean" },
+        "clips": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/givenClip" }
+        },
+        "files": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/givenFile" }
+        },
+        "history": {
+          "type": "object",
+          "required": ["undo", "redo"],
+          "additionalProperties": false,
+          "properties": {
+            "undo": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/givenHistoryEntry" }
+            },
+            "redo": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/givenHistoryEntry" }
             }
           }
         },
