@@ -12,7 +12,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { otcpSpec, type OtcpSpec } from '../support/otcp-spec.js';
 import { RunnerConnection } from './connection.js';
-import { InvalidVector, isObject, match, names, resolve, topLevelLiteral, type Bindings } from './matchers.js';
+import { InvalidVector, isObject, match, names, redact, resolve, topLevelLiteral, type Bindings } from './matchers.js';
 import { PreconditionUnavailable, type ContractTarget, type TargetInstance } from './target.js';
 import type { Step, Vector } from './vectors.js';
 
@@ -20,6 +20,11 @@ export interface Outcome {
   readonly id: string;
   readonly result: 'PASS' | 'FAIL' | 'SKIP';
   readonly note: string;
+}
+
+export interface RunOptions {
+  /** How long an expect step waits for its line; 10 s unless given. */
+  readonly readTimeoutMs?: number;
 }
 
 /** The instance did not behave as the vector expects. */
@@ -56,6 +61,7 @@ class Run {
     readonly instance: TargetInstance,
     readonly spec: OtcpSpec,
     readonly bindings: Bindings,
+    readonly readTimeoutMs: number,
   ) {}
 
   async connect(name: string): Promise<RunnerConnection> {
@@ -109,12 +115,13 @@ class Run {
 
   /** Reads the next line on the connection and matches it; throws VectorFailure on a mismatch. */
   async expect(name: string, expected: unknown): Promise<void> {
-    const line = await this.conn(name).readLine(READ_TIMEOUT_MS);
+    const line = await this.conn(name).readLine(this.readTimeoutMs);
     if (line === 'closed')
       throw new VectorFailure(`${name}: the server closed the connection instead of sending a line`);
     if (line === 'timeout') {
+      // Whole, not cut short: runVector redacts the secrets from the note it ends up in.
       throw new VectorFailure(
-        `${name}: no line within ${String(READ_TIMEOUT_MS)} ms; expected ${JSON.stringify(expected)}`,
+        `${name}: no line within ${String(this.readTimeoutMs)} ms; expected ${JSON.stringify(expected)}`,
       );
     }
     const { framingProblem } = this.conn(name);
@@ -124,7 +131,10 @@ class Run {
     try {
       actual = JSON.parse(text);
     } catch {
-      throw new VectorFailure(`${name}: the server sent a line that is not JSON: ${text.slice(0, 200)}`);
+      // Redacted before it is cut short, so that no part of a secret survives the cut.
+      throw new VectorFailure(
+        `${name}: the server sent a line that is not JSON: ${redact(text, this.bindings).slice(0, 200)}`,
+      );
     }
     const problems = match(expected, actual, this.bindings);
     if (isObject(expected) && typeof expected.id === 'number') {
@@ -189,18 +199,22 @@ class Run {
 
   /** Authenticates the connection with the discovery token and verifies the server (section 4.3). */
   async authenticate(name: string): Promise<void> {
-    const { discovery } = this.instance;
+    // By reference, never by value: a failure names the binding and shows neither secret.
     this.sendValue(name, {
       jsonrpc: '2.0',
       id: HELLO_ID,
       method: 'session.hello',
-      params: { token: discovery.token, protocol: RUNNER_PROTOCOL, client: CLIENT },
+      params: { token: { $ref: 'discovery.token' }, protocol: RUNNER_PROTOCOL, client: CLIENT },
     });
     try {
       await this.expect(name, {
         jsonrpc: '2.0',
         id: HELLO_ID,
-        result: { serverProof: discovery.serverProof, instanceId: discovery.instanceId, pid: discovery.pid },
+        result: {
+          serverProof: { $ref: 'discovery.serverProof' },
+          instanceId: { $ref: 'discovery.instanceId' },
+          pid: { $ref: 'discovery.pid' },
+        },
       });
     } catch (error) {
       if (error instanceof VectorFailure)
@@ -277,10 +291,13 @@ function skipReason(vector: Vector, instance: TargetInstance, target: string): s
   return undefined;
 }
 
+/** discovery.* (matching rule 3): the members of the instance's discovery file. */
+const discoveryBindings = (instance: TargetInstance): Bindings =>
+  new Map(Object.entries(instance.discovery).map(([member, value]) => [`discovery.${member}`, value]));
+
 /** discovery.* and runner.wrongToken (matching rule 3), plus the names `given` bound. */
 function initialBindings(instance: TargetInstance, given: Readonly<Record<string, unknown>>): Bindings {
-  const bindings: Bindings = new Map(Object.entries(given));
-  for (const [member, value] of Object.entries(instance.discovery)) bindings.set(`discovery.${member}`, value);
+  const bindings: Bindings = new Map([...Object.entries(given), ...discoveryBindings(instance)]);
   const token = instance.discovery.token;
   if (typeof token === 'string' && token.length % 2 === 0) {
     let wrong = randomBytes(token.length / 2).toString('hex');
@@ -322,10 +339,21 @@ async function runSteps(vector: Vector, run: Run): Promise<void> {
 }
 
 /** Runs one vector against a fresh instance of the target. Never throws. */
-export async function runVector(vector: Vector, target: ContractTarget, spec = otcpSpec()): Promise<Outcome> {
-  const outcome = (result: Outcome['result'], note: string): Outcome => ({ id: vector.id, result, note });
+export async function runVector(
+  vector: Vector,
+  target: ContractTarget,
+  spec = otcpSpec(),
+  options: RunOptions = {},
+): Promise<Outcome> {
   let instance: TargetInstance | undefined;
   let run: Run | undefined;
+  // The note reaches test errors, the PASS / FAIL table and CI logs. Whatever the instance sent,
+  // the token and the server proof of its discovery file never appear in it (section 4.5 rule 2).
+  const outcome = (result: Outcome['result'], note: string): Outcome => ({
+    id: vector.id,
+    result,
+    note: instance === undefined ? note : redact(note, discoveryBindings(instance)),
+  });
   try {
     instance = await target.open();
     // Read as a client reads it: members this version defines, others allowed (section 5.4 rule 4).
@@ -355,7 +383,7 @@ export async function runVector(vector: Vector, target: ContractTarget, spec = o
       else throw new InvalidVector(`$ref to ${name}, which nothing binds`);
     }
 
-    run = new Run(instance, spec, bindings);
+    run = new Run(instance, spec, bindings, options.readTimeoutMs ?? READ_TIMEOUT_MS);
     await run.connect('main');
     if (vector.session === 'authenticated') await run.authenticate('main');
     run.markStep();

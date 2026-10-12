@@ -16,8 +16,28 @@ const ANY_TYPES = new Set(['string', 'number', 'integer', 'boolean', 'object', '
 export const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-const show = (value: unknown): string => {
-  const text = value === undefined ? 'nothing' : JSON.stringify(value);
+/**
+ * Bindings whose values never appear in the runner's output: the token and the server proof may
+ * appear nowhere but in the discovery file and session.hello (PROTOCOL.md section 4.5 rule 2).
+ */
+export const SECRET_NAMES: ReadonlySet<string> = new Set(['discovery.token', 'discovery.serverProof']);
+
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** The text with every occurrence of a secret binding's value, in any letter case, replaced by `<redacted>`. */
+export function redact(text: string, bindings: Bindings): string {
+  let out = text;
+  for (const name of SECRET_NAMES) {
+    const secret = bindings.get(name);
+    if (typeof secret === 'string' && secret !== '')
+      out = out.replace(new RegExp(escapeRegExp(secret), 'gi'), '<redacted>');
+  }
+  return out;
+}
+
+/** A value for a message: redacted before it is cut short, so that no part of a secret survives the cut. */
+const show = (value: unknown, bindings: Bindings = new Map()): string => {
+  const text = value === undefined ? 'nothing' : redact(JSON.stringify(value), bindings);
   return text.length > 120 ? `${text.slice(0, 117)}...` : text;
 };
 
@@ -74,7 +94,10 @@ function matchMatcher(m: Record<string, unknown>, actual: unknown, bindings: Bin
     const name = nameOf(m, '$ref');
     if (!bindings.has(name)) throw new InvalidVector(`$ref to ${name}, which is not bound`);
     if (actual === undefined) return [`${at}: missing`];
-    return jsonEqual(bindings.get(name), actual) ? [] : [`${at}: expected the value of ${name}, got ${show(actual)}`];
+    if (jsonEqual(bindings.get(name), actual)) return [];
+    // Not even a near miss of a secret is shown: it may be another instance's secret.
+    if (SECRET_NAMES.has(name)) return [`${at}: expected the value of ${name}, got a different value (not shown)`];
+    return [`${at}: expected the value of ${name}, got ${show(actual, bindings)}`];
   }
   if ('$any' in m && ('$approx' in m || '$tol' in m)) throw new InvalidVector('$any cannot be combined with $approx');
   if ('$tol' in m && !('$approx' in m)) throw new InvalidVector('$tol needs $approx');
@@ -86,7 +109,7 @@ function matchMatcher(m: Record<string, unknown>, actual: unknown, bindings: Bin
       throw new InvalidVector(`$any takes true or a JSON type, got ${show(type)}`);
     }
     if (typeof type === 'string' && !hasType(actual, type))
-      problems.push(`${at}: expected any ${type}, got ${show(actual)}`);
+      problems.push(`${at}: expected any ${type}, got ${show(actual, bindings)}`);
   }
   if ('$approx' in m) {
     const x = m.$approx;
@@ -94,7 +117,7 @@ function matchMatcher(m: Record<string, unknown>, actual: unknown, bindings: Bin
     if (typeof x !== 'number' || typeof tol !== 'number' || tol < 0)
       throw new InvalidVector('$approx and $tol take numbers');
     if (typeof actual !== 'number' || Math.abs(actual - x) > tol) {
-      problems.push(`${at}: expected ${String(x)} within ${String(tol)}, got ${show(actual)}`);
+      problems.push(`${at}: expected ${String(x)} within ${String(tol)}, got ${show(actual, bindings)}`);
     }
   }
   if ('$capture' in m) {
@@ -113,19 +136,21 @@ export function match(expected: unknown, actual: unknown, bindings: Bindings, at
   if (isMatcher(expected)) return matchMatcher(expected, actual, bindings, at);
   if (actual === undefined) return [`${at}: missing`];
   if (Array.isArray(expected)) {
-    if (!Array.isArray(actual)) return [`${at}: expected an array, got ${show(actual)}`];
+    if (!Array.isArray(actual)) return [`${at}: expected an array, got ${show(actual, bindings)}`];
     if (actual.length !== expected.length) {
       return [`${at}: expected ${String(expected.length)} elements, got ${String(actual.length)}`];
     }
     return expected.flatMap((e, i) => match(e, actual[i], bindings, `${at}[${String(i)}]`));
   }
   if (isObject(expected)) {
-    if (!isObject(actual)) return [`${at}: expected an object, got ${show(actual)}`];
+    if (!isObject(actual)) return [`${at}: expected an object, got ${show(actual, bindings)}`];
     return Object.entries(expected).flatMap(([k, e]) =>
       match(e, Object.hasOwn(actual, k) ? actual[k] : undefined, bindings, `${at}.${k}`),
     );
   }
-  return jsonEqual(expected, actual) ? [] : [`${at}: expected ${show(expected)}, got ${show(actual)}`];
+  return jsonEqual(expected, actual)
+    ? []
+    : [`${at}: expected ${show(expected, bindings)}, got ${show(actual, bindings)}`];
 }
 
 /** A value to send with its `$ref` matchers replaced by the bound values. Other matchers are invalid there. */

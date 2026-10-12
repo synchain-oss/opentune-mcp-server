@@ -3,7 +3,11 @@
 
 // The contract-vector runner itself: matchers on both sides of the line, the id-literal reader,
 // and whole vectors against the mock, unchanged (PASS), with a planted wrong expectation (FAIL)
-// and from an area the mock does not implement (SKIP, never PASS).
+// and from an area the mock does not implement (SKIP, never PASS). Failure notes never show the
+// token or the server proof, whatever the instance sends.
+
+import { randomBytes } from 'node:crypto';
+import net from 'node:net';
 
 import { describe, expect, it } from 'vitest';
 
@@ -18,9 +22,69 @@ import {
 } from '../contract/matchers.js';
 import { mockTarget } from '../contract/mock-target.js';
 import { runVector } from '../contract/runner.js';
+import type { ContractTarget } from '../contract/target.js';
 import { loadVectors, type Vector } from '../contract/vectors.js';
 
 const bound = (entries: Record<string, unknown> = {}): Bindings => new Map(Object.entries(entries));
+
+interface Secrets {
+  readonly token: string;
+  readonly serverProof: string;
+}
+
+/** Fresh secrets of the discovery file's form; the token starts with a letter so it can pose as a reason code. */
+const secrets = (): Secrets => ({
+  token: `a${randomBytes(32).toString('hex').slice(1)}`,
+  serverProof: randomBytes(16).toString('hex'),
+});
+
+/** None of the values is in the text, not even the start of one, which is what a cut leaves. */
+const expectNoneOf = (text: string, ...values: string[]) => {
+  for (const value of values) expect(text).not.toContain(value.slice(0, 12));
+};
+
+/**
+ * An instance other than the one its discovery file names: the file is a mock's with the given
+ * secrets, but its port is a server of the test's own. That server answers the first line it
+ * receives, the runner's session.hello, with what `reply` returns for its id, or never answers.
+ */
+function impostor(fileSecrets: Secrets, reply?: (id: unknown) => string): ContractTarget {
+  return {
+    name: 'impostor',
+    async open() {
+      const instance = await mockTarget().open();
+      const sockets = new Set<net.Socket>();
+      const server = net.createServer((socket) => {
+        sockets.add(socket);
+        socket.on('error', () => undefined);
+        let received = '';
+        socket.on('data', (chunk: Buffer) => {
+          if (received.includes('\n')) return;
+          received += chunk.toString('utf8');
+          const end = received.indexOf('\n');
+          if (end === -1 || reply === undefined) return;
+          socket.write(`${reply((JSON.parse(received.slice(0, end)) as { id: unknown }).id)}\n`);
+        });
+      });
+      await new Promise<void>((done) => {
+        server.listen({ host: '127.0.0.1', port: 0 }, done);
+      });
+      return {
+        ...instance,
+        discovery: { ...instance.discovery, ...fileSecrets, port: (server.address() as net.AddressInfo).port },
+        async close() {
+          for (const socket of sockets) socket.destroy();
+          await new Promise<void>((done) => {
+            server.close(() => {
+              done();
+            });
+          });
+          await instance.close();
+        },
+      };
+    },
+  };
+}
 
 describe('match', () => {
   it('matches objects as subsets and arrays element by element', () => {
@@ -69,6 +133,20 @@ describe('match', () => {
     // A capture whose constraint fails binds nothing.
     expect(match({ $capture: 'n', $any: 'string' }, 5, b)).toHaveLength(1);
     expect(b.has('n')).toBe(false);
+  });
+
+  it('never shows the token or the server proof, nor a near miss of them, nor part of one', () => {
+    const { token, serverProof } = secrets();
+    const b = bound({ 'discovery.token': token, 'discovery.serverProof': serverProof });
+    const nearMiss = `${serverProof.slice(0, -1)}${serverProof.endsWith('0') ? '1' : '0'}`;
+    expect(match({ $ref: 'discovery.serverProof' }, nearMiss, b)).toEqual([
+      '$: expected the value of discovery.serverProof, got a different value (not shown)',
+    ]);
+    expect(match({ id: 'x' }, { id: token.toUpperCase() }, b)).toEqual(['$.id: expected "x", got "<redacted>"']);
+    // Long enough to be cut short, with the token across the cut.
+    const problems = match('x', `${'y'.repeat(100)}${token}`, b);
+    expect(problems[0]).toMatch(/<redacted>"$/);
+    expectNoneOf(problems.join(), token);
   });
 
   it('rejects malformed matchers as an invalid vector', () => {
@@ -182,5 +260,72 @@ describe('runVector against the mock', () => {
     const planted = vector('job/get-running');
     const outcome = await runVector({ ...planted, given: { ...planted.given, dirty: true } }, target);
     expect(outcome).toMatchObject({ result: 'SKIP', note: expect.stringContaining('given.dirty') as unknown });
+  });
+
+  describe("keeps the token and the server proof out of a failed session.hello's note", () => {
+    const helloFailed = /^the runner's own session\.hello failed: main: /;
+
+    it('when the result does not match the discovery file', async () => {
+      const file = secrets();
+      const otherProof = randomBytes(16).toString('hex');
+      // The proof of whichever instance answered, and the file's secrets where they do not belong.
+      const target = impostor(file, (id) =>
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          result: { serverProof: otherProof, instanceId: file.serverProof, pid: file.token },
+        }),
+      );
+      const outcome = await runVector(vector('session/info-ok'), target);
+      expect(outcome.result).toBe('FAIL');
+      expect(outcome.note).toMatch(helloFailed);
+      expect(outcome.note).toContain(
+        '$.result.serverProof: expected the value of discovery.serverProof, got a different value (not shown)',
+      );
+      expect(outcome.note).toContain(
+        '$.result.instanceId: expected the value of discovery.instanceId, got "<redacted>"',
+      );
+      expectNoneOf(outcome.note, file.token, file.serverProof, otherProof);
+    });
+
+    it('when no answer comes in time', async () => {
+      const file = secrets();
+      const outcome = await runVector(vector('session/info-ok'), impostor(file), undefined, { readTimeoutMs: 200 });
+      expect(outcome.result).toBe('FAIL');
+      expect(outcome.note).toMatch(helloFailed);
+      expect(outcome.note).toContain('no line within 200 ms; expected ');
+      expect(outcome.note).toContain('"serverProof":{"$ref":"discovery.serverProof"}');
+      expectNoneOf(outcome.note, file.token, file.serverProof);
+    });
+
+    it('when the answer is not JSON and the token is where the note cuts it', async () => {
+      const file = secrets();
+      const outcome = await runVector(
+        vector('session/info-ok'),
+        impostor(file, () => `${'x'.repeat(180)}${file.token}`),
+      );
+      expect(outcome.note).toMatch(helloFailed);
+      expect(outcome.note).toMatch(/not JSON: x+<redacted>$/);
+      expectNoneOf(outcome.note, file.token);
+    });
+
+    it('when an error echoes the token as its reason', async () => {
+      const file = secrets();
+      const target = impostor(file, (id) =>
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          error: {
+            code: -32001,
+            message: 'AUTH_FAILED',
+            data: { kind: 'AUTH_FAILED', reason: file.token, retryable: false, detail: 'denied', executed: false },
+          },
+        }),
+      );
+      const outcome = await runVector(vector('session/info-ok'), target);
+      expect(outcome.note).toMatch(helloFailed);
+      expect(outcome.note).toContain('reason <redacted> is not registered for AUTH_FAILED');
+      expectNoneOf(outcome.note, file.token);
+    });
   });
 });
