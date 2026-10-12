@@ -470,6 +470,12 @@
       "scope": "UNSUPPORTED",
       "since": "1.0",
       "description": "The audio file has more channels than session.info import.maxChannels."
+    },
+    {
+      "code": "idempotency_key_reused",
+      "scope": "INVALID_ARGUMENT",
+      "since": "1.0",
+      "description": "import.start named the idempotencyKey of a retained import job, but with other params than that job. Nothing was started; use a new key for a different import."
     }
   ]
 }

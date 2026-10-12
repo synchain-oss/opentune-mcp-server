@@ -67,6 +67,7 @@ Matching rules:
    - `runner.wrongToken`: a value generated at run time with the same length as the discovery token, which differs from it. Vectors never contain real or fake secrets.
    - `runner.unknownContentId`, `runner.unknownPlacementId`: handles of valid form, of the instance under test and its current content epoch, that name nothing.
    - `runner.staleContentId`, `runner.stalePlacementId`: handles of valid form whose instance part differs from that of the instance under test.
+   - `runner.lastTrackId`: the `trackId` of the last track slot of the instance under test (the last entry of `project.get` `tracks`).
    - Names that `given` establishes (below).
 4. Where an expected response has a number `id`, the runner also checks how the received line writes it: as a plain integer literal, without a fraction, an exponent or a sign (PROTOCOL.md section 3.3 rule 3). The runner reads the literal from the top-level `id` member of the line. This is the only check of how a value is written; everywhere else numbers match by value.
 
@@ -99,8 +100,9 @@ Each entry of `files` is `{bind, kind, extension, durationSec}`. The runner bind
 
 - `audio`: an existing mono WAV file of `durationSec` seconds with a voiced pitch;
 - `absent`: a path in an existing, writable directory where no file of that name exists;
-- `existing`: an existing file;
-- `noAccess`: a path in a directory that the instance cannot open, so that it cannot determine the identity of a file there (PROTOCOL.md section 20.3).
+- `existing`: an existing file. The runner also binds `<bind>.next` to the path `<stem> (2)<extension>` in the same directory, where `<stem>` is the file name without its extension, and makes sure that no file exists there: the name an export with `ifExists` `rename` writes (PROTOCOL.md section 19 rule 3). For this kind `bind` has no `.` part;
+- `noAccess`: a path in a directory that the instance cannot open, so that it cannot determine the identity of a file there (PROTOCOL.md section 20.3);
+- `undecodable`: an existing file whose content is not audio that OpenTune can decode.
 
 Each entry of `history.undo` and `history.redo` is `{bind, origin, action, clip, trackDeletedAfter}`, oldest first, so the last entry is the top. `origin` is `control` (made through this API) or `ui`; `action` (`noteEdit`, `pitchShift`, `clipMove` or `clipSplit`) was applied to the clip with that `bind`. With `trackDeletedAfter` true, a track before the clip's track was deleted after the entry was recorded, so the clip's track position (its `trackId` in `clips`) is one less than when the entry was recorded. `bind`, for a `control` entry, names its `undoId`. The clips are in the state after the `undo` entries and before the `redo` entries.
 
@@ -129,5 +131,5 @@ A mock used for contract tests SHOULD additionally be deterministic, so that its
 4. Every error vector's kind and reason are registered, and its `code` and `message` follow PROTOCOL.md section 17.
 5. Handle kinds (PROTOCOL.md section 9 rule 1): a `placementId` passed where a `contentId` is expected, and a `contentId` passed where a `placementId` is expected, get `INVALID_ARGUMENT(invalid_params)` (`content/get-notes-handle-kind`, `export/start-handle-kind`).
 6. Every value of the params members `op`, `mode`, `kind` and `layout` of a method with a defined schema is sent by at least one success vector.
-7. Every error kind in a method's `x-otcp.errors` other than the generic ones of `../methods/README.md` (`INVALID_ARGUMENT`, `UNSUPPORTED`, `BUSY`, `TIMEOUT`, `SHUTTING_DOWN` and `INTERNAL`) has a vector in which that method returns it. Every kind in `x-otcp.jobErrors` other than `CANCELLED` and `INTERNAL` has a vector in which a job of the method's job kind ends with it.
-8. Every write method has a success vector whose expected result lists every member of the write envelope (PROTOCOL.md section 14.1), with `revisionDiff`, `undo` and `dirty` written out rather than left to a matcher. Scenarios may expect only some members of a result where it only prepares or captures state (matching rule 1).
+7. Every error kind in a method's `x-otcp.errors` other than the generic ones of `../methods/README.md` (`INVALID_ARGUMENT`, `UNSUPPORTED`, `BUSY`, `TIMEOUT`, `SHUTTING_DOWN` and `INTERNAL`) has a vector in which that method returns it. Every kind in `x-otcp.jobErrors` other than `CANCELLED` and `INTERNAL` has a vector in which a job of the method's job kind ends with it. Where a vector can make a job fail through the protocol, it does so. A failure that no request can bring about, or only after a long wait (for example a change made in the OpenTune UI during an export, which the export lock keeps requests from making, a failing render block, or the export wait of 120 s), is shown with a job that `given.jobs[].error` establishes; such a vector shows only how `job.get` reports the error, and implementations test the behaviour that produces it in their own tests.
+8. Every write method has a success vector whose expected result lists every member of the write envelope (PROTOCOL.md section 14.1), with `revisionDiff`, `undo` and `dirty` written out rather than left to a matcher. An expected job result that is a write envelope is written out in the same way, or left to a matcher as a whole. Other expected results of scenario steps may list only some members (matching rule 1), for example where a step only prepares or captures state.

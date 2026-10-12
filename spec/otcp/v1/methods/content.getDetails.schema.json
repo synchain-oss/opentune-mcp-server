@@ -71,6 +71,7 @@
           "$ref": "../schemas/common.schema.json#/$defs/secNonNegative"
         },
         "key": {
+          "description": "The content's key; null with nullReasons.key not_analyzed until the analysis has determined one.",
           "anyOf": [
             { "$ref": "../schemas/common.schema.json#/$defs/key" },
             { "type": "null" }
@@ -131,6 +132,7 @@
           "additionalProperties": false,
           "properties": {
             "referencePlacementId": {
+              "description": "The placement viaPlacementId has a reference binding to; null when it has none.",
               "anyOf": [
                 { "$ref": "../schemas/common.schema.json#/$defs/placementId" },
                 { "type": "null" }

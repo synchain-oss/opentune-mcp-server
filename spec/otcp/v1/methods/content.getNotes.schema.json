@@ -89,6 +89,7 @@
         },
         "notes": { "type": "array", "items": { "$ref": "#/$defs/note" } },
         "nextCursor": {
+          "description": "Reads the next page; null on the last page.",
           "anyOf": [
             { "$ref": "../schemas/common.schema.json#/$defs/cursor" },
             { "type": "null" }

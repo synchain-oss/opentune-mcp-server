@@ -105,7 +105,7 @@ A minor version MAY only add: methods, optional params members, result members, 
    7. The `id` equals that of a request still in flight on the same session: `INVALID_ARGUMENT(duplicate_id)` with `id` null. Ids are compared by the values of rule 3, so the number `1.0` equals `1`, and a number never equals a string. The response has `id` null so that it cannot be mistaken for the response of the request in flight.
    8. `maxInFlightPerSession` requests are already in flight on the session: `BUSY(request_limit)` (section 3.4).
    9. `method` is not the name of a method defined by the session's protocol version (section 22), whatever the string is, for example `"foo"` or the empty string: `UNSUPPORTED(unknown_method)`. A `method` member that is missing or not a string is case 6.
-   10. The instance does not report the method's capability: `UNSUPPORTED(capability_missing)`. An instance implements every method of every capability it reports, so a defined method that an instance does not implement always gives this error.
+   10. The instance does not report the method's capability: `UNSUPPORTED(capability_missing)`. An instance implements every method of every capability it reports, so a defined method that an instance does not implement always gives this error. The same applies when a member of `params` has a value for which the method's schema names a further capability (`x-otcp.valueCapabilities`, `methods/README.md`) and the instance does not report that capability.
    11. The method is `session.hello`: `INVALID_ARGUMENT(hello_repeated)` (section 4.4).
    12. `params` does not validate against the method's params schema: `INVALID_ARGUMENT(invalid_params)`.
    13. Otherwise the method runs. Its own checks follow, for writes in the order of section 13.1 rule 4.
@@ -429,7 +429,7 @@ A terminal job is retained for at least `jobRetentionMs` (30 minutes) after `fin
 
 ### 12.5 Repeated requests
 
-`export.start` with the same normalized params as an export job that is not terminal returns that job instead of starting a second one (section 19). Other methods start a new job on every call unless their schema says otherwise.
+`export.start` with the same normalized params as an export job that is not terminal returns that job instead of starting a second one (section 19). `import.start` with the `idempotencyKey` of an import job that is still retained returns that job, so that a client can repeat a call whose response it lost without importing the files twice (its schema defines the rule). Other methods start a new job on every call unless their schema says otherwise.
 
 ## 13. Concurrency, busy state and UI priority
 
@@ -589,7 +589,7 @@ Undo entries created through this API use the same kinds of undo actions as the 
 A revert recipe is `{method, params, requiresConsent}` (`common.schema.json#/$defs/revert`): a request that restores the state before the change. `requiresConsent` is optional and defaults to false. A recipe without `requiresConsent: true` is a complete request that restores the state when it is sent unchanged.
 
 1. Whenever a change is not undoable but can be restored (for example the previous key, a track's previous volume, deleting imported clips), the server MUST provide a revert recipe in `undo.revert`.
-2. `revert` is null only when no request of this protocol can restore the state. A not-undoable change that can be neither undone nor reverted MUST carry the warning `IRREVERSIBLE`.
+2. `revert` is null only when no request of this protocol can restore the state. A recipe whose method needs a capability that the instance does not report cannot restore anything there, so on such an instance `revert` is null as well. A not-undoable change that can be neither undone nor reverted MUST carry the warning `IRREVERSIBLE`.
 3. A revert recipe SHOULD carry the expected tokens of the state right after the change, so that it fails with `REVISION_CONFLICT` instead of overwriting later changes.
 4. The `params` of a revert recipe MUST NOT contain any member by which a method takes the end user's consent (section 20.2 rule 3): `confirm`, any member whose name starts with `discard`, and any member that a later version defines for the same purpose. If the method of the recipe needs such consent to restore the state, the recipe carries `requiresConsent: true`. A client MUST NOT send such a recipe until the end user has explicitly agreed to that restoration; only then does the client add the method's consent members itself. A recipe never counts as consent, like any other part of a result.
 5. Rules 1 to 4 apply equally to the revert recipes of side effects (`sideEffects.<name>.revert`, section 14.6).
@@ -597,13 +597,13 @@ A revert recipe is `{method, params, requiresConsent}` (`common.schema.json#/$de
 ### 15.3 edit.undo and edit.redo
 
 1. `edit.undo` and `edit.redo` require `expectedUndoId`: the `undoId` of the entry the client expects on top of the undo (or redo) history.
-2. If the top entry is not that entry (including entries created in the OpenTune UI, which have no `undoId`), the call fails with `UNDO_CONFLICT(top_mismatch)` and changes nothing, unless `force` is true. If the history is empty, it fails with `UNDO_CONFLICT(history_empty)`, also with `force`.
-3. Clients MUST NOT set `force` unless the end user explicitly asked to undo or redo a change that was not made through the client.
+2. If the top entry is not that entry (including an entry created in the OpenTune UI, which has no `undoId` until rule 8 assigns one), the call fails with `UNDO_CONFLICT(top_mismatch)` and changes nothing, unless `force` is true. If the history is empty, it fails with `UNDO_CONFLICT(history_empty)`, also with `force`.
+3. Clients MUST NOT set `force` unless the end user explicitly asked to undo or redo a change that was not made through the client. Once the client has applied such an entry at the end user's request, rule 8 lets it name the entry; it still undoes or redoes the entry again only when the end user asks.
 4. If the top entry is a clip split, merge or delete, the call fails with `UNSUPPORTED(undo_unsafe_build)`, also with `force` (15.4).
 5. If the step changes nothing (`revisionDiff` is empty), the result is a success with `applied: true`, `noOp: true` and the warning `UNDO_NO_EFFECT`. The step is still used up and the project is still marked as changed, as in the OpenTune UI.
 6. An entry recorded through this API before a track was deleted, whose track has since moved, fails with `UNDO_CONFLICT(stale_entry)` unless `force` is true. An entry recorded in the UI before a track was deleted is applied and carries the warning `UNDO_ENTRY_POSSIBLY_STALE`.
 7. Like the UI, the server refreshes derived state after the step; any work this queues is reported in `sideEffects`.
-8. When `edit.undo` or `edit.redo` applies an entry that has no `undoId` (an entry created in the OpenTune UI, applied with `force`), the server assigns it one and reports it in the result's `entry`. The entry keeps that `undoId` while it stays in the history, so the revert recipe (`edit.redo` for an undo, `edit.undo` for a redo) and later calls can name it without `force`.
+8. When `edit.undo` or `edit.redo` applies an entry that has no `undoId` (an entry created in the OpenTune UI, applied with `force`), the server assigns it one and reports it in the result's `entry`; `edit.getHistory` shows it from then on. The entry keeps that `undoId` while it stays in the history, so the revert recipe (`edit.redo` for an undo, `edit.undo` for a redo) can name it without `force`: the recipe only takes back the step the end user asked for, and a recipe must restore the state when it is sent unchanged (section 15.2).
 
 ### 15.4 Known OpenTune behaviours
 
@@ -695,7 +695,7 @@ The value in each error instance is authoritative; for example `NOT_READY(f0_fai
 1. Before creating the job, the server validates `path` (section 20.1).
 2. The server MUST NOT write to a loaded source file or a media file of the current project, whatever `ifExists` says. Whether a target is such a file is decided by file identity (section 20.3), never by comparing path strings. The check is made before the job is created, in which case `export.start` fails with `INVALID_ARGUMENT(target_is_loaded_media)` and no job starts. It is made again for the name actually used immediately before the final rename, in which case the job fails with the same error, the temporary file is deleted and the target is not touched.
 3. The output is moved into place by the final rename of section 20.4, which depends on `ifExists`:
-   - `error`: a rename that never replaces. If it fails because the target exists, the job fails with `ALREADY_EXISTS(target_exists)`. The server SHOULD also fail `export.start` at once with `ALREADY_EXISTS(target_exists)` if the target already exists when the job would be created, so that no rendering is wasted; this early answer never takes the place of the rename's own failure.
+   - `error`: a rename that never replaces. If it fails because the target exists, the job fails with `ALREADY_EXISTS(target_exists)`. The server MUST also fail `export.start` at once with `ALREADY_EXISTS(target_exists)`, and create no job, if the target already exists when the job would be created, so that no rendering is wasted and the client gets the answer at once; this early answer never takes the place of the rename's own failure.
    - `rename`: a rename that never replaces, first to the target path and then, each time it fails because the name exists, to the next of `<stem> (2).wav`, `<stem> (3).wav`, … `<stem> (999).wav`, where `<stem>` is the target's file name without `.wav`. Rule 2 applies to every name before it is tried. If `<stem> (999).wav` exists as well, the job fails with `ALREADY_EXISTS(target_exists)`. The result's `path` is the name that was written.
    - `overwrite`: a rename that replaces an existing target.
 4. The UI and this API share one export lock. While it is held, `export.start` fails with `BUSY(export_in_progress)`.

@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "content/shift-timing-clamped",
   "type": "request",
-  "description": "Shifting h2 by 1.5 s would move it past its neighbour h3 at 3.0 s. As in OpenTune's time tool the move is limited by the minimum spacing to the neighbour; the result reports the requested and the applied position in clamped and with the warning CLAMPED. The applied position depends on the minimum spacing and is matched by type.",
+  "description": "Shifting h2 by 1.5 s would move it past its neighbour h3 at 3.0 s. As in OpenTune's time tool the move is limited by the minimum spacing to the neighbour; the result reports the requested and the applied position in clamped and with the warning CLAMPED. The applied position depends on the minimum spacing; it lies after the old position 2.0 s and before the neighbour at 3.0 s, which the vector checks as 2.5 s with a tolerance of 0.499 s.",
   "capability": "timing.v1",
   "since": "1.0",
   "method": "content.shiftTiming",
@@ -57,7 +57,7 @@
           "fields": {
             "outputSec": {
               "before": { "$approx": 2 },
-              "after": { "$any": "number" },
+              "after": { "$approx": 2.5, "$tol": 0.499 },
               "unit": "sec"
             }
           }
@@ -118,7 +118,7 @@
           "data": {
             "field": "outputSec",
             "requested": { "$approx": 3.5 },
-            "applied": { "$any": "number" }
+            "applied": { "$approx": 2.5, "$tol": 0.499 }
           }
         }
       ],
@@ -127,7 +127,7 @@
         {
           "handleId": { "$ref": "h2" },
           "requestedOutputSec": { "$approx": 3.5 },
-          "appliedOutputSec": { "$any": "number" }
+          "appliedOutputSec": { "$approx": 2.5, "$tol": 0.499 }
         }
       ]
     }

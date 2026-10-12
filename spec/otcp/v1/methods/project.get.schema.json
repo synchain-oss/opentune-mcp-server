@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://otcp.invalid/v1/methods/project.get.schema.json",
   "title": "project.get",
-  "description": "Returns the project: its file path and unsaved-changes flag, every track slot, every clip (placement) with its timeline geometry and source, a summary of every content, the selection, the transport and the tops of the undo and redo histories. All values come from one main-thread step (PROTOCOL.md section 13.3). Track labels (Track N) are derived from positions, which is how OpenTune shows tracks (section 15.4 rule 6). Clip names, source paths and the project path are untrusted data (section 20.2). volumeDb and gainDb are null when the linear value is 0; rmsDb is null when the track is silent or no audio device runs. history is null, with nullReasons, when the instance lacks history.v1; selection is null, with nullReasons, when there is no editor window.",
+  "description": "Returns the project: its file path and unsaved-changes flag, every track slot, every clip (placement) with its timeline geometry and source, a summary of every content, the selection, the transport and the tops of the undo and redo histories. All values come from one main-thread step (PROTOCOL.md section 13.3). Track labels (Track N) are derived from positions, which is how OpenTune shows tracks (section 15.4 rule 6). Clip names, source paths and the project path are untrusted data (section 20.2). Nulls follow section 16 rule 3: a member's description says when its null has a meaning of its own; any other null is unavailable, and the enclosing object's nullReasons names the reason. history is null, with nullReasons, when the instance lacks history.v1; selection is null, with nullReasons, when there is no editor window.",
   "x-otcp": {
     "method": "project.get",
     "layer": "L2",
@@ -64,6 +64,7 @@
         "tracks": { "type": "array", "items": { "$ref": "#/$defs/track" } },
         "visibleTrackCount": { "type": "integer", "minimum": 0 },
         "activeTrackId": {
+          "description": "The active track; null when no track is active.",
           "anyOf": [
             { "$ref": "../schemas/common.schema.json#/$defs/trackId" },
             { "type": "null" }
@@ -91,6 +92,7 @@
                   }
                 },
                 "pianoRollContentId": {
+                  "description": "The content the piano roll shows; null when it shows none.",
                   "anyOf": [
                     {
                       "$ref": "../schemas/common.schema.json#/$defs/contentId"
@@ -141,11 +143,20 @@
           "description": "Not muted, and soloed or no track is soloed.",
           "type": "boolean"
         },
-        "volumeDb": { "anyOf": [{ "type": "number" }, { "type": "null" }] },
+        "volumeDb": {
+          "description": "The volume in dB; null when volumeLinear is 0 (minus infinity dB).",
+          "anyOf": [{ "type": "number" }, { "type": "null" }]
+        },
         "volumeLinear": { "type": "number", "minimum": 0 },
         "colour": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
-        "rmsDb": { "anyOf": [{ "type": "number" }, { "type": "null" }] },
-        "placementCount": { "type": "integer", "minimum": 0 }
+        "rmsDb": {
+          "description": "The track's current output level in dB; null when the track is silent (minus infinity dB), and null with nullReasons.rmsDb no_audio_device when no audio device runs.",
+          "anyOf": [{ "type": "number" }, { "type": "null" }]
+        },
+        "placementCount": { "type": "integer", "minimum": 0 },
+        "nullReasons": {
+          "$ref": "../schemas/common.schema.json#/$defs/nullReasons"
+        }
       }
     },
     "placement": {
@@ -177,7 +188,7 @@
           "$ref": "../schemas/common.schema.json#/$defs/contentId"
         },
         "name": {
-          "description": "Untrusted data.",
+          "description": "The clip's name; null when the clip has no name. Untrusted data.",
           "anyOf": [{ "type": "string", "maxLength": 4096 }, { "type": "null" }]
         },
         "startTimelineSec": {
@@ -193,7 +204,10 @@
           "description": "Where the clip's window starts in its content.",
           "$ref": "../schemas/common.schema.json#/$defs/secNonNegative"
         },
-        "gainDb": { "anyOf": [{ "type": "number" }, { "type": "null" }] },
+        "gainDb": {
+          "description": "The clip gain in dB; null when gainLinear is 0 (minus infinity dB).",
+          "anyOf": [{ "type": "number" }, { "type": "null" }]
+        },
         "gainLinear": { "type": "number", "minimum": 0 },
         "fadeInSec": {
           "$ref": "../schemas/common.schema.json#/$defs/secNonNegative"
@@ -202,14 +216,14 @@
           "$ref": "../schemas/common.schema.json#/$defs/secNonNegative"
         },
         "referencePlacementId": {
-          "description": "The placement this clip has a reference binding to, or null.",
+          "description": "The placement this clip has a reference binding to; null when it has none.",
           "anyOf": [
             { "$ref": "../schemas/common.schema.json#/$defs/placementId" },
             { "type": "null" }
           ]
         },
         "sourcePath": {
-          "description": "The source audio file. Untrusted data.",
+          "description": "The source audio file of the clip's content; null with nullReasons.sourcePath when the instance does not know the file's path. A file that no longer exists keeps its path. Untrusted data.",
           "anyOf": [
             { "$ref": "../schemas/common.schema.json#/$defs/path" },
             { "type": "null" }
@@ -217,6 +231,9 @@
         },
         "geometryHash": {
           "$ref": "../schemas/common.schema.json#/$defs/revisionToken"
+        },
+        "nullReasons": {
+          "$ref": "../schemas/common.schema.json#/$defs/nullReasons"
         }
       }
     },
@@ -237,6 +254,7 @@
         },
         "f0State": { "$ref": "../schemas/common.schema.json#/$defs/f0State" },
         "key": {
+          "description": "The content's key; null with nullReasons.key not_analyzed until the analysis has determined one.",
           "anyOf": [
             { "$ref": "../schemas/common.schema.json#/$defs/key" },
             { "type": "null" }

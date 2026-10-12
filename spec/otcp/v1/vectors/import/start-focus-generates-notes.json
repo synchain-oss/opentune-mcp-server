@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "import/start-focus-generates-notes",
   "type": "scenario",
-  "description": "In the openDyne scheme, the imported clip is selected (focus defaults to true) and OpenTune generates its notes once the analysis has finished, although the request did not ask for notes. The job result reports notesGeneratedBy focus, the side effect notesGenerated and the warning SELECTION_GENERATED_NOTES. The import has no undo entry; its revert recipe deletes the imported clip with arrangement.edit and also covers the generated notes.",
+  "description": "In the openDyne scheme, the imported clip is selected (focus defaults to true) and OpenTune generates its notes once the analysis has finished, although the request did not ask for notes. The job result reports notesGeneratedBy focus, the side effect notesGenerated and the warning SELECTION_GENERATED_NOTES. The import has no undo entry, and the instance does not report arrangement.v1, so no request it accepts can delete the clip: revert is null, also for the side effect, and the result carries IRREVERSIBLE.",
   "capability": "import.v1",
   "extraCapabilities": ["jobs.v1"],
   "since": "1.0",
@@ -10,7 +10,8 @@
   "given": {
     "editingScheme": "openDyne",
     "dirty": false,
-    "files": [{ "bind": "take1", "kind": "audio", "durationSec": 4 }]
+    "files": [{ "bind": "take1", "kind": "audio", "durationSec": 4 }],
+    "withoutCapabilities": ["arrangement.v1"]
   },
   "steps": [
     {
@@ -120,20 +121,14 @@
               "undo": {
                 "undoable": false,
                 "reason": "ui_parity",
-                "revert": {
-                  "method": "arrangement.edit",
-                  "params": { "$any": "object" }
-                }
+                "revert": null
               },
               "dirty": { "before": false, "after": true },
               "ui": { "$any": true },
               "sideEffects": {
                 "notesGenerated": {
                   "contentIds": [{ "$any": "string" }],
-                  "revert": {
-                    "method": "arrangement.edit",
-                    "params": { "$any": "object" }
-                  }
+                  "revert": null
                 }
               },
               "warnings": [
@@ -141,7 +136,8 @@
                   "code": "SELECTION_GENERATED_NOTES",
                   "subject": { "contentId": { "$any": "string" } },
                   "data": null
-                }
+                },
+                { "code": "IRREVERSIBLE", "subject": null, "data": null }
               ],
               "job": null,
               "items": [

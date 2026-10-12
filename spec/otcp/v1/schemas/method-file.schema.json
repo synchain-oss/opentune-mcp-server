@@ -101,6 +101,19 @@
           "minItems": 1,
           "uniqueItems": true,
           "items": { "$ref": "common.schema.json#/$defs/errorKind" }
+        },
+        "valueCapabilities": {
+          "description": "Values of top-level params members that need a capability besides capability: maps the member name to an object that maps each such value to the capability it needs (PROTOCOL.md section 3.3 rule 5 case 10). Absent when no value needs one.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "$ref": "common.schema.json#/$defs/camelName" },
+          "additionalProperties": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "$ref": "common.schema.json#/$defs/capability"
+            }
+          }
         }
       },
       "if": { "properties": { "startsJob": { "type": "string" } } },

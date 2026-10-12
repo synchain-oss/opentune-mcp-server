@@ -132,13 +132,20 @@
       "additionalProperties": false,
       "properties": {
         "bind": { "$ref": "#/$defs/name" },
-        "kind": { "enum": ["audio", "absent", "existing", "noAccess"] },
+        "kind": {
+          "enum": ["audio", "absent", "existing", "noAccess", "undecodable"]
+        },
         "extension": {
           "description": "Default .wav.",
           "type": "string",
           "pattern": "^\\.[a-z0-9]{1,8}$"
         },
         "durationSec": { "type": "number", "exclusiveMinimum": 0 }
+      },
+      "if": { "properties": { "kind": { "const": "existing" } } },
+      "then": {
+        "description": "The runner also binds <bind>.next, so bind has no dot of its own.",
+        "properties": { "bind": { "$ref": "#/$defs/bindName" } }
       }
     },
     "givenHistoryEntry": {

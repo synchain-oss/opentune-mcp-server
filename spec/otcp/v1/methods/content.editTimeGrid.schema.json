@@ -93,20 +93,8 @@
       "unevaluatedProperties": false
     },
     "jobResult": {
-      "type": "object",
-      "allOf": [
-        { "$ref": "../schemas/common.schema.json#/$defs/writeEnvelope" }
-      ],
-      "required": ["clamped"],
-      "properties": {
-        "clamped": {
-          "type": "array",
-          "items": {
-            "$ref": "../schemas/common.schema.json#/$defs/clampedMove"
-          }
-        }
-      },
-      "unevaluatedProperties": false
+      "description": "The result of the timeGridSeed job: the write envelope of the seeding, with the members of result.",
+      "$ref": "#/$defs/result"
     }
   }
 }
