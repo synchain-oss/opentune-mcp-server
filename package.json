@@ -48,6 +48,7 @@
     "test": "vitest run --coverage",
     "test:unit": "vitest run --coverage --project unit",
     "test:stdio": "vitest run --project stdio",
+    "test:contract": "vitest run --project contract",
     "gates": "node scripts/gates.mjs"
   },
   "devDependencies": {
@@ -55,6 +56,7 @@
     "@modelcontextprotocol/server": "2.3.1",
     "@types/node": "22.20.5",
     "@vitest/coverage-v8": "5.0.3",
+    "ajv": "8.20.0",
     "esbuild": "0.28.2",
     "eslint": "10.12.0",
     "globals": "17.13.0",

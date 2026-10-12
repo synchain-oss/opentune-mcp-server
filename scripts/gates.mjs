@@ -93,9 +93,9 @@ function npmCommand(args) {
   return { command: 'npm', args, shell: process.platform === 'win32' };
 }
 
-function npmStreaming(args) {
+function npmStreaming(args, options = {}) {
   const npm = npmCommand(args);
-  return runStreaming(npm.command, npm.args, { shell: npm.shell });
+  return runStreaming(npm.command, npm.args, { shell: npm.shell, ...options });
 }
 
 function npmCapture(args) {
@@ -410,6 +410,28 @@ function reuseLint() {
     : { result: 'FAIL', note: `reuse lint exited with ${result.status ?? 'a signal'}` };
 }
 
+async function contractVectors() {
+  // The contract project runs every vector in spec/otcp/v1/vectors against the test mock and
+  // writes its counts here; the session and job vectors must all pass, the rest may be skipped.
+  const summaryFile = path.join(ROOT, '.cache', 'contract', 'summary.json');
+  await fs.rm(summaryFile, { force: true });
+  const status = npmStreaming(['run', '--silent', 'test:contract'], {
+    env: { ...process.env, OTCP_CONTRACT_SUMMARY: summaryFile },
+  });
+  const summary = JSON.parse(await fs.readFile(summaryFile, 'utf8').catch(() => 'null'));
+  if (summary === null)
+    return { result: 'FAIL', note: `npm run test:contract exited with ${status} and wrote no summary` };
+  const skips = Object.entries(summary.skipReasons)
+    .map(([reason, n]) => `${reason}: ${n}`)
+    .join('; ');
+  const note =
+    `${summary.total} vectors: ${summary.pass} PASS (session/ and job/: ${summary.required.pass} of ` +
+    `${summary.required.total}), ${summary.fail} FAIL${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ` +
+    `${summary.skip} SKIP${skips ? ` (${skips})` : ''}`;
+  const ok = status === 0 && summary.fail === 0 && summary.required.pass === summary.required.total;
+  return { result: ok ? 'PASS' : 'FAIL', note };
+}
+
 function notYet(reason) {
   return () => {
     throw new Skip(reason);
@@ -468,13 +490,10 @@ async function main() {
     ['attribution, sign-off + identity', () => attribution(base, allowExternalAuthors, allowDependabot)],
     ['README en/zh-CN heading outline', readmeParity],
     ['no pull_request_target', pullRequestTarget],
-    [
-      'contract vectors (mock)',
-      notYet('not yet: spec/otcp/v1 has vectors, but there is no mock or OTCP client to run them against'),
-    ],
+    ['contract vectors (mock)', contractVectors],
     ['tools/list size gate', notYet('not yet: no tools are registered')],
-    ['token canary', notYet('not yet: no OTCP client or mock to carry a token')],
-    ['output budget', notYet('not yet: no read tools or mock')],
+    ['token canary', notYet('not yet: no OTCP client or MCP tool output to check for the token')],
+    ['output budget', notYet('not yet: no read tools, and the mock has no project content to read')],
     ['docs consistency', notYet('not yet: no docs/reference.md or TROUBLESHOOTING to compare')],
     ['Inspector CLI --strict', notYet('not yet: no tools to validate')],
     ['reuse lint', reuseLint],

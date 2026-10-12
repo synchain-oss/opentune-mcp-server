@@ -35,6 +35,11 @@ export default defineConfig({
           testTimeout: 30_000,
         },
       },
+      {
+        // Every OTCP vector against the test mock (mock/), over real loopback TCP.
+        extends: true,
+        test: { name: 'contract', include: ['test/contract/**/*.test.ts'], testTimeout: 60_000 },
+      },
     ],
     coverage: {
       provider: 'v8',
