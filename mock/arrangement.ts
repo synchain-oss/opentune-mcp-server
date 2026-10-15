@@ -212,7 +212,8 @@ function planEdits(world: World, ops: readonly Op[]): Plan {
           if (!otherRequested && differs(fitted[other], otherBefore)) {
             warnings.push(
               warning('FADES_RECLAMPED', subjectOf(placement), {
-                [other]: { before: otherBefore, after: fitted[other] },
+                fadeInSec: other === 'fadeInSec' ? { before: otherBefore, after: fitted[other] } : null,
+                fadeOutSec: other === 'fadeOutSec' ? { before: otherBefore, after: fitted[other] } : null,
               }),
             );
           }
@@ -448,7 +449,10 @@ const clipItem = (placement: PlacementRec) => ({
 });
 
 /** The fades a clip had before a split shortened them, so that merging the two parts can put them back. */
-const splitFades = new WeakMap<PlacementRec, { right: PlacementRec; fadeInSec: number; fadeOutSec: number }>();
+const splitFades = new WeakMap<
+  PlacementRec,
+  { right: PlacementRec; fadeInSec: number; fadeOutSec: number; leftDurationSec: number; rightDurationSec: number }
+>();
 
 function split(context: MethodContext, op: Op, dryRun: boolean) {
   const { world } = context;
@@ -535,7 +539,13 @@ function split(context: MethodContext, op: Op, dryRun: boolean) {
     clipInContentSec: where.contentSec,
     fadeOutSec: fadeOut,
   });
-  splitFades.set(left, { right, fadeInSec: placement.fadeInSec, fadeOutSec: placement.fadeOutSec });
+  splitFades.set(left, {
+    right,
+    fadeInSec: placement.fadeInSec,
+    fadeOutSec: placement.fadeOutSec,
+    leftDurationSec: left.durationSec,
+    rightDurationSec: right.durationSec,
+  });
   const original = clipItem(placement);
   world.removePlacement(placement);
   for (const other of world.placements.values()) if (other.reference === placement) other.reference = left;
@@ -598,10 +608,13 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
     );
   }
   const duration = round6(leading.durationSec + trailing.durationSec);
-  // Parts of an earlier split get their original fades back as long as nobody changed the outer ones since.
+  // Parts of an earlier split get their original fades back as long as nobody changed the outer ones or
+  // the length of either part since (a trimmed part no longer fits the fades it had).
   const origin = splitFades.get(leading);
   const restores =
     origin?.right === trailing &&
+    !differs(leading.durationSec, origin.leftDurationSec) &&
+    !differs(trailing.durationSec, origin.rightDurationSec) &&
     !differs(leading.fadeInSec, clampFades(origin.fadeInSec, 0, leading.durationSec).fadeInSec) &&
     !differs(trailing.fadeOutSec, clampFades(0, origin.fadeOutSec, trailing.durationSec).fadeOutSec);
   const mergedFades = restores

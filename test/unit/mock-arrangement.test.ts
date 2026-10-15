@@ -171,10 +171,37 @@ describe('arrangement.edit', () => {
       expectedArrangementRevision: await arrangementRevision(session),
       ops: [{ op: 'setFade', placementId: ids['clip.placementId'], fadeInSec: 3 }],
     });
-    expect(result.warnings).toMatchObject([
-      { code: 'FADES_RECLAMPED', data: { fadeOutSec: { before: 2, after: 0.6 } } },
-    ]);
+    const warnings = result.warnings as { code: string; data: unknown }[];
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]?.code).toBe('FADES_RECLAMPED');
+    // Both keys are present, as in trim and split; the side that was not shortened is null.
+    expect(warnings[0]?.data).toEqual({ fadeInSec: null, fadeOutSec: { before: 2, after: 0.6 } });
     expect(mock.snapshot().placements[0]).toMatchObject({ fadeInSec: 3, fadeOutSec: 0.6 });
+  });
+
+  it('does not give the fades of a split back when a part was trimmed since', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({
+      clips: [clip({ startTimelineSec: 0, durationSec: 4, fadeInSec: 1.5, fadeOutSec: 1.5 })],
+    });
+    const split = await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'split', placementId: ids['clip.placementId'], atTimelineSec: 1 }],
+    });
+    const [left, right] = (field(split, 'idMap') as { to: { placementId: string }[] }[])[0]?.to ?? [];
+    // Trim the end of the right part, so that it is no longer as long as it was when the clip was split.
+    await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'trim', placementId: right?.placementId, edge: 'end', toTimelineSec: 3.5 }],
+    });
+    const merged = await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'merge', leadingPlacementId: left?.placementId, trailingPlacementId: right?.placementId }],
+    });
+    expect(merged.removed).toHaveLength(2);
+    // The fade-in stays as the left part had it (0.9 s), not the 1.5 s of the clip before the split.
+    expect(mock.snapshot().placements).toMatchObject([{ durationSec: 3.5, fadeInSec: 0.9, fadeOutSec: 1.5 }]);
   });
 
   it('needs confirm for a delete, drops the references to deleted clips, and gives no revert', async () => {
