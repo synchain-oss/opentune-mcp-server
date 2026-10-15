@@ -15,6 +15,7 @@ import { OtcpError, fromOtcpError, toolError, type ToolError } from '../errors/t
 import type { Logger } from '../log.js';
 import type { DiscoveryEntry } from '../discovery/file.js';
 import type { ProcessProbe } from '../discovery/process.js';
+import type { LaunchDeps } from '../launch/start.js';
 import type { Json, OtcpSession } from '../otcp/client.js';
 import { missingCapability, selectInstance, type Instances } from '../otcp/instances.js';
 import { MissingTokenError } from '../otcp/tokens.js';
@@ -28,6 +29,8 @@ export interface ToolContext {
   readonly logger: Logger;
   /** Current time in ms since the epoch. */
   readonly now: () => number;
+  /** Starting OpenTune (opentune_launch) and the launch wait that opentune_get_status also uses. */
+  readonly launch: LaunchDeps;
 }
 
 /** A success body starts with a one-sentence summary composed only from trusted text. */

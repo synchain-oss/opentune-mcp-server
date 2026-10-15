@@ -18,6 +18,12 @@ An instance announced itself but no session could be established yet. `reason` s
 seconds. `instance_unverified` (the process at the port is not the instance of the discovery file) and `auth_failed`
 need a restart of OpenTune.
 
+Two reasons come only from `opentune_launch`. `launch_timeout`: the OpenTune it started did not announce its control
+API within 30 seconds. The process keeps running (this server never ends it); check the status again after a few
+seconds instead of starting OpenTune again. `launch_unverified`: an instance announced itself for the start, but its
+discovery file does not carry the launch nonce passed to the process, so this server does not use it. Ask the user
+which OpenTune windows are open.
+
 ### Status PROTOCOL_MISMATCH
 
 OpenTune speaks a control protocol version this server does not support. Update OpenTune or this server so that both
@@ -25,27 +31,38 @@ support protocol major 1.
 
 ### Status STARTING
 
-An OpenTune process started less than 30 seconds ago and has not published its control API yet. Check again shortly;
-if the state turns into `RUNNING_WITHOUT_API`, the build or the start option lacks the control API.
+An OpenTune process started less than 30 seconds ago and has not published its control API yet. With `reason`
+`launch_pending`, it is a process that `opentune_launch` started (`processes` lists its pid); another call of
+`opentune_launch` waits for it instead of starting a second one. Check again shortly; if the state turns into
+`RUNNING_WITHOUT_API`, the build or the start option lacks the control API.
 
 ### Status RUNNING_WITHOUT_API
 
 OpenTune runs, but without the control API: it was started without `--control-api` (or `OPENTUNE_CONTROL_API=1`), or
-the build has no control API. Save your work, quit OpenTune and start an API build with the option. This server never
-closes OpenTune.
+the build has no control API. A process that `opentune_launch` started and that has not announced its control API
+within 30 seconds counts here too. Save your work, quit OpenTune, and start it again with `opentune_launch` (or start
+an API build with the option yourself). `opentune_launch` starts nothing while such a process runs, and this server
+never closes OpenTune.
 
 ### Status NOT_RUNNING
 
-The configured OpenTune build has the control API, but it is not running. Start it with `--control-api`.
+The configured OpenTune build has the control API, but it is not running. `opentune_launch` starts it (see
+[Starting OpenTune](#starting-opentune)); you can also start it yourself with `--control-api`.
+
+With `reason` `launch_exited`, the OpenTune that `opentune_launch` started exited before its control API became
+available. Start it by hand to see what happens, and run `opentune-mcp doctor`.
 
 With `processes: null` and `nullReasons.processes` set to `not_listable` (in this state, `NO_API_BUILD` or
 `NOT_INSTALLED`), the server could not list the running processes, so an OpenTune without the control API may still
-be running.
+be running. `opentune_launch` then starts nothing until the user confirms that no OpenTune runs (see
+[OPENTUNE_NOT_AVAILABLE](#error-opentune_not_available)).
 
 ### Status NO_API_BUILD
 
 `OPENTUNE_MCP_OPENTUNE_PATH` names an executable without an `opentune-control.json` for protocol major 1 next to it
-(`reason`: `manifest_missing`, `manifest_invalid` or `protocol_mismatch`). Configure a build with the control API.
+(`reason`: `manifest_missing`, `manifest_too_large`, `manifest_invalid` or `protocol_mismatch`). The file must be a
+UTF-8 JSON object of at most 8 KiB whose `protocolMajors` lists 1; other members are ignored. Configure a build with
+the control API. `opentune_launch` never starts such an executable.
 
 ### Status NOT_INSTALLED
 
@@ -57,6 +74,23 @@ No OpenTune build with the control API is configured: `OPENTUNE_MCP_OPENTUNE_PAT
 
 The server runs inside the Windows Subsystem for Linux and cannot reach OpenTune on Windows through `127.0.0.1`.
 Configure the MCP client to start the server with Windows Node.js.
+
+## Starting OpenTune
+
+`opentune_launch` starts only the executable in `OPENTUNE_MCP_OPENTUNE_PATH`, and only when the checks of
+[NOT_INSTALLED](#status-not_installed) and [NO_API_BUILD](#status-no_api_build) pass. Its only input is
+`allow_second_instance`; nothing in a tool call changes the executable, its arguments or its environment. It passes
+`--control-api`, a ready file, a random launch nonce and, when `OPENTUNE_MCP_DISCOVERY_DIR` is set, that directory
+(`--control-api-dir=`), and waits up to 30 seconds for the instance whose discovery file carries the nonce. While it
+waits, the folder `launching` in the discovery directory holds `<pid>.json` (the pid, the start time and a hash of the
+nonce, never a token) and the ready file, so that `opentune_get_status` reports [STARTING](#status-starting) and
+repeated or concurrent calls wait for the same start. It starts nothing when an instance with the control API already
+runs (`alreadyRunning`; a second instance needs `allow_second_instance` and the user's explicit consent) or an OpenTune
+without the control API runs. When the server cannot list the running processes, it cannot rule out the latter and
+also starts nothing (error [OPENTUNE_NOT_AVAILABLE](#error-opentune_not_available), `reason`
+`process_list_unavailable`). `allow_second_instance: true` is not idempotent: every call with it starts one more
+instance once the earlier starts are done, so use it only once per consent. It never ends a process, also not after a
+timeout.
 
 ## Errors
 
@@ -149,6 +183,12 @@ Check the status and re-read the state before retrying.
 
 No instance with the control API is running. Check the status and follow its next step.
 
+From `opentune_launch` with `reason` `process_list_unavailable` (and `processes: null`, `nullReasons.processes`
+`not_listable`, as in [NOT_RUNNING](#status-not_running)): the server could not list the running processes, so it
+cannot tell whether an OpenTune without the control API already runs, and starting would open a second instance next
+to it. Nothing was started. Make sure no OpenTune is running; only after the user has confirmed this, call
+`opentune_launch` again with `allow_second_instance: true`. That is the only way past this check.
+
 ### Error MULTIPLE_INSTANCES
 
 Several instances run and no `instance_id` was given. The error lists the instances; ask the user which one to use.
@@ -175,7 +215,10 @@ OpenTune did not answer in time. The request may still run; re-read the state be
 ### Error CONFIG_INVALID
 
 The server's configuration is invalid, for example `OPENTUNE_MCP_DISCOVERY_DIR` or `OPENTUNE_DATA_DIR` is not an
-absolute path, or the discovery directory cannot be read.
+absolute path, or the discovery directory cannot be read (`reason` `discovery_dir`; `opentune_launch` also reports
+it when it cannot create its `launching` folder there). With `reason` `launch_failed`, the executable in
+`OPENTUNE_MCP_OPENTUNE_PATH` passed the checks but the system could not start it; `detail` gives the system's error
+code. Run `opentune-mcp doctor`.
 
 ## Doctor checks
 
@@ -199,7 +242,11 @@ with an `opentune-control.json` next to it.
 
 ### Doctor OT_NO_OFFICIAL_INSTALL
 
-Planned check, not implemented yet: whether an official OpenTune installation is present.
+Whether an official OpenTune installation is present (Windows only): the server reads the uninstall entries in the
+registry, then looks in the usual install folders. Not finding one is a warning, not an error. The installation is
+never started by this server; an OpenTune that `opentune_launch` starts runs with it as working directory, so that a
+build without a models folder of its own finds the installed models. Without an installation the working directory is
+the folder of the configured executable.
 
 ### Doctor OT_VERSION_UNSUPPORTED
 
