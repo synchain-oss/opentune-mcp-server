@@ -388,6 +388,17 @@ describe('reads follow the model', () => {
     expect(log.truncated).toBe(true);
     expect(DEFAULT_NOTE_PARAMS.retuneSpeed).toBeGreaterThan(0);
   });
+
+  it('removes the home directory from log lines written with forward slashes, and on Windows in any case', async () => {
+    const { mock, ok } = await sessions.open();
+    const home = os.homedir();
+    mock.logLine(`opened ${home.replaceAll('\\', '/')}/Music/a.wav`);
+    if (process.platform === 'win32') mock.logLine(`opened ${home.toUpperCase()}\\Music\\b.wav`);
+    const lines = (await ok('app.getLog', { maxLines: 5 })).lines as string[];
+    const opened = lines.filter((line) => line.includes('opened'));
+    expect(opened.length).toBeGreaterThan(0);
+    for (const line of opened) expect(line).toMatch(/opened ~[\\/]Music[\\/][ab]\.wav$/);
+  });
 });
 
 describe('given and the test interface', () => {

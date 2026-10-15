@@ -129,8 +129,7 @@ export function writeDiscoveryFile(dir: string, pid: number, content: unknown): 
   const target = path.join(dir, `${String(pid)}.json`);
   // Temporary names never end in .json, so clients never read a half-written file (rule 4).
   const temp = path.join(dir, `.${String(pid)}.${String(process.hrtime.bigint())}.tmp`);
-  const data = `${JSON.stringify(content)}
-`;
+  const data = `${JSON.stringify(content)}\n`;
   let fd: number | undefined;
   try {
     if (process.platform === 'win32') {

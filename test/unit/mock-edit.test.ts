@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
 import { editHandlers } from '../../mock/edit.js';
-import { JOB_RETENTION_COUNT, JobStore } from '../../mock/jobs.js';
+import { JOB_RETENTION_COUNT, JobStore, oneShot } from '../../mock/jobs.js';
 import { World } from '../../mock/model.js';
 import { SCALES, nearestInScale } from '../../mock/music.js';
 import { MIN_HANDLE_SPACING_SEC, timingHandlers } from '../../mock/timing.js';
@@ -584,7 +584,7 @@ describe('the timeGridSeed job', () => {
       exportLock: false,
       hasCapability: () => true,
       redact: (t) => t,
-      startJob: (kind, work) => jobs.start(kind, work),
+      startJob: (kind, work) => jobs.start({ kind }, oneShot(work)),
     });
     const jobId = String(field(result, 'job', 'jobId'));
     world.contents.delete(content.objectId);
