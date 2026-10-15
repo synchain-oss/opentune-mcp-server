@@ -2,13 +2,15 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "content/get-details-reference-binding",
   "type": "request",
-  "description": "A clip with a reference binding in the openTune scheme: the AUTO button would run reference alignment, not regenerate (autoModes.uiButtonRuns reference). This is the trap a leftover binding sets in the OpenTune UI; content.autoTune never infers its mode from it.",
+  "description": "A clip with a reference binding, on an instance with reference alignment and experimental features on, in the openTune scheme: the AUTO button would run reference alignment, not regenerate (autoModes.uiButtonRuns reference). This is the trap a leftover binding sets in the OpenTune UI; content.autoTune never infers its mode from it.",
   "capability": "read.v1",
+  "extraCapabilities": ["reference.v1"],
   "since": "1.0",
   "method": "content.getDetails",
   "session": "authenticated",
   "given": {
     "editingScheme": "openTune",
+    "preferences": { "experimentalFeatures": true },
     "clips": [
       {
         "bind": "clip",

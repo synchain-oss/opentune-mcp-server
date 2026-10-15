@@ -40,6 +40,8 @@ export interface GivenHistoryEntry {
   readonly action: string;
   readonly clip: string;
   readonly trackDeletedAfter?: boolean;
+  /** A track after the clip's track was deleted after the entry was recorded: the clip did not move. */
+  readonly laterTrackDeletedAfter?: boolean;
 }
 
 export interface GivenState {
@@ -147,10 +149,13 @@ function buildHistory(
     const placement = byBind.get(item.clip);
     if (placement === undefined) throw new Error(`history entry names the clip ${item.clip}, which no clip binds`);
     const info = DESCRIPTIONS[item.action] ?? { description: item.action, innerAction: item.action };
-    const stale = item.trackDeletedAfter === true;
+    // A track before the clip's moved it, so the entry does nothing. A later track did not, but
+    // the server cannot tell that for an entry made in the UI (PROTOCOL.md section 15.3 rule 6).
+    const moved = item.trackDeletedAfter === true;
+    const stale = moved || (item.laterTrackDeletedAfter === true && item.origin === 'ui');
     let undoPatch: Patch | null = null;
     let redoPatch: Patch | null = null;
-    if (!stale && item.action !== 'clipSplit') {
+    if (!moved && item.action !== 'clipSplit') {
       // Walking away from the present: undo entries go back in time, redo entries forward.
       const now = current(placement);
       const there = perturbed(item.action, direction === 'undo' ? 'older' : 'newer', now.snap, now.startTimelineSec);
