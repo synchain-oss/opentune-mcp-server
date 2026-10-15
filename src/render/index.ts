@@ -3,20 +3,23 @@
 
 // Renders the write envelope that OTCP returns (spec/otcp/v1/PROTOCOL.md section 14) as the body
 // of a tool result: a summary, what the OpenTune window shows, a table of the changes, and one
-// line each for warnings, side effects and the undo or revert recipe. OpenTune sends codes and
-// values only; the sentences come from the fixed tables in text.ts, checked by golden snapshots.
-// The full envelope stays in the result next to the rendering.
+// line each for warnings, side effects and the undo or revert recipe, with the tool call that
+// carries out a recipe (revert.ts). OpenTune sends codes and values only; the sentences come from
+// the fixed tables in text.ts, checked by golden snapshots. The full envelope stays in the result
+// next to the rendering.
 
 import { toolError } from '../errors/tool-error.js';
 import type { Json } from '../otcp/client.js';
 import type { Body, Outcome } from '../tools/registry.js';
 import { asList, changeTable, isObject, type ChangeTable } from './changes.js';
+import { restoreCall, revertPlan, revertText, type RestoreCall } from './revert.js';
 import { summarize } from './summary.js';
 import { SIDE_EFFECT_TEXT, WARNING_TEXT, token, undoReasonText } from './text.js';
 import { uiEffects, type UiEffect } from './ui-effects.js';
 
 export type { ChangeTable, TableField, TableRow } from './changes.js';
 export { MAX_TABLE_ROWS } from './changes.js';
+export type { RestoreCall } from './revert.js';
 export type { UiEffect } from './ui-effects.js';
 
 export interface RenderContext {
@@ -46,6 +49,8 @@ export type Line =
       readonly text: string;
       /** The recipe exactly as OpenTune sent it, or null when no request can restore the state. */
       readonly revert: unknown;
+      /** The tool call that carries out the recipe, or null when no tool of this server performs it. */
+      readonly restore: RestoreCall | null;
     };
 
 export interface Rendering {
@@ -67,14 +72,10 @@ function warningLines(envelope: Json): Line[] {
   });
 }
 
-function revertText(revert: unknown): string {
-  const r = isObject(revert) ? revert : null;
-  const method = r === null ? null : token(r.method, 'method');
-  if (r === null) return 'No request of the protocol can restore the previous state.';
-  if (method === null) return 'A revert recipe is given but not in the expected form; see revert.';
-  return r.requiresConsent === true
-    ? `Restore with ${method} and these params, but only after the user explicitly agrees; add the method's consent parameters yourself.`
-    : `Restore with ${method} and these params, sent unchanged.`;
+/** A revert line: what OpenTune sent, the tool call that carries it out, and how. */
+function revertLine(revert: unknown, text: (sentence: string) => string): Line {
+  const plan = revertPlan(revert);
+  return { kind: 'revert', text: text(revertText(plan)), revert, restore: restoreCall(plan) };
 }
 
 function sideEffectLines(envelope: Json): Line[] {
@@ -87,8 +88,7 @@ function sideEffectLines(envelope: Json): Line[] {
     const lines: Line[] = [
       { kind: 'sideEffect', name, text: `${text[0]?.toUpperCase() ?? ''}${text.slice(1)}.`, details, revert },
     ];
-    if (revert !== null)
-      lines.push({ kind: 'revert', text: `${revertText(revert)} (reverts side effect ${label ?? 'above'})`, revert });
+    if (revert !== null) lines.push(revertLine(revert, (s) => `${s} (reverts side effect ${label ?? 'above'})`));
     return lines;
   });
 }
@@ -104,21 +104,14 @@ function undoLines(envelope: Json): Line[] {
         text:
           undoId === null
             ? 'Undoable as one step, but the undo id is not in the expected form.'
-            : `Undoable as one step: undo it with expectedUndoId ${undoId}.`,
+            : `Undoable as one step: undo it with opentune_undo, undo_id ${undoId}.`,
         undoId: undo.undoId ?? null,
         description: undo.description ?? null,
       },
     ];
   }
   if (undo.reason === 'no_op') return [];
-  const revert = undo.revert ?? null;
-  return [
-    {
-      kind: 'revert',
-      text: `Not undoable (${undoReasonText(undo.reason)}). ${revertText(revert)}`,
-      revert,
-    },
-  ];
+  return [revertLine(undo.revert ?? null, (s) => `Not undoable (${undoReasonText(undo.reason)}). ${s}`)];
 }
 
 /** Renders an envelope that has been checked against the OTCP write envelope schema. */

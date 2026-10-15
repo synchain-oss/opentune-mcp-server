@@ -240,7 +240,7 @@
       },
       {
         "kind": "undo",
-        "text": "Undoable as one step: undo it with expectedUndoId u:01234567:3.",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
         "undoId": "u:01234567:3",
         "description": "Pitch shift"
       }

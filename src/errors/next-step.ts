@@ -89,6 +89,24 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'INVALID_ARGUMENT/confirm_required': user(
     'This is destructive. Ask the user to confirm explicitly; only then call again with confirm: true.',
   ),
+  'INVALID_ARGUMENT/target_is_loaded_media': agent(
+    'The export path is a source or project media file, which an export never overwrites. Choose another file name.',
+  ),
+  'INVALID_ARGUMENT/track_capacity': agent(
+    'There are not enough free tracks for this layout. Use fewer files, another layout or a track that has room.',
+  ),
+  'NOT_READY/export_wait_timeout': agent(
+    'Analysis or rendering did not settle in time and nothing was written. Wait for OpenTune to finish, then export again.',
+  ),
+  'ANALYSIS_FAILED/f0_failed': user(
+    'Pitch analysis failed for a clip in this export. Tell the user; only if they agree to export it uncorrected, call again with allow_dry: true.',
+  ),
+  'RENDER_FAILED/render_chunk_failed': user(
+    'OpenTune could not render part of the audio, even after a retry, and wrote nothing. Tell the user; exporting again later may work.',
+  ),
+  'BUSY/export_in_progress': user(
+    'Another export is running in OpenTune (from the window or another client). Wait for it to end, then call again.',
+  ),
   'NOT_FOUND/job_not_found': agent('The job is unknown or expired (finished jobs are kept for 30 minutes).'),
   'NOT_READY/f0_failed': user('Pitch analysis of this clip failed, so it cannot be edited. Tell the user.'),
   'NOT_READY/f0_empty': user('OpenTune found no singing in this clip, so it cannot be edited. Tell the user.'),
@@ -99,6 +117,11 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   ),
   'UNSUPPORTED/capability_missing': user(
     'This OpenTune build lacks the feature (see detail). Ask the user to update to a build that has it.',
+  ),
+  'UNDO_CONFLICT/history_empty': user('There is nothing to undo or redo here. Tell the user.'),
+  'UNSUPPORTED/undo_unsafe_build': user(
+    'This OpenTune build cannot undo or redo the top step safely (a clip split, merge or delete). Tell the user; ' +
+      'they can decide in the OpenTune window. Do not force it.',
   ),
   'UNSUPPORTED/job_not_cancellable': agent(
     'This job cannot be cancelled now; it continues. Follow it with opentune_get_job.',

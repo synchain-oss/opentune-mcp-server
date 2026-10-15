@@ -215,6 +215,1214 @@
     }
   },
   {
+    "name": "opentune_set_clip",
+    "title": "Set OpenTune clip key and pitch shift",
+    "description": "OpenTune (audio vocal pitch editor): sets the key (root and scale) and/or the pitch shift (whole semitones plus cents) of a clip. The key change cannot be undone (as in OpenTune); the result gives the opentune_set_clip call that restores the previous key. The pitch shift is one undo step; it does not transpose the key. With both, two requests run, key first, and the result reports each. Needs the clip_revision as expected_revision; only the key part of it is checked. The result returns the new clip_revision. Setting the current value changes nothing.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clip": {
+          "type": "string",
+          "pattern": "^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...)."
+        },
+        "expected_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "The clip_revision of the clip from opentune_get_project, opentune_get_notes or the last write result for it, passed back unchanged."
+        },
+        "key": {
+          "description": "The clip key to set. Not undoable; the result gives the way back.",
+          "type": "object",
+          "properties": {
+            "root": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 11,
+              "description": "Tonic pitch class: 0 = C, 1 = C sharp ... 11 = B."
+            },
+            "scale": {
+              "type": "string",
+              "enum": [
+                "major",
+                "minor",
+                "chromatic",
+                "harmonicMinor",
+                "dorian",
+                "mixolydian",
+                "pentatonicMajor",
+                "pentatonicMinor"
+              ]
+            }
+          },
+          "required": [
+            "root",
+            "scale"
+          ],
+          "additionalProperties": false
+        },
+        "pitch_shift": {
+          "description": "Pitch shift to set: whole semitones -24..24 plus cents -99..99. Undoable.",
+          "type": "object",
+          "properties": {
+            "semitones": {
+              "type": "integer",
+              "minimum": -24,
+              "maximum": 24
+            },
+            "cents": {
+              "type": "integer",
+              "minimum": -99,
+              "maximum": 99
+            }
+          },
+          "required": [
+            "semitones",
+            "cents"
+          ],
+          "additionalProperties": false
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "clip",
+        "expected_revision"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_autotune_range",
+    "title": "Auto-tune a range of an OpenTune clip",
+    "description": "OpenTune (audio vocal pitch editor): runs AUTO on a clip with an explicit mode. regenerate rebuilds notes in ranges from the sung pitch, snapped to scale; snapNotes moves existing note targets to scale; notesOnly replaces ALL notes, cannot be undone, needs replace_edited_notes true; reference aligns to the reference clip (needs reference.v1). Ranges: source-audio seconds, default whole clip, max 16, one undo step. Unset parameters use generator defaults, not window knobs. retune_speed 0..1: 0 keeps natural movement, 1 sounds mechanical.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clip": {
+          "type": "string",
+          "pattern": "^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...)."
+        },
+        "expected_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "The clip_revision of the clip from opentune_get_project, opentune_get_notes or the last write result for it, passed back unchanged."
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "regenerate",
+            "snapNotes",
+            "notesOnly",
+            "reference"
+          ]
+        },
+        "ranges": {
+          "description": "Source-audio seconds. Default: whole clip.",
+          "minItems": 1,
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from_sec": {
+                "type": "number",
+                "minimum": 0
+              },
+              "to_sec": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "from_sec",
+              "to_sec"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "exclude": {
+          "description": "Source-audio seconds left untouched.",
+          "minItems": 1,
+          "maxItems": 16,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "from_sec": {
+                "type": "number",
+                "minimum": 0
+              },
+              "to_sec": {
+                "type": "number",
+                "minimum": 0
+              }
+            },
+            "required": [
+              "from_sec",
+              "to_sec"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "scale": {
+          "description": "Key to snap to, or \"clip\" for the clip key. Needed by regenerate and snapNotes.",
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "clip"
+            },
+            {
+              "type": "object",
+              "properties": {
+                "root": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 11,
+                  "description": "Tonic pitch class: 0 = C, 1 = C sharp ... 11 = B."
+                },
+                "scale": {
+                  "type": "string",
+                  "enum": [
+                    "major",
+                    "minor",
+                    "chromatic",
+                    "harmonicMinor",
+                    "dorian",
+                    "mixolydian",
+                    "pentatonicMajor",
+                    "pentatonicMinor"
+                  ]
+                }
+              },
+              "required": [
+                "root",
+                "scale"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "retune_speed": {
+          "description": "0 keeps natural pitch movement, 1 is mechanical.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "vibrato_depth": {
+          "description": "Added vibrato; 100 is plus or minus a semitone.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "vibrato_rate_hz": {
+          "type": "number",
+          "minimum": 3,
+          "maximum": 12
+        },
+        "note_split_cents": {
+          "description": "Note-split sensitivity.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 200
+        },
+        "dry_run": {
+          "description": "Predict the changes without applying them.",
+          "type": "boolean"
+        },
+        "replace_edited_notes": {
+          "description": "Only with the explicit consent of the user: lets notesOnly replace all notes, irreversibly.",
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "clip",
+        "expected_revision",
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_edit_notes",
+    "title": "Edit OpenTune notes",
+    "description": "OpenTune (audio vocal pitch editor): edits existing notes of a clip as the piano roll does; never adds or removes notes. ops (1-32, in order, one undo step): setTargetPitch, shiftCents, snapToScale, setParams (retune_speed 0..1: 0 keeps the natural pitch movement, 1 sounds mechanical; vibrato; pitch_drift_scale). Each op selects notes; selections refer to the notes at expected_revision. dry_run previews.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clip": {
+          "type": "string",
+          "pattern": "^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...)."
+        },
+        "expected_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "The clip_revision of the clip from opentune_get_project, opentune_get_notes or the last write result for it, passed back unchanged."
+        },
+        "ops": {
+          "minItems": 1,
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setTargetPitch"
+                  },
+                  "select": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "indices": {
+                            "minItems": 1,
+                            "maxItems": 1000,
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          }
+                        },
+                        "required": [
+                          "indices"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "from_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "to_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "from_sec",
+                          "to_sec"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "all": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "all"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "off_target_cents_over": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1200
+                          },
+                          "from_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "to_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "off_target_cents_over"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "target_midi": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 127
+                  }
+                },
+                "required": [
+                  "op",
+                  "select",
+                  "target_midi"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "shiftCents"
+                  },
+                  "select": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "indices": {
+                            "minItems": 1,
+                            "maxItems": 1000,
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          }
+                        },
+                        "required": [
+                          "indices"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "from_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "to_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "from_sec",
+                          "to_sec"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "all": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "all"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "off_target_cents_over": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1200
+                          },
+                          "from_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "to_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "off_target_cents_over"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "delta_cents": {
+                    "type": "number",
+                    "minimum": -1200,
+                    "maximum": 1200
+                  }
+                },
+                "required": [
+                  "op",
+                  "select",
+                  "delta_cents"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "snapToScale"
+                  },
+                  "select": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "indices": {
+                            "minItems": 1,
+                            "maxItems": 1000,
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          }
+                        },
+                        "required": [
+                          "indices"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "from_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "to_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "from_sec",
+                          "to_sec"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "all": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "all"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "off_target_cents_over": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1200
+                          },
+                          "from_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "to_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "off_target_cents_over"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "scale": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "const": "clip"
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "root": {
+                            "type": "integer",
+                            "minimum": 0,
+                            "maximum": 11,
+                            "description": "Tonic pitch class: 0 = C, 1 = C sharp ... 11 = B."
+                          },
+                          "scale": {
+                            "type": "string",
+                            "enum": [
+                              "major",
+                              "minor",
+                              "chromatic",
+                              "harmonicMinor",
+                              "dorian",
+                              "mixolydian",
+                              "pentatonicMajor",
+                              "pentatonicMinor"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "root",
+                          "scale"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "select",
+                  "scale"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "setParams"
+                  },
+                  "select": {
+                    "anyOf": [
+                      {
+                        "type": "object",
+                        "properties": {
+                          "indices": {
+                            "minItems": 1,
+                            "maxItems": 1000,
+                            "type": "array",
+                            "items": {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            }
+                          }
+                        },
+                        "required": [
+                          "indices"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "from_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "to_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "from_sec",
+                          "to_sec"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "all": {
+                            "type": "boolean",
+                            "const": true
+                          }
+                        },
+                        "required": [
+                          "all"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "object",
+                        "properties": {
+                          "off_target_cents_over": {
+                            "type": "number",
+                            "minimum": 0,
+                            "maximum": 1200
+                          },
+                          "from_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          },
+                          "to_sec": {
+                            "type": "number",
+                            "minimum": 0
+                          }
+                        },
+                        "required": [
+                          "off_target_cents_over"
+                        ],
+                        "additionalProperties": false
+                      }
+                    ]
+                  },
+                  "retune_speed": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1
+                  },
+                  "vibrato_depth": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 100
+                  },
+                  "vibrato_rate_hz": {
+                    "type": "number",
+                    "minimum": 3,
+                    "maximum": 12
+                  },
+                  "pitch_drift_scale": {
+                    "type": "number",
+                    "minimum": -2,
+                    "maximum": 3
+                  }
+                },
+                "required": [
+                  "op",
+                  "select"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "description": "Each op has select. select = {indices:[...]} (from opentune_get_notes), {from_sec,to_sec} (source-audio seconds, overlapping), {all:true}, or {off_target_cents_over:N, from_sec?, to_sec?} (voiced notes whose sung pitch is more than N cents from their target). Every condition is evaluated on the notes at expected_revision, before any op runs, so an earlier op does not change what a later condition selects."
+        },
+        "dry_run": {
+          "description": "Predict the changes without applying them.",
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "clip",
+        "expected_revision",
+        "ops"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_undo",
+    "title": "Undo the top OpenTune step",
+    "description": "OpenTune (audio vocal pitch editor): undoes the step on top of the undo history, but only if it is the step undo_id names; otherwise UNDO_CONFLICT, and then ask the user (the history has changed). Only edits that reported an undo id can be undone. A step that changes nothing still uses up the undo step and marks the project changed (UNDO_NO_EFFECT). Clip split, merge and delete cannot be undone safely in some builds (undo_unsafe_build). The result gives the opentune_redo call that takes this back.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "undo_id": {
+          "type": "string",
+          "pattern": "^u:[0-9a-f]{8}:[1-9][0-9]*$",
+          "description": "The undo id (u:...) of the step you expect on top, from the write result that made it."
+        },
+        "force": {
+          "description": "Only when the user explicitly asked to undo or redo a change that was not made through this server: applies the top step whatever it is. Never set it to get past UNDO_CONFLICT on your own.",
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "undo_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_redo",
+    "title": "Redo the top OpenTune step",
+    "description": "OpenTune (audio vocal pitch editor): redoes the step on top of the redo history, but only if it is the step undo_id names (the id the undo result reported); otherwise UNDO_CONFLICT, and then ask the user. Any edit without an undo entry made after the undo clears the redo history. A step that changes nothing still uses up the redo step (UNDO_NO_EFFECT). The result gives the opentune_undo call that takes this back.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "undo_id": {
+          "type": "string",
+          "pattern": "^u:[0-9a-f]{8}:[1-9][0-9]*$",
+          "description": "The undo id (u:...) of the step you expect on top, from the write result that made it."
+        },
+        "force": {
+          "description": "Only when the user explicitly asked to undo or redo a change that was not made through this server: applies the top step whatever it is. Never set it to get past UNDO_CONFLICT on your own.",
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "undo_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_analyze_pitch",
+    "title": "Analyze OpenTune pitch",
+    "description": "OpenTune (audio vocal pitch editor): measures how far the detected pitch of a clip is from its notes, in cents (detected minus target, positive = sharp). Per note: median deviation, stability (standard deviation), onset and release deviation; notes beyond threshold_cents (default 25) are flagged; notes are grouped into phrases at silences over 0.4 s. detail summary (default, small) gives totals, worst notes, flagged note indexes (each note's index as opentune_get_notes reports it) and clip_revision; phrases and notes are paged. from and to are seconds of the source audio. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clip": {
+          "type": "string",
+          "pattern": "^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...)."
+        },
+        "from": {
+          "description": "Range start in seconds of the source audio (content clock). Give both from and to.",
+          "type": "number",
+          "minimum": 0
+        },
+        "to": {
+          "description": "Range end in seconds of the source audio. Notes overlapping the range.",
+          "type": "number",
+          "minimum": 0
+        },
+        "threshold_cents": {
+          "description": "A note is flagged when its median deviation is larger than this many cents. Default 25.",
+          "type": "number",
+          "minimum": 1,
+          "maximum": 1200
+        },
+        "detail": {
+          "description": "summary (default): totals and worst notes. phrases: one entry per phrase. notes: one per note.",
+          "type": "string",
+          "enum": [
+            "summary",
+            "phrases",
+            "notes"
+          ]
+        },
+        "cursor": {
+          "description": "next_cursor of the previous page (phrases and notes only), passed back unchanged.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "limit": {
+          "description": "Entries per page for phrases and notes, 1 to 200. Default 50; fewer when the page would be large.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "clip"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "opentune_open_audio",
+    "title": "Open audio in OpenTune",
+    "description": "OpenTune (audio vocal pitch editor): imports audio files as new clips, as the window does, and waits up to wait_seconds (default 25, max 30); if the import job has not ended, the result names it for opentune_get_job. Give path or items (absolute paths; quotes, file://, ~ and /mnt/<drive>/ are accepted). layout: single, sequential (end to end) or separate_tracks. Not undoable; the result says how to revert. In the openDyne scheme the focused clip also gets notes (no undo entry). Repeating a call with the same files and target returns the earlier result unless allow_duplicate is true.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "description": "One file to import. Give path or items.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "items": {
+          "description": "Several files, in the order to place them. Give path or items.",
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096
+          }
+        },
+        "layout": {
+          "description": "single (one file), sequential (end to end on one track) or separate_tracks (one track each, from the target track). Default: single for one file, sequential for several.",
+          "type": "string",
+          "enum": [
+            "single",
+            "sequential",
+            "separate_tracks"
+          ]
+        },
+        "track": {
+          "description": "Target track id (0-based position). Default: the active track.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        },
+        "start": {
+          "description": "Timeline start of the first clip in seconds. Default: after the last clip on the track.",
+          "type": "number",
+          "minimum": 0
+        },
+        "new_track": {
+          "description": "Use the first track without clips as the target. Fails when every track has clips. Not with track.",
+          "type": "boolean"
+        },
+        "generate_notes": {
+          "description": "Generate notes once analysis ends. Default false.",
+          "type": "boolean"
+        },
+        "focus": {
+          "description": "Select the last imported clip, as the window does. Default true.",
+          "type": "boolean"
+        },
+        "allow_duplicate": {
+          "description": "Import again even if the same files were just imported to the same target. Default false.",
+          "type": "boolean"
+        },
+        "wait_seconds": {
+          "description": "Seconds to wait for the import to end, 0 to 30. Default 25.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_export_audio",
+    "title": "Export audio from OpenTune",
+    "description": "OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to wait_seconds (default 20, max 30); if the export job has not ended, the result names it for opentune_get_job. kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). Does not change the project.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "clip",
+            "track",
+            "master"
+          ],
+          "description": "What to export: one clip, one track or the whole mix."
+        },
+        "target": {
+          "description": "Which clip or track to export. Not for master.",
+          "type": "object",
+          "properties": {
+            "clip": {
+              "description": "Clip placement id (p:...) from opentune_get_project. For kind clip.",
+              "type": "string",
+              "pattern": "^p:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$"
+            },
+            "track": {
+              "description": "Track id (0-based position). For kind track.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "path": {
+          "description": "Absolute path of the WAV file to write, ending in .wav. Default: <source folder>/<name>.opentune.wav.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "allow_dry": {
+          "description": "Export a clip whose pitch analysis failed uncorrected instead of failing. Only with the user agreeing.",
+          "type": "boolean"
+        },
+        "wait_seconds": {
+          "description": "Seconds to wait for the export to end, 0 to 30. Default 20.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
     "name": "opentune_edit_timing",
     "title": "Edit OpenTune time grid",
     "description": "OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job), shift (handles in a start..end range, output or content clock, by delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed (CLAMPED). Handle ids come from time_grid_handles of the last result of this tool (seed gives them too).",
