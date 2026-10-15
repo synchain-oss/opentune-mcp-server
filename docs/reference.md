@@ -105,7 +105,7 @@ OTCP capabilities: `session.v1`. OTCP methods: `session.hello`, `session.info`.
 
 **Open audio in OpenTune**: changes state, not destructive, not idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): imports audio files as new clips, as the window does, and waits up to wait_seconds (default 25, max 30); if the import job has not ended, the result names it for opentune_get_job. Give path or items (absolute paths; quotes, file://, ~ and /mnt/<drive>/ are accepted). layout: single, sequential (end to end) or separate_tracks. Not undoable; the result says how to revert. In the openDyne scheme the focused clip also gets notes (no undo entry). Repeating a call with the same files and target imports nothing again unless allow_duplicate is true.
+OpenTune (audio vocal pitch editor): imports audio files as new clips, as the window does, and waits up to wait_seconds (default 25, max 30); if the import job has not ended, the result names it for opentune_get_job. Give path or items (absolute paths; quotes, file://, ~ and /mnt/<drive>/ are accepted). layout: single, sequential (end to end) or separate_tracks. Not undoable; the result says how to revert. In the openDyne scheme the focused clip also gets notes (no undo entry). Repeating a call with the same files and target returns the earlier result unless allow_duplicate is true.
 
 OTCP capabilities: `import.v1`, `jobs.v1`. OTCP methods: `import.start`, `job.get`.
 
@@ -127,7 +127,7 @@ OTCP capabilities: `import.v1`, `jobs.v1`. OTCP methods: `import.start`, `job.ge
 
 **Export audio from OpenTune**: changes state, not destructive, not idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to wait_seconds (default 25, max 30); if the export job has not ended, the result names it for opentune_get_job. kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). Does not change the project.
+OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to wait_seconds (default 20, max 30); if the export job has not ended, the result names it for opentune_get_job. kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). Does not change the project.
 
 OTCP capabilities: `export.v1`, `jobs.v1`, `read.v1`. OTCP methods: `export.start`, `project.get`, `job.get`.
 
@@ -137,5 +137,5 @@ OTCP capabilities: `export.v1`, `jobs.v1`, `read.v1`. OTCP methods: `export.star
 | `target` | object | no | Which clip or track to export. Not for master. |
 | `path` | string | no | Absolute path of the WAV file to write, ending in .wav. Default: <source folder>/<name>.opentune.wav. |
 | `allow_dry` | boolean | no | Export a clip whose pitch analysis failed uncorrected instead of failing. Only with the user agreeing. |
-| `wait_seconds` | number, 0 to 30 | no | Seconds to wait for the export to end, 0 to 30. Default 25. |
+| `wait_seconds` | number, 0 to 30 | no | Seconds to wait for the export to end, 0 to 30. Default 20. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |

@@ -217,7 +217,7 @@
   {
     "name": "opentune_open_audio",
     "title": "Open audio in OpenTune",
-    "description": "OpenTune (audio vocal pitch editor): imports audio files as new clips, as the window does, and waits up to wait_seconds (default 25, max 30); if the import job has not ended, the result names it for opentune_get_job. Give path or items (absolute paths; quotes, file://, ~ and /mnt/<drive>/ are accepted). layout: single, sequential (end to end) or separate_tracks. Not undoable; the result says how to revert. In the openDyne scheme the focused clip also gets notes (no undo entry). Repeating a call with the same files and target imports nothing again unless allow_duplicate is true.",
+    "description": "OpenTune (audio vocal pitch editor): imports audio files as new clips, as the window does, and waits up to wait_seconds (default 25, max 30); if the import job has not ended, the result names it for opentune_get_job. Give path or items (absolute paths; quotes, file://, ~ and /mnt/<drive>/ are accepted). layout: single, sequential (end to end) or separate_tracks. Not undoable; the result says how to revert. In the openDyne scheme the focused clip also gets notes (no undo entry). Repeating a call with the same files and target returns the earlier result unless allow_duplicate is true.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -325,7 +325,7 @@
   {
     "name": "opentune_export_audio",
     "title": "Export audio from OpenTune",
-    "description": "OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to wait_seconds (default 25, max 30); if the export job has not ended, the result names it for opentune_get_job. kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). Does not change the project.",
+    "description": "OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to wait_seconds (default 20, max 30); if the export job has not ended, the result names it for opentune_get_job. kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). Does not change the project.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -368,7 +368,7 @@
           "type": "boolean"
         },
         "wait_seconds": {
-          "description": "Seconds to wait for the export to end, 0 to 30. Default 25.",
+          "description": "Seconds to wait for the export to end, 0 to 30. Default 20.",
           "type": "number",
           "minimum": 0,
           "maximum": 30

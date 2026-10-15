@@ -49,6 +49,12 @@ the capabilities `import.v1` or `export.v1`, and `jobs.v1`.
   (clip: its source; track: the source of its first clip; master: the saved project's name, else the first clip). A
   path equal to a source file of a clip is refused before the job starts (`target_is_loaded_media`); OpenTune decides by
   file identity and stays authoritative. When `dryContents` is not empty, the first sentence of the summary says so.
+- **Result clarity.** Clips imported but not analysed (`ANALYSIS_FAILED`, `f0_failed`; not counted as failed) are named
+  right after the first sentence of the import summary. When OpenTune answers an import with a job created before the
+  call (repeated idempotency key), the first sentence says so and points to `allow_duplicate: true`. Exporting an
+  unknown clip or track id gives `NOT_FOUND(unknown_handle)`; an export that has not ended also returns
+  `requestedPath`. The export waits 20 seconds by default (import: 25), so that the longest possible call
+  (read 10 s, start 15 s, wait up to 30 s plus 4 s margin) stays under 60 seconds.
 - **Errors.** `ANALYSIS_FAILED` (suggests `allow_dry` only with the user's agreement), `RENDER_FAILED`,
   `BUSY(export_in_progress)` and `NOT_READY(export_wait_timeout)` carry a next step.
 

@@ -72,6 +72,8 @@ interface ItemFacts {
   readonly failed: number;
   /** Error kinds of the failed items, each checked against its protocol form. */
   readonly kinds: readonly string[];
+  /** Items that were imported but whose pitch analysis failed: in the project, not pitch-editable. */
+  readonly unanalysed: number;
 }
 
 /** Counts and error kinds of the items, or null when the result does not carry them in the expected form. */
@@ -83,12 +85,18 @@ function itemFacts(result: Json): ItemFacts | null {
   const failed = int(counts.failed);
   if (requested === null || imported === null || failed === null) return null;
   const kinds = new Set<string>();
+  let unanalysed = 0;
   for (const item of Array.isArray(result.items) ? result.items : []) {
     const data = isObject(item) && isObject(item.error) && isObject(item.error.data) ? item.error.data : null;
     const kind = data === null ? null : token(data.kind, 'code');
+    // Imported but not analysed: counts.failed does not hold such an item.
+    if (isObject(item) && item.imported === true && kind === 'ANALYSIS_FAILED') {
+      unanalysed += 1;
+      continue;
+    }
     if (kind !== null) kinds.add(kind);
   }
-  return { requested, imported, failed, kinds: [...kinds] };
+  return { requested, imported, failed, kinds: [...kinds], unanalysed };
 }
 
 /** True when OpenTune generated notes for the focused clip that the request did not ask for (openDyne scheme). */
@@ -98,7 +106,22 @@ function notesByFocus(result: Json): boolean {
   );
 }
 
-function finished(result: unknown): Outcome {
+/** Puts `sentence` right after the first sentence of a summary. */
+function afterFirstSentence(summary: string, sentence: string): string {
+  const end = summary.indexOf('. ');
+  return end < 0 ? `${summary} ${sentence}` : `${summary.slice(0, end + 1)} ${sentence}${summary.slice(end + 1)}`;
+}
+
+/** Makes `sentence` the first sentence of a summary that starts with the tool name. */
+function asFirstSentence(summary: string, sentence: string): string {
+  const prefix = `${TOOL}: `;
+  return `${prefix}${sentence} ${summary.startsWith(prefix) ? summary.slice(prefix.length) : summary}`;
+}
+
+const REUSED_SENTENCE =
+  'This is the result of an earlier import of the same files to the same target, not a new import: the project may no longer hold these clips. To import them again, call again with allow_duplicate: true.';
+
+function finished(result: unknown, reused: boolean): Outcome {
   if (!isWriteEnvelope(result)) return writeOutcome(result, { tool: TOOL });
   const body = writeBody(result, { tool: TOOL });
   const facts = itemFacts(result);
@@ -107,6 +130,13 @@ function finished(result: unknown): Outcome {
     summary += ' See items for what happened to each file.';
   } else {
     const why = facts.kinds.length === 0 ? '' : ` (${facts.kinds.join(', ')})`;
+    if (facts.unanalysed > 0) {
+      const one = facts.unanalysed === 1;
+      summary = afterFirstSentence(
+        summary,
+        `${String(facts.unanalysed)} imported clip${one ? '' : 's'} could not be analysed (ANALYSIS_FAILED, f0_failed): ${one ? 'it stays' : 'they stay'} in the project but cannot be pitch-edited for now; see items[].error, and import the file again or ask the user before editing ${one ? 'it' : 'them'}.`,
+      );
+    }
     if (facts.imported === 0) {
       summary = `${TOOL}: no file was imported, nothing in the project changed; ${String(facts.failed)} failed${why}. See items[].error for each file.`;
     } else if (facts.failed > 0) {
@@ -117,6 +147,7 @@ function finished(result: unknown): Outcome {
     summary +=
       ' OpenTune generated notes for the focused clip although none were requested: this is how the openDyne editing scheme works, and there is no undo entry for it.';
   }
+  if (reused) summary = asFirstSentence(summary, REUSED_SENTENCE);
   return { ok: true, body: { ...body, summary } };
 }
 
@@ -152,6 +183,7 @@ export async function openAudio(ctx: ToolContext, args: OpenAudioArgs): Promise<
   const sent: Json = args.allow_duplicate === true ? params : { ...params, idempotencyKey: importKey(params) };
 
   return withInstance(ctx, { instanceId: args.instance_id }, ['import.v1', 'jobs.v1'], async (session) => {
+    const before = ctx.now();
     const { started, job, waitFailed } = await startAndWait(
       ctx,
       session,
@@ -180,7 +212,10 @@ export async function openAudio(ctx: ToolContext, args: OpenAudioArgs): Promise<
         },
       };
     }
-    const outcome = finished(job.result);
+    // OpenTune answers a repeated idempotency key with the job it kept, which was created before this call.
+    const created = job.createdAtMs;
+    const reused = args.allow_duplicate !== true && typeof created === 'number' && created < before;
+    const outcome = finished(job.result, reused);
     return outcome.ok ? { ok: true, body: { ...outcome.body, job: jobRef(job) } } : outcome;
   });
 }
@@ -194,7 +229,7 @@ export const openAudioTool = defineTool({
     'opentune_get_job. Give path or items (absolute paths; quotes, file://, ~ and /mnt/<drive>/ are accepted). ' +
     'layout: single, sequential (end to end) or separate_tracks. Not undoable; the result says how to revert. In the ' +
     'openDyne scheme the focused clip also gets notes (no undo entry). Repeating a call with the same files and ' +
-    'target imports nothing again unless allow_duplicate is true.',
+    'target returns the earlier result unless allow_duplicate is true.',
   inputSchema: z.strictObject({
     path: z.string().min(1).max(4096).optional().describe('One file to import. Give path or items.'),
     items: z

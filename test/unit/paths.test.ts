@@ -40,6 +40,9 @@ describe('cleanPathInput', () => {
     expect(cleanPathInput('" \'/home/user/a.wav\' "')).toBe('/home/user/a.wav');
     expect(cleanPathInput('\u202aC:\\Music\\a.wav\u200e')).toBe('C:\\Music\\a.wav');
     expect(cleanPathInput('\ufeff/home/user/a.wav')).toBe('/home/user/a.wav');
+    // Marks inside the name belong to it (a zero width joiner in an emoji sequence).
+    expect(cleanPathInput('\u202a"C:\\Music\\a\u200db\u200e.wav"\u200f')).toBe('C:\\Music\\a\u200db\u200e.wav');
+    expect(cleanPathInput(' \u202a C:\\Music\\a.wav ')).toBe('C:\\Music\\a.wav');
   });
 
   it('keeps a quote that has no partner and stops at the nesting limit', () => {

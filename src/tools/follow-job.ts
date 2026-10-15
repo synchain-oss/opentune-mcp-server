@@ -17,9 +17,9 @@ import type { Outcome, ToolContext } from './registry.js';
 export { MAX_WAIT_SECONDS };
 /** The default wait inside one call; below the OTCP limit of 30 s so that the call returns first. */
 export const DEFAULT_WAIT_SECONDS = 25;
-const START_TIMEOUT_MS = 15_000;
+export const START_TIMEOUT_MS = 15_000;
 /** OTCP answers a job.get wait within waitMs + 1000 ms; this side allows a little more. */
-const WAIT_MARGIN_MS = 4000;
+export const WAIT_MARGIN_MS = 4000;
 const TERMINAL = new Set(['succeeded', 'failed', 'cancelled']);
 
 export interface Started {

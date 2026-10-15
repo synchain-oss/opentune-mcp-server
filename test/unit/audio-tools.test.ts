@@ -16,7 +16,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ManualClock } from '../../mock/clock.js';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { cancelJob, getJob } from '../../src/tools/jobs.js';
-import { exportAudio, defaultExportPath, exportAudioTool, type ExportAudioArgs } from '../../src/tools/export-audio.js';
+import {
+  EXPORT_DEFAULT_WAIT_SECONDS,
+  EXPORT_WORST_CASE_MS,
+  exportAudio,
+  defaultExportPath,
+  exportAudioTool,
+  type ExportAudioArgs,
+} from '../../src/tools/export-audio.js';
 import { importKey, openAudio, openAudioTool, type OpenAudioArgs } from '../../src/tools/open-audio.js';
 import { render, type Outcome, type ToolContext } from '../../src/tools/registry.js';
 import { tempDir, testContext } from '../support/context.js';
@@ -128,13 +135,19 @@ describe('opentune_open_audio', () => {
     const { ctx, audio } = await withMock();
     const file = audio('a.wav');
     const first = body(await open(ctx, { path: file }));
+    expect(first.summary).not.toMatch(/earlier import/);
+    await new Promise((resolve) => setTimeout(resolve, 10));
     const again = body(await open(ctx, { path: file }));
     expect((again.job as { jobId: string }).jobId).toBe((first.job as { jobId: string }).jobId);
+    // The old job comes back: the first sentence says so, whatever the project holds now.
+    expect(again.summary).toMatch(/^opentune_open_audio: This is the result of an earlier import of the same files/);
+    expect(again.summary).toMatch(/allow_duplicate: true/);
     expect(await placements(ctx)).toHaveLength(1);
     // Another target is another import.
     body(await open(ctx, { path: file, track: 3 }));
     expect(await placements(ctx)).toHaveLength(2);
-    body(await open(ctx, { path: file, allow_duplicate: true }));
+    const fresh = body(await open(ctx, { path: file, allow_duplicate: true }));
+    expect(fresh.summary).not.toMatch(/earlier import/);
     expect(await placements(ctx)).toHaveLength(3);
   });
 
@@ -205,6 +218,11 @@ describe('opentune_open_audio', () => {
       f0State: 'failed',
       error: { data: { kind: 'ANALYSIS_FAILED' } },
     });
+    // The clip is in the project but cannot be edited: the summary says so right after the first sentence.
+    expect(result.summary).toMatch(/1 imported clip could not be analysed \(ANALYSIS_FAILED, f0_failed\)/);
+    expect(result.summary).toMatch(/cannot be pitch-edited for now/);
+    expect(result.summary).not.toMatch(/ failed \(|were imported/);
+    expect((result.counts as { failed: number }).failed).toBe(0);
   });
 
   it('gives an error with a next step when the layout cannot fit', async () => {
@@ -380,6 +398,28 @@ describe('opentune_export_audio', () => {
     expect(error.detail).toMatch(/pass path/);
   });
 
+  it('reports an unknown clip or track as NOT_FOUND, not as a missing path', async () => {
+    const { ctx } = await setup();
+    const clipError = failure(await exportIt(ctx, { kind: 'clip', target: { clip: 'p:01234567:0:99' } }));
+    expect(clipError).toMatchObject({ kind: 'NOT_FOUND', reason: 'unknown_handle', executed: false });
+    expect(clipError.detail).toMatch(/opentune_get_project/);
+    const trackError = failure(await exportIt(ctx, { kind: 'track', target: { track: 99 } }));
+    expect(trackError).toMatchObject({ kind: 'NOT_FOUND', reason: 'unknown_handle' });
+  });
+
+  it('gives the path the file will be written to also while the export still runs', async () => {
+    const { ctx, placementId } = await setup();
+    const started = body(await exportIt(ctx, { kind: 'clip', target: { clip: placementId }, wait_seconds: 0 }));
+    expect(typeof started.requestedPath).toBe('string');
+    expect(started.requestedPath).toMatch(/.opentune.wav$/);
+  });
+
+  it('keeps the longest possible call under 60 seconds, and says the default wait', () => {
+    expect(EXPORT_WORST_CASE_MS).toBeLessThan(60_000);
+    expect(EXPORT_DEFAULT_WAIT_SECONDS).toBeLessThanOrEqual(25);
+    expect(exportAudioTool.description).toContain(`default ${String(EXPORT_DEFAULT_WAIT_SECONDS)}`);
+  });
+
   it('needs read.v1, which tells where the sources are', async () => {
     const { ctx, files, mock } = await setup();
     mock.given({ withoutCapabilities: ['read.v1'] });
@@ -415,6 +455,10 @@ describe('opentune_export_audio', () => {
     expect(defaultExportPath(project, a({ kind: 'clip', target: { clip: 'p:01234567:0:2' } }), 'posix')).toHaveProperty(
       'problem',
     );
+    expect(
+      defaultExportPath(project, a({ kind: 'clip', target: { clip: 'p:01234567:0:77' } }), 'posix'),
+    ).toHaveProperty('notFound');
+    expect(defaultExportPath(project, a({ kind: 'track', target: { track: 9 } }), 'posix')).toHaveProperty('notFound');
     expect(
       defaultExportPath(
         {

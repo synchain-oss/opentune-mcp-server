@@ -15,8 +15,9 @@ import { pathProblem, resolvePath, splitPath, systemOf, type PathSystem } from '
 import { asList, isObject } from '../render/changes.js';
 import { writeBody, writeOutcome } from '../render/index.js';
 import {
-  DEFAULT_WAIT_SECONDS,
   MAX_WAIT_SECONDS,
+  START_TIMEOUT_MS,
+  WAIT_MARGIN_MS,
   followText,
   isTerminal,
   jobFailure,
@@ -28,7 +29,16 @@ import { jobSentence } from './jobs.js';
 import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
 
 const TOOL = 'opentune_export_audio';
-const READ_TIMEOUT_MS = 15_000;
+/** Reading the project before the export starts. */
+export const READ_TIMEOUT_MS = 10_000;
+/**
+ * Seconds waited for the export job when the call does not say. Together with the read and start
+ * timeouts and the wait margin, even the longest allowed wait stays under the 60 s request limit
+ * that common MCP clients apply (see EXPORT_WORST_CASE_MS).
+ */
+export const EXPORT_DEFAULT_WAIT_SECONDS = 20;
+/** The longest one call can take: project.get, export.start, then the longest wait plus its margin. */
+export const EXPORT_WORST_CASE_MS = READ_TIMEOUT_MS + START_TIMEOUT_MS + MAX_WAIT_SECONDS * 1000 + WAIT_MARGIN_MS;
 /** Appended to the stem of the source file name to make the default export name. */
 const DEFAULT_SUFFIX = '.opentune.wav';
 
@@ -101,8 +111,18 @@ export function defaultExportPath(
   project: Json,
   args: ExportAudioArgs,
   system: PathSystem,
-): { path: string } | { problem: string } {
+): { path: string } | { problem: string } | { notFound: string } {
   const placements = placementsOf(project);
+  // An id that is not in the project any more (or was never) is not a reason to ask for a path.
+  if (args.kind === 'clip' && !placements.some((p) => p.placementId === args.target?.clip)) {
+    return { notFound: 'the clip is not in the project (its id is out of date or wrong)' };
+  }
+  if (args.kind === 'track') {
+    const known = asList(project.tracks).some((t) => isObject(t) && t.trackId === args.target?.track);
+    if (!known && !placements.some((p) => p.trackId === args.target?.track)) {
+      return { notFound: 'the track is not in the project (its id is out of date or wrong)' };
+    }
+  }
   const byStart = (a: Placement, b: Placement) => a.startTimelineSec - b.startTimelineSec;
   const usable = (p: Placement) => p.sourcePath !== null && pathProblem(p.sourcePath, system) === undefined;
   const sourceOf = (): string | null => {
@@ -166,6 +186,15 @@ export async function exportAudio(ctx: ToolContext, args: ExportAudioArgs): Prom
     let target = given;
     if (target === null) {
       const chosen = defaultExportPath(project, args, system);
+      if ('notFound' in chosen) {
+        return {
+          ok: false,
+          error: toolError('NOT_FOUND', {
+            reason: 'unknown_handle',
+            detail: `${chosen.notFound}; read the project again with opentune_get_project and use a current id`,
+          }),
+        };
+      }
       if ('problem' in chosen) return invalid(chosen.problem, 'path_required');
       target = chosen.path;
     }
@@ -193,13 +222,14 @@ export async function exportAudio(ctx: ToolContext, args: ExportAudioArgs): Prom
       session,
       'export.start',
       params,
-      args.wait_seconds ?? DEFAULT_WAIT_SECONDS,
+      args.wait_seconds ?? EXPORT_DEFAULT_WAIT_SECONDS,
     );
     if (job === null || !isTerminal(job)) {
       const outcome = writeOutcome(started, { tool: TOOL });
       if (!outcome.ok) return outcome;
       const note = job === null ? '' : followText(waitFailed);
-      return { ok: true, body: { ...outcome.body, summary: outcome.body.summary + note } };
+      // The agent needs to know where the file will be written, also while the job runs.
+      return { ok: true, body: { ...outcome.body, summary: outcome.body.summary + note, requestedPath: target } };
     }
     const state = jobState(job);
     if (state === 'failed') return jobFailure(job);
@@ -239,7 +269,7 @@ export const exportAudioTool = defineTool({
   title: 'Export audio from OpenTune',
   description:
     'OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to ' +
-    'wait_seconds (default 25, max 30); if the export job has not ended, the result names it for opentune_get_job. ' +
+    'wait_seconds (default 20, max 30); if the export job has not ended, the result names it for opentune_get_job. ' +
     'kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ' +
     'ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the ' +
     'next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). ' +
@@ -276,7 +306,7 @@ export const exportAudioTool = defineTool({
       .min(0)
       .max(MAX_WAIT_SECONDS)
       .optional()
-      .describe('Seconds to wait for the export to end, 0 to 30. Default 25.'),
+      .describe('Seconds to wait for the export to end, 0 to 30. Default 20.'),
     instance_id: z
       .string()
       .regex(/^[0-9a-f]{32}$/)
