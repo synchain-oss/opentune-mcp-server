@@ -859,7 +859,7 @@ export async function addedInHistory(range, { git, headPaths, blobHead }) {
     .split('\x01')
     .slice(1)) {
     // The commit ID is hex of any length (40 for SHA-1, 64 for SHA-256), so it is not sliced by a fixed width.
-    const header = /^([0-9a-f]+)([\s\S]*)$/.exec(record);
+    const header = /^([0-9a-f]{40}|[0-9a-f]{64})(?![0-9a-f])([\s\S]*)$/.exec(record);
     if (!header) throw new Error(`malformed log record in ${JSON.stringify(range)}: ${JSON.stringify(record)}`);
     const [, commit, names] = header;
     for (const name of names.split('\0')) {
@@ -986,4 +986,27 @@ export function parseSha256File(text) {
     out.set(m[2].trim(), m[1].toLowerCase());
   }
   return out;
+}
+
+/**
+ * The verdict of the "contract vectors (mock)" row from the exit status of `npm run test:contract`
+ * and the summary the contract project writes. Every vector of a capability the mock reports must
+ * pass; the rest may be skipped. The note names the failed vectors and, when some required vector
+ * did not pass (for example one that was skipped), how many, so a FAIL can be acted on.
+ * @param {number} status exit status of the contract run
+ * @param {{ total: number, pass: number, fail: number, skip: number, failed: string[],
+ *   skipReasons: Record<string, number>, required: { total: number, pass: number } }} summary
+ * @returns {{ result: 'PASS' | 'FAIL', note: string }}
+ */
+export function contractVectorsVerdict(status, summary) {
+  const skips = Object.entries(summary.skipReasons)
+    .map(([reason, n]) => `${reason}: ${n}`)
+    .join('; ');
+  const unmet = summary.required.total - summary.required.pass;
+  const note =
+    `${summary.total} vectors: ${summary.pass} PASS, ${summary.fail} FAIL${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ` +
+    `${summary.skip} SKIP${skips ? ` (${skips})` : ''}` +
+    (unmet > 0 ? `; ${unmet} vector(s) of capabilities the mock reports did not pass` : '');
+  const ok = status === 0 && summary.fail === 0 && unmet === 0;
+  return { result: ok ? 'PASS' : 'FAIL', note };
 }
