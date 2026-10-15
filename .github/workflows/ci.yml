@@ -51,7 +51,7 @@ defaults:
 # `ci-checks.mjs scope` 给出真实的 base。
 jobs:
   light:
-    name: light (lint, typecheck, unit tests, privacy, audio, attribution)
+    name: light (lint, typecheck, unit tests, privacy, audio, gitleaks, attribution)
     if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'feature/')
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -88,6 +88,7 @@ jobs:
           if [ "$ALLOW_DEPENDABOT" = true ]; then args+=(--allow-dependabot); fi
           node scripts/gates.mjs "${args[@]}" \
             --only "lint (eslint),format:check,typecheck,unit tests,gitleaks,privacy,no new audio files,attribution,no pull_request_target" \
+            --no-skip \
             | tee -a "$GITHUB_STEP_SUMMARY"
       # PR 标题与正文是不可信文本：只经 env: 传入，由署名检查的正本从 stdin 读。
       # Dependabot 的 PR 同样检查，理由见 branch-gate.yml 的同名步骤。

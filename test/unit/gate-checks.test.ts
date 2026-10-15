@@ -6,9 +6,12 @@
 // assembled at runtime so that this file does not trip the scan it is testing.
 
 import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, describe, expect, it } from 'vitest';
 
 import {
   AUDIO_EXTENSIONS,
@@ -22,6 +25,7 @@ import {
   PACKED_FILES,
   WEB_MERGE_COMMITTER_EMAIL,
   WEB_MERGE_COMMITTER_NAME,
+  addedInHistory,
   audioKind,
   checkBranchRule,
   checkBundleShape,
@@ -675,8 +679,9 @@ describe('commitCheckScope', () => {
 
   it('compares a push that rewrote its branch with the default branch', () => {
     const push = { event: 'push', before: sha, beforeAvailable: false, defaultBranch: 'dev', repo };
+    // A rewritten feature/* trunk takes project identities only (see the feature/* describe below).
     const scope = commitCheckScope({ ...push, refName: 'feature/v2' });
-    expect(scope).toMatchObject({ base: 'origin/dev', allowExternalAuthors: true, allowDependabot: true });
+    expect(scope).toMatchObject({ base: 'origin/dev', allowExternalAuthors: false, allowDependabot: false });
     expect(scope.reason).toContain('rewrote the branch');
   });
 
@@ -732,6 +737,94 @@ describe('commitCheckScope', () => {
   it('rejects other events and pull requests without a base', () => {
     expect(() => commitCheckScope({ event: 'workflow_dispatch', repo })).toThrow(/unsupported event/);
     expect(() => commitCheckScope({ event: 'pull_request', repo, headRepo: repo })).toThrow(/base/);
+  });
+});
+
+describe('feature/* pushes: strict for creation and rewrites, relaxed for fast-forwards', () => {
+  // A push that creates a feature/* branch or rewrites its history brings in commits no pull
+  // request gated, so project identities only. An ordinary fast-forward push comes from a merged
+  // pull request or from dev merged back into the trunk, where Dependabot and contributor squash
+  // commits are legitimate.
+  const repo = 'synchain-oss/opentune-mcp-server';
+  const sha = 'c'.repeat(40);
+  const PROJECT = 'noreply@synchain.ca';
+  const GITHUB_NOREPLY = join('140901583+DLsnows', '@', 'users.noreply.github.com');
+  const outsider = join('contributor', '@', 'example', '.org');
+  const trunk = (over: Record<string, unknown> = {}) =>
+    commitCheckScope({ event: 'push', before: sha, defaultBranch: 'dev', repo, refName: 'feature/v1', ...over });
+  const dev = (over: Record<string, unknown> = {}) =>
+    commitCheckScope({ event: 'push', before: sha, defaultBranch: 'dev', repo, refName: 'dev', ...over });
+  const commitOf = (over: Record<string, string>) => ({
+    sha: 'a'.repeat(40),
+    parents: ['b'.repeat(40)],
+    name: 'DLsnows',
+    email: PROJECT,
+    committerName: 'DLsnows',
+    committerEmail: PROJECT,
+    body: `feat: x\n\nSigned-off-by: DLsnows <${PROJECT}>`,
+    ...over,
+  });
+  const check = (
+    commit: ReturnType<typeof commitOf>,
+    scope: { allowExternalAuthors: boolean; allowDependabot: boolean },
+  ) => checkCommits([commit], scope);
+
+  it('turns off the exemptions for a feature/* push that creates or rewrites the branch only', () => {
+    expect(trunk()).toMatchObject({ base: sha, allowExternalAuthors: true, allowDependabot: true });
+    expect(trunk({ before: '0'.repeat(40) })).toMatchObject({
+      base: 'origin/dev',
+      allowExternalAuthors: false,
+      allowDependabot: false,
+    });
+    expect(trunk({ beforeAvailable: false })).toMatchObject({
+      base: 'origin/dev',
+      allowExternalAuthors: false,
+      allowDependabot: false,
+    });
+  });
+
+  it('keeps the exemptions for a push to dev, where commits arrive through merged pull requests', () => {
+    expect(dev()).toMatchObject({ allowExternalAuthors: true, allowDependabot: true });
+    expect(dev({ before: '0'.repeat(40) })).toMatchObject({ allowExternalAuthors: true, allowDependabot: true });
+  });
+
+  it('fails an outside author in a creating or rewriting feature/* push, passes it on a fast-forward and on dev', () => {
+    const outsiderCommit = commitOf({
+      name: 'Contributor',
+      email: outsider,
+      committerName: 'Contributor',
+      committerEmail: outsider,
+      body: `fix: y\n\nSigned-off-by: Contributor <${outsider}>`,
+    });
+    expect(check(outsiderCommit, trunk({ before: '0'.repeat(40) }))).not.toEqual([]);
+    expect(check(outsiderCommit, trunk({ beforeAvailable: false }))).not.toEqual([]);
+    expect(check(outsiderCommit, trunk())).toEqual([]);
+    expect(check(outsiderCommit, dev())).toEqual([]);
+  });
+
+  it("fails Dependabot's commit in a creating or rewriting feature/* push, exempts it on a fast-forward and on dev", () => {
+    const botCommit = commitOf({
+      name: DEPENDABOT_NAME,
+      email: DEPENDABOT_EMAIL,
+      committerName: WEB_MERGE_COMMITTER_NAME,
+      committerEmail: WEB_MERGE_COMMITTER_EMAIL,
+      body: `chore(deps): bump x\n\nSigned-off-by: support <${join('support', '@', 'github.com')}>`,
+    });
+    expect(check(botCommit, trunk({ before: '0'.repeat(40) }))).not.toEqual([]);
+    expect(check(botCommit, trunk({ beforeAvailable: false }))).not.toEqual([]);
+    expect(check(botCommit, trunk())).toEqual([]);
+    expect(check(botCommit, dev())).toEqual([]);
+  });
+
+  it("passes GitHub's web-merge squash commit of the maintainer on every feature/* push", () => {
+    const webMerge = commitOf({
+      email: GITHUB_NOREPLY,
+      committerName: WEB_MERGE_COMMITTER_NAME,
+      committerEmail: WEB_MERGE_COMMITTER_EMAIL,
+    });
+    expect(check(webMerge, trunk())).toEqual([]);
+    expect(check(webMerge, trunk({ before: '0'.repeat(40) }))).toEqual([]);
+    expect(check(webMerge, trunk({ beforeAvailable: false }))).toEqual([]);
   });
 });
 
@@ -948,6 +1041,139 @@ describe('audioKind / checkNoNewAudio', () => {
       'x/test/fixtures/vocals/y.wav',
     ];
     expect(checkNoNewAudio(lookAlikes.map((path) => ({ path, head: wav })))).toHaveLength(lookAlikes.length);
+  });
+});
+
+describe('addedInHistory: audio added by one commit and removed by the next', () => {
+  // A real repository in a temporary directory. Commits are made with plumbing (hash-object,
+  // mktree, commit-tree), which runs no hooks, so the test does not depend on local hook setup.
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ot-h2-history-'));
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const identity = {
+    GIT_AUTHOR_NAME: MAINTAINER_NAME,
+    GIT_AUTHOR_EMAIL: 'noreply@synchain.ca',
+    GIT_COMMITTER_NAME: MAINTAINER_NAME,
+    GIT_COMMITTER_EMAIL: 'noreply@synchain.ca',
+  };
+  const runGit = (args: string[], input?: Buffer | string): Buffer => {
+    const result = spawnSync('git', args, {
+      cwd: dir,
+      env: { ...process.env, ...identity },
+      input,
+      maxBuffer: 1 << 24,
+    });
+    if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${String(result.stderr)}`);
+    return result.stdout;
+  };
+  const text = (args: string[], input?: Buffer | string) => runGit(args, input).toString('utf8').trim();
+  /** A tree for `files` (paths with slashes become nested trees). */
+  const treeOf = (files: Record<string, Buffer>): string => {
+    const lines: string[] = [];
+    const dirs = new Map<string, Record<string, Buffer>>();
+    for (const [file, data] of Object.entries(files)) {
+      const slash = file.indexOf('/');
+      if (slash === -1) {
+        lines.push(`100644 blob ${text(['hash-object', '-w', '--stdin'], data)}\t${file}\n`);
+      } else {
+        const dir = file.slice(0, slash);
+        dirs.set(dir, { ...dirs.get(dir), [file.slice(slash + 1)]: data });
+      }
+    }
+    for (const [dir, sub] of dirs) lines.push(`040000 tree ${treeOf(sub)}\t${dir}\n`);
+    return text(['mktree'], lines.join(''));
+  };
+  const commitTree = (files: Record<string, Buffer>, parent?: string): string =>
+    text(['commit-tree', treeOf(files), '-m', 'feat: x', ...(parent ? ['-p', parent] : [])]);
+  const wav = Buffer.concat([Buffer.from('RIFF'), Buffer.from([0x24, 0, 0, 0]), Buffer.from('WAVE')]);
+  const readme = Buffer.from('# notes\n');
+
+  text(['init', '-q']);
+  const base = commitTree({ 'README.md': readme });
+  // Named without an audio extension, so only the bytes of the blob can give it away.
+  const added = commitTree({ 'README.md': readme, 'take1.dat': wav }, base);
+  const removed = commitTree({ 'README.md': readme }, added);
+  const kept = commitTree({ 'README.md': readme, 'take2.wav': wav }, base);
+  const cleanHead = commitTree({ 'README.md': readme }, base);
+  const scan = (head: string) => {
+    text(['update-ref', 'HEAD', head]);
+    const headPaths = text(['ls-tree', '-r', '-z', '--name-only', 'HEAD']).split('\0').filter(Boolean);
+    return addedInHistory(`${base}..HEAD`, {
+      git: (args) => runGit(args).toString('utf8'),
+      headPaths,
+      blobHead: (spec, bytes) => Promise.resolve(runGit(['cat-file', '-p', spec]).subarray(0, bytes)),
+    });
+  };
+
+  it('reports a recording that a later commit removed, with the bytes of the commit that added it', async () => {
+    const found = await scan(removed);
+    expect(found.map((f) => f.path)).toEqual(['take1.dat']);
+    expect(checkNoNewAudio(found)).toEqual([
+      'take1.dat: new audio file (WAV data); audio may only be added under test/fixtures/vocals/ (licensed test vocals)',
+    ]);
+  });
+
+  it('leaves a recording that HEAD still has to the working-tree scan', async () => {
+    expect(await scan(kept)).toEqual([]);
+  });
+
+  it('reports a recording that a later commit rewrote in place as text', async () => {
+    const rewritten = commitTree({ 'README.md': readme, 'take1.dat': Buffer.from('just text\n') }, added);
+    const found = await scan(rewritten);
+    expect(found.map((f) => f.path)).toEqual(['take1.dat']);
+    expect(checkNoNewAudio(found)).toHaveLength(1);
+  });
+
+  it('skips a submodule path instead of failing', async () => {
+    const readmeBlob = text(['hash-object', '-w', '--stdin'], readme);
+    const tree = text(
+      ['mktree'],
+      [`100644 blob ${readmeBlob}\tREADME.md`, `160000 commit ${'d'.repeat(40)}\tsub`, ''].join('\n'),
+    );
+    const withSub = text(['commit-tree', tree, '-m', 'feat: sub', '-p', base]);
+    expect(await scan(withSub)).toEqual([]);
+  });
+
+  it('finds nothing on a branch that never added audio', async () => {
+    expect(await scan(cleanHead)).toEqual([]);
+  });
+
+  it('keeps the test/fixtures/vocals/ exception for removed files too', async () => {
+    const fixture = commitTree({ 'README.md': readme, [`${AUDIO_FIXTURE_DIR}take3.wav`]: wav }, base);
+    const dropped = commitTree({ 'README.md': readme }, fixture);
+    expect(checkNoNewAudio(await scan(dropped))).toEqual([]);
+  });
+
+  it('reports a recording that a side branch added and removed when a merge commit brings the branch in', async () => {
+    // The merge is TREESAME to its first parent for take4.dat (absent in both), so a path-limited
+    // log would follow only the first parent and miss the side branch's adding commit.
+    const sideAdd = commitTree({ 'README.md': readme, 'take4.dat': wav }, base);
+    const sideGone = commitTree({ 'README.md': readme }, sideAdd);
+    const mainNote = Buffer.from('# notes, main\n');
+    const mainNext = commitTree({ 'README.md': mainNote }, base);
+    const merged = text([
+      'commit-tree',
+      treeOf({ 'README.md': mainNote }),
+      '-m',
+      'merge: side',
+      '-p',
+      mainNext,
+      '-p',
+      sideGone,
+    ]);
+    expect((await scan(merged)).map((f) => f.path)).toEqual(['take4.dat']);
+  });
+
+  it('fails instead of skipping a listed path that no adding commit accounts for', async () => {
+    const inconsistent = (args: string[]) => (args.includes('--format=') ? 'ghost.dat\0' : '');
+    await expect(
+      addedInHistory(`${base}..HEAD`, {
+        git: inconsistent,
+        headPaths: [],
+        blobHead: () => Promise.resolve(new Uint8Array()),
+      }),
+    ).rejects.toThrow(/ghost\.dat/);
   });
 });
 

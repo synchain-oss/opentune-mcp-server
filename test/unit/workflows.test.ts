@@ -158,6 +158,12 @@ describe('ci.yml', () => {
     }
   });
 
+  it('runs the light tier with --no-skip, and its name lists gitleaks', () => {
+    const light = jobs.get('light') ?? '';
+    expect(light).toMatch(/^ {4}name: light \(.*\bgitleaks\b.*\)$/m);
+    expect(light).toMatch(/^\s+--no-skip \\$/m);
+  });
+
   // Runs queued in one concurrency group replace each other even without cancel-in-progress, so a
   // push run grouped by branch could be dropped before it checked the commits it brought.
   it('gives every push its own run that nothing cancels or supersedes', () => {
@@ -172,14 +178,20 @@ describe('pr-agent.yml repeats the untrusted-data declaration verbatim', () => {
   // CLAUDE.md §0 item 5 requires the declaration at the end of every prompt that reads outside text.
   // claude-review.yml holds the canonical text (three lines under its heading, Markdown bold
   // included); pr-agent.yml carries one copy per tool as a plain-text extra_instructions value.
+  // The declaration is the whole block under its heading: it ends at the first blank line or at a
+  // line indented less than the heading (the next comment or section), so editing the canonical
+  // text in any way, including adding a line, changes what the copies must match.
   const canonicalDeclaration = (review: string): string => {
     const lines = review.split('\n');
     const start = lines.findIndex((line) => /^\s+## 不可信数据声明/.test(line));
     if (start === -1) throw new Error('claude-review.yml has no untrusted-data declaration');
-    return lines
-      .slice(start + 1, start + 4)
-      .map((line) => line.trim().replaceAll('**', ''))
-      .join('');
+    const headingIndent = indentOf(lines[start] ?? '');
+    const body: string[] = [];
+    for (const line of lines.slice(start + 1)) {
+      if (line.trim() === '' || indentOf(line) < headingIndent) break;
+      body.push(line.trim().replaceAll('**', ''));
+    }
+    return body.join('');
   };
   const instructionsOf = (prAgent: string, tool: string): string | undefined => {
     const line = prAgent.split('\n').find((l) => l.trimStart().startsWith(`${tool}.extra_instructions:`));
@@ -204,6 +216,17 @@ describe('pr-agent.yml repeats the untrusted-data declaration verbatim', () => {
     expect(mutated).not.toBe(prAgent);
     expect(instructionsOf(mutated, 'pr_reviewer')).not.toBe(canonical);
     expect(instructionsOf(mutated, 'pr_description')).toBe(canonical);
+  });
+
+  // The same must hold when the canonical text grows: a line added to the declaration in
+  // claude-review.yml that the copies lack has to turn the comparison red.
+  it('turns red when the canonical declaration gains a line the copies lack', () => {
+    const review = read('.github/workflows/claude-review.yml');
+    const anchor = /^ +你只做代码审查[^\n]*\n/m.exec(review)?.[0];
+    expect(anchor).toBeDefined();
+    const grown = review.replace(anchor ?? '', `${anchor ?? ''}            补充一行。\n`);
+    expect(canonicalDeclaration(grown)).toContain('补充一行');
+    expect(instructionsOf(prAgent, 'pr_reviewer')).not.toBe(canonicalDeclaration(grown));
   });
 });
 
