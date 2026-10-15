@@ -213,5 +213,178 @@
       "idempotentHint": false,
       "openWorldHint": false
     }
+  },
+  {
+    "name": "opentune_edit_timing",
+    "title": "Edit OpenTune time grid",
+    "description": "OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job; waits wait_seconds), shift (handles in a start..end range, output or content clock, move delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed and reported (CLAMPED). Handle ids: opentune_get_clip_details.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clip": {
+          "type": "string",
+          "pattern": "^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...)."
+        },
+        "expected_revision": {
+          "description": "clip_revision of the clip. Required for shift and move; not needed for seed.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "ops": {
+          "minItems": 1,
+          "maxItems": 8,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "seed"
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "shift"
+                  },
+                  "start_output_sec": {
+                    "description": "Range start on the output clock (after the time grid).",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "end_output_sec": {
+                    "description": "Range end on the output clock.",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "start_content_sec": {
+                    "description": "Range start on the content clock (source audio).",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "end_content_sec": {
+                    "description": "Range end on the content clock.",
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "delta_ms": {
+                    "type": "number",
+                    "minimum": -10000,
+                    "maximum": 10000,
+                    "description": "Milliseconds to move the handles; negative = earlier."
+                  }
+                },
+                "required": [
+                  "op",
+                  "delta_ms"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "move"
+                  },
+                  "moves": {
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "handle_id": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 64,
+                          "description": "Handle id, from opentune_get_clip_details."
+                        },
+                        "output_sec": {
+                          "type": "number",
+                          "minimum": 0,
+                          "description": "New position on the output clock, in seconds."
+                        }
+                      },
+                      "required": [
+                        "handle_id",
+                        "output_sec"
+                      ],
+                      "additionalProperties": false
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "moves"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "description": "Operations in order. seed must be alone."
+        },
+        "wait_seconds": {
+          "description": "How long seed waits for its job, 0 to 30. Default 10; then the job id is returned.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "clip",
+        "ops"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
   }
 ]

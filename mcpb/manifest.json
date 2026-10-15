@@ -53,6 +53,10 @@
     {
       "name": "opentune_launch",
       "description": "OpenTune (audio vocal pitch editor): starts the OpenTune build configured for this server (OPENTUNE_MCP_OPENTUNE_PATH) with its control API and waits up to 30 seconds until it is ready, then reports the state like opentune_get_status, with a nextStep. Starts nothing when OpenTune already runs (alreadyRunning), may run without the control API, or no API build is configured; the result says why. Repeated or concurrent calls share one start. allow_second_instance needs the user's explicit consent; each call with it starts one more instance once earlier starts are done. Never closes OpenTune."
+    },
+    {
+      "name": "opentune_edit_timing",
+      "description": "OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job; waits wait_seconds), shift (handles in a start..end range, output or content clock, move delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed and reported (CLAMPED). Handle ids: opentune_get_clip_details."
     }
   ],
   "tools_generated": false,

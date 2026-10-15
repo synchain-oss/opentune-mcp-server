@@ -7,6 +7,7 @@ import { getNotesTool } from './notes.js';
 import { getProjectTool } from './project.js';
 import type { ToolDefinition } from './registry.js';
 import { getStatusTool } from './status.js';
+import { editTimingTool } from './timing.js';
 
 /** Every tool, in the order tools/list reports them. */
 export const TOOLS: readonly ToolDefinition[] = [
@@ -16,4 +17,5 @@ export const TOOLS: readonly ToolDefinition[] = [
   getJobTool,
   cancelJobTool,
   launchTool,
+  editTimingTool,
 ];
