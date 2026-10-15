@@ -27,7 +27,7 @@ Advanced: register the npm package by hand instead.
   }
 }
 
-Paths are shown with ~ for your home directory; clients do not expand ~ inside JSON, so write the full path
-there, or run this command again with --full-paths.
+Paths are shown with ~ for your home directory, but neither a JSON configuration file nor every shell expands
+~, so write the full path there, or run this command again with --full-paths.
 
 Nothing was written; this command only prints.

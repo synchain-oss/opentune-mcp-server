@@ -49,7 +49,8 @@
       "type": "file",
       "title": "OpenTune executable",
       "description": "The OpenTune executable to start when needed. Choose a build of OpenTune Standalone that includes the control interface (the file opentune-control.json sits next to it). Leave empty to use only an OpenTune you have already started.",
-      "required": false
+      "required": false,
+      "default": ""
     }
   },
   "compatibility": {

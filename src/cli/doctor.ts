@@ -104,6 +104,13 @@ async function opentunePathCheck(deps: DoctorDeps): Promise<CheckResult> {
   const config = await checkLaunchConfig(deps.env, deps.platform);
   switch (config.state) {
     case 'unset':
+      if (config.unfilledPlaceholder === true) {
+        return result(
+          id,
+          'warn',
+          `${OPENTUNE_PATH_ENV} still holds an unfilled settings placeholder, so it is treated as not set. Open the extension settings and choose the OpenTune executable, or clear the setting.`,
+        );
+      }
       return result(
         id,
         'warn',

@@ -255,7 +255,7 @@ async function bundleStdoutHygiene() {
 
 async function mcpbPackage() {
   // Two packs of the same inputs must be byte-identical; then the manifest and the package must
-  // pass the MCPB tool's own validation. The package is written under .cache/mcpb for CI to upload.
+  // pass the MCPB tool's own validation. CI only checks the package here; it does not upload it.
   const first = await packMcpb(ROOT);
   const second = await packMcpb(ROOT);
   if (first.sha256 !== second.sha256)

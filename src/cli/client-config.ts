@@ -3,11 +3,12 @@
 
 // `opentune-mcp doctor --client <name>`: prints the configuration that registers this server with
 // an MCP client. It only prints; it never reads or writes a client's configuration file. Paths are
-// shown with the home directory replaced by ~ unless the caller asks for full paths.
+// shown with the home directory replaced by ~ unless the caller asks for full paths; the Claude Code
+// command is the exception because it is run as printed.
 
 import path from 'node:path';
 
-import { OPENTUNE_PATH_ENV } from '../launch/config.js';
+import { OPENTUNE_PATH_ENV, configuredOpentunePath } from '../launch/config.js';
 import { redactHome } from './doctor.js';
 
 export const CLIENTS = ['claude-code', 'claude-desktop', 'cursor'] as const;
@@ -31,9 +32,8 @@ const SERVER_KEY = 'opentune';
 const RELEASES = 'https://github.com/synchain-oss/opentune-mcp-server/releases';
 const PATH_PLACEHOLDER = '<absolute path of the OpenTune executable>';
 
-/** Node installed by a version manager lives under the home directory and is not on the PATH of GUI apps. */
-const VERSION_MANAGED_NODE =
-  /\/(?:\.nvm|\.fnm|\.volta|\.asdf|\.nodenv|\.n|\.mise|\.local\/share\/(?:fnm|mise)|Library\/Application Support\/fnm)\//;
+/** A GUI app on macOS only has the system directories on its PATH; node from anywhere else needs an absolute npx. */
+const SYSTEM_NODE_DIR = /^\/usr(?:\/local)?\/bin\//;
 
 interface ServerEntry {
   readonly command: string;
@@ -52,8 +52,8 @@ function serverEntry(
     // npx is a .cmd file there, which a client can only start through cmd.
     return { command: 'cmd', args: ['/c', 'npx', '-y', PACKAGE], env };
   }
-  if (deps.platform === 'darwin' && client !== 'claude-code' && VERSION_MANAGED_NODE.test(deps.execPath)) {
-    // A GUI app does not read the shell profile that puts the version manager's node on PATH.
+  if (deps.platform === 'darwin' && client !== 'claude-code' && !SYSTEM_NODE_DIR.test(deps.execPath)) {
+    // A GUI app does not read the shell profile, so node from Homebrew or a version manager is not on its PATH.
     const nodeDir = path.posix.dirname(deps.execPath);
     return {
       command: show(path.posix.join(nodeDir, 'npx')),
@@ -83,9 +83,12 @@ export function formatClientConfig(client: ClientName, deps: ClientConfigDeps): 
     if (shown !== p) redactions.push(p);
     return shown;
   };
-  const configured = deps.env[OPENTUNE_PATH_ENV];
-  const opentunePath = configured === undefined || configured === '' ? PATH_PLACEHOLDER : show(configured);
-  const entry = serverEntry(client, deps, opentunePath, show);
+  // The Claude Code snippet is a shell command run as printed, and no shell expands ~ everywhere (cmd and
+  // PowerShell never do), so it always shows real paths. It is printed only in the user's own terminal.
+  const shownPath = client === 'claude-code' ? (p: string) => p : show;
+  const configured = configuredOpentunePath(deps.env);
+  const opentunePath = configured === undefined ? PATH_PLACEHOLDER : shownPath(configured);
+  const entry = serverEntry(client, deps, opentunePath, shownPath);
   const mcpServers = json({
     mcpServers: { [SERVER_KEY]: { command: entry.command, args: entry.args, env: entry.env } },
   });
@@ -106,6 +109,8 @@ export function formatClientConfig(client: ClientName, deps: ClientConfigDeps): 
       '',
       mcpServers,
     );
+  } else if (desktopConfigPath(deps.platform) === null) {
+    return 'Claude Desktop is not available on this platform; use claude-code or cursor instead.\n\nNothing was written; this command only prints.\n';
   } else {
     const file = desktopConfigPath(deps.platform);
     const base = `${RELEASES}/download/v${deps.version}/opentune-mcp-${deps.version}`;
@@ -122,9 +127,7 @@ export function formatClientConfig(client: ClientName, deps: ClientConfigDeps): 
       '  4. In the extension settings, set "OpenTune executable" to a build of OpenTune with the control interface.',
       '',
       'Advanced: register the npm package by hand instead.',
-      file === null
-        ? '  Claude Desktop is not available on this platform; use claude-code or cursor.'
-        : `  Add this to ${file} (create the file if it does not exist), then restart Claude Desktop.`,
+      `  Add this to ${String(file)} (create the file if it does not exist), then restart Claude Desktop.`,
       '',
       mcpServers,
     );
@@ -139,8 +142,8 @@ export function formatClientConfig(client: ClientName, deps: ClientConfigDeps): 
   if (redactions.length > 0) {
     lines.push(
       '',
-      'Paths are shown with ~ for your home directory; clients do not expand ~ inside JSON, so write the full path',
-      'there, or run this command again with --full-paths.',
+      'Paths are shown with ~ for your home directory, but neither a JSON configuration file nor every shell expands',
+      '~, so write the full path there, or run this command again with --full-paths.',
     );
   }
   lines.push('', 'Nothing was written; this command only prints.');

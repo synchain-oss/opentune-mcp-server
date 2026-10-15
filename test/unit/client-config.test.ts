@@ -72,10 +72,42 @@ describe('formatClientConfig', () => {
     expect(formatClientConfig('claude-code', MAC_NVM)).toContain('-- npx -y @synchain/opentune-mcp');
   });
 
-  it('leaves a system node as plain npx on macOS', () => {
+  it('gives an absolute npx to any macOS node outside /usr/bin and /usr/local/bin, Homebrew on Apple Silicon included', () => {
     const text = formatClientConfig('cursor', { ...MAC_NVM, execPath: '/opt/homebrew/bin/node' });
-    expect(text).toContain('"command": "npx"');
-    expect(text).not.toContain('"PATH"');
+    expect(text).toContain('"command": "/opt/homebrew/bin/npx"');
+    expect(text).toContain('"PATH": "/opt/homebrew/bin:');
+  });
+
+  it('leaves a system node as plain npx on macOS', () => {
+    for (const execPath of ['/usr/local/bin/node', '/usr/bin/node']) {
+      const text = formatClientConfig('cursor', { ...MAC_NVM, execPath });
+      expect(text).toContain('"command": "npx"');
+      expect(text).not.toContain('"PATH"');
+    }
+  });
+
+  it('shows real paths in the Claude Code command, which is run as printed', () => {
+    const text = formatClientConfig('claude-code', {
+      ...MAC_NVM,
+      env: { OPENTUNE_MCP_OPENTUNE_PATH: '/Users/user/Apps/OpenTune' },
+    });
+    expect(text).toContain('/Users/user/Apps/OpenTune');
+    expect(text).not.toContain('~');
+  });
+
+  it('treats an unsubstituted settings placeholder as not set', () => {
+    const text = formatClientConfig('cursor', {
+      ...LINUX_UNSET,
+      env: { OPENTUNE_MCP_OPENTUNE_PATH: '${user_config.opentune_path}' },
+    });
+    expect(text).toContain('<absolute path of the OpenTune executable>');
+    expect(text).not.toContain('user_config');
+  });
+
+  it('points Linux users away from Claude Desktop', () => {
+    const text = formatClientConfig('claude-desktop', LINUX_UNSET);
+    expect(text).toContain('use claude-code or cursor');
+    expect(text).not.toContain('.mcpb');
   });
 
   it('starts npx through cmd on Windows', () => {
@@ -84,7 +116,7 @@ describe('formatClientConfig', () => {
   });
 
   it('puts a placeholder where the OpenTune path is not set, and says so', () => {
-    for (const client of CLIENTS) {
+    for (const client of CLIENTS.filter((c) => c !== 'claude-desktop')) {
       const text = formatClientConfig(client, LINUX_UNSET);
       expect(text).toContain('<absolute path of the OpenTune executable>');
       expect(text).toContain('is not set in this shell');
