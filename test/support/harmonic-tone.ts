@@ -128,6 +128,21 @@ function noteHz(note: ToneNote, tuningHz: number): number {
   return tuningHz * 2 ** ((note.midi + (note.cents ?? 0) / 100 - 69) / 12);
 }
 
+/**
+ * Rejects parameters the synthesis cannot render. A frequency at or above Nyquist would alias
+ * into a different pitch, which would make the ground truth wrong without any visible error.
+ * Written so that NaN fails every test.
+ */
+function checkNote(index: number, hz: number, durationSec: number, gapSec: number, rate: number): void {
+  const where = `note ${String(index)}`;
+  if (!(hz > 0 && hz < rate / 2))
+    throw new Error(
+      `${where}: hz ${String(hz)} must be above 0 and below half the sample rate (${String(rate / 2)} Hz)`,
+    );
+  if (!(durationSec > 0)) throw new Error(`${where}: durationSec ${String(durationSec)} must be above 0`);
+  if (!(gapSec >= 0)) throw new Error(`${where}: gapSec ${String(gapSec)} must be 0 or more`);
+}
+
 /** Splits a frequency into the nearest integer MIDI note and the distance from it in cents. */
 export function hzToMidiCents(hz: number, tuningHz: number): { midi: number; cents: number; midiExact: number } {
   const midiExact = 69 + 12 * Math.log2(hz / tuningHz);
@@ -164,12 +179,15 @@ export function generateTone(spec: ToneSpec): Tone {
   const fadeSec = spec.fadeSec ?? DEFAULT_FADE_SEC;
   const amplitude = spec.amplitude ?? DEFAULT_AMPLITUDE;
   const random = seededRandom(spec.seed);
+  if (!(fadeSec > 0)) throw new Error(`fadeSec ${String(fadeSec)} must be above 0`);
 
   // Layout in time first, so the buffer is allocated once.
   const truthNotes: TruthNote[] = [];
   let cursor = spec.leadSec ?? DEFAULT_LEAD_SEC;
   for (const [index, note] of spec.notes.entries()) {
     const hz = noteHz(note, tuningHz);
+    const gapSec = note.gapSec ?? DEFAULT_GAP_SEC;
+    checkNote(index, hz, note.durationSec, gapSec, rate);
     truthNotes.push({
       index,
       startSec: cursor,
@@ -177,7 +195,7 @@ export function generateTone(spec: ToneSpec): Tone {
       hz,
       ...hzToMidiCents(hz, tuningHz),
     });
-    cursor += note.durationSec + (note.gapSec ?? DEFAULT_GAP_SEC);
+    cursor += note.durationSec + gapSec;
   }
   const totalSamples = Math.ceil((cursor + TAIL_SEC) * rate);
   const samples = new Float64Array(totalSamples);

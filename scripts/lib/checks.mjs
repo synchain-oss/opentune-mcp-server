@@ -541,8 +541,10 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false, 
  *   - from a fork: an outside author's commits are accepted when signed off with their own address;
  *   - into prod: the commits are dev's history, which reached dev through gated pull requests and
  *     may include contributors' and Dependabot's merged commits.
- * - A push checks the commits it added (`before`..HEAD). They arrived through merged pull requests,
- *   so contributors and Dependabot are allowed. A push that creates the branch, or that rewrote it
+ * - A push checks the commits it added (`before`..HEAD). On dev they arrived through merged pull
+ *   requests, so contributors and Dependabot are allowed; a feature/* trunk takes project identities
+ *   only, since its pushes (a new branch's first push included) bypass the pull request gate. A push
+ *   that creates the branch, or that rewrote it
  *   so that `before` is no longer in the clone (`beforeAvailable` false), is compared with the
  *   default branch instead; a rewritten default branch has nothing to compare with and is an error.
  * @param {{ event: string, baseRef?: string, before?: string, beforeAvailable?: boolean,
@@ -563,6 +565,11 @@ export function commitCheckScope({
   prAuthor,
 }) {
   if (event === 'push') {
+    // A feature/* trunk has no pull request gate in front of every push (a new branch's first push
+    // and direct pushes skip it), so outside and Dependabot authors are not accepted there.
+    const strict = typeof refName === 'string' && refName.startsWith('feature/');
+    const allowExternalAuthors = !strict;
+    const allowDependabot = !strict;
     const creates = !before || /^0+$/.test(before);
     if (!creates) {
       if (!/^[0-9a-f]{40}$/.test(before))
@@ -570,9 +577,11 @@ export function commitCheckScope({
       if (beforeAvailable) {
         return {
           base: before,
-          allowExternalAuthors: true,
-          allowDependabot: true,
-          reason: 'push: the commits this push added, which arrived through merged pull requests',
+          allowExternalAuthors,
+          allowDependabot,
+          reason: strict
+            ? 'push to a feature/* trunk: the commits this push added, project identities only'
+            : 'push: the commits this push added, which arrived through merged pull requests',
         };
       }
     }
@@ -585,8 +594,8 @@ export function commitCheckScope({
     }
     return {
       base: `origin/${defaultBranch}`,
-      allowExternalAuthors: true,
-      allowDependabot: true,
+      allowExternalAuthors,
+      allowDependabot,
       reason: creates
         ? `push that creates the branch: commits not on ${defaultBranch}`
         : `push that rewrote the branch (its previous tip ${before.slice(0, 8)} is gone): commits not on ${defaultBranch}`,
@@ -816,6 +825,33 @@ export function checkNoNewAudio(added) {
       ? [`${path}: new audio file (${kind}); audio may only be added under ${AUDIO_FIXTURE_DIR} (licensed test vocals)`]
       : [];
   });
+}
+
+/**
+ * Files that a commit in `range` added and that HEAD no longer has (a recording committed and
+ * deleted by a later commit still sits in the history that a merge would keep). Each comes with
+ * the first bytes of the blob from every commit that added it. Paths HEAD still has are left to
+ * the working-tree scan, so they are not returned here.
+ * @param {string} range e.g. "origin/feature/v1..HEAD"
+ * @param {{ git: (args: string[]) => string, headPaths: Iterable<string>,
+ *   blobHead: (spec: string, bytes: number) => Promise<Uint8Array> }} io
+ *   git runs in the repository and returns stdout; blobHead reads the first bytes of `spec`
+ * @returns {Promise<{ path: string, head: Uint8Array }[]>}
+ */
+export async function addedInHistory(range, { git, headPaths, blobHead }) {
+  const present = new Set(headPaths);
+  const paths = [
+    ...new Set(git(['log', '--diff-filter=A', '--name-only', '-z', '--format=', range]).split('\0').filter(Boolean)),
+  ];
+  const found = [];
+  for (const path of paths) {
+    if (present.has(path)) continue;
+    const commits = git(['log', '--diff-filter=A', '--format=%H', range, '--', `:(literal)${path}`])
+      .split('\n')
+      .filter(Boolean);
+    for (const commit of commits) found.push({ path, head: await blobHead(`${commit}:${path}`, AUDIO_SNIFF_BYTES) });
+  }
+  return found;
 }
 
 /**
