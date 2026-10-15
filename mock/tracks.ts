@@ -342,6 +342,9 @@ const remove: Handler = (context) => {
     if (world.tracks[id]?.visible === true || holdsClips(id)) trackIdMap.push({ before: id, after: id - 1 });
   }
   const doomed = all.filter((p) => p.trackId === trackId);
+  // The settings of the tracks behind the deleted one move down a slot; trackIdMap and the moved clips'
+  // `changes` describe that shift, so it is not listed again here. The contract vectors list only the
+  // clips in `removed`, also when a content leaves the project with them.
   const removed = doomed.map((p) => ({
     entity: 'placement',
     ref: { placementId: p.id },

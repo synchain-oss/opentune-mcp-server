@@ -199,12 +199,23 @@ function planEdits(world: World, ops: readonly Op[]): Plan {
         for (const field of ['fadeInSec', 'fadeOutSec'] as const) {
           const requested = op[field];
           if (typeof requested !== 'number') continue;
+          const other = field === 'fadeInSec' ? 'fadeOutSec' : 'fadeInSec';
+          const otherRequested = typeof op[other] === 'number';
+          const otherBefore = after[other];
           after[field] = requested;
           const fitted = clampFades(after.fadeInSec, after.fadeOutSec, after.durationSec);
           if (differs(fitted[field], requested)) {
             warnings.push(warning('CLAMPED', subjectOf(placement), { field, requested, applied: fitted[field] }));
           }
           Object.assign(after, fitted);
+          // A side that was not asked for and got shortened to make room is an effect the caller did not request.
+          if (!otherRequested && differs(fitted[other], otherBefore)) {
+            warnings.push(
+              warning('FADES_RECLAMPED', subjectOf(placement), {
+                [other]: { before: otherBefore, after: fitted[other] },
+              }),
+            );
+          }
         }
         break;
       }
@@ -436,6 +447,9 @@ const clipItem = (placement: PlacementRec) => ({
   label: clipLabel(placement.serial, placement.trackId),
 });
 
+/** The fades a clip had before a split shortened them, so that merging the two parts can put them back. */
+const splitFades = new WeakMap<PlacementRec, { right: PlacementRec; fadeInSec: number; fadeOutSec: number }>();
+
 function split(context: MethodContext, op: Op, dryRun: boolean) {
   const { world } = context;
   const placement = world.placement(String(op.placementId));
@@ -457,6 +471,21 @@ function split(context: MethodContext, op: Op, dryRun: boolean) {
       }),
     );
   }
+  // Each part keeps the fade at its own outer edge, limited to its new length like any other fade.
+  const windowLeft = round6(where.timelineSec - placement.startTimelineSec);
+  const windowRight = round6(end - where.timelineSec);
+  const fadeIn = clampFades(placement.fadeInSec, 0, windowLeft).fadeInSec;
+  const fadeOut = clampFades(0, placement.fadeOutSec, windowRight).fadeOutSec;
+  const fadeInShortened = differs(fadeIn, placement.fadeInSec);
+  const fadeOutShortened = differs(fadeOut, placement.fadeOutSec);
+  if (fadeInShortened || fadeOutShortened) {
+    warnings.push(
+      warning('FADES_RECLAMPED', subjectOf(placement), {
+        fadeInSec: fadeInShortened ? { before: placement.fadeInSec, after: fadeIn } : null,
+        fadeOutSec: fadeOutShortened ? { before: placement.fadeOutSec, after: fadeOut } : null,
+      }),
+    );
+  }
   const dirtyBefore = world.project.dirty;
   if (dryRun) {
     return envelope(world, {
@@ -475,18 +504,15 @@ function split(context: MethodContext, op: Op, dryRun: boolean) {
           ref: { placementId: placement.id },
           label: clipLabel(placement.serial, placement.trackId),
           fields: {
-            durationSec: {
-              before: placement.durationSec,
-              after: round6(where.timelineSec - placement.startTimelineSec),
-              unit: 'sec',
-            },
+            durationSec: { before: placement.durationSec, after: windowLeft, unit: 'sec' },
+            ...(fadeInShortened ? { fadeInSec: { before: placement.fadeInSec, after: fadeIn, unit: 'sec' } } : {}),
+            ...(fadeOutShortened ? { fadeOutSec: { before: placement.fadeOutSec, after: fadeOut, unit: 'sec' } } : {}),
           },
         },
       ],
     });
   }
   const before = world.capture();
-  const windowLeft = round6(where.timelineSec - placement.startTimelineSec);
   const common = {
     content: placement.content,
     name: placement.name,
@@ -499,16 +525,17 @@ function split(context: MethodContext, op: Op, dryRun: boolean) {
     startTimelineSec: placement.startTimelineSec,
     durationSec: windowLeft,
     clipInContentSec: placement.clipInContentSec,
-    fadeInSec: clampFade(placement.fadeInSec, windowLeft),
+    fadeInSec: fadeIn,
   });
   const right = world.addPlacement({
     ...common,
     trackId: placement.trackId,
     startTimelineSec: where.timelineSec,
-    durationSec: round6(end - where.timelineSec),
+    durationSec: windowRight,
     clipInContentSec: where.contentSec,
-    fadeOutSec: placement.fadeOutSec,
+    fadeOutSec: fadeOut,
   });
+  splitFades.set(left, { right, fadeInSec: placement.fadeInSec, fadeOutSec: placement.fadeOutSec });
   const original = clipItem(placement);
   world.removePlacement(placement);
   for (const other of world.placements.values()) if (other.reference === placement) other.reference = left;
@@ -571,6 +598,15 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
     );
   }
   const duration = round6(leading.durationSec + trailing.durationSec);
+  // Parts of an earlier split get their original fades back as long as nobody changed the outer ones since.
+  const origin = splitFades.get(leading);
+  const restores =
+    origin?.right === trailing &&
+    !differs(leading.fadeInSec, clampFades(origin.fadeInSec, 0, leading.durationSec).fadeInSec) &&
+    !differs(trailing.fadeOutSec, clampFades(0, origin.fadeOutSec, trailing.durationSec).fadeOutSec);
+  const mergedFades = restores
+    ? clampFades(origin.fadeInSec, origin.fadeOutSec, duration)
+    : { fadeInSec: leading.fadeInSec, fadeOutSec: trailing.fadeOutSec };
   const boundary = trailing.startTimelineSec;
   const dirtyBefore = world.project.dirty;
   if (dryRun) {
@@ -583,7 +619,15 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
           entity: 'placement',
           ref: { placementId: leading.id },
           label: clipLabel(leading.serial, leading.trackId),
-          fields: { durationSec: { before: leading.durationSec, after: duration, unit: 'sec' } },
+          fields: {
+            durationSec: { before: leading.durationSec, after: duration, unit: 'sec' },
+            ...(differs(mergedFades.fadeInSec, leading.fadeInSec)
+              ? { fadeInSec: { before: leading.fadeInSec, after: mergedFades.fadeInSec, unit: 'sec' } }
+              : {}),
+            ...(differs(mergedFades.fadeOutSec, leading.fadeOutSec)
+              ? { fadeOutSec: { before: leading.fadeOutSec, after: mergedFades.fadeOutSec, unit: 'sec' } }
+              : {}),
+          },
         },
       ],
       diff: EMPTY_DIFF,
@@ -602,8 +646,8 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
     durationSec: duration,
     clipInContentSec: leading.clipInContentSec,
     gainLinear: leading.gainLinear,
-    fadeInSec: leading.fadeInSec,
-    fadeOutSec: trailing.fadeOutSec,
+    fadeInSec: mergedFades.fadeInSec,
+    fadeOutSec: mergedFades.fadeOutSec,
     reference: leading.reference,
   });
   const removed = [clipItem(leading), clipItem(trailing)];

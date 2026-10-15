@@ -131,6 +131,52 @@ describe('arrangement.edit', () => {
     expect(merged.removed).toHaveLength(2);
   });
 
+  it('limits the fades of both parts of a split, says so, and gives them back with the merge recipe', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({
+      clips: [clip({ startTimelineSec: 0, durationSec: 4, fadeInSec: 1.5, fadeOutSec: 1.5 })],
+    });
+    const before = mock.snapshot();
+    const request = {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'split', placementId: ids['clip.placementId'], atTimelineSec: 1 }],
+    };
+    const predicted = await ok('arrangement.edit', { ...request, dryRun: true });
+    expect(predicted.changes).toMatchObject([{ fields: { fadeInSec: { before: 1.5, after: 0.9 } } }]);
+    const split = await ok('arrangement.edit', request);
+    expect(codes(split)).toEqual(['FADES_RECLAMPED', 'UPSTREAM_UNDO_DEFECT']);
+    expect(split.warnings).toMatchObject([{ data: { fadeInSec: { before: 1.5, after: 0.9 }, fadeOutSec: null } }, {}]);
+    const parts = mock.snapshot().placements;
+    expect(parts.map((p) => [p.fadeInSec, p.fadeOutSec])).toEqual([
+      [0.9, 0],
+      [0, 1.5],
+    ]);
+
+    await revert(session, split);
+    expect(mock.snapshot().placements).toMatchObject([
+      { startTimelineSec: 0, durationSec: 4, clipInContentSec: 0, fadeInSec: 1.5, fadeOutSec: 1.5 },
+    ]);
+    expect(mock.snapshot().placements[0]).toMatchObject({
+      gainLinear: before.placements[0]?.gainLinear,
+      trackId: before.placements[0]?.trackId,
+    });
+  });
+
+  it('says which fade a one-sided setFade shortened as a side effect', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ clips: [clip({ durationSec: 4, fadeInSec: 0, fadeOutSec: 2 })] });
+    const result = await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'setFade', placementId: ids['clip.placementId'], fadeInSec: 3 }],
+    });
+    expect(result.warnings).toMatchObject([
+      { code: 'FADES_RECLAMPED', data: { fadeOutSec: { before: 2, after: 0.6 } } },
+    ]);
+    expect(mock.snapshot().placements[0]).toMatchObject({ fadeInSec: 3, fadeOutSec: 0.6 });
+  });
+
   it('needs confirm for a delete, drops the references to deleted clips, and gives no revert', async () => {
     const session = await sessions.open();
     const { mock, ok, fails } = session;

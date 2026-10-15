@@ -74,6 +74,8 @@ function applyPatch(world: World, patch: Patch | null): Effect {
     const before = stateOf(placement);
     const referenceBefore = placement.reference;
     const changed = applyState(world, placement, state);
+    // A reference clip that was deleted since is gone for good: the reference goes back as null on purpose,
+    // there is nothing left to point at.
     const referenceAfter = reference === undefined ? referenceBefore : (world.placements.get(reference ?? -1) ?? null);
     const referenceMoved = referenceAfter !== referenceBefore;
     if (referenceMoved) {
