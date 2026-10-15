@@ -13,6 +13,7 @@ function harness() {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const serve = vi.fn<() => void>();
+  const doctor = vi.fn<(json: boolean) => Promise<number>>(() => Promise.resolve(1));
   const deps = {
     writeStdout: (text: string) => {
       stdout.push(text);
@@ -21,8 +22,9 @@ function harness() {
       stderr.push(text);
     },
     serve,
+    doctor,
   };
-  return { stdout, stderr, serve, deps };
+  return { stdout, stderr, serve, doctor, deps };
 }
 
 describe('run', () => {
@@ -51,6 +53,15 @@ describe('run', () => {
     expect(USAGE).toContain(`Usage: ${SERVER_NAME} [--help | --version]`);
     expect(USAGE).toContain('--version');
     expect(h.serve).not.toHaveBeenCalled();
+  });
+
+  it('runs doctor, with or without --json, and returns its exit code', async () => {
+    const h = harness();
+    expect(await run(['doctor'], h.deps)).toBe(1);
+    expect(await run(['doctor', '--json'], h.deps)).toBe(1);
+    expect(h.doctor.mock.calls).toEqual([[false], [true]]);
+    expect(h.serve).not.toHaveBeenCalled();
+    expect(USAGE).toContain(`${SERVER_NAME} doctor [--json]`);
   });
 
   it('reports a usage error on stderr only and exits with the usage code', () => {
