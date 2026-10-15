@@ -64,16 +64,26 @@ function noteView(note: unknown): unknown {
   return view;
 }
 
-/** The geometry hash of a placement, from a fresh project read; null when it cannot be read. */
-async function geometryOf(session: OtcpSession, placementId: string): Promise<string | null> {
+/** A placement's geometry hash with the arrangement revision of the read it came from. */
+interface Geometry {
+  readonly hash: string | null;
+  readonly arrangement: string | null;
+}
+
+/** The geometry hash of a placement, from a fresh project read; null members when it cannot be read. */
+async function geometryOf(session: OtcpSession, placementId: string): Promise<Geometry> {
   try {
     const project = await session.call('project.get', {}, READ_TIMEOUT_MS);
     const found = (Array.isArray(project.placements) ? project.placements : []).find(
       (p): p is Json => isObject(p) && p.placementId === placementId,
     );
-    return typeof found?.geometryHash === 'string' ? found.geometryHash : null;
+    const asOf = isObject(project.asOf) ? project.asOf : {};
+    return {
+      hash: typeof found?.geometryHash === 'string' ? found.geometryHash : null,
+      arrangement: typeof asOf.arrangementRevision === 'string' ? asOf.arrangementRevision : null,
+    };
   } catch {
-    return null;
+    return { hash: null, arrangement: null };
   }
 }
 
@@ -89,9 +99,11 @@ export async function getNotes(ctx: ToolContext, args: GetNotesArgs): Promise<Ou
       limit,
     });
 
+    // The geometry is read before the notes: if the arrangement changes in between, the token is
+    // older than the notes, so a write using it gets REVISION_CONFLICT (the safe direction).
+    const geometry = args.clip.startsWith('p:') ? await geometryOf(session, args.clip) : null;
     let limit = requested;
     let result = await session.call('content.getNotes', params(limit), READ_TIMEOUT_MS);
-    const geometry = args.clip.startsWith('p:') ? await geometryOf(session, args.clip) : null;
     const build = (page: Json): Body => {
       const notes = Array.isArray(page.notes) ? page.notes.map(noteView) : [];
       const total = fin(page.totalCount) ? page.totalCount : null;
@@ -107,21 +119,31 @@ export async function getNotes(ctx: ToolContext, args: GetNotesArgs): Promise<Ou
         '; note times are in seconds and each member name states its clock.' +
         (more ? ' More notes follow: pass next_cursor as cursor to read the next page.' : '');
       const asOf = isObject(page.asOf) ? page.asOf : {};
+      // The geometry counts only when both reads saw the same arrangement revision.
+      const sameArrangement =
+        geometry !== null && geometry.arrangement !== null && geometry.arrangement === asOf.arrangementRevision;
+      const geometryHash = sameArrangement ? geometry.hash : null;
       const content = (Array.isArray(asOf.contents) ? asOf.contents : []).find(
         (c): c is Json => isObject(c) && c.contentId === page.contentId,
       );
+      const revision = clipRevisionFrom(content, geometryHash);
+      const reasons: Json = { ...(isObject(page.nullReasons) ? page.nullReasons : {}) };
+      if (revision === null) reasons.clip_revision = 'unavailable';
+      else if (geometry !== null && geometryHash === null) {
+        reasons.clip_revision_geometry = geometry.hash === null ? 'unavailable' : 'arrangement_changed_during_read';
+      }
       return {
         summary,
         contentId: page.contentId ?? null,
         placementId: page.placementId ?? null,
-        clip_revision: clipRevisionFrom(content, geometry),
+        clip_revision: revision,
         tuningHz: page.tuningHz ?? null,
         totalCount: page.totalCount ?? null,
         range: asked.range,
         notes,
         next_cursor: page.nextCursor ?? null,
         derived: Array.isArray(page.derived) ? page.derived : [],
-        ...(isObject(page.nullReasons) ? { nullReasons: page.nullReasons } : {}),
+        ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}),
       };
     };
 
@@ -135,6 +157,21 @@ export async function getNotes(ctx: ToolContext, args: GetNotesArgs): Promise<Ou
       limit = Math.max(1, Math.min(limit - 1, Math.floor((OUTPUT_BUDGET * 0.9) / perNote)));
       result = await session.call('content.getNotes', params(limit), READ_TIMEOUT_MS);
       body = build(result);
+    }
+    if (serializeResult(body).length > OUTPUT_BUDGET) {
+      return {
+        ok: false,
+        error: toolError('INTERNAL', {
+          reason: 'output_too_large',
+          detail: `a page of ${String(limit)} note(s) still exceeds the ${String(OUTPUT_BUDGET)} character output budget`,
+          nextStep: {
+            actor: 'agent',
+            tool: 'opentune_get_notes',
+            message:
+              'Read a narrower range with from and to (and clock), or pass limit 1 with the cursor, to get smaller pages.',
+          },
+        }),
+      };
     }
     if (limit < requested) {
       body = {

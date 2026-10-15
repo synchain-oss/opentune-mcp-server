@@ -19,10 +19,11 @@ import {
   encodeArrangementRevision,
   encodeClipRevision,
   expectedParams,
+  MissingTokenError,
 } from '../../src/otcp/tokens.js';
-import { getNotes, getNotesTool } from '../../src/tools/notes.js';
+import { getNotes, getNotesTool, OUTPUT_BUDGET } from '../../src/tools/notes.js';
 import { getProject, getProjectTool } from '../../src/tools/project.js';
-import { render, type Outcome } from '../../src/tools/registry.js';
+import { render, withInstance, type Outcome } from '../../src/tools/registry.js';
 import { discoveryContent, tempDir, testContext, type TestContext } from '../support/context.js';
 import { clip, need } from '../support/mock-client.js';
 
@@ -57,6 +58,25 @@ async function otcp(ctx: TestContext, method: string, params: Record<string, unk
   const scan = await ctx.instances.scan();
   if (!('instances' in scan) || scan.instances[0] === undefined) throw new Error('no instance');
   return (await ctx.instances.session(scan.instances[0])).call(method, params, 10_000);
+}
+
+/** Lets a test observe and alter the results the only instance's session returns. */
+async function tapSession(ctx: TestContext) {
+  const scan = await ctx.instances.scan();
+  if (!('instances' in scan) || scan.instances[0] === undefined) throw new Error('no instance');
+  const session = await ctx.instances.session(scan.instances[0]);
+  const original = session.call.bind(session);
+  let hook: (method: string, result: Record<string, unknown>) => void = () => undefined;
+  session.call = async (method: string, params: Record<string, unknown>, timeoutMs = 10_000) => {
+    const result = (await original(method, params, timeoutMs)) as Record<string, unknown>;
+    hook(method, result);
+    return result;
+  };
+  return {
+    tap(fn: (method: string, result: Record<string, unknown>) => void) {
+      hook = fn;
+    },
+  };
 }
 
 describe('revision tokens', () => {
@@ -107,8 +127,32 @@ describe('revision tokens', () => {
     expect(expectedParams('content.setKey', before, ['key'])).toEqual({ expectedKeyRevision: before.key });
     expect(Object.keys(expectedParams('content.editNotes', before, ['content']))).not.toContain('expectedKeyRevision');
     // The old content token is still current at the instance: a write using it does not conflict.
-    const edit = await otcp(ctx, 'content.getNotes', { contentId: placement?.contentId, limit: 1 });
-    expect((edit.asOf as { contents: { revision: string }[] }).contents[0]?.revision).toBe(before.content);
+    const edit = await otcp(ctx, 'content.editNotes', {
+      contentId: placement?.contentId,
+      ...expectedParams('content.editNotes', before, ['content']),
+      ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents: 10 }],
+    });
+    expect(edit.changes).toHaveLength(1);
+    // The counter-example: the same write that also carries the old key token conflicts.
+    await expect(
+      otcp(ctx, 'content.editNotes', {
+        contentId: placement?.contentId,
+        ...expectedParams('content.editNotes', before, ['content', 'key']),
+        ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents: 10 }],
+      }),
+    ).rejects.toMatchObject({ data: { kind: 'REVISION_CONFLICT' } });
+  });
+
+  it('turns a clip revision without the needed token into an actionable error', async () => {
+    const tokens = { content: 'r', grid: null, key: 'k', geometry: null };
+    expect(() => expectedParams('content.shiftTiming', tokens, ['grid'])).toThrow(MissingTokenError);
+    const { ctx } = await withMock();
+    const outcome = await withInstance(ctx, { instanceId: undefined }, [], () => {
+      expectedParams('content.shiftTiming', tokens, ['grid']);
+      return Promise.resolve({ ok: true, body: {} } as Outcome);
+    });
+    expect(failure(outcome)).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'revision_incomplete' });
+    expect(failure(outcome).nextStep.tool).toBe('opentune_get_project');
   });
 });
 
@@ -320,6 +364,57 @@ describe('opentune_get_notes', () => {
     );
     expect(stale).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'cursor_stale' });
     expect(stale.nextStep.message.length).toBeGreaterThan(10);
+  });
+
+  it('reads the geometry before the notes, so a change in between leaves the token older, not newer', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ clips: [clip()] });
+    const session = await tapSession(ctx);
+    const methods: string[] = [];
+    session.tap((method) => methods.push(method));
+    body(await getNotes(ctx, { clip: need(ids, 'clip.placementId'), clock: 'content' }));
+    expect(methods.indexOf('project.get')).toBeGreaterThanOrEqual(0);
+    expect(methods.indexOf('project.get')).toBeLessThan(methods.indexOf('content.getNotes'));
+  });
+
+  it('drops the geometry from the token when the two reads saw different arrangement revisions', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ clips: [clip()] });
+    const session = await tapSession(ctx);
+    session.tap((method, result) => {
+      if (method === 'content.getNotes') {
+        result.asOf = { ...(result.asOf as object), arrangementRevision: 'moved-in-between' };
+      }
+    });
+    const out = body(await getNotes(ctx, { clip: need(ids, 'clip.placementId'), clock: 'content' }));
+    const tokens = decodeClipRevision(out.clip_revision as string);
+    expect(tokens?.content).toBe(ids['clip.revision']);
+    expect(tokens?.geometry).toBeNull();
+    expect(out.nullReasons).toMatchObject({ clip_revision_geometry: 'arrangement_changed_during_read' });
+  });
+
+  it('explains a missing clip_revision like opentune_get_project does', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ clips: [clip()] });
+    const session = await tapSession(ctx);
+    session.tap((method, result) => {
+      if (method === 'content.getNotes') result.asOf = { arrangementRevision: 'x', contents: [] };
+    });
+    const out = body(await getNotes(ctx, { clip: need(ids, 'clip.placementId'), clock: 'content' }));
+    expect(out.clip_revision).toBeNull();
+    expect(out.nullReasons).toMatchObject({ clip_revision: 'unavailable' });
+  });
+
+  it('returns an error with a next step when even the smallest page exceeds the output budget', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ clips: [clip()] });
+    const session = await tapSession(ctx);
+    session.tap((method, result) => {
+      if (method === 'content.getNotes') result.derived = [{ pad: 'x'.repeat(OUTPUT_BUDGET) }];
+    });
+    const error = failure(await getNotes(ctx, { clip: need(ids, 'clip.placementId'), clock: 'content' }));
+    expect(error).toMatchObject({ reason: 'output_too_large' });
+    expect(error.nextStep.tool).toBe('opentune_get_notes');
   });
 
   it('is declared as a read-only tool whose clock is required', () => {
