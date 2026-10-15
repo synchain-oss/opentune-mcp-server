@@ -68,6 +68,27 @@ export function decodeArrangementRevision(value: string): string | null {
   return token !== null && token.length > 0 && token.length <= 256 ? token : null;
 }
 
+const isTokenString = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= 256;
+
+/**
+ * The clip_revision for a content's tokens as a read result's `asOf.contents[]` reports them
+ * (`revision`, `gridRevision`, `keyRevision`) and the geometry hash of the placement the clip is
+ * read through. Null when the content's tokens are missing or malformed. `geometryHash` is null
+ * when the placement is unknown; a write that depends on the geometry then needs a fresh read.
+ */
+export function clipRevisionFrom(content: unknown, geometryHash: unknown): string | null {
+  if (typeof content !== 'object' || content === null) return null;
+  const c = content as Record<string, unknown>;
+  if (!isTokenString(c.revision) || !isTokenString(c.gridRevision) || !isTokenString(c.keyRevision)) return null;
+  return encodeClipRevision({
+    content: c.revision,
+    grid: c.gridRevision,
+    key: c.keyRevision,
+    geometry: isTokenString(geometryHash) ? geometryHash : null,
+  });
+}
+
 /**
  * The expected-value params of `method` for the aspects an operation depends on. Throws for an
  * aspect the method does not accept or a token the clip_revision lacks: both are programming errors
