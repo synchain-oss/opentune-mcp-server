@@ -86,15 +86,17 @@ function applyPatch(world: World, patch: Patch | null): Effect {
   return effect;
 }
 
-function restore(world: World, content: ContentRec, snap: ContentSnap, effect: Effect): void {
+/** Puts back the aspects the snapshot holds; an aspect it leaves out is not touched. */
+function restore(world: World, content: ContentRec, snap: Partial<ContentSnap>, effect: Effect): void {
   const ref = { contentId: content.id };
   const label = contentLabel(content);
   const touched = () => {
     if (!effect.contents.includes(content)) effect.contents.push(content);
   };
-  if (!sameJson(content.notes, snap.notes)) {
+  const { notes, key, pitchShift, handles } = snap;
+  if (notes !== undefined && !sameJson(content.notes, notes)) {
     const before = content.revision;
-    content.notes = clone(snap.notes);
+    content.notes = clone(notes);
     world.touch(content, 'notes', 'pitch');
     effect.changes.push({
       entity: 'content',
@@ -105,45 +107,44 @@ function restore(world: World, content: ContentRec, snap: ContentSnap, effect: E
     effect.rerender.push(content);
     touched();
   }
-  if (!sameJson(content.key, snap.key)) {
+  if (key !== undefined && !sameJson(content.key, key)) {
     const before = content.key;
-    content.key = clone(snap.key);
+    content.key = clone(key);
     world.touch(content, 'key');
     effect.changes.push({
       entity: 'key',
       ref,
       label,
       fields: {
-        root: { before: before?.root ?? null, after: snap.key?.root ?? null, unit: null },
-        scale: { before: before?.scale ?? null, after: snap.key?.scale ?? null, unit: null },
+        root: { before: before?.root ?? null, after: key?.root ?? null, unit: null },
+        scale: { before: before?.scale ?? null, after: key?.scale ?? null, unit: null },
       },
     });
     touched();
   }
-  if (!sameJson(content.pitchShift, snap.pitchShift)) {
+  if (pitchShift !== undefined && !sameJson(content.pitchShift, pitchShift)) {
     const before = content.pitchShift;
-    content.pitchShift = clone(snap.pitchShift);
+    content.pitchShift = clone(pitchShift);
     world.touch(content, 'pitchShift');
     const fields: Record<string, unknown> = {};
-    if (before.semitones !== snap.pitchShift.semitones) {
-      fields.semitones = { before: before.semitones, after: snap.pitchShift.semitones, unit: 'semitones' };
+    if (before.semitones !== pitchShift.semitones) {
+      fields.semitones = { before: before.semitones, after: pitchShift.semitones, unit: 'semitones' };
     }
-    if (before.cents !== snap.pitchShift.cents) {
-      fields.cents = { before: before.cents, after: snap.pitchShift.cents, unit: 'cents' };
+    if (before.cents !== pitchShift.cents) {
+      fields.cents = { before: before.cents, after: pitchShift.cents, unit: 'cents' };
     }
     effect.changes.push({ entity: 'pitchShift', ref, label, fields });
     effect.rerender.push(content);
     touched();
   }
-  if (!sameJson(content.handles, snap.handles)) {
+  if (handles !== undefined && !sameJson(content.handles, handles)) {
     const before = content.handles;
     const gridRevision = content.comp.grid;
-    content.handles = clone(snap.handles);
+    content.handles = clone(handles);
     world.touch(content, 'grid');
-    const same =
-      before.length === snap.handles.length && before.every((h, i) => h.handleId === snap.handles[i]?.handleId);
+    const same = before.length === handles.length && before.every((h, i) => h.handleId === handles[i]?.handleId);
     if (same) {
-      for (const [i, handle] of snap.handles.entries()) {
+      for (const [i, handle] of handles.entries()) {
         const old = before[i];
         if (old !== undefined && old.outputSec !== handle.outputSec) {
           effect.changes.push({

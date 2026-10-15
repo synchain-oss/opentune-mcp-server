@@ -8,7 +8,7 @@ import { existsSync, readFileSync, statSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
 import { historyHandlers } from '../../mock/history.js';
@@ -187,7 +187,16 @@ describe('undo history', () => {
       unsafe: false,
     });
     const run = (params: Record<string, unknown>) =>
-      historyHandlers['edit.undo']?.({ world, params, exportLock: false, hasCapability: () => true, redact: (t) => t });
+      historyHandlers['edit.undo']?.({
+        world,
+        params,
+        exportLock: false,
+        hasCapability: () => true,
+        redact: (t) => t,
+        startJob: () => {
+          throw new Error('no job here');
+        },
+      });
     world.undoStack = [entry(), entry()];
     const [lower, upper] = world.undoStack;
 
@@ -492,6 +501,9 @@ describe('given and the test interface', () => {
     expect(mock.acceptedConnections).toBe(2);
     expect(mock.openConnections).toBe(2);
     second.destroy();
-    await mock.whenAccepted(1);
+    await vi.waitFor(() => {
+      expect(mock.openConnections).toBe(1);
+    });
+    expect(mock.acceptedConnections).toBe(2);
   });
 });

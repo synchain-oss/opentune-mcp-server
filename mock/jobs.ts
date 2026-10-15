@@ -7,6 +7,7 @@
 
 import type { OtcpSpec } from '../test/support/otcp-spec.js';
 import type { Clock, Timer } from './clock.js';
+import { refuse } from './errors.js';
 import { makeError, type ErrorObject } from './protocol.js';
 
 export const JOB_RETENTION_MS = 1_800_000;
@@ -15,6 +16,15 @@ export const JOB_RETENTION_COUNT = 64;
 export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
 const TERMINAL: ReadonlySet<JobState> = new Set(['succeeded', 'failed', 'cancelled']);
+
+/** Kinds whose jobs can be cancelled when they start (the table of section 12.3). */
+const CANCELLABLE_KINDS: ReadonlySet<string> = new Set([
+  'import',
+  'export',
+  'referenceAnalysis',
+  'timeGridSeed',
+  'projectOpen',
+]);
 
 export interface JobProgress {
   readonly fraction: number | null;
@@ -113,7 +123,10 @@ export class JobStore {
       });
     }
     this.#evict(now, JOB_RETENTION_COUNT - 1);
-    if (this.#jobs.size >= JOB_RETENTION_COUNT) throw new Error('all retained jobs are still active (BUSY job_limit)');
+    if (this.#jobs.size >= JOB_RETENTION_COUNT) {
+      // Section 12.4: the starting method fails and nothing starts.
+      throw refuse('BUSY', 'job_limit', 'every retained job is still active', 1000);
+    }
     const jobId = `j:${this.instanceIdShort}:${String(++this.#seq)}`;
     const view: JobView = {
       jobId,
@@ -129,6 +142,54 @@ export class JobStore {
     };
     this.#jobs.set(jobId, { view, cancelRequested: false, waiters: new Set() });
     return view;
+  }
+
+  /**
+   * Starts a job that finishes on the next turn of the clock: `work` runs then and its return value
+   * becomes the job's result; a throw fails the job with INTERNAL. A job of a kind that section
+   * 12.3 lets be cancelled can be cancelled until then; it ends cancelled and `work` never runs.
+   */
+  start(kind: string, work: () => Record<string, unknown>, cancellable = CANCELLABLE_KINDS.has(kind)): JobView {
+    const created = this.add({ kind, state: 'queued', cancellable });
+    const record = this.#jobs.get(created.jobId);
+    this.clock.setTimer(0, () => {
+      if (record === undefined || TERMINAL.has(record.view.state)) return;
+      const now = this.clock.now();
+      if (record.cancelRequested) {
+        // The job's first cancellation point is before its work: nothing is done.
+        record.view = {
+          ...record.view,
+          state: 'cancelled',
+          updatedAtMs: now,
+          finishedAtMs: now,
+          progress: progressOf('cancelled'),
+          error: this.#cancelledError(),
+        };
+        for (const waiter of [...record.waiters]) waiter();
+        return;
+      }
+      let outcome: Pick<JobView, 'state' | 'result' | 'error'>;
+      try {
+        outcome = { state: 'succeeded', result: work(), error: null };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'unexpected failure';
+        outcome = {
+          state: 'failed',
+          result: null,
+          error: makeError(this.spec, { kind: 'INTERNAL', detail: `the ${kind} job failed: ${detail}` }),
+        };
+      }
+      record.view = {
+        ...record.view,
+        ...outcome,
+        cancellable: false,
+        updatedAtMs: now,
+        finishedAtMs: now,
+        progress: progressOf(outcome.state),
+      };
+      for (const waiter of [...record.waiters]) waiter();
+    });
+    return created;
   }
 
   /** A job of this kind exists that has not finished: for kind `export`, the export lock is held (section 13.2). */
@@ -178,6 +239,8 @@ export class JobStore {
     record.view = { ...record.view, cancellable: false, updatedAtMs: this.clock.now() };
     // The job reaches its next cancellation point right after the response.
     this.clock.setTimer(0, () => {
+      // A job that got there first, through its own step, stays as it ended: terminal states never change.
+      if (TERMINAL.has(record.view.state)) return;
       const now = this.clock.now();
       record.view = {
         ...record.view,

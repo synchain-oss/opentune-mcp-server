@@ -22,6 +22,7 @@ import { resolveDiscoveryDir, writeDiscoveryFile } from './discovery.js';
 import { MockError } from './errors.js';
 import { WorkFiles } from './files.js';
 import { applyGiven, WORLD_GIVEN_MEMBERS, type GivenState } from './given.js';
+import { editHandlers } from './edit.js';
 import { historyHandlers } from './history.js';
 import { JobStore, UnsupportedPrecondition, type JobSpec } from './jobs.js';
 import { TRACK_SLOTS, World, type Analysis, type BusyState } from './model.js';
@@ -37,6 +38,7 @@ import {
   type RequestId,
 } from './protocol.js';
 import { readHandlers } from './reads.js';
+import { timingHandlers } from './timing.js';
 
 export { UnsupportedPrecondition } from './jobs.js';
 
@@ -56,7 +58,14 @@ export const LIMITS = {
 } as const;
 
 /** The capabilities whose methods the mock implements. */
-export const MOCK_CAPABILITIES: readonly string[] = ['session.v1', 'jobs.v1', 'read.v1', 'history.v1'];
+export const MOCK_CAPABILITIES: readonly string[] = [
+  'session.v1',
+  'jobs.v1',
+  'read.v1',
+  'history.v1',
+  'edit.v1',
+  'timing.v1',
+];
 
 const LOOPBACK = '127.0.0.1';
 const PROTOCOL = '1.0';
@@ -330,7 +339,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     return out;
   };
 
-  const worldHandlers = { ...readHandlers, ...historyHandlers };
+  const worldHandlers = { ...readHandlers, ...historyHandlers, ...editHandlers, ...timingHandlers };
 
   /** Runs a method of the model on the "main thread": synchronously, so requests apply in order. */
   const runModel = (conn: Connection, { id, method, params }: Request) => {
@@ -339,9 +348,13 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     const context: MethodContext = {
       world,
       params: params ?? {},
-      exportLock: jobs.hasActive('export'),
+      // Read when asked, so that the work of a job that runs later sees the lock as it is then.
+      get exportLock() {
+        return jobs.hasActive('export');
+      },
       hasCapability: (c) => capabilities.includes(c),
       redact,
+      startJob: (kind, work) => jobs.start(kind, work),
     };
     try {
       send(conn, successLine(id, handler(context)));
