@@ -33,6 +33,8 @@ export interface GivenClip {
   readonly pitchShift?: PitchShiftRec;
   readonly timeGrid?: readonly { bind: string; contentSec: number }[];
   readonly referenceClip?: string;
+  readonly fadeInSec?: number;
+  readonly fadeOutSec?: number;
 }
 
 export interface GivenHistoryEntry {
@@ -53,10 +55,22 @@ export interface GivenState {
   readonly clipOnEveryTrack?: boolean;
   readonly files?: readonly GivenFile[];
   readonly history?: { readonly undo: readonly GivenHistoryEntry[]; readonly redo: readonly GivenHistoryEntry[] };
+  /** The number of track slots shown, counted from track 0, or `all` for every slot. */
+  readonly visibleTrackCount?: number | 'all';
+  readonly audio?: { readonly running: boolean; readonly failsToOpen?: boolean };
 }
 
 /** The members of a vector's `given` that this module establishes. */
-export const WORLD_GIVEN_MEMBERS = ['editingScheme', 'dirty', 'clips', 'clipOnEveryTrack', 'files', 'history'] as const;
+export const WORLD_GIVEN_MEMBERS = [
+  'editingScheme',
+  'dirty',
+  'clips',
+  'clipOnEveryTrack',
+  'files',
+  'history',
+  'visibleTrackCount',
+  'audio',
+] as const;
 
 /** The clip that `clipOnEveryTrack` adds to an empty track (vectors/README.md, Preconditions). */
 const FILLER_CLIP_SEC = 2;
@@ -101,6 +115,8 @@ function createClip(world: World, files: WorkFiles, clip: GivenClip, bindings: R
     name: clip.bind,
     startTimelineSec: clip.startTimelineSec,
     durationSec: clip.durationSec,
+    fadeInSec: clip.fadeInSec ?? 0,
+    fadeOutSec: clip.fadeOutSec ?? 0,
   });
   bindings[`${clip.bind}.contentId`] = content.id;
   bindings[`${clip.bind}.placementId`] = placement.id;
@@ -168,11 +184,11 @@ function buildHistory(
       const content = { objectId: placement.content.objectId };
       const near: Patch = {
         content: { ...content, snap: now.snap },
-        placement: { serial: placement.serial, startTimelineSec: now.startTimelineSec },
+        placements: [{ serial: placement.serial, state: { startTimelineSec: now.startTimelineSec } }],
       };
       const far: Patch = {
         content: { ...content, snap: there.snap },
-        placement: { serial: placement.serial, startTimelineSec: there.startTimelineSec },
+        placements: [{ serial: placement.serial, state: { startTimelineSec: there.startTimelineSec } }],
       };
       [undoPatch, redoPatch] = direction === 'undo' ? [far, near] : [near, far];
       state.set(placement.serial, { ...now, snap: there.snap, startTimelineSec: there.startTimelineSec });
@@ -187,6 +203,7 @@ function buildHistory(
       redoPatch,
       possiblyStale: stale,
       unsafe: item.action === 'clipSplit',
+      ...(item.action === 'noteEdit' || item.action === 'pitchShift' ? {} : { tracks: [placement.trackId] }),
     };
     return entry;
   };
@@ -242,6 +259,10 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
   }
   for (const file of given.files ?? []) Object.assign(bindings, files.provide(file));
   if (given.history !== undefined) buildHistory(world, given.history, byBind, bindings);
+  if (given.visibleTrackCount !== undefined) {
+    world.setVisibleTrackCount(given.visibleTrackCount === 'all' ? TRACK_SLOTS : given.visibleTrackCount);
+  }
+  if (given.audio !== undefined) world.transport.audioDeviceRunning = given.audio.running;
   world.project.dirty = given.dirty ?? false;
   // Tokens are read after every precondition is in place (vectors/README.md).
   for (const [bind, placement] of byBind) {
