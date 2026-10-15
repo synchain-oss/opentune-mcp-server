@@ -131,6 +131,39 @@ export class JobStore {
     return view;
   }
 
+  /**
+   * Starts a job that cannot be cancelled and finishes on the next turn of the clock: `work` runs
+   * then and its return value becomes the job's result; a throw fails the job with INTERNAL.
+   */
+  start(kind: string, work: () => Record<string, unknown>): JobView {
+    const created = this.add({ kind, state: 'queued', cancellable: false });
+    const record = this.#jobs.get(created.jobId);
+    this.clock.setTimer(0, () => {
+      if (record === undefined) return;
+      const now = this.clock.now();
+      let outcome: Pick<JobView, 'state' | 'result' | 'error'>;
+      try {
+        outcome = { state: 'succeeded', result: work(), error: null };
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : 'unexpected failure';
+        outcome = {
+          state: 'failed',
+          result: null,
+          error: makeError(this.spec, { kind: 'INTERNAL', detail: `the ${kind} job failed: ${detail}` }),
+        };
+      }
+      record.view = {
+        ...record.view,
+        ...outcome,
+        updatedAtMs: now,
+        finishedAtMs: now,
+        progress: progressOf(outcome.state),
+      };
+      for (const waiter of [...record.waiters]) waiter();
+    });
+    return created;
+  }
+
   /** A job of this kind exists that has not finished: for kind `export`, the export lock is held (section 13.2). */
   hasActive(kind: string): boolean {
     return [...this.#jobs.values()].some((r) => r.view.kind === kind && r.view.finishedAtMs === null);
