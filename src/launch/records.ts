@@ -145,22 +145,47 @@ const sleep = (ms: number) =>
     setTimeout(resolve, ms);
   });
 
+/** How long a refused creation of the lock file counts as a lock being released, not as an error. */
+export const LOCK_DENIED_MS = 2000;
+
+/** Creates the lock file; fails with EEXIST when it exists. */
+export type CreateLockFile = (file: string) => Promise<void>;
+
+const createLockFile: CreateLockFile = async (file) => {
+  const handle = await open(file, 'wx', 0o600);
+  await handle.close();
+};
+
 /**
  * Takes the launch lock of `dir`, creating the directory if needed, and returns the function that
  * releases it. Waits while another call holds the lock; a lock older than LOCK_STALE_MS is removed.
  * Rejects when the directory cannot be created or the lock cannot be taken within twice that time.
  */
-export async function acquireLock(dir: string, pollMs: number): Promise<() => Promise<void>> {
+export async function acquireLock(
+  dir: string,
+  pollMs: number,
+  create: CreateLockFile = createLockFile,
+): Promise<() => Promise<void>> {
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, LOCK_FILE);
   const giveUp = Date.now() + 2 * LOCK_STALE_MS;
+  let deniedSince: number | null = null;
   for (;;) {
     try {
-      const handle = await open(file, 'wx', 0o600);
-      await handle.close();
+      await create(file);
       return () => unlink(file).catch(() => undefined);
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+      const { code } = error as NodeJS.ErrnoException;
+      if (code === 'EPERM' || code === 'EACCES') {
+        // Windows refuses to create a file while one of that name is still being deleted, which is
+        // the case just after another call released the lock. A refusal that lasts is an error.
+        deniedSince ??= Date.now();
+        if (Date.now() - deniedSince > LOCK_DENIED_MS) throw error;
+        await sleep(pollMs);
+        continue;
+      }
+      if (code !== 'EEXIST') throw error;
+      deniedSince = null;
     }
     const info = await stat(file).catch(() => null);
     if (info !== null && Date.now() - info.mtimeMs > LOCK_STALE_MS) {

@@ -19,6 +19,7 @@ import { pidAlive } from '../../src/discovery/process.js';
 import { manifestProblem } from '../../src/launch/config.js';
 import { detectOfficialInstall, installDir, parseRegQuery, systemInstallDetector } from '../../src/launch/install.js';
 import {
+  LOCK_DENIED_MS,
   LOCK_STALE_MS,
   acquireLock,
   launchDir,
@@ -480,6 +481,26 @@ describe('launch records', () => {
     await (
       await acquireLock(d, 10)
     )();
+    expect(readdirSync(d)).toEqual([]);
+  });
+
+  it('wait out a brief refusal to create the lock file, but not a lasting one', async () => {
+    const d = launchDir(dir());
+    const fail = (code: string) => Promise.reject(Object.assign(new Error(code), { code }));
+    let attempts = 0;
+    const release = await acquireLock(d, 10, (file) => {
+      attempts += 1;
+      // Windows: the name of a lock file another call has just deleted cannot be reused at once.
+      if (attempts <= 3) return fail('EPERM');
+      writeFileSync(file, '', { flag: 'wx' });
+      return Promise.resolve();
+    });
+    expect(attempts).toBe(4);
+    await release();
+    const started = Date.now();
+    await expect(acquireLock(d, 50, () => fail('EACCES'))).rejects.toMatchObject({ code: 'EACCES' });
+    expect(Date.now() - started).toBeGreaterThanOrEqual(LOCK_DENIED_MS);
+    await expect(acquireLock(d, 10, () => fail('ENOSPC'))).rejects.toMatchObject({ code: 'ENOSPC' });
     expect(readdirSync(d)).toEqual([]);
   });
 });
