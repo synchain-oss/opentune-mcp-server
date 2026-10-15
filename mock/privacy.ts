@@ -14,9 +14,12 @@ export function stripHome(text: string, home: string, platform: NodeJS.Platform 
   const forms = new Set([home, home.replaceAll('\\', '/')]);
   let out = text;
   for (const form of forms) {
-    // The match ends at a path boundary: `/srv/a` is not the start of `/srv/ab`.
+    // The match ends at a path boundary: `/srv/a` is not the start of `/srv/ab`. A letter, digit,
+    // underscore or hyphen right after the home directory continues a name, and so does a period
+    // that is followed by such a character (`/srv/a.b`). A period ending a sentence, a newline, a
+    // quote, a bracket or a comma is a boundary, so the home directory is replaced there.
     const escaped = form.replace(REGEXP_SPECIALS, '\\$&');
-    out = out.replace(new RegExp(`${escaped}(?=[\\\\/]|$)`, platform === 'win32' ? 'gi' : 'g'), '~');
+    out = out.replace(new RegExp(`${escaped}(?![\\w-]|\\.[\\w-])`, platform === 'win32' ? 'gi' : 'g'), '~');
   }
   return out;
 }

@@ -129,9 +129,9 @@ export class ImportService {
       return params.trackId;
     }
     if (params.newTrack === true) {
-      // When every track holds a clip, newTrack has no empty track to take. The schema does not say
-      // whether the active track is used instead; the maintainers ruled that this is an error
-      // (INVALID_ARGUMENT, track_capacity), and the next version of the spec will say so.
+      // When every track holds a clip, newTrack has no empty track to take. The schema leaves this
+      // case open. With newTrack the caller asked for a new track, so stacking the clips on the
+      // active track would be a surprise; the mock refuses with INVALID_ARGUMENT(track_capacity).
       const used = new Set([...world.placements.values()].map((p) => p.trackId));
       for (let id = 0; id < TRACK_SLOTS; id++) if (!used.has(id)) return id;
       throw refuse('INVALID_ARGUMENT', 'track_capacity', 'every track already holds a clip');

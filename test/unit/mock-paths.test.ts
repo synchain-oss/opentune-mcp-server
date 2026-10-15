@@ -191,4 +191,14 @@ describe('removing the home directory from text', () => {
     // Characters that mean something in a pattern are taken literally.
     expect(stripHome('D:\\a+b(1)\\x', 'D:\\a+b(1)', 'win32')).toBe('~\\x');
   });
+
+  it('replaces the home directory when a line break, quote, period, bracket or comma follows it', () => {
+    const home = '/srv/a';
+    expect(stripHome('/srv/a\n/x', home, 'linux')).toBe('~\n/x');
+    expect(stripHome('"/srv/a"', home, 'linux')).toBe('"~"');
+    expect(stripHome('see /srv/a.', home, 'linux')).toBe('see ~.');
+    expect(stripHome('(/srv/a)', home, 'linux')).toBe('(~)');
+    expect(stripHome('/srv/a, /srv/a', home, 'linux')).toBe('~, ~');
+    expect(stripHome('D:\\a\nD:\\a.', 'D:\\a', 'win32')).toBe('~\n~.');
+  });
 });
