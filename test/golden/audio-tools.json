@@ -1,0 +1,58 @@
+{
+  "import-one-file": {
+    "tool": "opentune_open_audio",
+    "summary": "opentune_open_audio: created 1 placement, 1 content (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; cannot be restored by any request). Warnings: IRREVERSIBLE.",
+    "lines": [
+      "This change can be neither undone nor reverted by any request of the protocol.",
+      "Not undoable (OpenTune records no undo entry for this, as in its own interface). No request of the protocol can restore the previous state."
+    ]
+  },
+  "import-partial-failure": {
+    "tool": "opentune_open_audio",
+    "summary": "opentune_open_audio: created 1 placement, 1 content (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; cannot be restored by any request). Warnings: IRREVERSIBLE. 1 of 2 files were imported; 1 failed (NOT_FOUND): see items[].error for each.",
+    "lines": [
+      "This change can be neither undone nor reverted by any request of the protocol.",
+      "Not undoable (OpenTune records no undo entry for this, as in its own interface). No request of the protocol can restore the previous state."
+    ]
+  },
+  "import-nothing-imported": {
+    "tool": "opentune_open_audio",
+    "summary": "opentune_open_audio: no file was imported, nothing in the project changed; 1 failed (NOT_FOUND). See items[].error for each file.",
+    "lines": []
+  },
+  "import-still-running": {
+    "tool": "opentune_open_audio",
+    "summary": "opentune_open_audio: started job j:01234567:1 (import), queued; nothing is committed until it finishes. Follow it with opentune_get_job. It was still running when the wait ended.",
+    "lines": []
+  },
+  "import-openDyne-focus-notes": {
+    "tool": "opentune_open_audio",
+    "summary": "opentune_open_audio: created 1 placement, 1 content (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; cannot be restored by any request; side effects: OpenTune generated notes for a content). Warnings: SELECTION_GENERATED_NOTES, IRREVERSIBLE. OpenTune generated notes for the focused clip although none were requested: this is how the openDyne editing scheme works, and there is no undo entry for it.",
+    "lines": [
+      "Selecting the clip made OpenTune generate its notes, with no undo entry.",
+      "This change can be neither undone nor reverted by any request of the protocol.",
+      "OpenTune generated notes for a content.",
+      "Not undoable (OpenTune records no undo entry for this, as in its own interface). No request of the protocol can restore the previous state."
+    ]
+  },
+  "export-clip": {
+    "tool": "opentune_export_audio",
+    "summary": "opentune_export_audio: the clip was written as a new WAV file (path in export.path). The project itself was not changed.",
+    "lines": []
+  },
+  "export-name-taken": {
+    "tool": "opentune_export_audio",
+    "summary": "opentune_export_audio: the clip was written as a new WAV file (path in export.path). The name asked for was taken, so OpenTune used the next free name; nothing was overwritten. The project itself was not changed.",
+    "lines": []
+  },
+  "export-uncorrected-content": {
+    "tool": "opentune_export_audio",
+    "summary": "opentune_export_audio: 1 content in this export is uncorrected (dry, not pitch-corrected; reasons in export.dryContents), and the clip was written as a new WAV file. The project itself was not changed.",
+    "lines": []
+  },
+  "export-master-still-running": {
+    "tool": "opentune_export_audio",
+    "summary": "opentune_export_audio: started job j:01234567:1 (export), queued; nothing is committed until it finishes. Follow it with opentune_get_job. It was still running when the wait ended.",
+    "lines": []
+  }
+}

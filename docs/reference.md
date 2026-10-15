@@ -2,7 +2,7 @@
 
 # Tool reference
 
-OpenTune MCP Server (by Synchain) offers 12 tools. Every tool returns its result both as
+OpenTune MCP Server (by Synchain) offers 14 tools. Every tool returns its result both as
 `structuredContent` and as the same JSON in a text block. Errors have the shape
 `{kind, reason, detail, retryable, executed, nextStep, url}`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -202,4 +202,43 @@ OTCP capabilities: `read.v1`. OTCP methods: `content.getNotes`, `content.getPitc
 | `detail` | string | no | summary (default): totals and worst notes. phrases: one entry per phrase. notes: one per note. |
 | `cursor` | string | no | next_cursor of the previous page (phrases and notes only), passed back unchanged. |
 | `limit` | integer, 1 to 200 | no | Entries per page for phrases and notes, 1 to 200. Default 50; fewer when the page would be large. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_open_audio`
+
+**Open audio in OpenTune**: changes state, not destructive, not idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): imports audio files as new clips, as the window does, and waits up to wait_seconds (default 25, max 30); if the import job has not ended, the result names it for opentune_get_job. Give path or items (absolute paths; quotes, file://, ~ and /mnt/<drive>/ are accepted). layout: single, sequential (end to end) or separate_tracks. Not undoable; the result says how to revert. In the openDyne scheme the focused clip also gets notes (no undo entry). Repeating a call with the same files and target returns the earlier result unless allow_duplicate is true.
+
+OTCP capabilities: `import.v1`, `jobs.v1`. OTCP methods: `import.start`, `job.get`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `path` | string | no | One file to import. Give path or items. |
+| `items` | array | no | Several files, in the order to place them. Give path or items. |
+| `layout` | string | no | single (one file), sequential (end to end on one track) or separate_tracks (one track each, from the target track). Default: single for one file, sequential for several. |
+| `track` | integer, 0 to 9007199254740991 | no | Target track id (0-based position). Default: the active track. |
+| `start` | number | no | Timeline start of the first clip in seconds. Default: after the last clip on the track. |
+| `new_track` | boolean | no | Use the first track without clips as the target. Fails when every track has clips. Not with track. |
+| `generate_notes` | boolean | no | Generate notes once analysis ends. Default false. |
+| `focus` | boolean | no | Select the last imported clip, as the window does. Default true. |
+| `allow_duplicate` | boolean | no | Import again even if the same files were just imported to the same target. Default false. |
+| `wait_seconds` | number, 0 to 30 | no | Seconds to wait for the import to end, 0 to 30. Default 25. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_export_audio`
+
+**Export audio from OpenTune**: changes state, not destructive, not idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to wait_seconds (default 20, max 30); if the export job has not ended, the result names it for opentune_get_job. kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). Does not change the project.
+
+OTCP capabilities: `export.v1`, `jobs.v1`, `read.v1`. OTCP methods: `export.start`, `project.get`, `job.get`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `kind` | string | yes | What to export: one clip, one track or the whole mix. |
+| `target` | object | no | Which clip or track to export. Not for master. |
+| `path` | string | no | Absolute path of the WAV file to write, ending in .wav. Default: <source folder>/<name>.opentune.wav. |
+| `allow_dry` | boolean | no | Export a clip whose pitch analysis failed uncorrected instead of failing. Only with the user agreeing. |
+| `wait_seconds` | number, 0 to 30 | no | Seconds to wait for the export to end, 0 to 30. Default 20. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |

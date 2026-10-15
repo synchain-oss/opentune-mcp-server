@@ -27,6 +27,7 @@ const result = spawnSync(
     'unit',
     'test/unit/catalog.test.ts',
     'test/unit/render-golden.test.ts',
+    'test/unit/audio-tools.test.ts',
     'test/unit/edit-tools-golden.test.ts',
   ],
   {
