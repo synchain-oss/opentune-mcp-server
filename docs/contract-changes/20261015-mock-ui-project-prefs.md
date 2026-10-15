@@ -15,7 +15,7 @@ the golden snapshots changes.
 
 | File                            | Change                                                                                                         |
 | ------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `test/golden/render/*.json`     | `ui.activeTrackId` is `null` instead of `0` in the 10 snapshots that show the snapshot. No other line changes. |
+| `test/golden/render/*.json`     | `ui.activeTrackId` is `null` instead of `0` in the 12 snapshots that show the snapshot. No other line changes. |
 | `test/golden/edit-tools/*.json` | The same one-line change in the 10 snapshots that show the snapshot.                                           |
 
 ## Compatibility

@@ -166,6 +166,42 @@ async function fromMock(): Promise<Record<string, Scenario>> {
     envelope: job,
   };
 
+  // Time-grid edits: a shift that the minimum spacing limits, and the result of the seed job.
+  const grid = await sessions.open({ instanceId: INSTANCE });
+  const gridIds = grid.mock.given({
+    dirty: false,
+    clips: [
+      clip({
+        timeGrid: [
+          { bind: 'h1', contentSec: 1 },
+          { bind: 'h2', contentSec: 2 },
+          { bind: 'h3', contentSec: 3 },
+        ],
+      }),
+    ],
+  });
+  out['timing-shift-clamped'] = {
+    description:
+      'A shift that would carry a handle past its neighbour: applied as far as the minimum spacing allows, with the requested and applied values in clamped and the warning CLAMPED.',
+    tool: 'opentune_edit_timing',
+    envelope: await grid.ok('content.shiftTiming', {
+      contentId: gridIds['clip.contentId'],
+      expectedGridRevision: gridIds['clip.gridRevision'],
+      range: { startOutputSec: 1.5, endOutputSec: 2.5 },
+      deltaSec: 1.5,
+    }),
+  };
+  const seedSession = await sessions.open({ instanceId: INSTANCE });
+  const seedIds = seedSession.mock.given({ dirty: false, clips: [clip()] });
+  const started = await seedSession.ok('content.editTimeGrid', { contentId: seedIds['clip.contentId'], op: 'seed' });
+  const seedJob = (await seedSession.ok('job.get', { jobId: (started.job as Json).jobId, waitMs: 30_000 })).job as Json;
+  out['timing-seed-result'] = {
+    description:
+      'The result of the seed job: handles created, no undo entry (as in the interface), so the first sentence says it cannot be undone.',
+    tool: 'opentune_edit_timing',
+    envelope: seedJob.result as Json,
+  };
+
   // An undo entry recorded before a track was deleted, applied with force, changes nothing.
   const stale = await sessions.open({ instanceId: INSTANCE });
   const staleIds = stale.mock.given({
