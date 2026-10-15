@@ -115,6 +115,45 @@ export type DecodedLine =
 // the text, where JSON.parse rejects it, because OTCP lines carry none.
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
+const HEX4 = /^[0-9a-fA-F]{4}$/;
+
+/**
+ * True when a string in the JSON text, a member name included, has an escape of a lone surrogate:
+ * a `\uD800` to `\uDBFF` escape not immediately followed by a `\uDC00` to `\uDFFF` escape, or a
+ * low surrogate escape that does not immediately follow a high one. Such a string encodes no
+ * Unicode text, which makes the line invalid JSON in OTCP terms (section 3.2 rule 3). The text is
+ * scanned before it is parsed, so a string that the parser would drop, such as the first value of
+ * a member name that appears twice, is checked as well. The text is valid UTF-8, so a surrogate
+ * can only come from an escape. Escapes that the parser rejects anyway are not judged here.
+ */
+export function hasLoneSurrogateEscape(text: string): boolean {
+  // Most lines have no escape that could encode a surrogate.
+  if (!/\\u[dD][89a-fA-F]/.test(text)) return false;
+  let inString = false;
+  /** The previous character of the current string was a high surrogate escape. */
+  let afterHigh = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (!inString) {
+      if (c === 0x22) inString = true;
+      continue;
+    }
+    if (c === 0x5c && text.charCodeAt(i + 1) === 0x75) {
+      const hex = text.slice(i + 2, i + 6);
+      const unit = HEX4.test(hex) ? Number.parseInt(hex, 16) : -1;
+      const low = unit >= 0xdc00 && unit <= 0xdfff;
+      if (afterHigh !== low) return true;
+      afterHigh = unit >= 0xd800 && unit <= 0xdbff;
+      i += 5;
+      continue;
+    }
+    if (afterHigh) return true;
+    if (c === 0x5c) i += 1;
+    else if (c === 0x22) inString = false;
+  }
+  return afterHigh;
+}
+
 /** Decodes one line (without its LF). Any failure is a parse error in OTCP terms. */
 export function decodeLine(bytes: Uint8Array, maxDepth = MAX_NESTING_DEPTH): DecodedLine {
   let text: string;
@@ -124,6 +163,7 @@ export function decodeLine(bytes: Uint8Array, maxDepth = MAX_NESTING_DEPTH): Dec
     return { ok: false, error: 'utf8' };
   }
   if (nestingDepth(text) > maxDepth) return { ok: false, error: 'depth' };
+  if (hasLoneSurrogateEscape(text)) return { ok: false, error: 'json' };
   try {
     return { ok: true, value: JSON.parse(text) as unknown };
   } catch {

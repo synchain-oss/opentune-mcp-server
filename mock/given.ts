@@ -11,6 +11,7 @@ import { snapOf } from './history.js';
 import {
   DEFAULT_NOTE_PARAMS,
   DETECTED_KEY,
+  TRACK_SLOTS,
   type Analysis,
   type ContentRec,
   type ContentSnap,
@@ -40,18 +41,25 @@ export interface GivenHistoryEntry {
   readonly action: string;
   readonly clip: string;
   readonly trackDeletedAfter?: boolean;
+  /** A track after the clip's track was deleted after the entry was recorded: the clip did not move. */
+  readonly laterTrackDeletedAfter?: boolean;
 }
 
 export interface GivenState {
   readonly editingScheme?: string;
   readonly dirty?: boolean;
   readonly clips?: readonly GivenClip[];
+  /** Every track slot that no clip of `clips` is on holds one more clip. */
+  readonly clipOnEveryTrack?: boolean;
   readonly files?: readonly GivenFile[];
   readonly history?: { readonly undo: readonly GivenHistoryEntry[]; readonly redo: readonly GivenHistoryEntry[] };
 }
 
 /** The members of a vector's `given` that this module establishes. */
-export const WORLD_GIVEN_MEMBERS = ['editingScheme', 'dirty', 'clips', 'files', 'history'] as const;
+export const WORLD_GIVEN_MEMBERS = ['editingScheme', 'dirty', 'clips', 'clipOnEveryTrack', 'files', 'history'] as const;
+
+/** The clip that `clipOnEveryTrack` adds to an empty track (vectors/README.md, Preconditions). */
+const FILLER_CLIP_SEC = 2;
 
 const GIVEN_KEY_CONFIDENCE = 0.9;
 
@@ -147,10 +155,13 @@ function buildHistory(
     const placement = byBind.get(item.clip);
     if (placement === undefined) throw new Error(`history entry names the clip ${item.clip}, which no clip binds`);
     const info = DESCRIPTIONS[item.action] ?? { description: item.action, innerAction: item.action };
-    const stale = item.trackDeletedAfter === true;
+    // A track before the clip's moved it, so the entry does nothing. A later track did not, but
+    // the server cannot tell that for an entry made in the UI (PROTOCOL.md section 15.3 rule 6).
+    const moved = item.trackDeletedAfter === true;
+    const stale = moved || (item.laterTrackDeletedAfter === true && item.origin === 'ui');
     let undoPatch: Patch | null = null;
     let redoPatch: Patch | null = null;
-    if (!stale && item.action !== 'clipSplit') {
+    if (!moved && item.action !== 'clipSplit') {
       // Walking away from the present: undo entries go back in time, redo entries forward.
       const now = current(placement);
       const there = perturbed(item.action, direction === 'undo' ? 'older' : 'newer', now.snap, now.startTimelineSec);
@@ -214,6 +225,20 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
     }
     const placement = byBind.get(clip.bind);
     if (placement !== undefined && reference !== undefined) placement.reference = reference;
+  }
+  if (given.clipOnEveryTrack === true) {
+    const used = new Set([...world.placements.values()].map((p) => p.trackId));
+    for (let trackId = 0; trackId < TRACK_SLOTS; trackId++) {
+      if (used.has(trackId)) continue;
+      // No name binds these clips, so their bindings go nowhere.
+      const filler = {
+        bind: `track${String(trackId)}Filler`,
+        trackId,
+        startTimelineSec: 0,
+        durationSec: FILLER_CLIP_SEC,
+      };
+      createClip(world, files, { ...filler, analysis: 'ready' }, {});
+    }
   }
   for (const file of given.files ?? []) Object.assign(bindings, files.provide(file));
   if (given.history !== undefined) buildHistory(world, given.history, byBind, bindings);

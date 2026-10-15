@@ -8,6 +8,7 @@ import {
   MAX_NESTING_DEPTH,
   decodeLine,
   encodeLine,
+  hasLoneSurrogateEscape,
   isBlankLine,
   nestingDepth,
   type LineEvent,
@@ -133,6 +134,71 @@ describe('decodeLine', () => {
     expect(decodeLine(b(nested(MAX_NESTING_DEPTH))).ok).toBe(true);
     expect(decodeLine(b(nested(MAX_NESTING_DEPTH + 1)))).toEqual({ ok: false, error: 'depth' });
     expect(decodeLine(b(nested(3)), 2)).toEqual({ ok: false, error: 'depth' });
+  });
+
+  it('rejects strings and member names that escape a lone surrogate, anywhere in the value', () => {
+    for (const line of [
+      String.raw`{"id":"\ud800"}`,
+      String.raw`{"id":"x\uDC00"}`,
+      String.raw`{"params":{"\udc00":1}}`,
+      String.raw`{"a":[1,{"b":"\uDE00\uD83D"}]}`,
+      String.raw`"\ud800"`,
+    ]) {
+      expect(decodeLine(b(line)), line).toEqual({ ok: false, error: 'json' });
+    }
+  });
+
+  it('rejects a lone surrogate escape also in a value that a repeated member name replaces', () => {
+    expect(decodeLine(b(String.raw`{"id":1,"x":"\ud800","x":"ok"}`))).toEqual({ ok: false, error: 'json' });
+    expect(decodeLine(b(String.raw`{"id":1,"\udc00":1,"\udc00":2}`))).toEqual({ ok: false, error: 'json' });
+  });
+
+  it('accepts surrogate pairs, whether escaped or written as UTF-8', () => {
+    expect(decodeLine(b(String.raw`{"id":"🎵","🎵":1}`))).toEqual({
+      ok: true,
+      value: { id: '\u{1F3B5}', '\u{1F3B5}': 1 },
+    });
+    expect(decodeLine(b(String.raw`{"id":"\uD83C\uDFB5"}`))).toEqual({ ok: true, value: { id: '\u{1F3B5}' } });
+    expect(decodeLine(b(String.raw`{"id":"\ud83c\udfb5"}`))).toEqual({ ok: true, value: { id: '\u{1F3B5}' } });
+    expect(decodeLine(b('{"\u{1F3B5}":["\u{1F3B5}",null,true,2]}'))).toEqual({
+      ok: true,
+      value: { '\u{1F3B5}': ['\u{1F3B5}', null, true, 2] },
+    });
+  });
+});
+
+describe('hasLoneSurrogateEscape', () => {
+  it('finds a high surrogate escape that no low surrogate escape follows at once', () => {
+    for (const text of [
+      String.raw`"\ud800"`,
+      String.raw`"\uD800x"`,
+      String.raw`"\ud800\n"`,
+      String.raw`"\ud800𐀀"`,
+      String.raw`"\uDBFFA"`,
+      String.raw`"\ud800`,
+    ]) {
+      expect(hasLoneSurrogateEscape(text), text).toBe(true);
+    }
+  });
+
+  it('finds a low surrogate escape that does not follow a high one', () => {
+    for (const text of [String.raw`"\udc00"`, String.raw`"a\uDFFF"`, String.raw`"🎵\udfb5"`]) {
+      expect(hasLoneSurrogateEscape(text), text).toBe(true);
+    }
+  });
+
+  it('accepts pairs, other escapes, escaped backslashes and text outside strings', () => {
+    for (const text of [
+      '{"id":1}',
+      String.raw`"🎵"`,
+      String.raw`"\uD83C\uDFB5"`,
+      String.raw`"🎵é\n\"\\"`,
+      String.raw`"\\ud800"`,
+      String.raw`["\\🎵",{"A":"￿"}]`,
+      String.raw`"\uD8ZZ"`,
+    ]) {
+      expect(hasLoneSurrogateEscape(text), text).toBe(false);
+    }
   });
 });
 

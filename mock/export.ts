@@ -309,11 +309,11 @@ export class ExportService {
           if (plan.ifExists === 'overwrite') {
             fs.renameSync(placed, name);
             temp = undefined;
-            return finish({ state: 'succeeded', result: this.#result(plan, name, dry) });
+            return finish({ state: 'succeeded', result: this.#result(plan, name, recorded, dry) });
           }
           if (renameNoReplace(placed, name) === 'done') {
             temp = undefined;
-            return finish({ state: 'succeeded', result: this.#result(plan, name, dry) });
+            return finish({ state: 'succeeded', result: this.#result(plan, name, recorded, dry) });
           }
           if (plan.ifExists === 'error') break;
         }
@@ -333,7 +333,12 @@ export class ExportService {
     return Object.assign(step, { dispose: dropTemp });
   }
 
-  #result(plan: Plan, written: string, dry: readonly { contentId: string; reason: string }[]) {
+  #result(
+    plan: Plan,
+    written: string,
+    recorded: ReadonlyMap<number, string>,
+    dry: readonly { contentId: string; reason: string }[],
+  ) {
     return {
       path: written,
       sampleRateHz: EXPORT_SAMPLE_RATE_HZ,
@@ -341,6 +346,8 @@ export class ExportService {
       sampleFormat: 'float32',
       durationSec: plan.durationSec,
       startTimelineSec: plan.startTimelineSec,
+      // Rule 8: the revisions the job recorded when all contents were ready.
+      contents: plan.contents.map((c) => ({ contentId: c.id, revision: recorded.get(c.objectId) ?? c.revision })),
       dryContents: [...dry],
       processing: {
         vocoderWeight: null,
