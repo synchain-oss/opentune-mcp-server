@@ -1,0 +1,341 @@
+{
+  "description": "An ordinary edit with one undo step; the undo id is in the summary and in the lines.",
+  "tool": "opentune_edit_notes",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r14"
+          }
+        },
+        "label": "#0 C4 0.00-0.10s",
+        "fields": {
+          "targetMidi": {
+            "before": 60,
+            "after": 60.25,
+            "unit": "midi"
+          },
+          "offsetCents": {
+            "before": 0,
+            "after": 25,
+            "unit": "cents"
+          }
+        }
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r14"
+          }
+        },
+        "label": "#1 C#4 0.15-0.25s",
+        "fields": {
+          "targetMidi": {
+            "before": 61,
+            "after": 61.25,
+            "unit": "midi"
+          },
+          "offsetCents": {
+            "before": 0,
+            "after": 25,
+            "unit": "cents"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n3",
+              "after": "n12"
+            },
+            "pitch": {
+              "before": "p4",
+              "after": "p13"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r14",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:1",
+      "description": "Edit notes",
+      "innerActions": [
+        "setNotes"
+      ],
+      "steps": 1
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "omittedChangeCount": 0
+  },
+  "rendered": {
+    "summary": "opentune_edit_notes: changed 2 notes (side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:1.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r14"
+          }
+        },
+        "label": "#0 C4 0.00-0.10s",
+        "fields": {
+          "targetMidi": {
+            "before": 60,
+            "after": 60.25,
+            "unit": "midi"
+          },
+          "offsetCents": {
+            "before": 0,
+            "after": 25,
+            "unit": "cents"
+          }
+        }
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r14"
+          }
+        },
+        "label": "#1 C#4 0.15-0.25s",
+        "fields": {
+          "targetMidi": {
+            "before": 61,
+            "after": 61.25,
+            "unit": "midi"
+          },
+          "offsetCents": {
+            "before": 0,
+            "after": 25,
+            "unit": "cents"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n3",
+              "after": "n12"
+            },
+            "pitch": {
+              "before": "p4",
+              "after": "p13"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r14",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:1",
+      "description": "Edit notes",
+      "innerActions": [
+        "setNotes"
+      ],
+      "steps": 1
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "omittedChangeCount": 0,
+    "uiEffects": [
+      {
+        "surface": "piano roll",
+        "effect": "changed note",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      },
+      {
+        "surface": "background work",
+        "effect": "rendering queued again",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Playback and export use the new result once rendering is done."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "note",
+          "label": "#0 C4 0.00-0.10s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 0,
+              "atRevision": "r14"
+            }
+          },
+          "fields": [
+            {
+              "field": "targetMidi",
+              "before": 60,
+              "after": 60.25,
+              "unit": "midi"
+            },
+            {
+              "field": "offsetCents",
+              "before": 0,
+              "after": 25,
+              "unit": "cents"
+            }
+          ]
+        },
+        {
+          "kind": "changed",
+          "entity": "note",
+          "label": "#1 C#4 0.15-0.25s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 1,
+              "atRevision": "r14"
+            }
+          },
+          "fields": [
+            {
+              "field": "targetMidi",
+              "before": 61,
+              "after": 61.25,
+              "unit": "midi"
+            },
+            {
+              "field": "offsetCents",
+              "before": 0,
+              "after": 25,
+              "unit": "cents"
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with expectedUndoId u:01234567:1.",
+        "undoId": "u:01234567:1",
+        "description": "Edit notes"
+      }
+    ]
+  }
+}

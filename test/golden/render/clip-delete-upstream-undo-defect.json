@@ -1,0 +1,198 @@
+{
+  "description": "Deleting a clip: OpenTune cannot undo it reliably (upstream_undo_defect), so the result is destructive and says so first.",
+  "tool": "opentune_edit_clips",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:1"
+        },
+        "label": "clip at 2.000 s"
+      }
+    ],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a1",
+        "after": "a2"
+      },
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "upstream_undo_defect",
+      "revert": {
+        "method": "import.start",
+        "params": {
+          "items": [
+            {
+              "path": "C:\\Music\\take1.wav"
+            }
+          ]
+        },
+        "requiresConsent": true
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 1
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "UPSTREAM_UNDO_DEFECT",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null
+  },
+  "rendered": {
+    "summary": "opentune_edit_clips: removed 1 placement (destructive; not undoable: OpenTune cannot undo this reliably; can be restored with import.start only after the user explicitly agrees). Warnings: UPSTREAM_UNDO_DEFECT.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:1"
+        },
+        "label": "clip at 2.000 s"
+      }
+    ],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a1",
+        "after": "a2"
+      },
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "upstream_undo_defect",
+      "revert": {
+        "method": "import.start",
+        "params": {
+          "items": [
+            {
+              "path": "C:\\Music\\take1.wav"
+            }
+          ]
+        },
+        "requiresConsent": true
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 1
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "UPSTREAM_UNDO_DEFECT",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "removed placement",
+        "target": "p:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Switch the window to the arrangement view."
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "removed",
+          "entity": "placement",
+          "label": "clip at 2.000 s",
+          "ref": {
+            "placementId": "p:01234567:0:1"
+          }
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "UPSTREAM_UNDO_DEFECT",
+        "text": "OpenTune cannot undo this change reliably: it frees objects its own undo entry needs.",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune cannot undo this reliably). Restore with import.start and these params, but only after the user explicitly agrees; add the method's consent parameters yourself.",
+        "revert": {
+          "method": "import.start",
+          "params": {
+            "items": [
+              {
+                "path": "C:\\Music\\take1.wav"
+              }
+            ]
+          },
+          "requiresConsent": true
+        }
+      }
+    ]
+  }
+}
