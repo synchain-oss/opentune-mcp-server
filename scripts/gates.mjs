@@ -6,7 +6,7 @@
 // tool output go to stderr. Exits 1 if any check fails.
 //
 // Usage: node scripts/gates.mjs [--base <ref>] [--only <names>] [--allow-external-authors]
-//                               [--allow-dependabot]
+//                               [--allow-dependabot] [--no-skip]
 //   --base   branch the current branch will be merged into; the commits in <ref>..HEAD are
 //            checked for attribution, sign-off and identity, and the files that are new since
 //            the merge base must not be audio (default: origin/feature/v1)
@@ -19,6 +19,10 @@
 //   --allow-dependabot
 //            skip the commits Dependabot made (its pull requests, and dev's history once they are
 //            merged); CI decides when this applies (scripts/ci-checks.mjs scope).
+//   --no-skip
+//            treat every SKIP row as a failure: the run exits 1 and names the skipped checks. CI
+//            uses it where a check must actually run (a SKIP there means a tool was not installed).
+//            Without it SKIP rows keep their reason and do not fail the run.
 
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -442,14 +446,21 @@ function notYet(reason) {
 // main
 
 const USAGE =
-  'usage: node scripts/gates.mjs [--base <ref>] [--only <names>] [--allow-external-authors] [--allow-dependabot]';
+  'usage: node scripts/gates.mjs [--base <ref>] [--only <names>] [--allow-external-authors] [--allow-dependabot] [--no-skip]';
 
 function parseArgs(argv) {
-  const options = { base: DEFAULT_BASE, only: null, allowExternalAuthors: false, allowDependabot: false };
+  const options = {
+    base: DEFAULT_BASE,
+    only: null,
+    allowExternalAuthors: false,
+    allowDependabot: false,
+    noSkip: false,
+  };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--base' && argv[i + 1]) options.base = argv[++i];
     else if (argv[i] === '--allow-external-authors') options.allowExternalAuthors = true;
     else if (argv[i] === '--allow-dependabot') options.allowDependabot = true;
+    else if (argv[i] === '--no-skip') options.noSkip = true;
     else if (argv[i] === '--only' && argv[i + 1]) {
       options.only = argv[++i]
         .split(',')
@@ -461,7 +472,7 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  const { base, only, allowExternalAuthors, allowDependabot } = parseArgs(process.argv.slice(2));
+  const { base, only, allowExternalAuthors, allowDependabot, noSkip } = parseArgs(process.argv.slice(2));
   try {
     git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
   } catch {
@@ -525,6 +536,13 @@ async function main() {
   const branch = git(['rev-parse', '--abbrev-ref', 'HEAD']).trim();
   const dirty = git(['status', '--porcelain']).trim() !== '';
   const failed = rows.filter((r) => r.result === 'FAIL').length;
+  const skipped = rows.filter((r) => r.result === 'SKIP').map((r) => r.name);
+  const skipFailure = noSkip && skipped.length > 0;
+  let verdictLine = 'All checks passed (SKIP rows give their reason).';
+  if (failed) verdictLine = `**${failed} check(s) failed.**`;
+  else if (skipFailure)
+    verdictLine = `**--no-skip: ${skipped.length} check(s) skipped, which counts as a failure: ${skipped.join('; ')}.**`;
+  if (skipFailure) log(`gates: --no-skip: ${skipped.length} check(s) skipped: ${skipped.join('; ')}`);
   const cell = (s) => String(s).replaceAll('|', '\\|').replaceAll('\n', ' ');
   const partial = selected.length < steps.length ? ` (partial run: ${selected.length} of ${steps.length} checks)` : '';
   const table = [
@@ -538,11 +556,11 @@ async function main() {
     '| --- | --- | --- |',
     ...rows.map((r) => `| ${cell(r.name)} | ${r.result} | ${cell(r.note)} |`),
     '',
-    failed ? `**${failed} check(s) failed.**` : 'All checks passed (SKIP rows give their reason).',
+    verdictLine,
     '',
   ].join('\n');
   process.stdout.write(`\n${table}`);
-  process.exitCode = failed ? 1 : 0;
+  process.exitCode = failed || skipFailure ? 1 : 0;
 }
 
 try {

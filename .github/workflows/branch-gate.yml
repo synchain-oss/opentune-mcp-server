@@ -49,6 +49,11 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24
+      # 前提：下面各步的判据（scripts/ci-checks.mjs、scripts/lib/checks.mjs、scripts/check-attribution.mjs）以及
+      # 本 workflow 自身，都取自 PR head（pull_request 事件下 workflow 定义取自合并提交）。所以改动这些文件的 PR
+      # 能让本检查自己变绿，检查通过对这类 PR 不构成证据。这一点无法在 workflow 内部根治，也不宜为此引入
+      # pull_request_target；改动 .github/workflows/、scripts/ci-checks.mjs 等文件的 PR 须由维护者人工审阅。
+      # 单维护者仓库暂不加 CODEOWNERS 审批要求。
       # 后面各步用 !cancelled()：一条失败时其余照样跑完，一次报出全部问题。
       - name: Source branch
         env:
