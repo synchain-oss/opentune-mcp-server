@@ -105,7 +105,7 @@ OTCP capabilities: `session.v1`. OTCP methods: `session.hello`, `session.info`.
 
 **Analyze OpenTune pitch**: read-only, not destructive, idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): measures how far the detected pitch of a clip is from its notes, in cents (detected minus target, positive = sharp). Per note: median deviation, stability (standard deviation), onset and release deviation; notes beyond threshold_cents (default 25) are flagged; notes are grouped into phrases at silences over 0.4 s. detail summary (default, small) gives totals, worst notes and flagged note indexes for opentune_edit_notes plus clip_revision; phrases and notes are paged. from and to are seconds of the source audio. Read-only.
+OpenTune (audio vocal pitch editor): measures how far the detected pitch of a clip is from its notes, in cents (detected minus target, positive = sharp). Per note: median deviation, stability (standard deviation), onset and release deviation; notes beyond threshold_cents (default 25) are flagged; notes are grouped into phrases at silences over 0.4 s. detail summary (default, small) gives totals, worst notes, flagged note indexes (each note's index as opentune_get_notes reports it) and clip_revision; phrases and notes are paged. from and to are seconds of the source audio. Read-only.
 
 OTCP capabilities: `read.v1`. OTCP methods: `content.getNotes`, `content.getPitchCurve`, `content.segmentNotes`, `project.get`.
 

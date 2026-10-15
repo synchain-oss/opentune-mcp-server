@@ -29,17 +29,28 @@ Read-only (`readOnlyHint: true`, `openWorldHint: false`), needs the `read.v1` ca
 
 - Deviations are `detected minus target` in cents (positive = sharp). The curve is in MIDI at the content's `tuningHz`,
   so the cents do not depend on `tuningHz`; the tool reports `tuningHz` as read.
-- `summary` (default): totals (`overall`), the five worst notes, `flagged_note_indexes` (note indexes accepted by the
-  note editing tools, at most 100, `flagged_note_indexes_truncated` when cut), `phrase_count` and `clip_revision`, the same
-  value `opentune_get_notes` reports.
+- `summary` (default): totals (`overall`), the five worst notes, `flagged_note_indexes` (each note's index as
+  `opentune_get_notes` reports it, at most 100, `flagged_note_indexes_truncated` when cut), `phrase_count` and
+  `clip_revision`, the same value `opentune_get_notes` reports.
+- `stabilityCents` is the standard deviation of the frame deviations over the whole note. Vibrato raises it, and so do
+  slides between notes and the transitions at the onset and the release, so a large value alone does not mean an
+  unsteady sustain.
 - `phrases` and `notes`: one entry per phrase or note, paged. `next_cursor` is private to this tool and bound to the
-  request and the content revision; a stale one gives `REVISION_CONFLICT` (`cursor_stale`). A result stays within 20,000
-  characters; a page that would be larger gets fewer entries (`page_limit_applied`).
+  clip, the request, the content revision (the whole `asOf` when the instance reports no revision for the content) and
+  the entries being paged; a cursor of another clip or of an earlier state gives `REVISION_CONFLICT` (`cursor_stale`). A
+  result stays within 20,000 characters; a page that would be larger gets fewer entries (`page_limit_applied`).
+- The notes (or segments) and the pitch curve are separate reads. When they report different content revisions, the
+  clip changed in between and the tool fails with `REVISION_CONFLICT` (`changed_during_read`, retryable); the next step
+  is to call it again.
+- One call reads at most 10,000 notes and 1,000,000 pitch frames; when a clip has more, `warnings` says what was left
+  out.
 - Phrases are separated by silences longer than 0.4 s between notes. A note's onset and release deviation use its first
   and last 0.1 s (half the note for shorter notes).
 - Notes come from `content.getNotes`. When the clip has no stored notes, `content.segmentNotes` supplies the segments with
-  the nearest semitone as target; `note_source` says which, and such notes have `index: null`.
-- When the pitch analysis is not ready the tool succeeds with null statistics and `nullReasons.statistics`.
+  the nearest semitone as target; `note_source` says which, and such notes have `index: null` (the summary then points
+  to detail `notes` for the times of the flagged ones).
+- When the pitch analysis is not ready the tool succeeds with null statistics and `nullReasons.statistics`. `f0State` is
+  passed on when it is a camelName and reported as `unknown` otherwise, so no other instance string reaches the summary.
 
 ## Compatibility
 

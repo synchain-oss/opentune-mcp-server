@@ -8,6 +8,8 @@
 // (both paged). One result stays within OUTPUT_BUDGET characters: a page that would be larger
 // gets fewer entries, never cut ones, and next_cursor continues exactly where the page ends.
 
+import { createHash } from 'node:crypto';
+
 import { z } from 'zod';
 
 import {
@@ -30,11 +32,17 @@ import { OUTPUT_BUDGET, geometryOf } from './notes.js';
 import { defineTool, withInstance, type Body, type Outcome, type ToolContext } from './registry.js';
 
 const READ_TIMEOUT_MS = 15_000;
-const NOTE_PAGE = 200;
-const CURVE_PAGE = 10_000;
+
+/** How much one call reads: the page size and the number of pages of each paged OTCP read. */
+export interface ReadLimits {
+  readonly notePage: number;
+  readonly maxNotePages: number;
+  readonly curvePage: number;
+  readonly maxCurvePages: number;
+}
+
 /** Upper bounds on what one call reads: 10,000 notes and 1,000,000 frames (about 2.7 hours at 10 ms). */
-const MAX_NOTE_PAGES = 50;
-const MAX_CURVE_PAGES = 100;
+export const READ_LIMITS: ReadLimits = { notePage: 200, maxNotePages: 50, curvePage: 10_000, maxCurvePages: 100 };
 /** Entries of a paged detail level: default and largest page. */
 export const DEFAULT_ENTRY_LIMIT = 50;
 export const MAX_ENTRY_LIMIT = 200;
@@ -43,6 +51,8 @@ const MAX_FLAGGED_LISTED = 100;
 
 const CLIP_RE = /^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/;
 const CURSOR_PREFIX = 'ap1.';
+/** f0State is a camelName (notRequested, extracting, ready, failed); any other value is reported as 'unknown'. */
+const STATE_RE = /^[a-z][A-Za-z0-9]{0,63}$/;
 
 const isObject = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -63,7 +73,25 @@ export interface AnalyzePitchArgs {
 
 const invalid = (detail: string): Outcome => ({ ok: false, error: toolError('INVALID_ARGUMENT', { detail }) });
 
-/** What a cursor is bound to: the same request on the same content state continues, anything else is stale. */
+/**
+ * f0State as the instance reports it. It is the only OpenTune string the summary sentence quotes, so
+ * a value that is not a camelName becomes 'unknown'; a missing one leaves `fallback`.
+ */
+const stateOf = (value: unknown, fallback: string | null): string | null =>
+  typeof value === 'string' ? (STATE_RE.test(value) ? value : 'unknown') : fallback;
+
+/** The asOf.contents[] entry of `contentId` in a read result, if the instance reports one. */
+function contentTokens(result: Json, contentId: string): Json | undefined {
+  const asOf = isObject(result.asOf) ? result.asOf : {};
+  return (Array.isArray(asOf.contents) ? asOf.contents : []).find(
+    (c): c is Json => isObject(c) && c.contentId === contentId,
+  );
+}
+
+/**
+ * What a cursor is bound to: the same request on the same clip in the same state continues, anything
+ * else is stale. `binding` is a digest, so the cursor stays short whatever goes into it.
+ */
 interface CursorState {
   readonly offset: number;
   readonly binding: string;
@@ -86,16 +114,21 @@ function decodeCursor(cursor: string): CursorState | null {
   }
 }
 
-/** The notes of the clip as OTCP reports them, all pages. */
-async function readNotes(session: OtcpSession, base: Json, range: Json | null) {
+/** The notes of the clip as OTCP reports them, all pages up to the read limit. */
+async function readNotes(session: OtcpSession, base: Json, range: Json | null, limits: ReadLimits) {
   const notes: NoteSpan[] = [];
   let first: Json | null = null;
   let cursor: string | undefined;
   let complete = false;
-  for (let page = 0; page < MAX_NOTE_PAGES; page += 1) {
+  for (let page = 0; page < limits.maxNotePages; page += 1) {
     const result = await session.call(
       'content.getNotes',
-      { ...base, ...(range === null ? {} : { range }), ...(cursor === undefined ? {} : { cursor }), limit: NOTE_PAGE },
+      {
+        ...base,
+        ...(range === null ? {} : { range }),
+        ...(cursor === undefined ? {} : { cursor }),
+        limit: limits.notePage,
+      },
       READ_TIMEOUT_MS,
     );
     first ??= result;
@@ -119,13 +152,19 @@ async function readNotes(session: OtcpSession, base: Json, range: Json | null) {
   return { notes, first: first ?? {}, complete };
 }
 
-/** The detected pitch of [startContentSec, endContentSec], all pages joined into one frame array. */
-async function readCurve(session: OtcpSession, contentId: string, startContentSec: number, endContentSec: number) {
+/** The detected pitch of a span, all pages up to the read limit joined into one frame array. */
+async function readCurve(
+  session: OtcpSession,
+  contentId: string,
+  span: { readonly startContentSec: number; readonly endContentSec: number },
+  limits: ReadLimits,
+) {
+  const { startContentSec, endContentSec } = span;
   const midi: (number | null)[] = [];
   let first: Json | null = null;
   let cursor: string | undefined;
   let complete = false;
-  for (let page = 0; page < MAX_CURVE_PAGES; page += 1) {
+  for (let page = 0; page < limits.maxCurvePages; page += 1) {
     const result = await session.call(
       'content.getPitchCurve',
       {
@@ -133,7 +172,7 @@ async function readCurve(session: OtcpSession, contentId: string, startContentSe
         range: { startContentSec, endContentSec },
         stepFrame: 1,
         ...(cursor === undefined ? {} : { cursor }),
-        limit: CURVE_PAGE,
+        limit: limits.curvePage,
       },
       READ_TIMEOUT_MS,
     );
@@ -190,7 +229,26 @@ function fitPage(
 
 const nullable = (value: number | null, unit: string): string => (value === null ? 'n/a' : `${String(value)} ${unit}`);
 
-export async function analyzePitch(ctx: ToolContext, args: AnalyzePitchArgs): Promise<Outcome> {
+/** A digest of what a cursor is bound to. */
+const digest = (parts: unknown): string => createHash('sha256').update(JSON.stringify(parts)).digest('base64url');
+
+/** The reads of one call saw different content revisions: the clip was edited in between. */
+const changedDuringRead = (): Outcome => ({
+  ok: false,
+  error: toolError('REVISION_CONFLICT', {
+    reason: 'changed_during_read',
+    detail: 'the clip changed while its notes and pitch curve were read',
+    retryable: true,
+    nextStep: { actor: 'agent', tool: 'opentune_analyze_pitch', message: 'Call opentune_analyze_pitch again.' },
+  }),
+});
+
+/** `limits` lets tests reach the read limits with small content; the tool always uses READ_LIMITS. */
+export async function analyzePitch(
+  ctx: ToolContext,
+  args: AnalyzePitchArgs,
+  limits: ReadLimits = READ_LIMITS,
+): Promise<Outcome> {
   if ((args.from === undefined) !== (args.to === undefined)) {
     return invalid('from and to go together: pass both, or neither to analyze all notes of the clip');
   }
@@ -211,7 +269,7 @@ export async function analyzePitch(ctx: ToolContext, args: AnalyzePitchArgs): Pr
   return withInstance(ctx, { instanceId: args.instance_id }, ['read.v1'], async (session) => {
     const geometry = args.clip.startsWith('p:') ? await geometryOf(session, args.clip) : null;
     const base: Json = args.clip.startsWith('p:') ? { placementId: args.clip } : { contentId: args.clip };
-    const read = await readNotes(session, base, range);
+    const read = await readNotes(session, base, range, limits);
     const contentId = typeof read.first.contentId === 'string' ? read.first.contentId : null;
     if (contentId === null) {
       return {
@@ -220,9 +278,9 @@ export async function analyzePitch(ctx: ToolContext, args: AnalyzePitchArgs): Pr
       };
     }
     const asOf = isObject(read.first.asOf) ? read.first.asOf : {};
-    const content = (Array.isArray(asOf.contents) ? asOf.contents : []).find(
-      (c): c is Json => isObject(c) && c.contentId === contentId,
-    );
+    const content = contentTokens(read.first, contentId);
+    /** The content revision each read reported; they must all agree. */
+    const seenRevisions: unknown[] = [content?.revision];
     const sameArrangement =
       geometry !== null && geometry.arrangement !== null && geometry.arrangement === asOf.arrangementRevision;
     const revision = clipRevisionFrom(content, sameArrangement ? geometry.hash : null);
@@ -242,8 +300,9 @@ export async function analyzePitch(ctx: ToolContext, args: AnalyzePitchArgs): Pr
         { contentId, ...(range === null ? {} : { range }) },
         READ_TIMEOUT_MS,
       );
-      f0State = typeof segmented.f0State === 'string' ? segmented.f0State : null;
+      f0State = stateOf(segmented.f0State, null);
       tuningHz = segmented.tuningHz ?? tuningHz;
+      seenRevisions.push(contentTokens(segmented, contentId)?.revision);
       source = 'detected_segments';
       spans = [];
       for (const segment of Array.isArray(segmented.segments) ? segmented.segments : []) {
@@ -263,42 +322,48 @@ export async function analyzePitch(ctx: ToolContext, args: AnalyzePitchArgs): Pr
       }
     }
 
-    let stats: NoteStat[] = [];
+    let frames: PitchFrames | null = null;
     if (spans.length > 0) {
-      const start = Math.min(...spans.map((s) => s.startContentSec));
-      const end = Math.max(...spans.map((s) => s.endContentSec));
-      const curve = await readCurve(session, contentId, start, end);
-      f0State = typeof curve.first.f0State === 'string' ? curve.first.f0State : f0State;
+      const curve = await readCurve(
+        session,
+        contentId,
+        {
+          startContentSec: Math.min(...spans.map((s) => s.startContentSec)),
+          endContentSec: Math.max(...spans.map((s) => s.endContentSec)),
+        },
+        limits,
+      );
+      f0State = stateOf(curve.first.f0State, f0State);
       tuningHz = curve.first.tuningHz ?? tuningHz;
       if (!curve.complete) warnings.push('the pitch curve was cut at the read limit; later notes are not measured');
-      const curveContent = (
-        Array.isArray(isObject(curve.first.asOf) ? curve.first.asOf.contents : null)
-          ? ((curve.first.asOf as Json).contents as unknown[])
-          : []
-      ).find((c): c is Json => isObject(c) && c.contentId === contentId);
-      if (isObject(content) && isObject(curveContent) && content.revision !== curveContent.revision) {
-        return {
-          ok: false,
-          error: toolError('REVISION_CONFLICT', {
-            reason: 'changed_during_read',
-            detail: 'the clip changed while its notes and pitch curve were read',
-            retryable: true,
-          }),
-        };
-      }
-      stats = f0State === 'ready' ? measureNotes(spans, curve.frames, threshold) : [];
+      seenRevisions.push(contentTokens(curve.first, contentId)?.revision);
+      frames = curve.frames;
     }
+    // Notes, segments and curve must describe one state of the clip: every revision reported must agree.
+    const reported = seenRevisions.filter((r) => r !== undefined);
+    if (reported.some((r) => r !== reported[0])) return changedDuringRead();
+    const stats: NoteStat[] = frames !== null && f0State === 'ready' ? measureNotes(spans, frames, threshold) : [];
 
     const ready = f0State === null || f0State === 'ready';
     if (!ready) reasons.statistics = `pitch_analysis_${String(f0State)}`;
     const overall = summarize(stats);
     const phrases = groupPhrases(stats);
-    const binding = JSON.stringify([
+    const entries: readonly Json[] =
+      detail === 'phrases' ? phrases.map(phraseEntry) : detail === 'notes' ? stats.map(noteEntry) : [];
+    // A cursor is bound to the clip (revision tokens are opaque and two contents may report the same
+    // one), the request, the content revision (the whole asOf when the instance reports none) and
+    // the entries being paged, so it never continues on another clip or another state of this one.
+    const revisionNow = content?.revision ?? null;
+    const binding = digest([
+      contentId,
+      args.clip,
       detail,
       threshold,
       args.from ?? null,
       args.to ?? null,
-      isObject(content) ? (content.revision ?? null) : null,
+      revisionNow,
+      revisionNow === null ? asOf : null,
+      entries,
     ]);
     let offset = 0;
     if (cursor !== null) {
@@ -316,6 +381,9 @@ export async function analyzePitch(ctx: ToolContext, args: AnalyzePitchArgs): Pr
           }),
         };
       }
+      if (cursor.offset >= entries.length) {
+        return invalid('cursor was not issued by this tool; pass next_cursor back unchanged');
+      }
       offset = cursor.offset;
     }
 
@@ -332,10 +400,12 @@ export async function analyzePitch(ctx: ToolContext, args: AnalyzePitchArgs): Pr
       range,
       detail,
     });
-    const sourceNote =
+    const segmentsNote = (flaggedWithoutIndex: boolean): string =>
       source === 'detected_segments'
-        ? ' The clip has no stored notes, so OpenTune segmentation of the detected pitch was used with the nearest semitone as target; these notes have no index.'
+        ? ' The clip has no stored notes, so OpenTune segmentation of the detected pitch was used with the nearest semitone as target; these notes have no index' +
+          (flaggedWithoutIndex ? ', so for the ones beyond the threshold use detail notes for their times.' : '.')
         : '';
+    const sourceNote = segmentsNote(false);
     const tail: Json = {
       ...(warnings.length > 0 ? { warnings } : {}),
       ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}),
@@ -368,7 +438,7 @@ export async function analyzePitch(ctx: ToolContext, args: AnalyzePitchArgs): Pr
             `Analyzed ${String(overall.measuredNoteCount)} of ${String(overall.noteCount)} notes in ${String(phrases.length)} phrases: ` +
               `mean absolute deviation ${nullable(overall.meanAbsDeviationCents, 'cents')}, ` +
               `${String(overall.overThresholdCount)} beyond ${String(threshold)} cents (${unit}).` +
-              sourceNote,
+              segmentsNote(overall.overThresholdCount > 0),
           ),
           overall,
           phrase_count: phrases.length,
@@ -381,7 +451,6 @@ export async function analyzePitch(ctx: ToolContext, args: AnalyzePitchArgs): Pr
       };
     }
 
-    const entries = (detail === 'phrases' ? phrases.map(phraseEntry) : stats.map(noteEntry)) as readonly Json[];
     const noun = detail === 'phrases' ? 'phrases' : 'notes';
     const paged = fitPage(entries, offset, limit, (page, more) => {
       const last = offset + page.length;
@@ -425,9 +494,9 @@ export const analyzePitchTool = defineTool({
     'OpenTune (audio vocal pitch editor): measures how far the detected pitch of a clip is from its notes, in ' +
     'cents (detected minus target, positive = sharp). Per note: median deviation, stability (standard deviation), ' +
     'onset and release deviation; notes beyond threshold_cents (default 25) are flagged; notes are grouped into ' +
-    'phrases at silences over 0.4 s. detail summary (default, small) gives totals, worst notes and flagged note ' +
-    'indexes for opentune_edit_notes plus clip_revision; phrases and notes are paged. from and to are seconds ' +
-    'of the source audio. Read-only.',
+    'phrases at silences over 0.4 s. detail summary (default, small) gives totals, worst notes, flagged note ' +
+    "indexes (each note's index as opentune_get_notes reports it) and clip_revision; phrases and notes are paged. " +
+    'from and to are seconds of the source audio. Read-only.',
   inputSchema: z.strictObject({
     clip: z
       .string()

@@ -46,7 +46,11 @@ export interface NoteStat {
   readonly voicedFrameCount: number;
   /** Median of detected minus target over the voiced frames; null when no frame is voiced. */
   readonly medianDeviationCents: number | null;
-  /** Standard deviation of the frame deviations around their mean: small is steady, vibrato raises it. */
+  /**
+   * Standard deviation of the frame deviations around their mean, over the whole note: small is
+   * steady. Vibrato raises it, and so do slides between notes and the transitions at the onset and
+   * the release, so a large value does not by itself mean an unsteady sustain.
+   */
   readonly stabilityCents: number | null;
   readonly onsetDeviationCents: number | null;
   readonly releaseDeviationCents: number | null;
