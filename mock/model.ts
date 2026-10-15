@@ -1,0 +1,506 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
+// SPDX-License-Identifier: MIT
+
+// The state of the mock instance: the project (tracks, placements, selection, transport, history,
+// path and unsaved-changes flag), the contents (notes, keys, pitch shift, time grid, analysis and
+// render state) and the tokens that guard writes (spec/otcp/v1/PROTOCOL.md sections 9, 10 and 14).
+// Method handlers read and change it through the methods below, which keep the tokens and the
+// world revision vector consistent: every token is minted from one counter, so a token never
+// repeats, not even when an undo restores earlier data.
+
+import type { Clock, Timer } from './clock.js';
+import { refuse } from './errors.js';
+import { TUNING_HZ } from './music.js';
+
+export const TRACK_SLOTS = 8;
+/** The tracks OpenTune shows before any clip needs more. */
+export const INITIAL_VISIBLE_TRACKS = 4;
+/** Time the mock needs to render a content again after an edit. */
+export const RENDER_SETTLE_MS = 30;
+/** Default note parameters of the note generator. */
+export const DEFAULT_NOTE_PARAMS = { retuneSpeed: 0.5, vibratoDepth: 0, vibratoRateHz: 6, pitchDriftScale: 1 } as const;
+
+export type Analysis = 'ready' | 'running' | 'failed' | 'unvoiced';
+export type Component = 'notes' | 'pitch' | 'content' | 'grid' | 'key' | 'pitchShift' | 'reference';
+
+export interface NoteRec {
+  startContentSec: number;
+  endContentSec: number;
+  /** Includes offsetCents. */
+  targetMidi: number;
+  offsetCents: number;
+  retuneSpeed: number;
+  vibratoDepth: number;
+  vibratoRateHz: number;
+  pitchDriftScale: number;
+}
+
+export interface KeyRec {
+  root: number;
+  scale: string;
+  origin: 'automatic' | 'manual';
+  confidence: number | null;
+}
+
+export interface HandleRec {
+  handleId: string;
+  contentSec: number;
+  outputSec: number;
+}
+
+export interface PitchShiftRec {
+  semitones: number;
+  cents: number;
+}
+
+export interface ContentRec {
+  readonly objectId: number;
+  readonly id: string;
+  durationSec: number;
+  analysis: Analysis;
+  notes: NoteRec[];
+  key: KeyRec | null;
+  pitchShift: PitchShiftRec;
+  handles: HandleRec[];
+  sourcePath: string | null;
+  /** Opaque value of each component of the world revision vector (section 14.4). */
+  comp: Record<Component, string>;
+  /** Changes with the notes, pitch and content components. */
+  revision: string;
+  render: { published: string; desired: string };
+  alignmentReady: boolean;
+  handleSeq: number;
+}
+
+export interface PlacementRec {
+  readonly serial: number;
+  readonly id: string;
+  trackId: number;
+  content: ContentRec;
+  name: string | null;
+  startTimelineSec: number;
+  durationSec: number;
+  clipInContentSec: number;
+  gainLinear: number;
+  fadeInSec: number;
+  fadeOutSec: number;
+  reference: PlacementRec | null;
+  geometryHash: string;
+}
+
+export interface TrackRec {
+  trackId: number;
+  visible: boolean;
+  muted: boolean;
+  solo: boolean;
+  volumeLinear: number;
+  colour: string;
+}
+
+/** What a history entry restores on one content. */
+export interface ContentSnap {
+  notes: NoteRec[];
+  key: KeyRec | null;
+  pitchShift: PitchShiftRec;
+  handles: HandleRec[];
+}
+
+/** The state an undo or redo step puts back. */
+export interface Patch {
+  content?: { objectId: number; snap: ContentSnap };
+  placement?: { serial: number; startTimelineSec: number };
+}
+
+export interface HistoryEntry {
+  /** The sequence number of its undoId; null for an entry from the UI that no call has applied. */
+  seq: number | null;
+  origin: 'control' | 'ui';
+  action: string;
+  description: string;
+  innerActions: string[];
+  /** Applied by edit.undo; null when the entry changes nothing now (its target has moved). */
+  undoPatch: Patch | null;
+  /** Applied by edit.redo. */
+  redoPatch: Patch | null;
+  possiblyStale: boolean;
+  unsafe: boolean;
+}
+
+/** The world revision vector (section 14.4) at one moment. */
+export interface Vector {
+  arrangement: string;
+  trackState: string;
+  contents: Map<number, Record<Component, string>>;
+}
+
+export interface RevisionPair {
+  before: string | null;
+  after: string | null;
+}
+
+export interface RevisionDiff {
+  arrangement: RevisionPair | null;
+  trackState: RevisionPair | null;
+  contents: { contentId: string; changed: Partial<Record<Component, RevisionPair>> }[];
+}
+
+/** What the UI can be doing that makes writes wait (section 13.2). */
+export interface BusyState {
+  pointerDown: boolean;
+  modalOpen: boolean;
+  importInProgress: boolean;
+  projectOperation: boolean;
+}
+
+export const BUSY_REASONS = {
+  pointerDown: 'pointer_down',
+  modalOpen: 'modal_open',
+  importInProgress: 'import_in_progress',
+  projectOperation: 'project_operation',
+} as const satisfies Record<keyof BusyState, string>;
+
+/** What the analysis finds in a clip that has none of its own key. */
+export const DETECTED_KEY: KeyRec = { root: 0, scale: 'major', origin: 'automatic', confidence: 0.8 };
+
+const COLOURS = ['#E57373', '#64B5F6', '#81C784', '#FFD54F', '#BA68C8', '#4DB6AC', '#FF8A65', '#A1887F'] as const;
+
+export const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+export const clone = <T>(value: T): T => structuredClone(value);
+/** Seconds are reported to 6 decimal places (section 8.2). */
+export const round6 = (value: number): number => Math.round(value * 1e6) / 1e6;
+
+const REVISION_COMPONENTS: readonly Component[] = ['notes', 'pitch', 'content'];
+
+export class World {
+  readonly short: string;
+  readonly epoch = 0;
+  readonly project: { path: string | null; dirty: boolean } = { path: null, dirty: false };
+  editingScheme = 'openTune';
+  readonly busy: BusyState = { pointerDown: false, modalOpen: false, importInProgress: false, projectOperation: false };
+  readonly tracks: TrackRec[];
+  visibleTrackCount = INITIAL_VISIBLE_TRACKS;
+  activeTrackId = 0;
+  readonly contents = new Map<number, ContentRec>();
+  readonly placements = new Map<number, PlacementRec>();
+  selectedPlacementIds: string[] = [];
+  readonly transport = {
+    playing: false,
+    positionTimelineSec: 0,
+    playStartTimelineSec: 0,
+    loopEnabled: false,
+    bpm: 120,
+    timeSignature: { numerator: 4, denominator: 4 },
+    audioDeviceRunning: false,
+    lastControl: null as { call: string; atMs: number } | null,
+  };
+  readonly prefs = { tuningHz: TUNING_HZ, hybridMode: false, onboardingShown: true, language: 'en' };
+  arrangement: string;
+  trackState: string;
+  undoStack: HistoryEntry[] = [];
+  redoStack: HistoryEntry[] = [];
+  readonly logLines: string[] = [];
+  #tick = 0;
+  #contentSeq = 0;
+  #placementSeq = 0;
+  #undoSeq = 0;
+  readonly #renderTimers = new Set<Timer>();
+
+  constructor(
+    readonly instanceId: string,
+    private readonly clock: Clock,
+  ) {
+    this.short = instanceId.slice(0, 8);
+    this.arrangement = this.mint('a');
+    this.trackState = this.mint('t');
+    this.tracks = Array.from({ length: TRACK_SLOTS }, (_, trackId) => ({
+      trackId,
+      visible: trackId < INITIAL_VISIBLE_TRACKS,
+      muted: false,
+      solo: false,
+      volumeLinear: 1,
+      colour: COLOURS[trackId % COLOURS.length] ?? '#888888',
+    }));
+  }
+
+  /** A new token. Tokens are opaque, never repeat, and are only compared for equality. */
+  mint(prefix: string): string {
+    return `${prefix}${String(++this.#tick)}`;
+  }
+
+  log(line: string): void {
+    this.logLines.push(`${new Date(this.clock.now()).toISOString()} ${line}`);
+  }
+
+  // Content and placements ------------------------------------------------------------------
+
+  addContent(init: Pick<ContentRec, 'durationSec' | 'analysis' | 'sourcePath'>): ContentRec {
+    const objectId = ++this.#contentSeq;
+    const content: ContentRec = {
+      objectId,
+      id: `c:${this.short}:${String(this.epoch)}:${String(objectId)}`,
+      ...init,
+      notes: [],
+      key: null,
+      pitchShift: { semitones: 0, cents: 0 },
+      handles: [],
+      comp: {
+        notes: this.mint('n'),
+        pitch: this.mint('p'),
+        content: this.mint('c'),
+        grid: this.mint('g'),
+        key: this.mint('k'),
+        pitchShift: this.mint('s'),
+        reference: this.mint('f'),
+      },
+      revision: this.mint('r'),
+      render: { published: '', desired: '' },
+      alignmentReady: false,
+      handleSeq: 0,
+    };
+    content.render = { published: content.revision, desired: content.revision };
+    this.contents.set(objectId, content);
+    return content;
+  }
+
+  addPlacement(
+    init: Pick<PlacementRec, 'trackId' | 'content' | 'name' | 'startTimelineSec' | 'durationSec'>,
+  ): PlacementRec {
+    const serial = ++this.#placementSeq;
+    const placement: PlacementRec = {
+      serial,
+      id: `p:${this.short}:${String(this.epoch)}:${String(serial)}`,
+      ...init,
+      clipInContentSec: 0,
+      gainLinear: 1,
+      fadeInSec: 0,
+      fadeOutSec: 0,
+      reference: null,
+      geometryHash: this.mint('h'),
+    };
+    this.placements.set(serial, placement);
+    if (init.trackId >= this.visibleTrackCount) this.visibleTrackCount = init.trackId + 1;
+    for (const track of this.tracks) track.visible = track.trackId < this.visibleTrackCount;
+    return placement;
+  }
+
+  /** section 9 rule 1: instance and epoch (stale), then existence (unknown). The form is the schema's. */
+  #resolve<T>(id: string, kind: 'content' | 'placement', table: ReadonlyMap<number, T>): T {
+    const [, short, epoch, n] = id.split(':');
+    if (short !== this.short || Number(epoch) !== this.epoch) {
+      throw refuse('NOT_FOUND', 'stale_handle', `the ${kind} handle belongs to another instance or an earlier epoch`);
+    }
+    const found = table.get(Number(n));
+    if (found === undefined) throw refuse('NOT_FOUND', 'unknown_handle', `no ${kind} has this handle`);
+    return found;
+  }
+
+  content(id: string): ContentRec {
+    return this.#resolve(id, 'content', this.contents);
+  }
+
+  placement(id: string): PlacementRec {
+    return this.#resolve(id, 'placement', this.placements);
+  }
+
+  placementsOf(content: ContentRec): PlacementRec[] {
+    return [...this.placements.values()].filter((p) => p.content === content);
+  }
+
+  /** Handles for `runner.*` names that depend on the instance's state. */
+  handleOfOtherInstance(kind: 'c' | 'p'): string {
+    const other = this.short === '00000000' ? 'ffffffff' : '00000000';
+    return `${kind}:${other}:${String(this.epoch)}:1`;
+  }
+
+  unknownHandle(kind: 'c' | 'p'): string {
+    return `${kind}:${this.short}:${String(this.epoch)}:${String(kind === 'c' ? this.#contentSeq + 1000 : this.#placementSeq + 1000)}`;
+  }
+
+  // Tokens ------------------------------------------------------------------------------------
+
+  /** Advances the given components of a content; revision follows notes, pitch and content. */
+  touch(content: ContentRec, ...components: Component[]): void {
+    for (const component of components) content.comp[component] = this.mint(component.slice(0, 1));
+    if (components.some((c) => REVISION_COMPONENTS.includes(c))) content.revision = this.mint('r');
+  }
+
+  touchGeometry(placement: PlacementRec): void {
+    placement.geometryHash = this.mint('h');
+    this.arrangement = this.mint('a');
+  }
+
+  /** Queues rendering of a content again; it settles RENDER_SETTLE_MS later (section 14.6). */
+  queueRender(content: ContentRec): void {
+    const desired = this.mint('d');
+    content.render.desired = desired;
+    const timer = this.clock.setTimer(RENDER_SETTLE_MS, () => {
+      this.#renderTimers.delete(timer);
+      content.render.published = content.render.desired;
+    });
+    this.#renderTimers.add(timer);
+  }
+
+  capture(): Vector {
+    return {
+      arrangement: this.arrangement,
+      trackState: this.trackState,
+      contents: new Map([...this.contents].map(([id, c]) => [id, { ...c.comp }])),
+    };
+  }
+
+  /** Only the components that differ (section 14.4 rule 5). */
+  diff(before: Vector, after: Vector): RevisionDiff {
+    const pair = (a: string, b: string): RevisionPair | null => (a === b ? null : { before: a, after: b });
+    const contents: RevisionDiff['contents'] = [];
+    for (const id of new Set([...before.contents.keys(), ...after.contents.keys()])) {
+      const was = before.contents.get(id);
+      const now = after.contents.get(id);
+      const changed: Partial<Record<Component, RevisionPair>> = {};
+      for (const component of Object.keys(now ?? was ?? {}) as Component[]) {
+        const a = was?.[component] ?? null;
+        const b = now?.[component] ?? null;
+        if (a !== b) changed[component] = { before: a, after: b };
+      }
+      if (Object.keys(changed).length > 0) {
+        contents.push({ contentId: `c:${this.short}:${String(this.epoch)}:${String(id)}`, changed });
+      }
+    }
+    return {
+      arrangement: pair(before.arrangement, after.arrangement),
+      trackState: pair(before.trackState, after.trackState),
+      contents,
+    };
+  }
+
+  contentTokens(content: ContentRec) {
+    return {
+      contentId: content.id,
+      revision: content.revision,
+      gridRevision: content.comp.grid,
+      keyRevision: content.comp.key,
+    };
+  }
+
+  asOf(contents: readonly ContentRec[]) {
+    return { arrangementRevision: this.arrangement, contents: contents.map((c) => this.contentTokens(c)) };
+  }
+
+  tokens(contents: readonly ContentRec[], placements: readonly PlacementRec[] = []) {
+    return {
+      arrangementRevision: this.arrangement,
+      contents: contents.map((c) => this.contentTokens(c)),
+      placements: placements.map((p) => ({ placementId: p.id, geometryHash: p.geometryHash })),
+    };
+  }
+
+  // Time grid (section 8.1) ------------------------------------------------------------------
+
+  /** The time grid as a list of (content, output) points; its ends map to themselves. */
+  #gridPoints(content: ContentRec): [number, number][] {
+    const inner = [...content.handles].sort((a, b) => a.contentSec - b.contentSec);
+    return [
+      [0, 0],
+      ...inner.map((h): [number, number] => [h.contentSec, h.outputSec]),
+      [content.durationSec, content.durationSec],
+    ];
+  }
+
+  #interpolate(points: [number, number][], x: number): number {
+    for (let i = 1; i < points.length; i++) {
+      const [x0, y0] = points[i - 1] ?? [0, 0];
+      const [x1, y1] = points[i] ?? [0, 0];
+      if (x <= x1 || i === points.length - 1) return x1 === x0 ? y1 : y0 + ((x - x0) * (y1 - y0)) / (x1 - x0);
+    }
+    return x;
+  }
+
+  contentToOutput(content: ContentRec, contentSec: number): number {
+    return this.#interpolate(this.#gridPoints(content), contentSec);
+  }
+
+  outputToContent(content: ContentRec, outputSec: number): number {
+    return this.#interpolate(
+      this.#gridPoints(content).map(([c, o]): [number, number] => [o, c]),
+      outputSec,
+    );
+  }
+
+  gridIsIdentity(content: ContentRec): boolean {
+    return content.handles.every((h) => Math.abs(h.contentSec - h.outputSec) < 1e-9);
+  }
+
+  // Project state -------------------------------------------------------------------------------
+
+  /** section 15.5: after a change saved with the project, the flag is set. */
+  markDirty(): void {
+    this.project.dirty = true;
+  }
+
+  uiSnapshot() {
+    return {
+      workspace: 'arrangement',
+      pianoRollContentId: null,
+      activeTrackId: this.activeTrackId,
+      selectedPlacementIds: [...this.selectedPlacementIds],
+      visibleTrackCount: this.visibleTrackCount,
+    };
+  }
+
+  trackLabel(trackId: number): string {
+    return `Track ${String(trackId + 1)}`;
+  }
+
+  /** `undoId`s are numbered from 1 (section 9). */
+  nextUndoId(): { seq: number; undoId: string } {
+    const seq = ++this.#undoSeq;
+    return { seq, undoId: `u:${this.short}:${String(seq)}` };
+  }
+
+  undoIdOf(seq: number): string {
+    return `u:${this.short}:${String(seq)}`;
+  }
+
+  /** Why a write is refused now, if it is (section 13.2); `exportLock` is held by a running export job. */
+  busyReason(exportLock: boolean): string | undefined {
+    if (this.busy.pointerDown) return BUSY_REASONS.pointerDown;
+    if (this.busy.modalOpen) return BUSY_REASONS.modalOpen;
+    if (this.busy.importInProgress) return BUSY_REASONS.importInProgress;
+    if (exportLock) return 'export_in_progress';
+    if (this.busy.projectOperation) return BUSY_REASONS.projectOperation;
+    return undefined;
+  }
+
+  /** Test interface: the analysis of a content finishes, fails or is requested again. */
+  setAnalysis(content: ContentRec, analysis: Analysis): void {
+    content.analysis = analysis;
+    if (analysis === 'ready' && content.key === null) content.key = { ...DETECTED_KEY };
+    this.touch(content, 'content');
+  }
+
+  /** Test interface: the data of the project without any token, for comparing states. */
+  dataSnapshot() {
+    return {
+      dirty: this.project.dirty,
+      contents: [...this.contents.values()].map((c) => ({
+        id: c.id,
+        analysis: c.analysis,
+        notes: clone(c.notes),
+        key: clone(c.key),
+        pitchShift: clone(c.pitchShift),
+        handles: clone(c.handles),
+      })),
+      placements: [...this.placements.values()].map((p) => ({
+        id: p.id,
+        trackId: p.trackId,
+        startTimelineSec: p.startTimelineSec,
+        durationSec: p.durationSec,
+        reference: p.reference?.id ?? null,
+      })),
+    };
+  }
+
+  dispose(): void {
+    for (const timer of this.#renderTimers) timer.cancel();
+    this.#renderTimers.clear();
+  }
+}

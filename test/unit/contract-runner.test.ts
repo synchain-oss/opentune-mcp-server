@@ -246,20 +246,20 @@ describe('runVector against the mock', () => {
   });
 
   it('skips, and never passes, a vector whose capability the mock does not report', async () => {
-    const other = [...vectors.values()].find((v) => v.capability === 'read.v1');
-    if (other === undefined) throw new Error('no read.v1 vector');
+    const other = [...vectors.values()].find((v) => v.capability === 'edit.v1');
+    if (other === undefined) throw new Error('no edit.v1 vector');
     const outcome = await runVector(other, target);
     expect(outcome).toEqual({
       id: other.id,
       result: 'SKIP',
-      note: 'mock target lacks read.v1 (methods not implemented)',
+      note: 'mock target lacks edit.v1 (methods not implemented)',
     });
   });
 
   it('skips a vector whose precondition the mock cannot establish', async () => {
     const planted = vector('job/get-running');
-    const outcome = await runVector({ ...planted, given: { ...planted.given, dirty: true } }, target);
-    expect(outcome).toMatchObject({ result: 'SKIP', note: expect.stringContaining('given.dirty') as unknown });
+    const outcome = await runVector({ ...planted, given: { ...planted.given, futureMember: true } }, target);
+    expect(outcome).toMatchObject({ result: 'SKIP', note: expect.stringContaining('given.futureMember') as unknown });
   });
 
   describe("keeps the token and the server proof out of a failed session.hello's note", () => {

@@ -28,21 +28,51 @@ export function realOpenTuneDirs(env: NodeJS.ProcessEnv = process.env, home = os
   return dirs;
 }
 
-const comparable = (p: string) => {
+/** Windows and macOS file systems are case-insensitive by default; the other systems' are not. */
+const foldsCase = (platform: NodeJS.Platform) => platform === 'win32' || platform === 'darwin';
+
+const comparable = (p: string, platform: NodeJS.Platform) => {
   const resolved = path.resolve(p);
-  return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  return foldsCase(platform) ? resolved.toLowerCase() : resolved;
 };
 
-function isInside(child: string, parent: string): boolean {
-  const rel = path.relative(comparable(parent), comparable(child));
+/** `child` is `parent` or lies below it. Both are compared as the platform's file system compares names. */
+export function isInside(child: string, parent: string, platform: NodeJS.Platform = process.platform): boolean {
+  const rel = path.relative(comparable(parent, platform), comparable(child, platform));
   return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
 }
 
 /**
- * The directory the mock writes its discovery file to. Throws, before any file-system access, when
- * none is given or when it lies inside a real OpenTune data folder.
+ * The path with symbolic links and junctions resolved. A directory that does not exist yet is
+ * resolved through its longest existing parent, so that a link in front of it cannot hide where
+ * it will end up.
  */
-export function resolveDiscoveryDir(option: string | undefined, env: NodeJS.ProcessEnv = process.env): string {
+export function canonicalPath(p: string): string {
+  const resolved = path.resolve(p);
+  const rest: string[] = [];
+  let existing = resolved;
+  for (;;) {
+    try {
+      return path.join(fs.realpathSync.native(existing), ...rest.reverse());
+    } catch {
+      const parent = path.dirname(existing);
+      if (parent === existing) return resolved;
+      rest.push(path.basename(existing));
+      existing = parent;
+    }
+  }
+}
+
+/**
+ * The directory the mock writes its discovery file to. Throws when none is given or when it lies
+ * inside a real OpenTune data folder, before anything is created: the only file-system access is
+ * resolving links of directories that already exist.
+ */
+export function resolveDiscoveryDir(
+  option: string | undefined,
+  env: NodeJS.ProcessEnv = process.env,
+  home = os.homedir(),
+): string {
   const dir = option ?? env[DISCOVERY_DIR_ENV];
   if (dir === undefined || dir === '') {
     throw new Error(
@@ -50,8 +80,10 @@ export function resolveDiscoveryDir(option: string | undefined, env: NodeJS.Proc
     );
   }
   if (!path.isAbsolute(dir)) throw new Error(`the discovery directory must be an absolute path: ${dir}`);
-  for (const real of realOpenTuneDirs(env)) {
-    if (isInside(dir, real)) {
+  // Compared by where the directories really are, so a link into a real folder is refused too.
+  const where = canonicalPath(dir);
+  for (const real of realOpenTuneDirs(env, home)) {
+    if (isInside(where, canonicalPath(real))) {
       throw new Error(`refusing discovery directory ${dir}: it is inside the real OpenTune data folder ${real}`);
     }
   }
@@ -97,29 +129,43 @@ export function writeDiscoveryFile(dir: string, pid: number, content: unknown): 
   const target = path.join(dir, `${String(pid)}.json`);
   // Temporary names never end in .json, so clients never read a half-written file (rule 4).
   const temp = path.join(dir, `.${String(pid)}.${String(process.hrtime.bigint())}.tmp`);
-  const data = `${JSON.stringify(content)}\n`;
-  let fd: number;
-  if (process.platform === 'win32') {
-    fd = fs.openSync(temp, 'wx');
-    const acl = spawnSync(system32('icacls.exe'), [temp, '/inheritance:r', '/grant:r', `*${userSid()}:(F)`], {
-      windowsHide: true,
-    });
-    if (acl.status !== 0) {
-      fs.closeSync(fd);
-      fs.rmSync(temp, { force: true });
-      throw new Error(`icacls failed to restrict ${temp} to the current user`);
-    }
-  } else {
-    checkPosixDir(dir);
-    const { O_CREAT, O_EXCL, O_WRONLY, O_NOFOLLOW } = fs.constants;
-    fd = fs.openSync(temp, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0o600);
-  }
+  const data = `${JSON.stringify(content)}
+`;
+  let fd: number | undefined;
   try {
+    if (process.platform === 'win32') {
+      // A deliberate deviation from section 5.2 rule 3, which has the access rights set when the
+      // file is created so that it never exists with others. Node cannot pass a security
+      // descriptor to CreateFileW, so the mock creates the file empty and replaces its inherited
+      // rights with one entry for the current user before it writes anything. Until then the file
+      // holds no secret, and it lies in a directory the test chose; the real server has no such
+      // window. If restricting the rights fails, the empty file is deleted and nothing is written.
+      fd = fs.openSync(temp, 'wx');
+      const acl = spawnSync(system32('icacls.exe'), [temp, '/inheritance:r', '/grant:r', `*${userSid()}:(F)`], {
+        windowsHide: true,
+      });
+      if (acl.status !== 0) throw new Error(`icacls failed to restrict ${temp} to the current user`);
+    } else {
+      checkPosixDir(dir);
+      const { O_CREAT, O_EXCL, O_WRONLY, O_NOFOLLOW } = fs.constants;
+      fd = fs.openSync(temp, O_CREAT | O_EXCL | O_WRONLY | O_NOFOLLOW, 0o600);
+    }
     fs.writeSync(fd, data);
     fs.fsyncSync(fd);
-  } finally {
     fs.closeSync(fd);
+    fd = undefined;
+    fs.renameSync(temp, target);
+  } catch (error) {
+    // Whatever failed, no temporary file stays behind: it could hold the token.
+    if (fd !== undefined) {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        // already closed or invalid; the file is removed below either way
+      }
+    }
+    fs.rmSync(temp, { force: true });
+    throw error;
   }
-  fs.renameSync(temp, target);
   return target;
 }

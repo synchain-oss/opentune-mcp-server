@@ -24,6 +24,7 @@ export interface ErrorObject {
     readonly kind: string;
     readonly reason?: string;
     readonly retryable: boolean;
+    readonly retryAfterMs?: number;
     readonly detail: string;
     readonly executed: boolean;
   };
@@ -37,6 +38,8 @@ export interface ErrorInit {
   readonly retryable?: boolean;
   /** Defaults to false: the request changed nothing. */
   readonly executed?: boolean;
+  /** Hint for retryable errors (section 17.1). */
+  readonly retryAfterMs?: number;
 }
 
 export const isPlainObject = (value: unknown): value is Record<string, unknown> =>
@@ -104,6 +107,7 @@ export function makeError(spec: OtcpSpec, init: ErrorInit): ErrorObject {
       kind: init.kind,
       ...(init.reason === undefined ? {} : { reason: init.reason }),
       retryable: init.retryable ?? kind.retryable,
+      ...(init.retryAfterMs === undefined ? {} : { retryAfterMs: init.retryAfterMs }),
       detail: printableDetail(init.detail),
       executed: init.executed ?? false,
     },
