@@ -93,19 +93,43 @@ export function resolveDiscoveryDir(
 /** A Windows system tool by absolute path, so that a same-named tool earlier on PATH (Git Bash) is not used. */
 const system32 = (tool: string) => path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', tool);
 
-let currentUserSid: string | undefined;
+let currentUser: { name: string; sid: string } | undefined;
 
-/** The SID of the user this process runs as (Windows). */
-function userSid(): string {
-  if (currentUserSid !== undefined) return currentUserSid;
+/** The account name and SID of the user this process runs as (Windows). */
+function user(): { name: string; sid: string } {
+  if (currentUser !== undefined) return currentUser;
   const result = spawnSync(system32('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], {
     encoding: 'utf8',
     windowsHide: true,
   });
-  const sid = /"(S-1-[0-9-]+)"\s*$/.exec(result.stdout.trim())?.[1];
-  if (result.status !== 0 || sid === undefined) throw new Error('cannot determine the SID of the current user');
-  currentUserSid = sid;
-  return sid;
+  const match = /^"([^"]+)","(S-1-[0-9-]+)"\s*$/.exec(result.stdout.trim());
+  if (result.status !== 0 || match?.[1] === undefined || match[2] === undefined) {
+    throw new Error('cannot determine the SID of the current user');
+  }
+  currentUser = { name: match[1], sid: match[2] };
+  return currentUser;
+}
+
+/**
+ * Removes every access entry except the current user's from a file whose inheritance is already cut.
+ * When the directory has nothing to inherit, a new file gets the default DACL of the process token,
+ * with explicit entries for SYSTEM and Administrators besides the user; `/inheritance:r` only drops
+ * inherited entries, so the others are read back from icacls and removed one by one.
+ */
+function removeOtherEntries(file: string, own: string): void {
+  const icacls = system32('icacls.exe');
+  const listing = spawnSync(icacls, [file], { encoding: 'utf8', windowsHide: true });
+  if (listing.status !== 0) throw new Error(`icacls failed to read the access rights of ${file}`);
+  const others = new Set<string>();
+  for (const line of listing.stdout.split(/\r?\n/)) {
+    // "<file>  NAME:(F)" for the first entry, "      NAME:(F)" for the following ones.
+    const name = /^(.+?):\(/.exec(line.startsWith(file) ? line.slice(file.length).trim() : line.trim())?.[1];
+    if (name !== undefined && name.toLowerCase() !== own.toLowerCase()) others.add(name);
+  }
+  for (const name of others) {
+    const removed = spawnSync(icacls, [file, '/remove:g', name], { windowsHide: true });
+    if (removed.status !== 0) throw new Error(`icacls failed to remove ${name} from ${file}`);
+  }
 }
 
 /** POSIX: the directory checks of section 5.2 rule 1. */
@@ -136,14 +160,15 @@ export function writeDiscoveryFile(dir: string, pid: number, content: unknown): 
       // A deliberate deviation from section 5.2 rule 3, which has the access rights set when the
       // file is created so that it never exists with others. Node cannot pass a security
       // descriptor to CreateFileW, so the mock creates the file empty and replaces its inherited
-      // rights with one entry for the current user before it writes anything. Until then the file
+      // rights with one entry for the current user (dropping the default entries too) before it writes anything. Until then the file
       // holds no secret, and it lies in a directory the test chose; the real server has no such
       // window. If restricting the rights fails, the empty file is deleted and nothing is written.
       fd = fs.openSync(temp, 'wx');
-      const acl = spawnSync(system32('icacls.exe'), [temp, '/inheritance:r', '/grant:r', `*${userSid()}:(F)`], {
+      const acl = spawnSync(system32('icacls.exe'), [temp, '/inheritance:r', '/grant:r', `*${user().sid}:(F)`], {
         windowsHide: true,
       });
       if (acl.status !== 0) throw new Error(`icacls failed to restrict ${temp} to the current user`);
+      removeOtherEntries(temp, user().name);
     } else {
       checkPosixDir(dir);
       const { O_CREAT, O_EXCL, O_WRONLY, O_NOFOLLOW } = fs.constants;
