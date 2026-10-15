@@ -23,6 +23,7 @@ import { MockError } from './errors.js';
 import { stripHome } from './privacy.js';
 import { WorkFiles } from './files.js';
 import { applyGiven, WORLD_GIVEN_MEMBERS, type GivenState } from './given.js';
+import { arrangementHandlers } from './arrangement.js';
 import { editHandlers } from './edit.js';
 import { ExportService } from './export.js';
 import { historyHandlers } from './history.js';
@@ -42,6 +43,8 @@ import {
 } from './protocol.js';
 import { readHandlers } from './reads.js';
 import { timingHandlers } from './timing.js';
+import { trackHandlers } from './tracks.js';
+import { transportHandlers } from './transport.js';
 
 export { UnsupportedPrecondition } from './jobs.js';
 
@@ -70,6 +73,9 @@ export const MOCK_CAPABILITIES: readonly string[] = [
   'export.v1',
   'edit.v1',
   'timing.v1',
+  'tracks.v1',
+  'arrangement.v1',
+  'transport.v1',
 ];
 
 const LOOPBACK = '127.0.0.1';
@@ -353,6 +359,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     ...historyHandlers,
     ...editHandlers,
     ...timingHandlers,
+    ...trackHandlers,
+    ...arrangementHandlers,
+    ...transportHandlers,
     'import.start': importer.start,
     'export.start': exporter.start,
   };
@@ -637,6 +646,8 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
           return world.handleOfOtherInstance('c');
         case 'runner.stalePlacementId':
           return world.handleOfOtherInstance('p');
+        case 'runner.arrangementRevision':
+          return world.arrangement;
         case 'runner.lastTrackId':
           return TRACK_SLOTS - 1;
         case 'runner.unknownTrackId':

@@ -84,13 +84,14 @@ const pick = (snap: Partial<ContentSnap>, aspects: readonly Aspect[]): Partial<C
 
 /**
  * A change without an undo entry is not taken back by any step either (it reports IRREVERSIBLE or
- * a revert recipe): the undo entries of the content stop putting back the aspects it changed, and
- * the redo history ends, so that no redo writes older values over it. The protocol does not say
- * what such a change does to the redo history; ending it is the choice that never overwrites.
+ * a revert recipe). The entries recorded through the API stop putting back the aspects it changed
+ * (PROTOCOL.md section 15.3 rule 9); an entry recorded in the UI, which the server cannot inspect,
+ * is left as it is. The redo history ends, so that no redo writes older values over the change.
  */
 function forgetAspects(world: World, content: ContentRec, aspects: readonly Aspect[]): void {
   const kept = ASPECTS.filter((a) => !aspects.includes(a));
   for (const entry of world.undoStack) {
+    if (entry.origin !== 'control') continue;
     for (const patch of [entry.undoPatch, entry.redoPatch]) {
       if (patch?.content?.objectId === content.objectId) {
         patch.content = { objectId: content.objectId, snap: pick(patch.content.snap, kept) };

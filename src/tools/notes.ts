@@ -65,13 +65,13 @@ function noteView(note: unknown): unknown {
 }
 
 /** A placement's geometry hash with the arrangement revision of the read it came from. */
-interface Geometry {
+export interface Geometry {
   readonly hash: string | null;
   readonly arrangement: string | null;
 }
 
 /** The geometry hash of a placement, from a fresh project read; null members when it cannot be read. */
-async function geometryOf(session: OtcpSession, placementId: string): Promise<Geometry> {
+export async function geometryOf(session: OtcpSession, placementId: string): Promise<Geometry> {
   try {
     const project = await session.call('project.get', {}, READ_TIMEOUT_MS);
     const found = (Array.isArray(project.placements) ? project.placements : []).find(

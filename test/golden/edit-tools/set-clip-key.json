@@ -1,0 +1,162 @@
+{
+  "description": "A key change: not undoable, with the way back.",
+  "tool": "opentune_set_clip",
+  "input": {
+    "clip": "p:01234567:0:1",
+    "key": {
+      "root": 2,
+      "scale": "dorian"
+    },
+    "expected_revision": "<clip_revision of the clip>"
+  },
+  "result": {
+    "summary": "opentune_set_clip: changed 1 key (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_clip, see the revert line).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "key",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1",
+        "fields": {
+          "root": {
+            "before": 0,
+            "after": 2,
+            "unit": null
+          },
+          "scale": {
+            "before": "major",
+            "after": "dorian",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "key": {
+              "before": "k14",
+              "after": "k17"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r10",
+          "gridRevision": "g6",
+          "keyRevision": "k17"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "content.setKey",
+        "params": {
+          "contentId": "c:01234567:0:1",
+          "key": {
+            "root": 0,
+            "scale": "major"
+          },
+          "expectedKeyRevision": "k17"
+        }
+      }
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "transport bar key selector",
+        "effect": "changed key",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Select the clip; the key selector in the transport bar then shows its key."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "key",
+          "label": "Content 1",
+          "ref": {
+            "contentId": "c:01234567:0:1"
+          },
+          "fields": [
+            {
+              "field": "root",
+              "before": 0,
+              "after": 2,
+              "unit": null
+            },
+            {
+              "field": "scale",
+              "before": "major",
+              "after": "dorian",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_clip with the arguments in restore, adding expected_revision: the latest clip_revision you read for the clip.",
+        "revert": {
+          "method": "content.setKey",
+          "params": {
+            "contentId": "c:01234567:0:1",
+            "key": {
+              "root": 0,
+              "scale": "major"
+            },
+            "expectedKeyRevision": "k17"
+          }
+        },
+        "restore": {
+          "tool": "opentune_set_clip",
+          "arguments": {
+            "clip": "c:01234567:0:1",
+            "key": {
+              "root": 0,
+              "scale": "major"
+            }
+          }
+        }
+      }
+    ],
+    "clip_revision": "cr1.WyJyMTAiLCJnNiIsImsxNyIsImgxMSJd"
+  }
+}

@@ -8,6 +8,7 @@
 
 import { checkNotBusy, contentLabel, envelope, isEmptyDiff, placementLabel, type Handler } from './context.js';
 import { refuse } from './errors.js';
+import { applyState, fieldChanges, stateOf } from './placements.js';
 import {
   clone,
   sameJson,
@@ -67,21 +68,36 @@ function applyPatch(world: World, patch: Patch | null): Effect {
     const content = world.contents.get(patch.content.objectId);
     if (content !== undefined) restore(world, content, patch.content.snap, effect);
   }
-  if (patch?.placement !== undefined) {
-    const placement = world.placements.get(patch.placement.serial);
-    const to = patch.placement.startTimelineSec;
-    if (placement !== undefined && placement.startTimelineSec !== to) {
-      const from = placement.startTimelineSec;
-      placement.startTimelineSec = to;
-      world.touchGeometry(placement);
-      effect.placements.push(placement);
-      effect.changes.push({
-        entity: 'placement',
-        ref: { placementId: placement.id },
-        label: placementLabel(world, placement),
-        fields: { startTimelineSec: { before: from, after: to, unit: 'sec' } },
-      });
+  for (const { serial, state, reference } of patch?.placements ?? []) {
+    const placement = world.placements.get(serial);
+    if (placement === undefined) continue;
+    const before = stateOf(placement);
+    const referenceBefore = placement.reference;
+    const changed = applyState(world, placement, state);
+    // A reference clip that was deleted since is gone for good: the reference goes back as null on purpose,
+    // there is nothing left to point at.
+    const referenceAfter = reference === undefined ? referenceBefore : (world.placements.get(reference ?? -1) ?? null);
+    const referenceMoved = referenceAfter !== referenceBefore;
+    if (referenceMoved) {
+      placement.reference = referenceAfter;
+      world.touchArrangement();
     }
+    if (changed.length === 0 && !referenceMoved) continue;
+    const fields: Record<string, unknown> = fieldChanges(before, stateOf(placement));
+    if (referenceMoved) {
+      fields.referencePlacementId = {
+        before: referenceBefore?.id ?? null,
+        after: referenceAfter?.id ?? null,
+        unit: null,
+      };
+    }
+    effect.placements.push(placement);
+    effect.changes.push({
+      entity: 'placement',
+      ref: { placementId: placement.id },
+      label: placementLabel(world, placement),
+      fields,
+    });
   }
   return effect;
 }

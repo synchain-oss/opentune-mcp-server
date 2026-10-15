@@ -71,7 +71,7 @@
     "job": null
   },
   "rendered": {
-    "summary": "opentune_edit_clips: removed 1 placement (destructive; not undoable: OpenTune cannot undo this reliably; can be restored with import.start only after the user explicitly agrees). Warnings: UPSTREAM_UNDO_DEFECT.",
+    "summary": "opentune_edit_clips: removed 1 placement (destructive; not undoable: OpenTune cannot undo this reliably; no tool of this server can restore it yet, but the user can by hand in the OpenTune window). Warnings: UPSTREAM_UNDO_DEFECT.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -180,7 +180,7 @@
       },
       {
         "kind": "revert",
-        "text": "Not undoable (OpenTune cannot undo this reliably). Restore with import.start and these params, but only after the user explicitly agrees; add the method's consent parameters yourself.",
+        "text": "Not undoable (OpenTune cannot undo this reliably). No tool of this server can carry out this restore yet; the user can restore it by hand in the OpenTune window. It needs the user's explicit agreement.",
         "revert": {
           "method": "import.start",
           "params": {
@@ -191,7 +191,8 @@
             ]
           },
           "requiresConsent": true
-        }
+        },
+        "restore": null
       }
     ]
   }
