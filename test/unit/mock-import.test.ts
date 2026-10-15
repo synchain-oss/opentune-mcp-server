@@ -326,6 +326,24 @@ describe('the idempotency key and the job limit', () => {
     expect((await session.ok('project.get')).placements).toHaveLength(1);
   });
 
+  it('returns the same job for a retry after newTrack took the last empty track', async () => {
+    const { clock, session, audio } = await open();
+    session.mock.given({
+      clips: Array.from({ length: TRACK_SLOTS - 1 }, (_, trackId) => clip({ bind: `c${String(trackId)}`, trackId })),
+    });
+    const params = { items: [{ path: audio('a.wav') }], layout: 'single', newTrack: true, idempotencyKey: 'last' };
+    const first = (await session.ok('import.start', params)).job as { jobId: string };
+    clock.advance(IMPORT_ITEM_MS);
+    // Every track holds a clip now, yet the retry gets the job and starts nothing.
+    const again = (await session.ok('import.start', params)).job as { jobId: string };
+    expect(again.jobId).toBe(first.jobId);
+    expect((await session.ok('project.get')).placements).toHaveLength(TRACK_SLOTS);
+    // A different request is still refused for lack of a track.
+    expect((await session.fails('import.start', { ...params, idempotencyKey: 'other' })).data).toMatchObject({
+      reason: 'track_capacity',
+    });
+  });
+
   it('treats defaults as given: the same key with the explicit defaults is the same call', async () => {
     const { session, audio } = await open();
     const file = audio('a.wav');

@@ -183,7 +183,10 @@ describe('removing the home directory from text', () => {
     const text = 'a C:\\Profiles\\Someone\\x.wav b c:/profiles/someone/y.wav c C:/Profiles/Someone';
     expect(stripHome(text, home, 'win32')).toBe('a ~\\x.wav b ~/y.wav c ~');
     expect(stripHome(text, home, 'linux')).toBe('a ~\\x.wav b c:/profiles/someone/y.wav c ~');
-    expect(stripHome('/srv/a/x /srv/ab', '/srv/a', 'linux')).toBe('~/x ~b');
+    expect(stripHome('/srv/a/x /srv/a', '/srv/a', 'linux')).toBe('~/x ~');
+    // Only a whole path component is the home directory.
+    expect(stripHome('/srv/a/x /srv/ab/y', '/srv/a', 'linux')).toBe('~/x /srv/ab/y');
+    expect(stripHome('D:\\ab\\x D:\\abc\\x', 'D:\\ab', 'win32')).toBe('~\\x D:\\abc\\x');
     expect(stripHome('unchanged', '', 'win32')).toBe('unchanged');
     // Characters that mean something in a pattern are taken literally.
     expect(stripHome('D:\\a+b(1)\\x', 'D:\\a+b(1)', 'win32')).toBe('~\\x');

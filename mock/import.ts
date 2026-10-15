@@ -129,6 +129,9 @@ export class ImportService {
       return params.trackId;
     }
     if (params.newTrack === true) {
+      // When every track holds a clip, newTrack has no empty track to take. The schema does not say
+      // whether the active track is used instead; the maintainers ruled that this is an error
+      // (INVALID_ARGUMENT, track_capacity), and the next version of the spec will say so.
       const used = new Set([...world.placements.values()].map((p) => p.trackId));
       for (let id = 0; id < TRACK_SLOTS; id++) if (!used.has(id)) return id;
       throw refuse('INVALID_ARGUMENT', 'track_capacity', 'every track already holds a clip');
@@ -144,35 +147,25 @@ export class ImportService {
       if (bad !== undefined) throw bad;
     }
     const layout = params.layout as Layout;
-    const baseTrack = this.#baseTrack(params);
-    if (layout === 'separateTracks' && baseTrack + paths.length > TRACK_SLOTS) {
-      throw refuse(
-        'INVALID_ARGUMENT',
-        'track_capacity',
-        `${String(paths.length)} files from track ${String(baseTrack)} need more than ${String(TRACK_SLOTS)} tracks`,
-      );
-    }
-    const plan: Plan = {
-      paths,
-      layout,
-      baseTrack,
-      startTimelineSec: typeof params.startTimelineSec === 'number' ? params.startTimelineSec : undefined,
-      generateNotes: params.generateNotes === true,
-      focus: params.focus !== false,
-    };
+    const startTimelineSec = typeof params.startTimelineSec === 'number' ? params.startTimelineSec : undefined;
+    const generateNotes = params.generateNotes === true;
+    const focus = params.focus !== false;
+    // The normalized params depend on the request only, so the idempotencyKey is looked up before
+    // any check that depends on the state: a retry after a lost response returns the same job.
     const normalized = JSON.stringify({
       items: paths,
       layout,
       trackId: params.trackId ?? null,
       newTrack: params.newTrack === true,
-      startTimelineSec: plan.startTimelineSec ?? null,
-      generateNotes: plan.generateNotes,
-      focus: plan.focus,
+      startTimelineSec: startTimelineSec ?? null,
+      generateNotes,
+      focus,
     });
     const key = typeof params.idempotencyKey === 'string' ? params.idempotencyKey : undefined;
     if (key !== undefined) {
       const known = this.#keys.get(key);
       const job = known === undefined ? undefined : this.jobs.get(known.jobId);
+      if (known !== undefined && job === undefined) this.#keys.delete(key);
       if (known !== undefined && job !== undefined) {
         if (known.params !== normalized) {
           throw refuse(
@@ -184,6 +177,15 @@ export class ImportService {
         return jobStartedResult(this.world, job);
       }
     }
+    const baseTrack = this.#baseTrack(params);
+    if (layout === 'separateTracks' && baseTrack + paths.length > TRACK_SLOTS) {
+      throw refuse(
+        'INVALID_ARGUMENT',
+        'track_capacity',
+        `${String(paths.length)} files from track ${String(baseTrack)} need more than ${String(TRACK_SLOTS)} tracks`,
+      );
+    }
+    const plan: Plan = { paths, layout, baseTrack, startTimelineSec, generateNotes, focus };
     checkNotBusy(context);
     const job = this.jobs.start({ kind: 'import', cancellable: true }, this.#driver(plan));
     if (key !== undefined) this.#keys.set(key, { jobId: job.jobId, params: normalized });
@@ -363,7 +365,7 @@ export class ImportService {
         else if (clip === focused && world.editingScheme === 'openDyne') this.#generateNotes(clip, 'focus');
       }
       const result = this.#result(plan, items, clips, before, revealed);
-      return { done: state === 'succeeded' ? { state, result } : { state, result } };
+      return { done: { state, result } };
     };
 
     return (control: JobControl): JobStep => {

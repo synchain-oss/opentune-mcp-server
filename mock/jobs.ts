@@ -63,6 +63,8 @@ interface JobRecord {
   readonly waiters: Set<() => void>;
   driver?: JobDriver | undefined;
   timer?: Timer | undefined;
+  /** Called when the store stops with the job unfinished. */
+  onDispose?: (() => void) | undefined;
 }
 
 export interface JobSpec {
@@ -164,7 +166,11 @@ export class JobStore {
    * Starts a job that the store drives: queued now, then one step of `driver` after another on the
    * clock, the first right away. The job is running from its first step on.
    */
-  start(spec: { readonly kind: string; readonly cancellable: boolean }, driver: JobDriver): JobView {
+  start(
+    spec: { readonly kind: string; readonly cancellable: boolean },
+    driver: JobDriver,
+    onDispose?: () => void,
+  ): JobView {
     const now = this.clock.now();
     const jobId = this.#reserve(now);
     const view: JobView = {
@@ -179,7 +185,7 @@ export class JobStore {
       result: null,
       error: null,
     };
-    const record: JobRecord = { view, cancelRequested: false, waiters: new Set(), driver };
+    const record: JobRecord = { view, cancelRequested: false, waiters: new Set(), driver, onDispose };
     this.#jobs.set(jobId, record);
     this.#schedule(record, 0);
     return view;
@@ -258,6 +264,7 @@ export class JobStore {
   /** Stops every pending step and wait; the store is not used afterwards. */
   dispose(): void {
     for (const record of this.#jobs.values()) {
+      if (record.driver !== undefined) record.onDispose?.();
       record.timer?.cancel();
       record.timer = undefined;
       record.driver = undefined;

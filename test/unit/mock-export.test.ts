@@ -7,9 +7,10 @@
 // loaded media found by file identity.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
 import { EXPORT_POLL_MS, EXPORT_SAMPLE_RATE_HZ, EXPORT_WAIT_LIMIT_MS, EXPORT_WRITE_MS } from '../../mock/export.js';
@@ -308,23 +309,58 @@ describe('the job', () => {
 
   it('stops pending work when the mock stops', async () => {
     const { clock, session } = await open();
-    const ids = session.mock.given({ ...clipGiven, files: [{ bind: 'out', kind: 'absent' }] });
-    await start(session, { kind: 'master', path: ids.out });
-    await session.mock.stop();
-    clock.advance(EXPORT_WAIT_LIMIT_MS);
+    session.mock.given(clipGiven);
+    // A directory of the test's own: the mock's working files go away when it stops, this one stays.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ot-export-test-'));
+    try {
+      const out = path.join(dir, 'out.wav');
+      await start(session, { kind: 'master', path: out });
+      clock.advance(0);
+      // The temporary file is written; stopping the mock removes it.
+      expect(filesIn(dir).some((name) => name.endsWith('.tmp'))).toBe(true);
+      await session.mock.stop();
+      clock.advance(EXPORT_WAIT_LIMIT_MS);
+      expect(filesIn(dir)).toEqual([]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('fails with write_failed, keeps the target absent and removes the temporary file when no link can be made', async () => {
+    const { clock, session } = await open();
+    const ids = session.mock.given({
+      ...clipGiven,
+      files: [
+        { bind: 'existing', kind: 'existing' },
+        { bind: 'out', kind: 'absent' },
+      ],
+    });
+    const refuseLinks = vi.spyOn(fs, 'linkSync').mockImplementation(() => {
+      throw Object.assign(new Error('operation not supported'), { code: 'ENOTSUP' });
+    });
+    try {
+      const jobId = await start(session, { kind: 'master', path: ids.out, ifExists: 'error' });
+      const job = await finish(session, clock, jobId, EXPORT_WRITE_MS);
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({ kind: 'IO_ERROR', reason: 'write_failed' });
+    } finally {
+      refuseLinks.mockRestore();
+    }
     expect(fs.existsSync(ids.out ?? '')).toBe(false);
+    expect(filesIn(path.dirname(ids.out ?? '')).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 });
 
 describe('targets and paths', () => {
-  it('refuses a hard link to a source file as loaded media, whatever its name', async () => {
+  it('refuses a hard link to a source file as loaded media, whatever its name', async (ctx) => {
     const { session } = await open();
     const ids = session.mock.given({ ...clipGiven, files: [{ bind: 'out', kind: 'absent' }] });
     const link = ids.out ?? '';
     try {
       fs.linkSync(ids['clip.sourcePath'] ?? '', link);
     } catch {
-      return; // no hard links on this file system
+      ctx.skip(); // no hard links on this file system
+      return;
     }
     for (const ifExists of ['error', 'rename', 'overwrite']) {
       const refused = await session.fails('export.start', { kind: 'master', path: link, ifExists });

@@ -76,15 +76,15 @@ function renameNoReplace(temp: string, target: string): 'done' | 'exists' {
     if (code !== 'EPERM' && code !== 'ENOTSUP' && code !== 'EOPNOTSUPP' && code !== 'ENOSYS' && code !== 'EXDEV') {
       throw error;
     }
-    // No hard links here: a copy that fails if the target exists is the nearest atomic form.
-    try {
-      fs.copyFileSync(temp, target, fs.constants.COPYFILE_EXCL);
-    } catch (copyError) {
-      if (errnoOf(copyError) === 'EEXIST') return 'exists';
-      throw copyError;
-    }
+    // Section 20.4 rule 2: no rename that never replaces is available, so the export fails; never a copy.
+    throw refuse('IO_ERROR', 'write_failed', 'the file system offers no rename that never replaces');
   }
-  fs.unlinkSync(temp);
+  // The export is complete once the link exists; removing the temporary name is best effort.
+  try {
+    fs.rmSync(temp, { force: true });
+  } catch {
+    // The temporary name stays behind; the target is already in place.
+  }
   return 'done';
 }
 
@@ -149,6 +149,14 @@ export class ExportService {
     };
   }
 
+  /** The target of the normalized params (section 19 rule 5): only the member the kind uses. */
+  #keyTarget(kind: Plan['kind'], target: unknown): unknown {
+    const t = (target ?? {}) as { placementId?: unknown; trackId?: unknown };
+    if (kind === 'clip') return { placementId: t.placementId ?? null };
+    if (kind === 'track') return { trackId: t.trackId ?? null };
+    return null;
+  }
+
   /** export.start (section 19). */
   readonly start: Handler = (context) => {
     const { params } = context;
@@ -157,14 +165,19 @@ export class ExportService {
     const plan = this.#plan(params);
     const key = JSON.stringify({
       kind: plan.kind,
-      target: params.target ?? null,
+      target: this.#keyTarget(plan.kind, params.target),
       path: plan.path,
       ifExists: plan.ifExists,
       allowDry: plan.allowDry,
     });
     for (const [jobId, jobKey] of this.#keys) {
       const job = this.jobs.get(jobId);
-      if (jobKey === key && job?.finishedAtMs === null) return jobStartedResult(this.world, job);
+      if (job === undefined) {
+        // The job left the retention window: its key is no longer needed.
+        this.#keys.delete(jobId);
+      } else if (jobKey === key && job.finishedAtMs === null) {
+        return jobStartedResult(this.world, job);
+      }
     }
     checkNotBusy(context);
     if (this.#isLoadedMedia(plan.path)) {
@@ -173,7 +186,8 @@ export class ExportService {
     if (plan.ifExists === 'error' && exists(plan.path)) {
       throw refuse('ALREADY_EXISTS', 'target_exists', 'a file already exists at the target and ifExists is error');
     }
-    const job = this.jobs.start({ kind: 'export', cancellable: true }, this.#driver(plan));
+    const driver = this.#driver(plan);
+    const job = this.jobs.start({ kind: 'export', cancellable: true }, driver, driver.dispose);
     this.#keys.set(job.jobId, key);
     return jobStartedResult(this.world, job);
   };
@@ -310,11 +324,13 @@ export class ExportService {
       }
     };
 
-    return (control: { readonly cancelRequested: boolean }): JobStep => {
+    const step = (control: { readonly cancelRequested: boolean }): JobStep => {
       // Section 19 rule 9: cancelling is possible until the final rename, which is one step.
       if (control.cancelRequested) return finish({ state: 'cancelled' });
       return phase === 'wait' ? waitStep() : renameStep();
     };
+    // When the mock stops while the temporary file exists, the file goes with it.
+    return Object.assign(step, { dispose: dropTemp });
   }
 
   #result(plan: Plan, written: string, dry: readonly { contentId: string; reason: string }[]) {

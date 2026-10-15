@@ -14,10 +14,9 @@ export function stripHome(text: string, home: string, platform: NodeJS.Platform 
   const forms = new Set([home, home.replaceAll('\\', '/')]);
   let out = text;
   for (const form of forms) {
-    out =
-      platform === 'win32'
-        ? out.replace(new RegExp(form.replace(REGEXP_SPECIALS, '\\$&'), 'gi'), '~')
-        : out.split(form).join('~');
+    // The match ends at a path boundary: `/srv/a` is not the start of `/srv/ab`.
+    const escaped = form.replace(REGEXP_SPECIALS, '\\$&');
+    out = out.replace(new RegExp(`${escaped}(?=[\\\\/]|$)`, platform === 'win32' ? 'gi' : 'g'), '~');
   }
   return out;
 }
