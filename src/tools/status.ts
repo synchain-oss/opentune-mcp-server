@@ -194,12 +194,17 @@ export async function getStatus(ctx: ToolContext, instanceId: string | undefined
     const readyCount = instances.filter((i) => i.state === 'READY').length;
     const first = readyCount > 0 ? instances.find((i) => i.state === 'READY') : instances[0];
     const state = first?.state ?? 'NOT_READY';
-    const reason =
-      readyCount > 1 ? 'multiple_instances' : state === 'READY' ? null : ((first?.reason as string | null) ?? null);
-    const summary =
-      readyCount > 1
-        ? `${String(readyCount)} OpenTune instances are running and ready; pass instance_id to choose one.`
-        : undefined;
+    // Other tools refuse to choose among several announced instances, ready or not.
+    const multiple = state === 'READY' && instances.length > 1;
+    const reason = multiple
+      ? 'multiple_instances'
+      : state === 'READY'
+        ? null
+        : ((first?.reason as string | null) ?? null);
+    const summary = multiple
+      ? `${String(instances.length)} OpenTune instances are running (${String(readyCount)} ready); pass instance_id ` +
+        'to choose one.'
+      : undefined;
     return status(state, reason, { ...extra, instances }, summary);
   }
 

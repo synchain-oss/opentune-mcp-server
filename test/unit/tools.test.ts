@@ -227,11 +227,14 @@ describe('opentune_get_status', () => {
       new OtcpError({ kind: 'INTERNAL', reason: null, retryable: false, detail: 'x', executed: false, ...data }),
     );
 
-  it('asks which instance to use when several are ready', async () => {
+  it('asks which instance to use when several are announced, ready or not', async () => {
     const ctx = fakeInstances([session(() => Promise.resolve({})), session(() => Promise.resolve({}))]);
     const b = expectState(await getStatus(ctx, undefined), 'READY', 'multiple_instances');
-    expect(b.summary).toMatch(/^2 OpenTune instances/);
+    expect(b.summary).toBe('2 OpenTune instances are running (2 ready); pass instance_id to choose one.');
     expect(b.instances).toHaveLength(2);
+    const mixed = fakeInstances([failing({ kind: 'SHUTTING_DOWN' }), session(() => Promise.resolve({}))]);
+    const m = expectState(await getStatus(mixed, undefined), 'READY', 'multiple_instances');
+    expect(m.summary).toBe('2 OpenTune instances are running (1 ready); pass instance_id to choose one.');
   });
 
   it.each([

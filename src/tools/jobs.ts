@@ -7,7 +7,7 @@
 
 import { z } from 'zod';
 
-import { toolError } from '../errors/tool-error.js';
+import { OtcpError, toolError } from '../errors/tool-error.js';
 import type { Json, OtcpSession } from '../otcp/client.js';
 import { trustedToken } from '../sanitize/untrusted.js';
 import { defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
@@ -113,13 +113,13 @@ export async function cancelJob(
       try {
         result = await session.call('job.cancel', { jobId: args.job_id }, 10_000);
       } catch (error) {
-        const data = (error as { data?: { kind?: string; reason?: string | null } }).data;
-        if (data?.kind !== 'UNSUPPORTED' || data.reason !== 'job_not_cancellable') throw error;
+        const refused = error instanceof OtcpError && error.data.reason === 'job_not_cancellable';
+        if (!refused || error.data.kind !== 'UNSUPPORTED') throw error;
         const nextStep = {
           actor: 'agent' as const,
           tool: 'opentune_get_job',
           args: { job_id: args.job_id },
-          message: 'This job cannot be cancelled (any more); it continues unchanged. Follow it with opentune_get_job.',
+          message: 'This job cannot be cancelled now; it continues unchanged. Follow it with opentune_get_job.',
         };
         return {
           ok: false,
