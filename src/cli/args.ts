@@ -6,6 +6,7 @@ export type CliCommand =
   | { readonly kind: 'serve' }
   | { readonly kind: 'version' }
   | { readonly kind: 'help' }
+  | { readonly kind: 'doctor'; readonly json: boolean }
   | { readonly kind: 'usage-error'; readonly message: string };
 
 const HELP_FLAGS: ReadonlySet<string> = new Set(['--help', '-h']);
@@ -17,12 +18,18 @@ const VERSION_FLAG = '--version';
  * - No arguments: serve MCP over stdio (how MCP clients launch the server).
  * - `--help` / `-h` anywhere: print usage, even next to other or unknown arguments.
  * - `--version`: print the version.
+ * - `doctor [--json]`: check the set-up and print the results.
  * - Anything else: a usage error. Arguments are never ignored silently, so a mistyped flag
  *   cannot accidentally start the server.
  */
 export function parseArgs(argv: readonly string[]): CliCommand {
   if (argv.length === 0) return { kind: 'serve' };
   if (argv.some((arg) => HELP_FLAGS.has(arg))) return { kind: 'help' };
+  if (argv[0] === 'doctor') {
+    const extra = argv.slice(1).find((arg) => arg !== '--json');
+    if (extra !== undefined) return { kind: 'usage-error', message: `unknown argument ${JSON.stringify(extra)}` };
+    return { kind: 'doctor', json: argv.includes('--json') };
+  }
   const unknown = argv.find((arg) => arg !== VERSION_FLAG);
   if (unknown !== undefined) {
     return { kind: 'usage-error', message: `unknown argument ${JSON.stringify(unknown)}` };

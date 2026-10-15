@@ -107,7 +107,8 @@ export interface ContentSnap {
 
 /** The state an undo or redo step puts back. */
 export interface Patch {
-  content?: { objectId: number; snap: ContentSnap };
+  /** Only the aspects in `snap` are put back; an aspect left out stays as it is. */
+  content?: { objectId: number; snap: Partial<ContentSnap> };
   placement?: { serial: number; startTimelineSec: number };
 }
 

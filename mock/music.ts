@@ -120,3 +120,31 @@ export function segmentDetected(durationSec: number, splitCents: number): Segmen
   }
   return segments;
 }
+
+/** The pitch classes of each scale a key can name, counted up from its root. */
+export const SCALES: Readonly<Record<string, readonly number[]>> = {
+  major: [0, 2, 4, 5, 7, 9, 11],
+  minor: [0, 2, 3, 5, 7, 8, 10],
+  chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  harmonicMinor: [0, 2, 3, 5, 7, 8, 11],
+  dorian: [0, 2, 3, 5, 7, 9, 10],
+  mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  pentatonicMajor: [0, 2, 4, 7, 9],
+  pentatonicMinor: [0, 3, 5, 7, 10],
+};
+
+/** The pitch of the key's scale nearest to `midi`; an exact tie goes up. */
+export function nearestInScale(midi: number, key: { root: number; scale: string }): number {
+  const degrees = SCALES[key.scale] ?? SCALES.chromatic ?? [];
+  let best = Number.NaN;
+  let bestDistance = Infinity;
+  for (let candidate = Math.floor(midi) - 12; candidate <= Math.ceil(midi) + 12; candidate++) {
+    if (!degrees.includes((((candidate - key.root) % 12) + 12) % 12)) continue;
+    const distance = Math.abs(candidate - midi);
+    if (distance < bestDistance - 1e-9 || (Math.abs(distance - bestDistance) <= 1e-9 && candidate > best)) {
+      best = candidate;
+      bestDistance = distance;
+    }
+  }
+  return best;
+}

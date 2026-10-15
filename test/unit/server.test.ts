@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { createLogger } from '../../src/log.js';
 import { createServer, startStdioServer } from '../../src/server.js';
+import { TOOLS } from '../../src/tools/index.js';
 import { SERVER_NAME, VERSION } from '../../src/version.js';
 import { LineClient, isJsonRpcMessage } from '../support/jsonrpc-lines.js';
 
@@ -53,7 +54,7 @@ describe('stdio server (in-process)', () => {
     });
   });
 
-  it('lists no tools yet, rather than failing with "method not found"', async () => {
+  it('lists the registered tools', async () => {
     const { client } = startInProcess();
     await client.request(1, 'initialize', {
       protocolVersion: '2025-11-25',
@@ -63,7 +64,7 @@ describe('stdio server (in-process)', () => {
     client.notify('notifications/initialized');
     const list = await client.request(2, 'tools/list');
     expect(list.error).toBeUndefined();
-    expect((list.result as { tools?: unknown }).tools).toEqual([]);
+    expect((list.result as { tools: { name: string }[] }).tools.map((t) => t.name)).toEqual(TOOLS.map((t) => t.name));
     expect(client.lines.every((line) => isJsonRpcMessage(JSON.parse(line)))).toBe(true);
   });
 
@@ -83,7 +84,7 @@ describe('stdio server (in-process)', () => {
     });
     const list = await client.request(2, 'tools/list', { _meta });
     expect(list.error).toBeUndefined();
-    expect((list.result as { tools?: unknown }).tools).toEqual([]);
+    expect((list.result as { tools: unknown[] }).tools).toHaveLength(TOOLS.length);
   });
 
   it('reports transport errors through the logger (stderr), never on stdout', async () => {

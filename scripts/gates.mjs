@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 import * as esbuild from 'esbuild';
 
 import { checkText, loadPatterns } from './check-attribution.mjs';
+import { sizeGate } from './lib/catalog.mjs';
 import { checkNotices } from './gen-notices.mjs';
 import { fetchTool } from './fetch-tool.mjs';
 import {
@@ -556,10 +557,17 @@ async function main() {
     ['no pull_request_target', pullRequestTarget],
     ['contract vectors (mock)', contractVectors],
     ['contract vectors (exe)', contractVectorsExe],
-    ['tools/list size gate', notYet('not yet: no tools are registered')],
+    ['tools/list size gate', () => sizeGate(ROOT, BUNDLE)],
     ['token canary', notYet('not yet: no OTCP client or MCP tool output to check for the token')],
     ['output budget', notYet('not yet: no read tools, and the mock has no project content to read')],
-    ['docs consistency', notYet('not yet: no docs/reference.md or TROUBLESHOOTING to compare')],
+    [
+      'docs consistency',
+      npmScriptStep(
+        'test:catalog',
+        'docs/reference.md and the golden snapshots match the tool registry; docs/TROUBLESHOOTING.md has a ' +
+          'section for every error kind, status and doctor check',
+      ),
+    ],
     ['Inspector CLI --strict', notYet('not yet: no tools to validate')],
     ['reuse lint', reuseLint],
   ];
