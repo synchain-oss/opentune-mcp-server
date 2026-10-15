@@ -115,6 +115,20 @@ export type DecodedLine =
 // the text, where JSON.parse rejects it, because OTCP lines carry none.
 const utf8 = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true });
 
+/**
+ * True when every string in the value, member names included, is well-formed UTF-16. The line
+ * itself is valid UTF-8, so a lone surrogate can only come from a `\uD800`-style escape, which
+ * encodes no Unicode text and makes the line invalid JSON in OTCP terms (section 3.2 rule 3).
+ */
+function wellFormed(value: unknown): boolean {
+  if (typeof value === 'string') return value.isWellFormed();
+  if (Array.isArray(value)) return value.every(wellFormed);
+  if (typeof value === 'object' && value !== null) {
+    return Object.entries(value).every(([name, member]) => name.isWellFormed() && wellFormed(member));
+  }
+  return true;
+}
+
 /** Decodes one line (without its LF). Any failure is a parse error in OTCP terms. */
 export function decodeLine(bytes: Uint8Array, maxDepth = MAX_NESTING_DEPTH): DecodedLine {
   let text: string;
@@ -124,11 +138,13 @@ export function decodeLine(bytes: Uint8Array, maxDepth = MAX_NESTING_DEPTH): Dec
     return { ok: false, error: 'utf8' };
   }
   if (nestingDepth(text) > maxDepth) return { ok: false, error: 'depth' };
+  let value: unknown;
   try {
-    return { ok: true, value: JSON.parse(text) as unknown };
+    value = JSON.parse(text) as unknown;
   } catch {
     return { ok: false, error: 'json' };
   }
+  return wellFormed(value) ? { ok: true, value } : { ok: false, error: 'json' };
 }
 
 /** Serializes one message as compact JSON followed by LF. JSON.stringify never emits a raw CR or LF. */

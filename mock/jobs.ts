@@ -65,6 +65,7 @@ const TERMINAL_RESULTS: Readonly<Record<string, Readonly<Record<string, unknown>
     sampleFormat: 'float32',
     durationSec: 10,
     startTimelineSec: 0,
+    contents: [],
     dryContents: [],
     processing: {
       vocoderWeight: null,

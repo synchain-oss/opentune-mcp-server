@@ -134,6 +134,26 @@ describe('decodeLine', () => {
     expect(decodeLine(b(nested(MAX_NESTING_DEPTH + 1)))).toEqual({ ok: false, error: 'depth' });
     expect(decodeLine(b(nested(3)), 2)).toEqual({ ok: false, error: 'depth' });
   });
+
+  it('rejects strings and member names that escape a lone surrogate, anywhere in the value', () => {
+    for (const line of [
+      String.raw`{"id":"\ud800"}`,
+      String.raw`{"id":"x\uDC00"}`,
+      String.raw`{"params":{"\udc00":1}}`,
+      String.raw`{"a":[1,{"b":"\uDE00\uD83D"}]}`,
+      String.raw`"\ud800"`,
+    ]) {
+      expect(decodeLine(b(line)), line).toEqual({ ok: false, error: 'json' });
+    }
+  });
+
+  it('accepts surrogate pairs, whether escaped or written as UTF-8', () => {
+    expect(decodeLine(b(String.raw`{"id":"🎵"}`))).toEqual({ ok: true, value: { id: '\u{1F3B5}' } });
+    expect(decodeLine(b('{"\u{1F3B5}":["\u{1F3B5}",null,true,2]}'))).toEqual({
+      ok: true,
+      value: { '\u{1F3B5}': ['\u{1F3B5}', null, true, 2] },
+    });
+  });
 });
 
 describe('encodeLine', () => {
