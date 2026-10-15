@@ -1,0 +1,29 @@
+{
+  "description": "Two operations in one call: a shift, then a move that the minimum spacing limits. The first sentence names the queued rendering, CLAMPED and the undo order.",
+  "tool": "opentune_edit_timing",
+  "summary": "opentune_edit_timing: applied 2 operations in order, each as its own undo step (see steps); side effects: rendering of one or more contents was queued again; 1 handle move(s) were limited by the minimum spacing; Warnings: CLAMPED; undoing all takes 2 steps, newest first: u:<instance>:2, u:<instance>:1.",
+  "members": [
+    "summary",
+    "steps",
+    "clip_revision",
+    "time_grid_handles",
+    "time_grid_handle_count"
+  ],
+  "handles": [
+    {
+      "handle_id": "th:1:1",
+      "content_sec": 1,
+      "output_sec": 1
+    },
+    {
+      "handle_id": "th:1:2",
+      "content_sec": 2,
+      "output_sec": 2.95
+    },
+    {
+      "handle_id": "th:1:3",
+      "content_sec": 3,
+      "output_sec": 3
+    }
+  ]
+}

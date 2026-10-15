@@ -14,6 +14,7 @@ import { getProjectTool } from './project.js';
 import type { ToolDefinition } from './registry.js';
 import { setClipTool } from './set-clip.js';
 import { getStatusTool } from './status.js';
+import { editTimingTool } from './timing.js';
 
 /** Every tool, in the order tools/list reports them. */
 export const TOOLS: readonly ToolDefinition[] = [
@@ -31,4 +32,5 @@ export const TOOLS: readonly ToolDefinition[] = [
   analyzePitchTool,
   openAudioTool,
   exportAudioTool,
+  editTimingTool,
 ];

@@ -1,0 +1,298 @@
+{
+  "description": "The result of the seed job: handles created, no undo entry (as in the interface), so the first sentence says it cannot be undone.",
+  "tool": "opentune_edit_timing",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:1"
+        },
+        "label": "Handle at 1.00 s"
+      },
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:2"
+        },
+        "label": "Handle at 2.00 s"
+      },
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:3"
+        },
+        "label": "Handle at 3.00 s"
+      },
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:4"
+        },
+        "label": "Handle at 4.00 s"
+      },
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:5"
+        },
+        "label": "Handle at 5.00 s"
+      }
+    ],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "grid": {
+              "before": "g6",
+              "after": "g12"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r10",
+          "gridRevision": "g12",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": null
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "clamped": []
+  },
+  "rendered": {
+    "summary": "opentune_edit_timing: created 5 timeHandles (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; cannot be restored by any request). Warnings: IRREVERSIBLE.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:1"
+        },
+        "label": "Handle at 1.00 s"
+      },
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:2"
+        },
+        "label": "Handle at 2.00 s"
+      },
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:3"
+        },
+        "label": "Handle at 3.00 s"
+      },
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:4"
+        },
+        "label": "Handle at 4.00 s"
+      },
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:5"
+        },
+        "label": "Handle at 5.00 s"
+      }
+    ],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "grid": {
+              "before": "g6",
+              "after": "g12"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r10",
+          "gridRevision": "g12",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": null
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "clamped": [],
+    "uiEffects": [
+      {
+        "surface": "piano roll",
+        "effect": "created timeHandle",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "created",
+          "entity": "timeHandle",
+          "label": "Handle at 1.00 s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "handleId": "th:1:1"
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "timeHandle",
+          "label": "Handle at 2.00 s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "handleId": "th:1:2"
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "timeHandle",
+          "label": "Handle at 3.00 s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "handleId": "th:1:3"
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "timeHandle",
+          "label": "Handle at 4.00 s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "handleId": "th:1:4"
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "timeHandle",
+          "label": "Handle at 5.00 s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "handleId": "th:1:5"
+          }
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ]
+  }
+}

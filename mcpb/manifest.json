@@ -85,6 +85,10 @@
     {
       "name": "opentune_export_audio",
       "description": "OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to wait_seconds (default 20, max 30); if the export job has not ended, the result names it for opentune_get_job. kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). Does not change the project."
+    },
+    {
+      "name": "opentune_edit_timing",
+      "description": "OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job), shift (handles in a start..end range, output or content clock, by delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed (CLAMPED). Handle ids come from time_grid_handles of the last result of this tool (seed gives them too)."
     }
   ],
   "tools_generated": false,
