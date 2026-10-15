@@ -5,15 +5,17 @@
 // trip with the revert recipe as given, what opening does to handles and histories, cancelling,
 // and the recent-projects list. The files live in the mock's work directory.
 
-import { existsSync, readFileSync } from 'node:fs';
+import fs, { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
 import { Sessions, clip, need, type TestSession } from '../support/mock-client.js';
 
 const sessions = new Sessions();
 afterEach(async () => {
+  vi.restoreAllMocks();
   await sessions.dispose();
 });
 
@@ -40,6 +42,15 @@ const shape = (session: TestSession) => {
     tracks,
   };
 };
+
+/** An absolute path with the wrong extension, written the way the host system writes absolute paths. */
+const absoluteWav = process.platform === 'win32' ? 'C:\\Music\\take1.wav' : '/music/take1.wav';
+
+/** A project file as the damage cases reach into it. */
+interface Damaged {
+  clips: unknown[];
+  contents: unknown[];
+}
 
 const FILES = [
   { bind: 'a', kind: 'absent', extension: '.otproj' },
@@ -105,9 +116,31 @@ describe('project.save and project.saveAs', () => {
     clock.advance(0);
     await finished(session, started);
     await ok('transport.setTempo', { bpm: 100 });
-    expect((await fails('project.saveAs', { path: 'C:\\Music\\take1.wav' })).data).toMatchObject({
+    expect((await fails('project.saveAs', { path: absoluteWav })).data).toMatchObject({
       reason: 'path_bad_extension',
     });
+  });
+});
+
+describe('a project job that fails on the file system', () => {
+  it('ends the save job, releases the project operation and leaves no temporary file', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ files: [...FILES], clips: [clip()] });
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => {
+      throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    });
+    const started = await ok('project.saveAs', { path: ids.a });
+    const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId'), waitMs: 5000 })) as {
+      job: { state: string; error: { data: Record<string, unknown> } };
+    };
+    expect(job.state).toBe('failed');
+    expect(job.error.data).toMatchObject({ kind: 'INTERNAL' });
+    expect(((await ok('ui.getState')).busy as Record<string, boolean>).projectOperation).toBe(false);
+    expect(readdirSync(path.dirname(need(ids, 'a'))).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(existsSync(need(ids, 'a'))).toBe(false);
+    // Writes are accepted again.
+    await ok('transport.setTempo', { bpm: 100 });
   });
 });
 
@@ -182,6 +215,36 @@ describe('project.open', () => {
       reason: 'file_not_found',
     });
     const started = await ok('project.open', { path: ids.junk, discardUnsaved: true });
+    const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId'), waitMs: 5000 })) as {
+      job: { state: string; error: { data: Record<string, unknown> } };
+    };
+    expect(job.state).toBe('failed');
+    expect(job.error.data).toMatchObject({ kind: 'IO_ERROR', reason: 'read_failed' });
+    expect(mock.snapshot()).toEqual(before);
+    expect(((await ok('ui.getState')).busy as Record<string, boolean>).projectOperation).toBe(false);
+  });
+
+  it.each([
+    ['a clip that is not an object', (f: Damaged) => (f.clips = [null])],
+    ['a track beyond the eighth', (f: Damaged) => Object.assign(f.clips[0] ?? {}, { trackId: 8 })],
+    ['a track that is not an integer', (f: Damaged) => Object.assign(f.clips[0] ?? {}, { trackId: 1.5 })],
+    ['a content index without content', (f: Damaged) => Object.assign(f.clips[0] ?? {}, { contentIndex: 4 })],
+    ['a content index that is not a number', (f: Damaged) => Object.assign(f.clips[0] ?? {}, { contentIndex: 'a' })],
+    ['notes that are not an array', (f: Damaged) => Object.assign(f.contents[0] ?? {}, { notes: {} })],
+    [
+      'a note with a field of the wrong type',
+      (f: Damaged) => Object.assign(f.contents[0] ?? {}, { notes: [{ startContentSec: 'x' }] }),
+    ],
+    ['a reference index without clip', (f: Damaged) => Object.assign(f.clips[0] ?? {}, { referenceClipIndex: 3 })],
+  ])('keeps the project when the file is damaged inside: %s', async (_name, damage) => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ files: [...FILES], clips: [clip()] });
+    const file = JSON.parse(readFileSync(need(ids, 'b'), 'utf8')) as Damaged;
+    damage(file);
+    writeFileSync(need(ids, 'b'), JSON.stringify(file));
+    const before = mock.snapshot();
+    const started = await ok('project.open', { path: ids.b, discardUnsaved: true });
     const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId'), waitMs: 5000 })) as {
       job: { state: string; error: { data: Record<string, unknown> } };
     };

@@ -6,7 +6,7 @@
 // visible tracks, the undo history and the preferences; PROTOCOL.md section 22, project.save). It
 // is only ever written to the mock's work directory; the real format is OpenTune's own.
 
-import type { KeyRec, HandleRec, NoteRec, PitchShiftRec, World } from './model.js';
+import { TRACK_SLOTS, type KeyRec, type HandleRec, type NoteRec, type PitchShiftRec, type World } from './model.js';
 
 const FORMAT = 'otcp-mock-project';
 
@@ -81,7 +81,68 @@ export const projectBytes = (project: ProjectFile): string => `${JSON.stringify(
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** The project a file holds, or undefined when the text is not a project file this mock wrote. */
+const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+const isIndex = (value: unknown, length: number): boolean =>
+  typeof value === 'number' && Number.isInteger(value) && value >= 0 && value < length;
+
+const NOTE_FIELDS = [
+  'startContentSec',
+  'endContentSec',
+  'targetMidi',
+  'offsetCents',
+  'retuneSpeed',
+  'vibratoDepth',
+  'vibratoRateHz',
+  'pitchDriftScale',
+] as const;
+
+const validTrack = (value: unknown): boolean =>
+  isRecord(value) &&
+  typeof value.muted === 'boolean' &&
+  typeof value.solo === 'boolean' &&
+  isNumber(value.volumeLinear) &&
+  typeof value.colour === 'string';
+
+const validNote = (value: unknown): boolean => isRecord(value) && NOTE_FIELDS.every((field) => isNumber(value[field]));
+
+const validHandle = (value: unknown): boolean =>
+  isRecord(value) && typeof value.handleId === 'string' && isNumber(value.contentSec) && isNumber(value.outputSec);
+
+const validKey = (value: unknown): boolean =>
+  value === null ||
+  (isRecord(value) &&
+    isNumber(value.root) &&
+    typeof value.scale === 'string' &&
+    (value.origin === 'automatic' || value.origin === 'manual') &&
+    (value.confidence === null || isNumber(value.confidence)));
+
+const validContent = (value: unknown): boolean =>
+  isRecord(value) &&
+  typeof value.source === 'string' &&
+  isNumber(value.durationSec) &&
+  validKey(value.key) &&
+  isRecord(value.pitchShift) &&
+  isNumber(value.pitchShift.semitones) &&
+  isNumber(value.pitchShift.cents) &&
+  Array.isArray(value.notes) &&
+  value.notes.every(validNote) &&
+  Array.isArray(value.handles) &&
+  value.handles.every(validHandle);
+
+const validClip = (value: unknown, contentCount: number, clipCount: number): boolean =>
+  isRecord(value) &&
+  isIndex(value.contentIndex, contentCount) &&
+  isIndex(value.trackId, TRACK_SLOTS) &&
+  (value.name === null || typeof value.name === 'string') &&
+  isNumber(value.startTimelineSec) &&
+  isNumber(value.durationSec) &&
+  isNumber(value.clipInContentSec) &&
+  isNumber(value.gainLinear) &&
+  isNumber(value.fadeInSec) &&
+  isNumber(value.fadeOutSec) &&
+  (value.referenceClipIndex === null || isIndex(value.referenceClipIndex, clipCount));
+
+/** The project a file holds, or undefined when the text is not a project file this mock wrote or its structure is damaged. */
 export function parseProject(text: string): ProjectFile | undefined {
   let value: unknown;
   try {
@@ -90,7 +151,12 @@ export function parseProject(text: string): ProjectFile | undefined {
     return undefined;
   }
   if (!isRecord(value) || value.format !== FORMAT || value.version !== 1) return undefined;
-  if (!Array.isArray(value.tracks) || !Array.isArray(value.contents) || !Array.isArray(value.clips)) return undefined;
+  const { tracks, contents, clips, timeSignature } = value;
+  if (!Array.isArray(tracks) || !Array.isArray(contents) || !Array.isArray(clips)) return undefined;
+  if (!isNumber(value.bpm) || !isRecord(timeSignature)) return undefined;
+  if (!isNumber(timeSignature.numerator) || !isNumber(timeSignature.denominator)) return undefined;
+  if (!tracks.every(validTrack) || !contents.every(validContent)) return undefined;
+  if (!clips.every((clip) => validClip(clip, contents.length, clips.length))) return undefined;
   return value as unknown as ProjectFile;
 }
 

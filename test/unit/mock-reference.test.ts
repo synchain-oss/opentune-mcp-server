@@ -98,6 +98,62 @@ describe('content.analyzeReference', () => {
     });
   });
 
+  describe('checks again when the job runs', () => {
+    const changes: [string, (session: TestSession, ids: Record<string, unknown>) => Promise<void>, string][] = [
+      [
+        'the clip was deleted',
+        async ({ ok }, ids) => {
+          const revision = ((await ok('project.get')).asOf as { arrangementRevision: string }).arrangementRevision;
+          await ok('arrangement.edit', {
+            expectedArrangementRevision: revision,
+            ops: [{ op: 'delete', placementIds: [ids['clip.placementId']] }],
+            confirm: true,
+          });
+        },
+        'unknown_handle',
+      ],
+      [
+        'the binding was removed',
+        async ({ ok }, ids) => {
+          const revision = ((await ok('project.get')).asOf as { arrangementRevision: string }).arrangementRevision;
+          await ok('arrangement.edit', {
+            expectedArrangementRevision: revision,
+            ops: [{ op: 'setReference', placementId: ids['clip.placementId'], referencePlacementId: null }],
+          });
+        },
+        'reference_not_bound',
+      ],
+      [
+        'another project was opened',
+        async ({ ok }, ids) => {
+          await ok('project.open', { path: ids.other });
+        },
+        'unknown_handle',
+      ],
+    ];
+    it.each(changes)('ends the job with INTERNAL and stores nothing when %s', async (_name, change, reason) => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock });
+      const ids = session.mock.given({
+        files: [{ bind: 'other', kind: 'project', durationSec: 3 }],
+        clips: [
+          clip({ bind: 'ref', startTimelineSec: 0 }),
+          clip({ bind: 'clip', startTimelineSec: 0, referenceClip: 'ref' }),
+        ],
+      });
+      const started = await session.ok('content.analyzeReference', { placementId: ids['clip.placementId'] });
+      const jobId = String(field(started, 'job', 'jobId'));
+      await change(session, ids);
+      clock.advance(5000);
+      const { job } = (await session.ok('job.get', { jobId })) as {
+        job: { state: string; error: { data: Record<string, unknown> } | null };
+      };
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({ kind: 'INTERNAL' });
+      expect(String(job.error?.data.detail)).toContain(reason);
+    });
+  });
+
   it('needs a binding and finished analyses of both clips', async () => {
     const { session, ids } = await setup();
     const { mock, fails } = session;
@@ -228,6 +284,8 @@ describe('content.autoTune in mode reference', () => {
     });
     const failed = await result(doomed);
     expect(failed.state).toBe('failed');
-    expect(failed.error?.data).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'reference_not_bound' });
+    // The jobErrors of the method are CANCELLED and INTERNAL: the cause is in the detail.
+    expect(failed.error?.data).toMatchObject({ kind: 'INTERNAL' });
+    expect(String(failed.error?.data.detail)).toContain('reference_not_bound');
   });
 });

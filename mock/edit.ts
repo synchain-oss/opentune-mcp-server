@@ -404,11 +404,12 @@ function autoTuneReference(context: MethodContext, content: ContentRec) {
     noteCount,
     omittedCount: omitted,
   });
+  const epoch = world.epoch;
   const job = context.jobs.start(
     { kind: 'referenceAnalysis' },
     alignmentDriver(() => {
       // What the call checked can have changed while the job ran: check again, in the same order.
-      if (world.placements.get(placement.serial) !== placement) {
+      if (world.epoch !== epoch || world.placements.get(placement.serial) !== placement) {
         throw refuse('NOT_FOUND', 'unknown_handle', 'the placement was removed before the job ran');
       }
       checkNotBusy(context);

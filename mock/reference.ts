@@ -101,11 +101,31 @@ export function alignmentDriver(commit: () => Record<string, unknown>): JobDrive
     try {
       return { done: { state: 'succeeded', result: commit() } };
     } catch (error) {
-      // A check that the work repeats ends the job with its own kind and reason.
-      if (error instanceof MockError) return { done: { state: 'failed', error: error.init } };
+      // A check that the work repeats failed. The jobErrors of these methods are CANCELLED and INTERNAL only,
+      // so the job ends with INTERNAL and the detail names the cause.
+      if (error instanceof MockError) {
+        const cause = error.init.reason === undefined ? error.init.kind : `${error.init.kind}/${error.init.reason}`;
+        return {
+          done: {
+            state: 'failed',
+            error: { kind: 'INTERNAL', detail: `the reference job could not finish (${cause}): ${error.init.detail}` },
+          },
+        };
+      }
       throw error;
     }
   };
+}
+
+/** What the call checked can have changed while the job ran: the clips, their binding and the project. */
+function recheckPair(world: World, placement: PlacementRec, reference: PlacementRec, epoch: number): void {
+  if (world.epoch !== epoch || world.placements.get(placement.serial) !== placement) {
+    throw refuse('NOT_FOUND', 'unknown_handle', 'the placement was removed before the job ran');
+  }
+  if (world.placements.get(reference.serial) !== reference || placement.reference !== reference) {
+    throw refuse('INVALID_ARGUMENT', 'reference_not_bound', 'the reference binding changed before the job ran');
+  }
+  requireReadyPair(placement, reference);
 }
 
 const analyzeReference: Handler = ({ world, params, jobs }) => {
@@ -118,9 +138,11 @@ const analyzeReference: Handler = ({ world, params, jobs }) => {
   if (running?.finishedAtMs === null) {
     return { job: { jobId: running.jobId, kind: running.kind, state: running.state } };
   }
+  const epoch = world.epoch;
   const job = jobs.start(
     { kind: 'referenceAnalysis' },
     alignmentDriver(() => {
+      recheckPair(world, placement, reference, epoch);
       computeAlignment(world, placement, reference);
       return {
         placementId: placement.id,

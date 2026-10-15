@@ -46,6 +46,12 @@ function readMedia(file: string): ReturnType<typeof readWav> {
   }
 }
 
+/** A failure that is not one of the mock's own refusals, as the INTERNAL error that ends the job. */
+function unexpected(kind: string, error: unknown): MockError {
+  const detail = error instanceof Error ? error.message : 'unexpected failure';
+  return new MockError({ kind: 'INTERNAL', detail: `the ${kind} job failed: ${detail}` });
+}
+
 export class ProjectService {
   #seq = 0;
 
@@ -147,8 +153,9 @@ export class ProjectService {
         });
         return finish({ done: { state: 'succeeded', result } });
       } catch (error) {
-        if (error instanceof MockError) return fail(error);
-        throw error;
+        // Any other failure (a file system error from the rename, say) must also release the project operation
+        // and drop the temporary file, so it ends the job here instead of leaving the mock busy.
+        return fail(error instanceof MockError ? error : unexpected('projectSave', error));
       }
     };
     return this.jobs.start({ kind: 'projectSave' }, driver, () => {
@@ -407,8 +414,8 @@ export class ProjectService {
         }
         return finish({ state: 'succeeded', result: this.#replace(target, prepared, discarded) });
       } catch (error) {
-        if (error instanceof MockError) return finish({ state: 'failed', error: error.init });
-        throw error;
+        const failure = error instanceof MockError ? error : unexpected('projectOpen', error);
+        return finish({ state: 'failed', error: failure.init });
       }
     };
     const job = this.jobs.start({ kind: 'projectOpen' }, driver, () => {
