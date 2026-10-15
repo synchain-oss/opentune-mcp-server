@@ -10,6 +10,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { otherTrustees } from './sddl.js';
+
 export const DISCOVERY_DIR_ENV = 'OPENTUNE_MCP_DISCOVERY_DIR';
 
 /**
@@ -108,28 +110,12 @@ function userSid(): string {
   return sid;
 }
 
-/** The SDDL aliases icacls prints for well-known SIDs, which `/remove:g` needs as `*S-1-...`. */
-const WELL_KNOWN_SIDS: Readonly<Record<string, string>> = {
-  WD: 'S-1-1-0',
-  SY: 'S-1-5-18',
-  LS: 'S-1-5-19',
-  NS: 'S-1-5-20',
-  BA: 'S-1-5-32-544',
-  BU: 'S-1-5-32-545',
-  BG: 'S-1-5-32-546',
-  PU: 'S-1-5-32-547',
-  AU: 'S-1-5-11',
-  IU: 'S-1-5-4',
-  OW: 'S-1-3-4',
-  CO: 'S-1-3-0',
-};
-
 /**
  * Removes every access entry except the current user's from a file whose inheritance is already cut.
  * When the directory has nothing to inherit, a new file gets the default DACL of the process token,
  * with explicit entries for SYSTEM and Administrators besides the user; `/inheritance:r` only drops
- * inherited entries. The entries are read back as SDDL, which names every trustee by SID, and removed
- * by SID: display names come out of icacls in the console code page and cannot be fed back safely.
+ * inherited entries. The entries are read back as SDDL, which names every trustee by SID or by a short alias (resolved in
+ * sddl.ts), and removed by SID: display names come out of icacls in the console code page and cannot be fed back safely.
  */
 function removeOtherEntries(file: string, own: string): void {
   const icacls = system32('icacls.exe');
@@ -139,16 +125,29 @@ function removeOtherEntries(file: string, own: string): void {
     const read = spawnSync(icacls, [file, '/save', saved], { windowsHide: true });
     if (read.status !== 0) throw new Error(`icacls failed to read the access rights of ${file}`);
     const sddl = fs.readFileSync(saved).toString('utf16le');
-    const others = new Set<string>();
-    for (const match of sddl.matchAll(/\((?:[AD]);[^;()]*;[^;()]*;[^;()]*;[^;()]*;([^;()]+)\)/g)) {
-      const trustee = match[1] ?? '';
-      const sid = trustee.startsWith('S-1-') ? trustee : WELL_KNOWN_SIDS[trustee];
-      if (sid === undefined) throw new Error(`unrecognised trustee ${trustee} in the access rights of ${file}`);
-      if (sid.toLowerCase() !== own.toLowerCase()) others.add(sid);
+    let others: string[];
+    try {
+      others = otherTrustees(sddl, own);
+    } catch (error) {
+      throw new Error(`${(error as Error).message} in the access rights of ${file}`, { cause: error });
     }
     for (const sid of others) {
       const removed = spawnSync(icacls, [file, '/remove:g', `*${sid}`], { windowsHide: true });
       if (removed.status !== 0) throw new Error(`icacls failed to remove ${sid} from ${file}`);
+    }
+    // Read the rights back: a wrongly resolved alias yields a valid but different SID, which
+    // /remove:g accepts without removing the entry. Anything left is a failure, never a pass.
+    const after = spawnSync(icacls, [file, '/save', saved], { windowsHide: true });
+    if (after.status !== 0) throw new Error(`icacls failed to read back the access rights of ${file}`);
+    let left: string[];
+    try {
+      left = otherTrustees(fs.readFileSync(saved).toString('utf16le'), own);
+    } catch (error) {
+      left = [(error as Error).message];
+    }
+    if (left.length > 0) {
+      fs.rmSync(file, { force: true });
+      throw new Error(`access rights of ${file} still list other trustees after removal: ${left.join(', ')}`);
     }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });

@@ -608,6 +608,19 @@ export function commitCheckScope({
         : `push that rewrote the branch (its previous tip ${before.slice(0, 8)} is gone): commits not on ${defaultBranch}`,
     };
   }
+  if (event === 'workflow_dispatch') {
+    // A manual run of the full suite on a branch: the commits the branch holds beyond the default
+    // branch. The strict rules of a pull request apply (no outside authors, no Dependabot
+    // exemption): a manual run on the head of a pull request produces the same mcp-gate check on
+    // the same commit, and a relaxed result would cover the strict one of the pull request.
+    if (!defaultBranch) throw new Error('manual run: the default branch is unknown');
+    return {
+      base: `origin/${defaultBranch}`,
+      allowExternalAuthors: false,
+      allowDependabot: false,
+      reason: `manual run: commits not on ${defaultBranch}`,
+    };
+  }
   if (event === 'pull_request') {
     if (!baseRef) throw new Error('pull request without a base branch');
     const base = `origin/${baseRef}`;
