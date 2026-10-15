@@ -1,0 +1,195 @@
+[
+  {
+    "name": "opentune_get_status",
+    "title": "Get OpenTune status",
+    "description": "OpenTune (audio vocal pitch editor): reports whether this server can use OpenTune now, as one state (READY, NOT_READY, PROTOCOL_MISMATCH, STARTING, RUNNING_WITHOUT_API, NOT_RUNNING, NO_API_BUILD, NOT_INSTALLED, WSL_UNSUPPORTED_RUNTIME) with a nextStep saying who should do what. Call it first, and again whenever a tool error says so. Lists the running instances with their instance_id; when several run, ask the user which one to use. Read-only: it never starts, stops or changes OpenTune.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "instance_id": {
+          "description": "Report only this instance (32 hex digits, from an earlier result). Omit to report all.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "_meta": {
+      "anthropic/alwaysLoad": true
+    }
+  },
+  {
+    "name": "opentune_get_project",
+    "title": "Get OpenTune project",
+    "description": "OpenTune (audio vocal pitch editor): reads the open project: path and unsaved-changes flag, tracks (volume, mute, solo), clips with timeline start, end and source file, a summary of each clip content (analysis state, key, note count, pitch shift), the selection and the transport. Every clip carries a clip_revision and the result an arrangement_revision: pass them as expected_revision to write tools. track_ids limits the result to those tracks; include_history adds the undo and redo tops. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "track_ids": {
+          "description": "Only these tracks and their clips (0-based track ids; positions, they shift when a track is deleted).",
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          }
+        },
+        "include_history": {
+          "description": "Also return the tops of the undo and redo histories. Default false.",
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "opentune_get_notes",
+    "title": "Get OpenTune notes",
+    "description": "OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (limit default 100, at most 200; fewer when the page would be large). Each note has its index, start and end seconds on the content clock (source audio) and, for a clip placement, on the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock says which clock from and to use; timeline needs a placement id. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clip": {
+          "type": "string",
+          "pattern": "^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...)."
+        },
+        "clock": {
+          "type": "string",
+          "enum": [
+            "content",
+            "timeline"
+          ],
+          "description": "Clock of from and to: content = seconds of the source audio, timeline = seconds of the arrangement (placement ids only). Required."
+        },
+        "from": {
+          "description": "Range start in seconds on the given clock. Give both from and to.",
+          "type": "number",
+          "minimum": 0
+        },
+        "to": {
+          "description": "Range end in seconds on the given clock. Notes overlapping the range.",
+          "type": "number",
+          "minimum": 0
+        },
+        "cursor": {
+          "description": "next_cursor of the previous page, passed back unchanged.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "limit": {
+          "description": "Notes per page, 1 to 200. Default 100.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 200
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "clip",
+        "clock"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "opentune_get_job",
+    "title": "Get OpenTune job",
+    "description": "OpenTune (audio vocal pitch editor): reports a long-running job (import, export, analysis, project open or save): state queued, running, succeeded, failed or cancelled, progress, and when it has ended its result or error. With wait_seconds it waits up to that long for the job to end. Finished jobs are kept for 30 minutes. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "pattern": "^j:[0-9a-f]{8}:[1-9][0-9]*$",
+          "description": "Job id from the result that started the job (j:...)."
+        },
+        "wait_seconds": {
+          "description": "Seconds to wait for the job to end before answering, 0 to 30. Default 0: answer at once.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "instance_id": {
+          "description": "Instance that owns the job. Optional: the job id identifies it.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "opentune_cancel_job",
+    "title": "Cancel OpenTune job",
+    "description": "OpenTune (audio vocal pitch editor): asks OpenTune to stop a running job and reports the outcome. Work the job already committed stays: an import keeps the items imported so far, and the result lists them with how to revert each; an export never touches the target file. Project saves, preference changes and project opens past their preparation cannot be cancelled; the error then says so and the job continues.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "job_id": {
+          "type": "string",
+          "pattern": "^j:[0-9a-f]{8}:[1-9][0-9]*$",
+          "description": "Job id from the result that started the job (j:...)."
+        },
+        "instance_id": {
+          "description": "Instance that owns the job. Optional: the job id identifies it.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "job_id"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  }
+]

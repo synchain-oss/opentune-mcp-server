@@ -49,6 +49,11 @@
     "test:unit": "vitest run --coverage --project unit",
     "test:stdio": "vitest run --project stdio",
     "test:contract": "vitest run --project contract",
+    "test:catalog": "vitest run --project unit test/unit/catalog.test.ts",
+    "test:budget": "vitest run --project unit test/unit/output-budget.test.ts",
+    "catalog:update": "node scripts/update-catalog.mjs",
+    "mcpb:pack": "node scripts/mcpb.mjs pack",
+    "mcpb:validate": "node scripts/mcpb.mjs validate",
     "gates": "node scripts/gates.mjs"
   },
   "devDependencies": {

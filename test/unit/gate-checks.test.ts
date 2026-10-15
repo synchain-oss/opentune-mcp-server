@@ -1178,7 +1178,7 @@ describe('addedInHistory: audio added by one commit and removed by the next', ()
 });
 
 describe('gates.mjs --no-skip', () => {
-  // "output budget" is a placeholder check that reports SKIP until its tool exists, so it gives a
+  // "token canary" is a placeholder check that reports SKIP until its tool exists, so it gives a
   // deterministic SKIP row without running any real gate. "no pull_request_target" is a file scan
   // that passes on this repository.
   const gates = fileURLToPath(new URL('../../scripts/gates.mjs', import.meta.url));
@@ -1190,16 +1190,16 @@ describe('gates.mjs --no-skip', () => {
     });
 
   it('keeps SKIP rows passing without the flag', () => {
-    const r = run('output budget');
+    const r = run('token canary');
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/\| output budget \| SKIP \|/);
+    expect(r.stdout).toMatch(/\| token canary \| SKIP \|/);
   });
 
   it('fails and names the skipped check with the flag', () => {
-    const r = run('output budget', '--no-skip');
+    const r = run('token canary', '--no-skip');
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('--no-skip: 1 check(s) skipped: output budget');
-    expect(r.stdout).toContain('counts as a failure: output budget');
+    expect(r.stderr).toContain('--no-skip: 1 check(s) skipped: token canary');
+    expect(r.stdout).toContain('counts as a failure: token canary');
   });
 
   it('passes with the flag when nothing is skipped', () => {

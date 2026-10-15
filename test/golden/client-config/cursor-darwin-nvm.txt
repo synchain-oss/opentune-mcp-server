@@ -1,0 +1,22 @@
+Cursor: put this in ~/.cursor/mcp.json (all projects) or .cursor/mcp.json (one project).
+
+{
+  "mcpServers": {
+    "opentune": {
+      "command": "~/.nvm/versions/node/v22.12.0/bin/npx",
+      "args": [
+        "-y",
+        "@synchain/opentune-mcp"
+      ],
+      "env": {
+        "PATH": "~/.nvm/versions/node/v22.12.0/bin:/usr/local/bin:/usr/bin:/bin",
+        "OPENTUNE_MCP_OPENTUNE_PATH": "/Applications/OpenTune.app/Contents/MacOS/OpenTune"
+      }
+    }
+  }
+}
+
+Paths are shown with ~ for your home directory, but neither a JSON configuration file nor every shell expands
+~, so write the full path there, or run this command again with --full-paths.
+
+Nothing was written; this command only prints.

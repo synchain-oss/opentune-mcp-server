@@ -5,6 +5,7 @@
 // (spec/otcp/v1/PROTOCOL.md section 14).
 
 import { refuse } from './errors.js';
+import type { JobView } from './jobs.js';
 import type { ContentRec, PlacementRec, RevisionDiff, World } from './model.js';
 
 export interface MethodContext {
@@ -16,6 +17,8 @@ export interface MethodContext {
   readonly hasCapability: (capability: string) => boolean;
   /** Removes the token, the server proof and the home directory from a line of text (section 20.2 rule 5). */
   readonly redact: (text: string) => string;
+  /** Starts a job that runs `work` shortly and completes with its result. */
+  readonly startJob: (kind: string, work: () => Record<string, unknown>) => JobView;
 }
 
 /** Answers with the result, or throws a MockError. Runs "on the main thread": synchronously, one at a time. */

@@ -17,13 +17,17 @@ import os from 'node:os';
 import { LineSplitter, decodeLine, isBlankLine } from '../src/otcp/framing.js';
 import { otcpSpec } from '../test/support/otcp-spec.js';
 import { realClock, type Clock, type Timer } from './clock.js';
-import type { MethodContext } from './context.js';
+import type { Handler, MethodContext } from './context.js';
 import { resolveDiscoveryDir, writeDiscoveryFile } from './discovery.js';
 import { MockError } from './errors.js';
+import { stripHome } from './privacy.js';
 import { WorkFiles } from './files.js';
 import { applyGiven, WORLD_GIVEN_MEMBERS, type GivenState } from './given.js';
+import { editHandlers } from './edit.js';
+import { ExportService } from './export.js';
 import { historyHandlers } from './history.js';
-import { JobStore, UnsupportedPrecondition, type JobSpec } from './jobs.js';
+import { IMPORT_LIMITS, ImportService } from './import.js';
+import { JobStore, oneShot, UnsupportedPrecondition, type JobSpec } from './jobs.js';
 import { TRACK_SLOTS, World, type Analysis, type BusyState } from './model.js';
 import {
   classify,
@@ -37,6 +41,7 @@ import {
   type RequestId,
 } from './protocol.js';
 import { readHandlers } from './reads.js';
+import { timingHandlers } from './timing.js';
 
 export { UnsupportedPrecondition } from './jobs.js';
 
@@ -56,7 +61,16 @@ export const LIMITS = {
 } as const;
 
 /** The capabilities whose methods the mock implements. */
-export const MOCK_CAPABILITIES: readonly string[] = ['session.v1', 'jobs.v1', 'read.v1', 'history.v1'];
+export const MOCK_CAPABILITIES: readonly string[] = [
+  'session.v1',
+  'jobs.v1',
+  'read.v1',
+  'history.v1',
+  'import.v1',
+  'export.v1',
+  'edit.v1',
+  'timing.v1',
+];
 
 const LOOPBACK = '127.0.0.1';
 const PROTOCOL = '1.0';
@@ -123,6 +137,10 @@ export interface OtcpMock {
   setAnalysis(contentId: string, analysis: Analysis): void;
   /** Appends a line to the log that app.getLog reads. */
   logLine(text: string): void;
+  /** The next `times` attempts to render a content fail, so that an export of it fails (PROTOCOL.md section 19 rule 6). */
+  failRender(contentId: string, times?: number): void;
+  /** The pitch analysis of the next `count` imported clips fails. */
+  failNextAnalysis(count?: number): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
   stop(): Promise<void>;
 }
@@ -175,6 +193,8 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   const jobs = new JobStore(spec, clock, instanceId.slice(0, 8));
   const world = new World(instanceId, clock);
   const files = new WorkFiles(options.workDir);
+  const exporter = new ExportService(world, jobs, files, clock);
+  const importer = new ImportService(world, jobs, files, clock, spec);
   let capabilities = [...MOCK_CAPABILITIES];
   let preAuthCount = 0;
   let acceptedConnections = 0;
@@ -269,7 +289,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     language: world.prefs.language,
     capabilities: [...capabilities],
-    import: { extensions: ['.wav', '.flac', '.mp3'], maxChannels: 2, maxAnalysisSec: 600 },
+    import: { ...IMPORT_LIMITS, extensions: [...IMPORT_LIMITS.extensions] },
     export: {
       formats: ['wav'],
       sampleRateHz: 44100,
@@ -324,13 +344,18 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   };
 
   const redact = (text: string): string => {
-    let out = text.split(token).join('<redacted>').split(serverProof).join('<redacted>');
-    const home = os.homedir();
-    if (home !== '') out = out.split(home).join('~');
-    return out;
+    const out = text.split(token).join('<redacted>').split(serverProof).join('<redacted>');
+    return stripHome(out, os.homedir());
   };
 
-  const worldHandlers = { ...readHandlers, ...historyHandlers };
+  const worldHandlers: Readonly<Record<string, Handler>> = {
+    ...readHandlers,
+    ...historyHandlers,
+    ...editHandlers,
+    ...timingHandlers,
+    'import.start': importer.start,
+    'export.start': exporter.start,
+  };
 
   /** Runs a method of the model on the "main thread": synchronously, so requests apply in order. */
   const runModel = (conn: Connection, { id, method, params }: Request) => {
@@ -339,9 +364,13 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     const context: MethodContext = {
       world,
       params: params ?? {},
-      exportLock: jobs.hasActive('export'),
+      // Read when asked, so that the work of a job that runs later sees the lock as it is then.
+      get exportLock() {
+        return jobs.hasActive('export');
+      },
       hasCapability: (c) => capabilities.includes(c),
       redact,
+      startJob: (kind, work) => jobs.start({ kind }, oneShot(work)),
     };
     try {
       send(conn, successLine(id, handler(context)));
@@ -635,6 +664,12 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     setAnalysis(contentId, analysis) {
       world.setAnalysis(world.content(contentId), analysis);
     },
+    failRender(contentId, times = 2) {
+      exporter.failRender(world.content(contentId), times);
+    },
+    failNextAnalysis(count = 1) {
+      importer.failNextAnalysis(count);
+    },
     logLine(text) {
       world.log(text);
     },
@@ -655,6 +690,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
           });
         });
         fs.rmSync(discoveryPath, { force: true });
+        jobs.dispose();
         files.dispose();
         world.dispose();
       })();

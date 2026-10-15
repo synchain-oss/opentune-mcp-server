@@ -17,6 +17,7 @@ import { LineClient, isJsonRpcMessage } from '../support/jsonrpc-lines.js';
 const BUNDLE = process.env.SMOKE_BUNDLE ?? fileURLToPath(new URL('../../dist/opentune-mcp.mjs', import.meta.url));
 const PKG = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version: string };
 const EXIT_TIMEOUT_MS = 10_000;
+const GOLDEN = readFileSync(new URL('../golden/tools-list.json', import.meta.url), 'utf8');
 
 interface Exit {
   code: number | null;
@@ -81,8 +82,9 @@ describe('built bundle over stdio', () => {
     client.notify('notifications/initialized');
     const list = await client.request(2, 'tools/list');
     expect(list.error).toBeUndefined();
-    // No tools are registered yet: the list exists and is empty (not missing, not an error).
-    expect((list.result as { tools?: unknown }).tools).toEqual([]);
+    // The built bundle lists exactly the golden catalog.
+    expect(`${JSON.stringify((list.result as { tools: unknown }).tools, null, 2)}
+`).toBe(GOLDEN);
 
     run.child.stdin.end();
     const exit = await run.exited;
@@ -101,7 +103,8 @@ describe('built bundle over stdio', () => {
     };
     const list = await client.request(1, 'tools/list', { _meta });
     expect(list.error).toBeUndefined();
-    expect((list.result as { tools?: unknown }).tools).toEqual([]);
+    expect(`${JSON.stringify((list.result as { tools: unknown }).tools, null, 2)}
+`).toBe(GOLDEN);
 
     run.child.stdin.end();
     expect(await run.exited).toEqual({ code: 0, signal: null });

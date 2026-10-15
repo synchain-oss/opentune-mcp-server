@@ -5,6 +5,7 @@ import { readFileSync } from 'node:fs';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { ClientName } from '../../src/cli/client-config.js';
 import { EXIT_USAGE, USAGE, run } from '../../src/cli/run.js';
 import { writeCliStdout } from '../../src/cli/stdout.js';
 import { SERVER_NAME, VERSION } from '../../src/version.js';
@@ -13,6 +14,8 @@ function harness() {
   const stdout: string[] = [];
   const stderr: string[] = [];
   const serve = vi.fn<() => void>();
+  const doctor = vi.fn<(json: boolean) => Promise<number>>(() => Promise.resolve(1));
+  const clientConfig = vi.fn<(client: ClientName, fullPaths: boolean) => number>(() => 0);
   const deps = {
     writeStdout: (text: string) => {
       stdout.push(text);
@@ -21,8 +24,10 @@ function harness() {
       stderr.push(text);
     },
     serve,
+    doctor,
+    clientConfig,
   };
-  return { stdout, stderr, serve, deps };
+  return { stdout, stderr, serve, doctor, clientConfig, deps };
 }
 
 describe('run', () => {
@@ -51,6 +56,24 @@ describe('run', () => {
     expect(USAGE).toContain(`Usage: ${SERVER_NAME} [--help | --version]`);
     expect(USAGE).toContain('--version');
     expect(h.serve).not.toHaveBeenCalled();
+  });
+
+  it('runs doctor, with or without --json, and returns its exit code', async () => {
+    const h = harness();
+    expect(await run(['doctor'], h.deps)).toBe(1);
+    expect(await run(['doctor', '--json'], h.deps)).toBe(1);
+    expect(h.doctor.mock.calls).toEqual([[false], [true]]);
+    expect(h.serve).not.toHaveBeenCalled();
+    expect(USAGE).toContain(`${SERVER_NAME} doctor [--json]`);
+  });
+
+  it('prints a client configuration without running the doctor checks', () => {
+    const h = harness();
+    expect(run(['doctor', '--client', 'cursor', '--full-paths'], h.deps)).toBe(0);
+    expect(h.clientConfig.mock.calls).toEqual([['cursor', true]]);
+    expect(h.doctor).not.toHaveBeenCalled();
+    expect(h.serve).not.toHaveBeenCalled();
+    expect(USAGE).toContain('doctor --client <claude-code|claude-desktop|cursor>');
   });
 
   it('reports a usage error on stderr only and exits with the usage code', () => {
