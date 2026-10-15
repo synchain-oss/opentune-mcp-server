@@ -56,7 +56,7 @@
     },
     {
       "name": "opentune_edit_timing",
-      "description": "OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job; waits wait_seconds), shift (handles in a start..end range, output or content clock, move delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed and reported (CLAMPED). Handle ids: opentune_get_clip_details."
+      "description": "OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job), shift (handles in a start..end range, output or content clock, by delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed (CLAMPED). Handle ids come from time_grid_handles of the last result of this tool (seed gives them too)."
     }
   ],
   "tools_generated": false,

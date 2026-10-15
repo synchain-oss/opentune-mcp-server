@@ -6,8 +6,14 @@
 // stale and unknown handles), several operations in one call, and the revision rule: only the grid
 // token is forwarded, so a change of the notes does not conflict and a change of the grid does.
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
+
+import { OtcpError } from '../../src/errors/tool-error.js';
+import { OtcpSession } from '../../src/otcp/client.js';
+import { TOOLS } from '../../src/tools/index.js';
 import { ManualClock } from '../../mock/clock.js';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { decodeClipRevision, encodeClipRevision } from '../../src/otcp/tokens.js';
@@ -19,6 +25,7 @@ import { otcpSpec } from '../support/otcp-spec.js';
 
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
+  vi.restoreAllMocks();
   for (const fn of cleanup.splice(0).reverse()) await fn();
 });
 
@@ -393,15 +400,298 @@ describe('opentune_edit_timing declaration', () => {
     expect(editTimingTool.outputSchema).toBe(WRITE_RESULT_OUTPUT);
     expect(editTimingTool.description).toContain('does not detect beats');
   });
+});
 
-  it('keeps the tool names of the next steps and the OTCP params in line with the spec', () => {
+/** Records every OTCP request of the tool, passing it on to the mock. */
+function recordCalls(): { method: string; params: Record<string, unknown> }[] {
+  const calls: { method: string; params: Record<string, unknown> }[] = [];
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const original = OtcpSession.prototype.call;
+  vi.spyOn(OtcpSession.prototype, 'call').mockImplementation(function (this: OtcpSession, method, params, timeout) {
+    calls.push({ method, params });
+    return original.call(this, method, params, timeout);
+  });
+  return calls;
+}
+
+/** Makes one OTCP method fail with the given error, everything else goes to the mock. */
+function failMethod(target: string, data: ConstructorParameters<typeof OtcpError>[0]): void {
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const original = OtcpSession.prototype.call;
+  vi.spyOn(OtcpSession.prototype, 'call').mockImplementation(function (this: OtcpSession, method, params, timeout) {
+    if (method === target) return Promise.reject(new OtcpError(data));
+    return original.call(this, method, params, timeout);
+  });
+}
+
+describe('opentune_edit_timing OTCP requests', () => {
+  it('sends params that the OTCP schemas accept, with the grid token only and the right clock', async () => {
     const spec = otcpSpec();
-    const params = spec.validate('methods/content.shiftTiming.schema.json#/$defs/params', {
-      contentId: 'c:01234567:0:1',
-      expectedGridRevision: 'g1',
-      range: { startOutputSec: 1, endOutputSec: 2 },
-      deltaSec: 10,
+    const { ctx, ids, revision } = await seeded();
+    const calls = recordCalls();
+    const contentId = need(ids, 'clip.contentId');
+    body(await call(ctx, { clip: contentId, expected_revision: revision, ops: [shift({ delta_ms: 250 })] }));
+    const sent = calls.find((c) => c.method === 'content.shiftTiming');
+    expect(sent?.params).toEqual({
+      contentId,
+      expectedGridRevision: ids['clip.gridRevision'],
+      range: { startOutputSec: 1.5, endOutputSec: 2.5 },
+      deltaSec: 0.25,
     });
-    expect(params).toEqual([]);
+    expect(spec.validate('methods/content.shiftTiming.schema.json#/$defs/params', sent?.params)).toEqual([]);
+  });
+
+  it('sends a range on the content clock', async () => {
+    const spec = otcpSpec();
+    const { ctx, ids, revision } = await seeded();
+    const calls = recordCalls();
+    body(
+      await call(ctx, {
+        clip: need(ids, 'clip.contentId'),
+        expected_revision: revision,
+        ops: [{ op: 'shift', start_content_sec: 2.5, end_content_sec: 3.5, delta_ms: -200 }],
+      }),
+    );
+    const onContent = calls.find((c) => c.method === 'content.shiftTiming');
+    expect(onContent?.params.range).toEqual({ startContentSec: 2.5, endContentSec: 3.5 });
+    expect(onContent?.params.deltaSec).toBeCloseTo(-0.2);
+    expect(spec.validate('methods/content.shiftTiming.schema.json#/$defs/params', onContent?.params)).toEqual([]);
+  });
+
+  it('sends a move through a placement id after resolving it with project.get', async () => {
+    const spec = otcpSpec();
+    const { ctx, ids, revision, placement } = await seeded();
+    const calls = recordCalls();
+    body(
+      await call(ctx, {
+        clip: placement,
+        expected_revision: revision,
+        ops: [{ op: 'move', moves: [{ handle_id: need(ids, 'h1'), output_sec: 1.25 }] }],
+      }),
+    );
+    const moved = calls.find((c) => c.method === 'content.editTimeGrid');
+    expect(moved?.params).toMatchObject({
+      contentId: need(ids, 'clip.contentId'),
+      op: 'moveHandles',
+      moves: [{ handleId: need(ids, 'h1'), outputSec: 1.25 }],
+    });
+    expect(spec.validate('methods/content.editTimeGrid.schema.json#/$defs/params', moved?.params)).toEqual([]);
+    expect(calls.map((c) => c.method)).toContain('project.get');
+  });
+
+  it('sends seed as an editTimeGrid request and waits with job.get', async () => {
+    const spec = otcpSpec();
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    const calls = recordCalls();
+    body(await call(ctx, { clip: need(ids, 'clip.contentId'), ops: [{ op: 'seed' }], wait_seconds: 5 }));
+    const seed = calls.find((c) => c.method === 'content.editTimeGrid');
+    expect(seed?.params).toEqual({ contentId: need(ids, 'clip.contentId'), op: 'seed' });
+    expect(spec.validate('methods/content.editTimeGrid.schema.json#/$defs/params', seed?.params)).toEqual([]);
+    expect(calls.find((c) => c.method === 'job.get')?.params).toMatchObject({ waitMs: 5000 });
+  });
+});
+
+describe('opentune_edit_timing handles in results', () => {
+  it('lists the handles of the clip with their clocks in the field names', async () => {
+    const { ctx, ids, revision } = await seeded();
+    const out = body(
+      await call(ctx, {
+        clip: need(ids, 'clip.contentId'),
+        expected_revision: revision,
+        ops: [shift({ delta_ms: 100 })],
+      }),
+    );
+    const handles = out.time_grid_handles as { handle_id: string; content_sec: number; output_sec: number }[];
+    expect(handles.map((h) => h.handle_id)).toEqual([need(ids, 'h1'), need(ids, 'h2'), need(ids, 'h3')]);
+    expect(handles[1]?.content_sec).toBeCloseTo(2);
+    expect(handles[1]?.output_sec).toBeCloseTo(2.1);
+    expect(out.time_grid_handle_count).toBe(3);
+
+    const many = body(
+      await call(ctx, {
+        clip: need(ids, 'clip.contentId'),
+        expected_revision: out.clip_revision as string,
+        ops: [shift({ delta_ms: 10 }), shift({ delta_ms: 10 })],
+      }),
+    );
+    expect(many.time_grid_handles as unknown[]).toHaveLength(3);
+  });
+
+  it('lists the handles a seed created', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    const out = body(await call(ctx, { clip: need(ids, 'clip.contentId'), ops: [{ op: 'seed' }] }));
+    const listed = (out.time_grid_handles as { handle_id: string }[]).map((h) => h.handle_id).sort();
+    const created = (out.created as { ref: { handleId: string } }[]).map((c) => c.ref.handleId).sort();
+    expect(listed.length).toBeGreaterThan(0);
+    expect(listed).toEqual(created);
+  });
+
+  it('does not lose a finished write when the handle read fails', async () => {
+    const { ctx, ids, revision } = await seeded();
+    failMethod('content.getDetails', {
+      kind: 'REQUEST_TIMEOUT',
+      reason: null,
+      retryable: false,
+      detail: 'late',
+      executed: null,
+    });
+    const out = body(
+      await call(ctx, { clip: need(ids, 'clip.contentId'), expected_revision: revision, ops: [shift()] }),
+    );
+    expect(out.changes).toHaveLength(1);
+    expect(out.time_grid_handles).toBeNull();
+  });
+});
+
+describe('opentune_edit_timing failure after the seed job started', () => {
+  it.each([
+    ['REQUEST_TIMEOUT', null],
+    ['CONNECTION_LOST', null],
+    ['TIMEOUT', 'wait_expired'],
+  ])('keeps the job id when job.get fails with %s', async (kind, reason) => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    failMethod('job.get', { kind, reason, retryable: true, detail: 'gone', executed: null });
+    const outcome = await call(ctx, { clip: need(ids, 'clip.contentId'), ops: [{ op: 'seed' }] });
+    const error = failure(outcome);
+    const jobId = `j:${mock.discovery.instanceId.slice(0, 8)}:1`;
+    expect(error.kind).toBe(kind);
+    expect(error.executed).toBe(true);
+    expect(error.retryable).toBe(false);
+    expect(error.detail).toContain(jobId);
+    expect(error.nextStep).toMatchObject({ tool: 'opentune_get_job', args: { job_id: jobId } });
+    expect(error.nextStep.message).toContain('do not seed again');
+    expect((outcome as { context?: { jobId?: string } }).context?.jobId).toBe(jobId);
+  });
+});
+
+/** The instance prefix of the ids in a result, e.g. the 8 hex digits in u:xxxxxxxx:1. */
+function mockInstance(out: Record<string, unknown>): string {
+  const match = /u:([0-9a-f]{8}):/.exec(out.summary as string);
+  return match?.[1] ?? 'no-instance';
+}
+
+describe('opentune_edit_timing several operations', () => {
+  it('names side effects, warnings and the undo order in the first sentence', async () => {
+    const { ctx, ids, revision } = await seeded();
+    const out = body(
+      await call(ctx, {
+        clip: need(ids, 'clip.contentId'),
+        expected_revision: revision,
+        ops: [shift({ delta_ms: 50 }), { op: 'move', moves: [{ handle_id: need(ids, 'h2'), output_sec: 3.5 }] }],
+      }),
+    );
+    const undoIds = (out.steps as { undo: { undoId: string } }[]).map((s) => s.undo.undoId);
+    expect(undoIds).toHaveLength(2);
+    expect(out.summary).toBe(
+      'opentune_edit_timing: applied 2 operations in order, each as its own undo step (see steps)' +
+        '; side effects: rendering of one or more contents was queued again' +
+        '; 1 handle move(s) were limited by the minimum spacing' +
+        '; Warnings: CLAMPED' +
+        `; undoing all takes 2 steps, newest first: ${undoIds[1] ?? ''}, ${undoIds[0] ?? ''}.`,
+    );
+    // The golden file keeps the sentence and the shape of the whole result; ids of the instance are masked.
+    const mask = (text: string) => text.replaceAll(mockInstance(out), '<instance>');
+    const golden = `${JSON.stringify(
+      {
+        description:
+          'Two operations in one call: a shift, then a move that the minimum spacing limits. The first sentence names the queued rendering, CLAMPED and the undo order.',
+        tool: 'opentune_edit_timing',
+        summary: mask(out.summary),
+        members: Object.keys(out),
+        handles: out.time_grid_handles,
+      },
+      null,
+      2,
+    )}
+`;
+    const file = new URL('../golden/timing-multi-op.json', import.meta.url);
+    if (process.env.OPENTUNE_MCP_UPDATE_CATALOG === '1') {
+      mkdirSync(new URL('../golden/', import.meta.url), { recursive: true });
+      writeFileSync(file, golden);
+    }
+    expect(golden).toBe(readFileSync(file, 'utf8'));
+  });
+
+  it('tells which operations to retry when a later one fails', async () => {
+    const { ctx, ids, revision } = await seeded();
+    const error = failure(
+      await call(ctx, {
+        clip: need(ids, 'clip.contentId'),
+        expected_revision: revision,
+        ops: [shift(), { op: 'move', moves: [{ handle_id: 'th:9:9', output_sec: 5 }] }],
+      }),
+    );
+    expect(error.nextStep.message).toContain('retry only the operations from number 2 on');
+    expect(error.nextStep.message).toContain('last item of completed');
+  });
+
+  it('refuses wait_seconds together with shift or move before sending anything', async () => {
+    const { ctx, ids, revision } = await seeded();
+    const calls = recordCalls();
+    const error = failure(
+      await call(ctx, {
+        clip: need(ids, 'clip.contentId'),
+        expected_revision: revision,
+        ops: [shift()],
+        wait_seconds: 5,
+      }),
+    );
+    expect(error.kind).toBe('INVALID_ARGUMENT');
+    expect(error.detail).toMatch(/wait_seconds belongs to seed only/);
+    expect(calls).toHaveLength(0);
+  });
+});
+
+describe('opentune_edit_timing references to other tools', () => {
+  it('names only registered tools in the description, the parameters and every next step', async () => {
+    const registered = new Set(TOOLS.map((t) => t.name));
+    const texts: string[] = [editTimingTool.description, JSON.stringify(z.toJSONSchema(editTimingTool.inputSchema))];
+    const steps: { tool?: string | undefined; message: string }[] = [];
+    const take = (outcome: Outcome) => {
+      if (!outcome.ok) steps.push(outcome.error.nextStep);
+    };
+
+    const { ctx, ids, revision } = await seeded();
+    const contentId = need(ids, 'clip.contentId');
+    take(await call(ctx, { clip: contentId, expected_revision: revision, ops: [shift()] }));
+    // The same revision again: the grid has changed.
+    take(await call(ctx, { clip: contentId, expected_revision: revision, ops: [shift()] }));
+    // A later operation fails after an earlier one was applied.
+    const fresh = await seeded();
+    take(
+      await call(fresh.ctx, {
+        clip: need(fresh.ids, 'clip.contentId'),
+        expected_revision: fresh.revision,
+        ops: [shift(), { op: 'move', moves: [{ handle_id: 'th:9:9', output_sec: 5 }] }],
+      }),
+    );
+    // The grid has no handles.
+    const bare = await withMock();
+    const unseeded = bare.mock.given({ dirty: false, clips: [clip()] });
+    take(
+      await call(bare.ctx, {
+        clip: need(unseeded, 'clip.contentId'),
+        expected_revision: revisionOf(unseeded),
+        ops: [shift()],
+      }),
+    );
+    // The wait for the seed job fails.
+    failMethod('job.get', { kind: 'REQUEST_TIMEOUT', reason: null, retryable: true, detail: 'x', executed: null });
+    const lost = await withMock();
+    const lostIds = lost.mock.given({ dirty: false, clips: [clip()] });
+    take(await call(lost.ctx, { clip: need(lostIds, 'clip.contentId'), ops: [{ op: 'seed' }] }));
+
+    expect(steps).toHaveLength(4);
+    for (const step of steps) {
+      if (step.tool !== undefined) texts.push(step.tool);
+      texts.push(step.message);
+    }
+    const names = texts.flatMap((text) => text.match(/opentune_[a-z_]+/g) ?? []);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) expect(registered.has(name), name).toBe(true);
+    expect(texts.join(' ')).not.toContain('get_clip_details');
   });
 });

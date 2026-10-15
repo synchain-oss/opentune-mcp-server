@@ -15,6 +15,7 @@ import { OtcpError, errorDataFrom, fromOtcpError, toolError, type NextStep } fro
 import type { Json, OtcpSession } from '../otcp/client.js';
 import { clipRevisionFrom, decodeClipRevision, expectedParams, type ClipTokens } from '../otcp/tokens.js';
 import { writeOutcome } from '../render/index.js';
+import { SIDE_EFFECT_TEXT } from '../render/text.js';
 import { trustedToken } from '../sanitize/untrusted.js';
 import {
   WRITE_RESULT_OUTPUT,
@@ -28,6 +29,9 @@ import {
 const TOOL = 'opentune_edit_timing';
 const CLIP_RE = /^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/;
 const JOB_ID_RE = /^j:[0-9a-f]{8}:[1-9][0-9]*$/;
+const HANDLE_ID_RE = /^[A-Za-z0-9:_-]{1,64}$/;
+/** Most handles a result lists; the count of all of them is always given. */
+export const MAX_LISTED_HANDLES = 200;
 const WRITE_TIMEOUT_MS = 20_000;
 const READ_TIMEOUT_MS = 15_000;
 /** OTCP answers a job.get wait within waitMs + 1000 ms; this side allows a little more. */
@@ -61,7 +65,13 @@ const opSchema = z.discriminatedUnion('op', [
     moves: z
       .array(
         z.strictObject({
-          handle_id: z.string().min(1).max(64).describe('Handle id, from opentune_get_clip_details.'),
+          handle_id: z
+            .string()
+            .min(1)
+            .max(64)
+            .describe(
+              'Handle id, from time_grid_handles in the last result of this tool (a seed result has them too).',
+            ),
           output_sec: sec.describe('New position on the output clock, in seconds.'),
         }),
       )
@@ -117,6 +127,9 @@ function plan(args: EditTimingArgs): Call[] | Outcome {
       'seed runs as a job and changes the grid revision: pass it alone, then read the clip again and call with shift or move',
     );
   }
+  if (args.wait_seconds !== undefined && args.ops.some((op) => op.op !== 'seed')) {
+    return invalid('wait_seconds belongs to seed only: leave it out when ops has shift or move');
+  }
   const calls: Call[] = [];
   for (const [index, op] of args.ops.entries()) {
     if (op.op === 'seed') calls.push({ kind: 'seed' });
@@ -161,8 +174,8 @@ function stepFor(error: OtcpError, args: EditTimingArgs): NextStep | undefined {
       tool: TOOL,
       args: { clip: args.clip, ops: [{ op: 'seed' }] },
       message:
-        'The time grid has no handles yet. Seed it with op seed (this cannot be undone), then read the handles with ' +
-        'opentune_get_clip_details and a fresh clip_revision with opentune_get_project.',
+        'The time grid has no handles yet. Seed it with op seed (this cannot be undone); the result lists the handles ' +
+        '(time_grid_handles) and the clip_revision for the next edit.',
     };
   }
   if (kind === 'REVISION_CONFLICT' && reason === 'grid_changed') {
@@ -170,8 +183,8 @@ function stepFor(error: OtcpError, args: EditTimingArgs): NextStep | undefined {
       actor: 'agent',
       tool: 'opentune_get_project',
       message:
-        'The time grid changed since the clip_revision was read. Read the clip again (handle positions with ' +
-        'opentune_get_clip_details), then retry with the new clip_revision.',
+        'The time grid changed since the clip_revision was read. Read the clip again with opentune_get_project for a ' +
+        'fresh clip_revision, then retry. Handle ids and positions are in time_grid_handles of the last result of this tool.',
     };
   }
   return undefined;
@@ -188,6 +201,40 @@ function contentTokens(result: Json, contentId: string): Json | undefined {
 /** The clip_revision after a write: the tokens of the result for this content, geometry as before. */
 function revisionAfter(result: Json, contentId: string, before: ClipTokens | null): string | null {
   return clipRevisionFrom(contentTokens(result, contentId), before?.geometry ?? null);
+}
+
+/**
+ * The time handles of a content as content.getDetails reports them, ids and positions with the clock in
+ * the field names. null when the read fails: the write already happened and its result must not be lost.
+ */
+async function handlesOf(session: OtcpSession, contentId: string): Promise<Json | null> {
+  try {
+    const details = await session.call('content.getDetails', { contentId }, READ_TIMEOUT_MS);
+    const grid = isObject(details.timeGrid) ? details.timeGrid : {};
+    const all = (Array.isArray(grid.handles) ? grid.handles : []).flatMap((h): Json[] => {
+      const id = isObject(h) ? trustedToken(h.handleId, HANDLE_ID_RE) : null;
+      if (!isObject(h) || id === null || typeof h.contentSec !== 'number' || typeof h.outputSec !== 'number') return [];
+      return [{ handle_id: id, content_sec: h.contentSec, output_sec: h.outputSec }];
+    });
+    return {
+      time_grid_handles: all.slice(0, MAX_LISTED_HANDLES),
+      time_grid_handle_count: all.length,
+      ...(all.length > MAX_LISTED_HANDLES ? { time_grid_handles_truncated: true } : {}),
+    };
+  } catch (error) {
+    if (error instanceof OtcpError) return null;
+    throw error;
+  }
+}
+
+/** The outcome with the current handles of the content added to a success body. */
+async function withHandles(session: OtcpSession, contentId: string, outcome: Outcome): Promise<Outcome> {
+  if (!outcome.ok) return outcome;
+  const handles = await handlesOf(session, contentId);
+  return {
+    ok: true,
+    body: { ...outcome.body, ...(handles ?? { time_grid_handles: null }) },
+  };
 }
 
 function rendered(result: Json, revision: string | null): Outcome {
@@ -211,8 +258,32 @@ async function seed(
   const waitMs = Math.round(waitSeconds * 1000);
   let current: Json = job;
   if (waitMs > 0) {
-    const polled = await session.call('job.get', { jobId, waitMs }, waitMs + WAIT_MARGIN_MS);
-    if (isObject(polled.job)) current = polled.job;
+    try {
+      const polled = await session.call('job.get', { jobId, waitMs }, waitMs + WAIT_MARGIN_MS);
+      if (isObject(polled.job)) current = polled.job;
+    } catch (error) {
+      if (!(error instanceof OtcpError)) throw error;
+      // The job was started and may be writing handles that cannot be undone: keep its id.
+      const failure = fromOtcpError(error.data);
+      return {
+        ok: false,
+        error: {
+          ...failure,
+          detail: `the seed job ${jobId} was started but waiting for it failed: ${failure.detail}`,
+          executed: true,
+          retryable: false,
+          nextStep: {
+            actor: 'agent',
+            tool: 'opentune_get_job',
+            args: { job_id: jobId },
+            message:
+              `The seed job ${jobId} is running or finished in OpenTune. Follow it with opentune_get_job; do not seed ` +
+              'again before it has ended. When it has succeeded, read the clip_revision with opentune_get_project.',
+          },
+        },
+        context: { jobId, job: current },
+      };
+    }
   }
   const state = typeof current.state === 'string' ? current.state : null;
   if (state === 'succeeded' && isObject(current.result)) {
@@ -260,11 +331,7 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
   if (tokens === null && calls.some((c) => c.kind !== 'seed')) {
     return invalid('shift and move need expected_revision: the clip_revision of the clip, from opentune_get_project');
   }
-  const capabilities = [
-    'timing.v1',
-    ...(calls.some((c) => c.kind === 'seed') ? ['jobs.v1'] : []),
-    ...(args.clip.startsWith('p:') ? ['read.v1'] : []),
-  ];
+  const capabilities = ['timing.v1', ...(calls.some((c) => c.kind === 'seed') ? ['jobs.v1'] : []), 'read.v1'];
   return withInstance(ctx, { instanceId: args.instance_id }, capabilities, async (session) => {
     const resolved = await contentIdOf(session, args.clip);
     if (typeof resolved !== 'string') return resolved;
@@ -275,7 +342,11 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
     try {
       for (const call of calls) {
         if (call.kind === 'seed') {
-          return await seed(session, contentId, current, args.wait_seconds ?? DEFAULT_WAIT_SECONDS);
+          return await withHandles(
+            session,
+            contentId,
+            await seed(session, contentId, current, args.wait_seconds ?? DEFAULT_WAIT_SECONDS),
+          );
         }
         if (current === null) throw new Error('shift and move are planned only with a revision');
         const method = call.kind === 'shift' ? 'content.shiftTiming' : 'content.editTimeGrid';
@@ -306,32 +377,71 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
       if (!(error instanceof OtcpError)) throw error;
       const failure = fromOtcpError(error.data, stepFor(error, args));
       if (steps.length === 0) return { ok: false, error: failure };
+      const applied = steps.length;
       // Earlier operations of this call took effect; the error says which one failed.
       return {
         ok: false,
         error: {
           ...failure,
-          detail: `operation ${String(steps.length + 1)} failed after ${String(steps.length)} applied: ${failure.detail}`,
+          detail: `operation ${String(applied + 1)} failed after ${String(applied)} applied: ${failure.detail}`,
           executed: true,
+          nextStep: {
+            ...failure.nextStep,
+            message:
+              `${failure.nextStep.message} Operations 1 to ${String(applied)} are applied: retry only the operations ` +
+              `from number ${String(applied + 1)} on, with the clip_revision of the last item of completed.`,
+          },
         },
         context: { completed: steps.map((s) => s.body) },
       };
     }
     const [only] = steps;
-    if (steps.length === 1 && only !== undefined) return { ok: true, body: only.body };
-    const clamped = steps.reduce((total, s) => total + s.clamped, 0);
-    return {
+    if (steps.length === 1 && only !== undefined) return withHandles(session, contentId, { ok: true, body: only.body });
+    return withHandles(session, contentId, {
       ok: true,
       body: {
-        summary:
-          `${TOOL}: applied ${String(steps.length)} operations in order, each as its own undo step (see steps)` +
-          (clamped > 0 ? `; ${String(clamped)} handle move(s) were limited by the minimum spacing (CLAMPED)` : '') +
-          '.',
+        summary: multiSummary(steps),
         steps: steps.map((s) => s.body),
         clip_revision: revisionAfter(last, contentId, tokens),
       },
-    };
+    });
   });
+}
+
+const keysOf = (value: unknown): string[] => (isObject(value) ? Object.keys(value) : []);
+
+/** The first sentence of a several-operation result: side effects, warnings and the undo order of all steps. */
+function multiSummary(steps: readonly { body: Body; clamped: number }[]): string {
+  const clamped = steps.reduce((total, s) => total + s.clamped, 0);
+  const effects = new Set(steps.flatMap((s) => keysOf(s.body.sideEffects)));
+  const codes = new Set(
+    steps.flatMap((s) =>
+      (Array.isArray(s.body.warnings) ? s.body.warnings : []).flatMap((w): string[] => {
+        const code = isObject(w) ? trustedToken(w.code, /^[A-Z][A-Z0-9_]{0,63}$/) : null;
+        return code === null ? [] : [code];
+      }),
+    ),
+  );
+  const undoIds = steps.flatMap((s) => {
+    const undo = isObject(s.body.undo) ? s.body.undo : null;
+    const id = undo?.undoable === true ? trustedToken(undo.undoId, /^[A-Za-z0-9:_-]{1,64}$/) : null;
+    return id === null ? [] : [id];
+  });
+  const effectText = [...effects].map(
+    (name) =>
+      SIDE_EFFECT_TEXT[name] ??
+      `side effect ${trustedToken(name, /^[a-z][A-Za-z0-9]{0,63}$/) ?? 'with an unrecognized name'}`,
+  );
+  return (
+    `${TOOL}: applied ${String(steps.length)} operations in order, each as its own undo step (see steps)` +
+    (effectText.length > 0 ? `; side effects: ${effectText.join(', ')}` : '') +
+    (clamped > 0 ? `; ${String(clamped)} handle move(s) were limited by the minimum spacing` : '') +
+    (codes.size > 0 ? `; Warnings: ${[...codes].join(', ')}` : '') +
+    (undoIds.length > 0
+      ? `; undoing all takes ${String(undoIds.length)} steps, newest first: ${[...undoIds].reverse().join(', ')}`
+      : '') +
+    '.'
+  );
 }
 
 export const editTimingTool = defineTool({
@@ -340,9 +450,9 @@ export const editTimingTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or ' +
     'compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places ' +
-    'initial handles and cannot be undone. ops run in order: seed (a job; waits wait_seconds), shift (handles in a ' +
-    'start..end range, output or content clock, move delta_ms), move (named handles to output_sec). Limited moves ' +
-    'are applied as far as allowed and reported (CLAMPED). Handle ids: opentune_get_clip_details.',
+    'initial handles and cannot be undone. ops run in order: seed (a job), shift (handles in a start..end range, ' +
+    'output or content clock, by delta_ms), move (named handles to output_sec). Limited moves are applied as far as ' +
+    'allowed (CLAMPED). Handle ids come from time_grid_handles of the last result of this tool (seed gives them too).',
   inputSchema: z.strictObject({
     clip: z
       .string()
@@ -360,7 +470,9 @@ export const editTimingTool = defineTool({
       .min(0)
       .max(MAX_WAIT_SECONDS)
       .optional()
-      .describe('How long seed waits for its job, 0 to 30. Default 10; then the job id is returned.'),
+      .describe(
+        'Seed only (refused with shift or move). How long seed waits for its job, 0 to 30. Default 10; then the job id is returned.',
+      ),
     instance_id: z
       .string()
       .regex(/^[0-9a-f]{32}$/)
@@ -370,6 +482,6 @@ export const editTimingTool = defineTool({
   outputSchema: WRITE_RESULT_OUTPUT,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   capabilities: ['timing.v1', 'jobs.v1', 'read.v1'],
-  otcpMethods: ['content.shiftTiming', 'content.editTimeGrid', 'job.get', 'project.get'],
+  otcpMethods: ['content.shiftTiming', 'content.editTimeGrid', 'content.getDetails', 'job.get', 'project.get'],
   run: (args, ctx) => editTiming(ctx, args),
 });

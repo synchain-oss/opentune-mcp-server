@@ -105,14 +105,14 @@ OTCP capabilities: `session.v1`. OTCP methods: `session.hello`, `session.info`.
 
 **Edit OpenTune time grid**: changes state, not destructive, not idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job; waits wait_seconds), shift (handles in a start..end range, output or content clock, move delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed and reported (CLAMPED). Handle ids: opentune_get_clip_details.
+OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job), shift (handles in a start..end range, output or content clock, by delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed (CLAMPED). Handle ids come from time_grid_handles of the last result of this tool (seed gives them too).
 
-OTCP capabilities: `timing.v1`, `jobs.v1`, `read.v1`. OTCP methods: `content.shiftTiming`, `content.editTimeGrid`, `job.get`, `project.get`.
+OTCP capabilities: `timing.v1`, `jobs.v1`, `read.v1`. OTCP methods: `content.shiftTiming`, `content.editTimeGrid`, `content.getDetails`, `job.get`, `project.get`.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `clip` | string, matching `^[pc]:[0-9a-f]{8}:(0\|[1-9][0-9]*):(0\|[1-9][0-9]*)$` | yes | Clip placement id (p:...) from opentune_get_project, or a content id (c:...). |
 | `expected_revision` | string | no | clip_revision of the clip. Required for shift and move; not needed for seed. |
 | `ops` | array | yes | Operations in order. seed must be alone. |
-| `wait_seconds` | number, 0 to 30 | no | How long seed waits for its job, 0 to 30. Default 10; then the job id is returned. |
+| `wait_seconds` | number, 0 to 30 | no | Seed only (refused with shift or move). How long seed waits for its job, 0 to 30. Default 10; then the job id is returned. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
