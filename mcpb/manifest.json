@@ -53,6 +53,14 @@
     {
       "name": "opentune_launch",
       "description": "OpenTune (audio vocal pitch editor): starts the OpenTune build configured for this server (OPENTUNE_MCP_OPENTUNE_PATH) with its control API and waits up to 30 seconds until it is ready, then reports the state like opentune_get_status, with a nextStep. Starts nothing when OpenTune already runs (alreadyRunning), may run without the control API, or no API build is configured; the result says why. Repeated or concurrent calls share one start. allow_second_instance needs the user's explicit consent; each call with it starts one more instance once earlier starts are done. Never closes OpenTune."
+    },
+    {
+      "name": "opentune_open_audio",
+      "description": "OpenTune (audio vocal pitch editor): imports audio files as new clips, as the window does, and waits up to wait_seconds (default 25, max 30); if the import job has not ended, the result names it for opentune_get_job. Give path or items (absolute paths; quotes, file://, ~ and /mnt/<drive>/ are accepted). layout: single, sequential (end to end) or separate_tracks. Not undoable; the result says how to revert. In the openDyne scheme the focused clip also gets notes (no undo entry). Repeating a call with the same files and target imports nothing again unless allow_duplicate is true."
+    },
+    {
+      "name": "opentune_export_audio",
+      "description": "OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to wait_seconds (default 25, max 30); if the export job has not ended, the result names it for opentune_get_job. kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). Does not change the project."
     }
   ],
   "tools_generated": false,
