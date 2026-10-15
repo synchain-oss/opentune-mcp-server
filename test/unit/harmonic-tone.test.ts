@@ -169,4 +169,37 @@ describe('harmonic tone generator', () => {
   it('rejects a note with neither hz nor midi', () => {
     expect(() => generateTone({ seed: 1, notes: [{ durationSec: 0.1 }] })).toThrow(/hz or midi/);
   });
+
+  describe('rejects parameters it cannot render, naming the note and the parameter', () => {
+    const ok = { midi: 60, durationSec: 0.2 } as const;
+    it.each([
+      ['hz at Nyquist', { hz: 22050, durationSec: 0.2 }, /note 0: hz 22050 must be above 0 and below half/],
+      ['hz above Nyquist', { hz: 30000, durationSec: 0.2 }, /note 0: hz 30000 must be above 0 and below half/],
+      ['hz zero', { hz: 0, durationSec: 0.2 }, /note 0: hz 0 must be above 0/],
+      ['hz negative', { hz: -440, durationSec: 0.2 }, /note 0: hz -440 must be above 0/],
+      ['hz NaN', { hz: Number.NaN, durationSec: 0.2 }, /note 0: hz NaN must be above 0/],
+      ['midi far above the range', { midi: 200, durationSec: 0.2 }, /note 0: hz .* must be above 0 and below half/],
+      ['midi NaN', { midi: Number.NaN, durationSec: 0.2 }, /note 0: hz NaN/],
+      ['duration zero', { midi: 60, durationSec: 0 }, /note 0: durationSec 0 must be above 0/],
+      ['duration negative', { midi: 60, durationSec: -0.1 }, /note 0: durationSec -0.1 must be above 0/],
+      ['duration NaN', { midi: 60, durationSec: Number.NaN }, /note 0: durationSec NaN/],
+      ['gap negative', { midi: 60, durationSec: 0.2, gapSec: -0.05 }, /note 0: gapSec -0.05 must be 0 or more/],
+      ['gap NaN', { midi: 60, durationSec: 0.2, gapSec: Number.NaN }, /note 0: gapSec NaN/],
+    ])('%s', (_label, note, message) => {
+      expect(() => generateTone({ seed: 1, notes: [note] })).toThrow(message);
+    });
+
+    it('names the second note when the first is fine', () => {
+      expect(() => generateTone({ seed: 1, notes: [ok, { hz: 0, durationSec: 0.2 }] })).toThrow(/^note 1: hz 0 /);
+    });
+
+    it.each([0, -0.01, Number.NaN])('fadeSec %s', (fadeSec) => {
+      expect(() => generateTone({ seed: 1, notes: [ok], fadeSec })).toThrow(/fadeSec .* must be above 0/);
+    });
+
+    it('accepts a note just below Nyquist and zero gap', () => {
+      const tone = generateTone({ seed: 1, notes: [{ hz: 22049, durationSec: 0.1, gapSec: 0 }] });
+      expect(tone.truth.notes[0]?.hz).toBe(22049);
+    });
+  });
 });
