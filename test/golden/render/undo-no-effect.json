@@ -58,7 +58,7 @@
     }
   },
   "rendered": {
-    "summary": "opentune_undo: nothing was changed, which is a success (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with edit.redo, see the revert line; the undo or redo step is used up and the project is now marked as changed). Warnings: UNDO_NO_EFFECT.",
+    "summary": "opentune_undo: nothing was changed, which is a success (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_redo, see the revert line; the undo or redo step is used up and the project is now marked as changed). Warnings: UNDO_NO_EFFECT.",
     "applied": true,
     "noOp": true,
     "dryRun": false,
@@ -136,11 +136,17 @@
       },
       {
         "kind": "revert",
-        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore with edit.redo and these params, sent unchanged.",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_redo with the arguments in restore, as they are.",
         "revert": {
           "method": "edit.redo",
           "params": {
             "expectedUndoId": "u:01234567:1"
+          }
+        },
+        "restore": {
+          "tool": "opentune_redo",
+          "arguments": {
+            "undo_id": "u:01234567:1"
           }
         }
       }
