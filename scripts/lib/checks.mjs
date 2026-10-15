@@ -608,6 +608,19 @@ export function commitCheckScope({
         : `push that rewrote the branch (its previous tip ${before.slice(0, 8)} is gone): commits not on ${defaultBranch}`,
     };
   }
+  if (event === 'workflow_dispatch') {
+    // A manual run of the full suite on a branch: the commits the branch holds beyond the default
+    // branch. They came in through merged pull requests (a trunk) or are being tried before one,
+    // so the relaxed rules of an ordinary trunk push apply; the pull request that follows is held
+    // to project identities by its own run.
+    if (!defaultBranch) throw new Error('manual run: the default branch is unknown');
+    return {
+      base: `origin/${defaultBranch}`,
+      allowExternalAuthors: true,
+      allowDependabot: true,
+      reason: `manual run: commits not on ${defaultBranch}`,
+    };
+  }
   if (event === 'pull_request') {
     if (!baseRef) throw new Error('pull request without a base branch');
     const base = `origin/${baseRef}`;

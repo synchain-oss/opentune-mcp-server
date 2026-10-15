@@ -6,7 +6,7 @@ name: CI
 # scripts/ci-checks.mjs（需要事件上下文的部分）；workflow 只负责装环境、传上下文，不另写一套判据。
 #
 # 两档：
-# - 完整档：PR → dev / prod；push → dev、feature/**。
+# - 完整档：PR → dev / prod；push → dev、feature/**；手动触发（workflow_dispatch，在所选分支上）。
 #   checks（ubuntu × Node 22/24 + windows × Node 24；覆盖率门槛在 ubuntu / Node 24 上强制）、
 #   protocol（ubuntu + windows）、package、audit、compliance、docs。
 # - 轻量档：PR → feature/**（子 PR）。单条 ubuntu job：lint、format、typecheck、单测 + 覆盖率、隐私、
@@ -25,6 +25,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review, edited]
   push:
     branches: [dev, "feature/**"]
+  # 手动触发：在任意分支上跑完整档，合并前验证只在 Windows 等完整档才暴露的改动。
+  workflow_dispatch:
 
 permissions:
   contents: read

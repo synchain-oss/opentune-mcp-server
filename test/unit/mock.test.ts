@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ManualClock } from '../../mock/clock.js';
 import { DISCOVERY_DIR_ENV, realOpenTuneDirs, resolveDiscoveryDir } from '../../mock/discovery.js';
 import { fixedResponse } from '../../mock/protocol.js';
+import { otherTrustees, resolveTrustee, sddlTrusteeFields } from '../../mock/sddl.js';
 import { LIMITS, startMock, type MockOptions, type OtcpMock } from '../../mock/server.js';
 import { RunnerConnection } from '../contract/connection.js';
 import { SPEC_ROOT, otcpSpec } from '../support/otcp-spec.js';
@@ -156,7 +157,13 @@ describe('mock guards', () => {
         const sddl = readFileSync(saved).toString('utf16le');
         const dacl = /D:([A-Z]*)((?:\([^)]*\))*)/.exec(sddl);
         expect(dacl?.[1]).toContain('P');
-        expect(dacl?.[2]).toBe(`(A;;FA;;;${sidOf()})`);
+        // One entry that grants full access, to a trustee that is the current user (the built-in
+        // administrator account is written as the alias LA rather than as its SID).
+        const sid = sidOf();
+        expect(dacl?.[2]).toMatch(/^\(A;;FA;;;[^;()]+\)$/);
+        const trustees = sddlTrusteeFields(sddl);
+        expect(trustees).toHaveLength(1);
+        expect(resolveTrustee(trustees[0] ?? '', sid)?.toLowerCase()).toBe(sid.toLowerCase());
       }
 
       it('in an ordinary temporary directory', async () => {
@@ -175,6 +182,52 @@ describe('mock guards', () => {
       });
     },
   );
+});
+
+describe('SDDL trustee resolution', () => {
+  const user = 'S-1-5-21-111-222-333-1001';
+  const sddl = (...trustees: string[]) => `D:PAI${trustees.map((t) => `(A;;FA;;;${t})`).join('')}`;
+
+  it('resolves fixed aliases and explicit SIDs', () => {
+    expect(resolveTrustee('SY', user)).toBe('S-1-5-18');
+    expect(resolveTrustee('BA', user)).toBe('S-1-5-32-544');
+    expect(resolveTrustee('S-1-5-21-9-9-9-500', user)).toBe('S-1-5-21-9-9-9-500');
+  });
+
+  it('computes machine- and domain-relative aliases from the prefix of the user SID', () => {
+    expect(resolveTrustee('LA', user)).toBe('S-1-5-21-111-222-333-500');
+    expect(resolveTrustee('LG', user)).toBe('S-1-5-21-111-222-333-501');
+    expect(resolveTrustee('DA', user)).toBe('S-1-5-21-111-222-333-512');
+    expect(resolveTrustee('DU', user)).toBe('S-1-5-21-111-222-333-513');
+  });
+
+  it('cannot compute a relative alias for a user SID outside S-1-5-21', () => {
+    expect(resolveTrustee('LA', 'S-1-12-1-1-2-3-4')).toBeUndefined();
+    expect(resolveTrustee('SY', 'S-1-12-1-1-2-3-4')).toBe('S-1-5-18');
+  });
+
+  it('returns undefined for an unknown alias', () => {
+    expect(resolveTrustee('ZZ', user)).toBeUndefined();
+  });
+
+  it('does not list the current user, however it is written', () => {
+    expect(otherTrustees(sddl(user), user)).toEqual([]);
+    expect(otherTrustees(sddl('LA'), 'S-1-5-21-111-222-333-500')).toEqual([]);
+  });
+
+  it('lists every other trustee once, resolved to SIDs', () => {
+    expect(otherTrustees(sddl('LA', 'SY', 'BA', 'SY', 'S-1-5-21-1-2-3-1234'), user)).toEqual([
+      'S-1-5-21-111-222-333-500',
+      'S-1-5-18',
+      'S-1-5-32-544',
+      'S-1-5-21-1-2-3-1234',
+    ]);
+  });
+
+  it('names the alias it cannot resolve', () => {
+    expect(() => otherTrustees(sddl('ZZ'), user)).toThrow('unrecognised trustee ZZ');
+    expect(() => otherTrustees(sddl('LA'), 'S-1-12-1-1-2-3-4')).toThrow('unrecognised trustee LA');
+  });
 });
 
 describe('mock reproducibility', () => {

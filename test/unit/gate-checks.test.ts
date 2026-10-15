@@ -693,6 +693,15 @@ describe('commitCheckScope', () => {
     expect(() => commitCheckScope({ ...push, refName: 'feature/v2', defaultBranch: '' })).toThrow(/default branch/);
   });
 
+  it('compares a manual run with the default branch, as a push to a trunk does', () => {
+    expect(commitCheckScope({ event: 'workflow_dispatch', defaultBranch: 'dev', repo })).toMatchObject({
+      base: 'origin/dev',
+      allowExternalAuthors: true,
+      allowDependabot: true,
+    });
+    expect(() => commitCheckScope({ event: 'workflow_dispatch', repo })).toThrow(/default branch/);
+  });
+
   it('holds a pull request from a branch of this repository to project identities', () => {
     expect(
       commitCheckScope({ event: 'pull_request', baseRef: 'feature/v1', repo, headRepo: repo, headRef: 'feat/x' }),
@@ -736,7 +745,7 @@ describe('commitCheckScope', () => {
   });
 
   it('rejects other events and pull requests without a base', () => {
-    expect(() => commitCheckScope({ event: 'workflow_dispatch', repo })).toThrow(/unsupported event/);
+    expect(() => commitCheckScope({ event: 'schedule', repo })).toThrow(/unsupported event/);
     expect(() => commitCheckScope({ event: 'pull_request', repo, headRepo: repo })).toThrow(/base/);
   });
 });
