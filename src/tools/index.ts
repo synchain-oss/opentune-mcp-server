@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
 // SPDX-License-Identifier: MIT
 
+import { analyzePitchTool } from './analyze.js';
 import { autotuneTool } from './autotune.js';
 import { editNotesTool } from './edit-notes.js';
 import { redoTool, undoTool } from './history.js';
@@ -25,4 +26,5 @@ export const TOOLS: readonly ToolDefinition[] = [
   editNotesTool,
   undoTool,
   redoTool,
+  analyzePitchTool,
 ];

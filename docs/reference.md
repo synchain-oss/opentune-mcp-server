@@ -2,7 +2,7 @@
 
 # Tool reference
 
-OpenTune MCP Server (by Synchain) offers 11 tools. Every tool returns its result both as
+OpenTune MCP Server (by Synchain) offers 12 tools. Every tool returns its result both as
 `structuredContent` and as the same JSON in a text block. Errors have the shape
 `{kind, reason, detail, retryable, executed, nextStep, url}`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -183,4 +183,23 @@ OTCP capabilities: `history.v1`. OTCP methods: `edit.redo`.
 | --- | --- | --- | --- |
 | `undo_id` | string, matching `^u:[0-9a-f]{8}:[1-9][0-9]*$` | yes | The undo id (u:...) of the step you expect on top, from the write result that made it. |
 | `force` | boolean | no | Only when the user explicitly asked to undo or redo a change that was not made through this server: applies the top step whatever it is. Never set it to get past UNDO_CONFLICT on your own. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_analyze_pitch`
+
+**Analyze OpenTune pitch**: read-only, not destructive, idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): measures how far the detected pitch of a clip is from its notes, in cents (detected minus target, positive = sharp). Per note: median deviation, stability (standard deviation), onset and release deviation; notes beyond threshold_cents (default 25) are flagged; notes are grouped into phrases at silences over 0.4 s. detail summary (default, small) gives totals, worst notes, flagged note indexes (each note's index as opentune_get_notes reports it) and clip_revision; phrases and notes are paged. from and to are seconds of the source audio. Read-only.
+
+OTCP capabilities: `read.v1`. OTCP methods: `content.getNotes`, `content.getPitchCurve`, `content.segmentNotes`, `project.get`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `clip` | string, matching `^[pc]:[0-9a-f]{8}:(0\|[1-9][0-9]*):(0\|[1-9][0-9]*)$` | yes | Clip placement id (p:...) from opentune_get_project, or a content id (c:...). |
+| `from` | number | no | Range start in seconds of the source audio (content clock). Give both from and to. |
+| `to` | number | no | Range end in seconds of the source audio. Notes overlapping the range. |
+| `threshold_cents` | number, 1 to 1200 | no | A note is flagged when its median deviation is larger than this many cents. Default 25. |
+| `detail` | string | no | summary (default): totals and worst notes. phrases: one entry per phrase. notes: one per note. |
+| `cursor` | string | no | next_cursor of the previous page (phrases and notes only), passed back unchanged. |
+| `limit` | integer, 1 to 200 | no | Entries per page for phrases and notes, 1 to 200. Default 50; fewer when the page would be large. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
