@@ -2,7 +2,7 @@
 
 # Tool reference
 
-OpenTune MCP Server (by Synchain) offers 5 tools. Every tool returns its result both as
+OpenTune MCP Server (by Synchain) offers 6 tools. Every tool returns its result both as
 `structuredContent` and as the same JSON in a text block. Errors have the shape
 `{kind, reason, detail, retryable, executed, nextStep, url}`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -88,3 +88,15 @@ OTCP capabilities: `jobs.v1`. OTCP methods: `job.cancel`, `job.get`.
 | --- | --- | --- | --- |
 | `job_id` | string, matching `^j:[0-9a-f]{8}:[1-9][0-9]*$` | yes | Job id from the result that started the job (j:...). |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | Instance that owns the job. Optional: the job id identifies it. |
+
+### `opentune_launch`
+
+**Start OpenTune**: changes state, not destructive, not idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): starts the OpenTune build configured for this server (OPENTUNE_MCP_OPENTUNE_PATH) with its control API and waits up to 30 seconds until it is ready, then reports the state like opentune_get_status, with a nextStep. Starts nothing when OpenTune already runs (alreadyRunning), may run without the control API, or no API build is configured; the result says why. Repeated or concurrent calls share one start. allow_second_instance needs the user's explicit consent; each call with it starts one more instance once earlier starts are done. Never closes OpenTune.
+
+OTCP capabilities: `session.v1`. OTCP methods: `session.hello`, `session.info`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `allow_second_instance` | boolean | no | Start OpenTune even though an instance with the control API runs, or even though this server cannot list the running processes to rule out an OpenTune without the control API. Only when the user explicitly asked for a second instance, or confirmed that no OpenTune runs. Default false: start nothing then. |

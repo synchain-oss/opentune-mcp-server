@@ -33,6 +33,7 @@ function setup(env: NodeJS.ProcessEnv = {}): DoctorDeps & { discovery: string } 
     home: dir,
     nodeVersion: 'v22.12.0',
     osRelease: null,
+    officialInstall: () => Promise.resolve(null),
     discovery,
   };
 }
@@ -43,7 +44,7 @@ describe('doctor', () => {
   it('lists every check id in a stable order, planned ones as not implemented', async () => {
     const checks = await runDoctor(setup());
     expect(checks.map((c) => c.id)).toEqual(DOCTOR_CHECK_IDS);
-    expect(checks.slice(4).every((c) => c.status === 'not_implemented')).toBe(true);
+    expect(checks.slice(5).every((c) => c.status === 'not_implemented')).toBe(true);
     for (const c of checks) expect(c.url).toMatch(new RegExp(`#doctor-${c.id.toLowerCase()}$`));
     expect(byId(checks, 'OT_NODE_VERSION')?.status).toBe('pass');
     expect(byId(checks, 'OT_WSL_RUNTIME')?.status).toBe('pass');
@@ -128,6 +129,49 @@ describe('doctor', () => {
     expect(formatDoctor(checks, false)).toMatch(
       /^opentune-mcp doctor .+\nPASS {2}OT_NODE_VERSION {2,}Node\.js v22\.12\.0/,
     );
+  });
+
+  it('reports the official installation on Windows only, and its absence as a warning', async () => {
+    const base = { ...setup(), platform: 'win32' as const };
+    const dir = `${base.home}\\Programs\\OpenTune`;
+    const found = await runDoctor({
+      ...base,
+      officialInstall: () => Promise.resolve({ dir, version: '1.8.0', source: 'registry' }),
+    });
+    expect(byId(found, 'OT_NO_OFFICIAL_INSTALL')).toMatchObject({
+      status: 'pass',
+      message: expect.stringMatching(
+        /^Official OpenTune installation in ~\\Programs\\OpenTune \(version "1\.8\.0", found by its uninstall entry\)/,
+      ) as unknown,
+    });
+    const folder = await runDoctor({
+      ...base,
+      officialInstall: () => Promise.resolve({ dir, version: null, source: 'folder' }),
+    });
+    expect(byId(folder, 'OT_NO_OFFICIAL_INSTALL')?.message).toMatch(/\(version unknown, found by its install folder\)/);
+    for (const officialInstall of [() => Promise.resolve(null), () => Promise.reject(new Error('reg failed'))]) {
+      const missing = await runDoctor({ ...base, officialInstall });
+      expect(byId(missing, 'OT_NO_OFFICIAL_INSTALL')).toMatchObject({
+        status: 'warn',
+        message: expect.stringMatching(
+          /^No official OpenTune installation was found .+ This is not an error;/,
+        ) as unknown,
+      });
+    }
+    let asked = false;
+    const elsewhere = await runDoctor({
+      ...base,
+      platform: 'linux',
+      officialInstall: () => {
+        asked = true;
+        return Promise.resolve(null);
+      },
+    });
+    expect(byId(elsewhere, 'OT_NO_OFFICIAL_INSTALL')).toMatchObject({
+      status: 'warn',
+      message: expect.stringMatching(/^Not checked: .+ on Windows only\.$/) as unknown,
+    });
+    expect(asked).toBe(false);
   });
 
   it('reports an unusable discovery directory', async () => {

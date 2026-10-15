@@ -13,6 +13,7 @@ import { PassThrough } from 'node:stream';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 
 import type { ProcessInfo, ProcessProbe } from '../../src/discovery/process.js';
+import type { LaunchDeps } from '../../src/launch/start.js';
 import { createLogger } from '../../src/log.js';
 import { Instances, type InstanceDeps } from '../../src/otcp/instances.js';
 import { startStdioServer } from '../../src/server.js';
@@ -52,15 +53,31 @@ export interface TestContext extends ToolContext {
   readonly logLines: string[];
 }
 
-/** A tool context whose discovery directory is `dir`; nothing resolves to a real OpenTune folder. */
+/**
+ * Launch dependencies for tests: starting a process fails the test unless a test passes its own
+ * spawn, and no official installation is found.
+ */
+export const TEST_LAUNCH: LaunchDeps = {
+  spawn: () => {
+    throw new Error('this test must not start a process');
+  },
+  officialInstall: () => Promise.resolve(null),
+  waitMs: 30_000,
+  pollMs: 25,
+};
+
+/**
+ * A tool context whose discovery directory is `dir`; nothing resolves to a real OpenTune folder.
+ * The clock is real unless `now` fixes it.
+ */
 export function testContext(
   dir: string,
-  options: { env?: NodeJS.ProcessEnv; now?: number; open?: InstanceDeps['open'] } = {},
+  options: { env?: NodeJS.ProcessEnv; now?: number; open?: InstanceDeps['open']; launch?: Partial<LaunchDeps> } = {},
 ): TestContext {
   const env = { OPENTUNE_MCP_DISCOVERY_DIR: dir, ...options.env };
   const probe = fakeProbe();
   const logLines: string[] = [];
-  const now = options.now ?? Date.now();
+  const { now } = options;
   return {
     instances: new Instances({
       env,
@@ -74,7 +91,8 @@ export function testContext(
     probe,
     logger: createLogger({ sink: (line) => logLines.push(line), level: 'debug' }),
     logLines,
-    now: () => now,
+    now: now === undefined ? () => Date.now() : () => now,
+    launch: { ...TEST_LAUNCH, ...options.launch },
   };
 }
 

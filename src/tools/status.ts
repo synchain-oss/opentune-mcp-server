@@ -3,8 +3,9 @@
 
 // opentune_get_status: one state for "can this server use OpenTune now", with the next step.
 // The checks run from the outside in: the runtime (WSL), the discovery directory and the
-// instances in it (session.hello and session.info), OpenTune processes without a discovery file,
-// and finally the configured executable. Starting OpenTune is not this tool's job.
+// instances in it (session.hello and session.info), OpenTune processes that opentune_launch started
+// and that have not announced themselves yet, other OpenTune processes without a discovery file,
+// and finally the configured executable. Starting OpenTune is opentune_launch's job.
 
 import { z } from 'zod';
 
@@ -12,6 +13,7 @@ import type { DiscoveryEntry } from '../discovery/file.js';
 import { troubleshootingUrl } from '../errors/next-step.js';
 import { OtcpError, type NextStep } from '../errors/tool-error.js';
 import { checkLaunchConfig, isWsl, readOsRelease } from '../launch/config.js';
+import { launchDir, liveRecords } from '../launch/records.js';
 import type { Json } from '../otcp/client.js';
 import { instanceSummary, selectInstance } from '../otcp/instances.js';
 import { defineTool, type Outcome, type ToolContext } from './registry.js';
@@ -61,13 +63,17 @@ export const STATUS_TEXT: Readonly<Record<StatusState, { readonly summary: strin
   RUNNING_WITHOUT_API: {
     summary: 'OpenTune is running without the control API.',
     step: user(
-      'Ask the user to save their work, quit OpenTune and start a build with the control API using the --control-api ' +
-        'option. Never close OpenTune yourself.',
+      'Ask the user to save their work and quit OpenTune, then start it again with opentune_launch (or the user ' +
+        'starts a build with the control API using the --control-api option). Never close OpenTune yourself.',
     ),
   },
   NOT_RUNNING: {
     summary: 'OpenTune is not running.',
-    step: user('Ask the user to start OpenTune with the --control-api option, then check the status again.'),
+    step: {
+      actor: 'agent',
+      tool: 'opentune_launch',
+      message: 'Start OpenTune with opentune_launch; it waits until OpenTune is ready.',
+    },
   },
   NO_API_BUILD: {
     summary: 'The configured OpenTune build has no control API.',
@@ -96,6 +102,18 @@ export const STATUS_REASON_STEPS: Readonly<Record<string, NextStep>> = {
   ),
   'NOT_READY/instance_unverified': user(`The instance could not be verified. ${RESTART}`),
   'NOT_READY/auth_failed': user(`OpenTune refused this server's credentials. ${RESTART}`),
+  'NOT_READY/launch_timeout': later(
+    'OpenTune was started but its control API is not available yet. Wait a few seconds, then check the status ' +
+      'again; do not start it again.',
+  ),
+  'NOT_READY/launch_unverified': user(
+    'An OpenTune instance announced itself, but not with the launch nonce of the process this server started, so it ' +
+      'is not used. Ask the user which OpenTune windows are open; do not start OpenTune again.',
+  ),
+  'NOT_RUNNING/launch_exited': user(
+    'OpenTune exited right after it was started. Ask the user to start it by hand to see what happens, or to run ' +
+      '"opentune-mcp doctor".',
+  ),
   'NOT_INSTALLED/not_absolute': user(
     'OPENTUNE_MCP_OPENTUNE_PATH must be an absolute path. Ask the user to correct it.',
   ),
@@ -164,7 +182,8 @@ async function instanceStatus(ctx: ToolContext, entry: DiscoveryEntry): Promise<
   }
 }
 
-function status(state: StatusState, reason: string | null, extra: Json = {}, summary?: string): Outcome {
+/** A status result: the state's summary (or `summary`), the next step for the state and reason, the link. */
+export function status(state: StatusState, reason: string | null, extra: Json = {}, summary?: string): Outcome {
   const text = STATUS_TEXT[state];
   const nextStep = (reason === null ? undefined : STATUS_REASON_STEPS[`${state}/${reason}`]) ?? text.step;
   return {
@@ -212,8 +231,18 @@ export async function getStatus(ctx: ToolContext, instanceId: string | undefined
     return status(state, reason, { ...extra, instances }, summary);
   }
 
+  // Processes opentune_launch started: still within the launch wait (STARTING), or past it and
+  // still without a discovery file, which counts as running without the control API.
+  const launched = await liveRecords(launchDir(scan.dir), {
+    probe: ctx.probe,
+    now: ctx.now(),
+    waitMs: ctx.launch.waitMs,
+    cleanup: false,
+  });
+  const pending = launched.filter((r) => r.state === 'pending').map((r) => ({ pid: r.record.pid }));
+  if (pending.length > 0) return status('STARTING', 'launch_pending', { ...extra, processes: pending });
   const listed = await ctx.probe.listOpenTune();
-  const pids = listed ?? [];
+  const pids = [...new Set([...(listed ?? []), ...launched.map((r) => r.record.pid)])];
   if (listed === null) {
     // The states below assume no OpenTune runs; say that this could not be checked.
     extra.processes = null;

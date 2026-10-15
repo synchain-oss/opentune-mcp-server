@@ -37,6 +37,7 @@ import {
   checkPackageJson,
   commitCheckScope,
   compareHeadingOutlines,
+  contractVectorsVerdict,
   findPullRequestTarget,
   findStdoutConsoleCalls,
   isContractChangeRecord,
@@ -1174,6 +1175,83 @@ describe('addedInHistory: audio added by one commit and removed by the next', ()
         blobHead: () => Promise.resolve(new Uint8Array()),
       }),
     ).rejects.toThrow(/ghost\.dat/);
+  });
+});
+
+describe('addedInHistory: commit IDs of any hex length', () => {
+  it('splits a 64-hex (SHA-256) commit ID from its path list', async () => {
+    const sha256 = 'a'.repeat(64);
+    const blob = 'b'.repeat(40);
+    const git = (args: string[]): string => {
+      if (args.includes('--format=')) return 'take64.dat\0';
+      if (args.includes('--format=%x01%H')) return `\x01${sha256}\ntake64.dat\0`;
+      if (args[0] === 'ls-tree') return `100644 blob ${blob}\ttake64.dat\0`;
+      throw new Error(`unexpected git call: ${args.join(' ')}`);
+    };
+    const specs: string[] = [];
+    const found = await addedInHistory('origin/feature/v1..HEAD', {
+      git,
+      headPaths: [],
+      blobHead: (spec) => {
+        specs.push(spec);
+        return Promise.resolve(new Uint8Array([1]));
+      },
+    });
+    expect(specs).toEqual([`${sha256}:take64.dat`]);
+    expect(found).toEqual([{ path: 'take64.dat', head: new Uint8Array([1]) }]);
+  });
+});
+
+describe('addedInHistory: a malformed log record', () => {
+  it('fails instead of building a spec from a truncated commit ID', async () => {
+    // A one-digit-run ID is not a commit ID git writes (40 or 64 hex digits); it must not be read as one.
+    const git = (args: string[]): string => {
+      if (args.includes('--format=')) return 'x.dat\0';
+      if (args.includes('--format=%x01%H')) return '\x01zzzz\nx.dat\0';
+      throw new Error(`unexpected git call: ${args.join(' ')}`);
+    };
+    await expect(
+      addedInHistory('origin/feature/v1..HEAD', {
+        git,
+        headPaths: [],
+        blobHead: () => Promise.resolve(new Uint8Array()),
+      }),
+    ).rejects.toThrow(/malformed log record/);
+  });
+});
+
+describe('contractVectorsVerdict: the contract vectors row', () => {
+  const summary = (over: Partial<Record<string, unknown>> = {}) => ({
+    total: 10,
+    pass: 9,
+    fail: 0,
+    skip: 1,
+    failed: [] as string[],
+    skipReasons: { 'method not implemented by the mock': 1 },
+    required: { total: 9, pass: 9 },
+    ...over,
+  });
+
+  it('passes with a concise note when every required vector passed', () => {
+    const v = contractVectorsVerdict(0, summary());
+    expect(v.result).toBe('PASS');
+    expect(v.note).toBe('10 vectors: 9 PASS, 0 FAIL, 1 SKIP (method not implemented by the mock: 1)');
+  });
+
+  it('fails and says why when a required vector was skipped, even with no FAIL', () => {
+    const v = contractVectorsVerdict(0, summary({ pass: 8, skip: 2, required: { total: 9, pass: 8 } }));
+    expect(v.result).toBe('FAIL');
+    expect(v.note).toMatch(/; 1 vector\(s\) of capabilities the mock reports did not pass$/);
+  });
+
+  it('names the failed vectors on a FAIL', () => {
+    const v = contractVectorsVerdict(
+      1,
+      summary({ fail: 1, failed: ['op.edit.bad'], pass: 8, required: { total: 9, pass: 8 } }),
+    );
+    expect(v.result).toBe('FAIL');
+    expect(v.note).toContain('1 FAIL (op.edit.bad)');
+    expect(v.note).toContain('1 vector(s) of capabilities the mock reports did not pass');
   });
 });
 

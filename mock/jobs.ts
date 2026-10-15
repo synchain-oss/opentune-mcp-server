@@ -254,7 +254,9 @@ export class JobStore {
       step = record.driver(control);
     } catch (error) {
       const detail = error instanceof Error ? error.message : 'unexpected failure';
-      step = { done: { state: 'failed', error: { kind: 'INTERNAL', detail: `the job failed: ${detail}` } } };
+      step = {
+        done: { state: 'failed', error: { kind: 'INTERNAL', detail: `the ${record.view.kind} job failed: ${detail}` } },
+      };
     }
     if ('next' in step) this.#schedule(record, step.next);
     else this.#finish(record, step.done);

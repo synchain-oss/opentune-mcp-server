@@ -1,0 +1,158 @@
+{
+  "description": "A change that no request can restore: revert is null and the warning IRREVERSIBLE is carried.",
+  "tool": "opentune_edit_tracks",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [
+      {
+        "entity": "track",
+        "ref": {
+          "trackId": 2
+        },
+        "label": null
+      }
+    ],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a1",
+        "after": "a2"
+      },
+      "trackState": {
+        "before": "h1",
+        "after": "h2"
+      },
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": null,
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "trackId": 2
+        },
+        "data": null
+      }
+    ],
+    "job": null
+  },
+  "rendered": {
+    "summary": "opentune_edit_tracks: removed 1 track (destructive; not undoable: OpenTune has no undo for this; cannot be restored by any request). Warnings: IRREVERSIBLE.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [
+      {
+        "entity": "track",
+        "ref": {
+          "trackId": 2
+        },
+        "label": null
+      }
+    ],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a1",
+        "after": "a2"
+      },
+      "trackState": {
+        "before": "h1",
+        "after": "h2"
+      },
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": null,
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "trackId": 2
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "removed track",
+        "target": "track 2",
+        "visibleNow": false,
+        "howToSee": "No editor window is open."
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "removed",
+          "entity": "track",
+          "label": null,
+          "ref": {
+            "trackId": 2
+          }
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "trackId": 2
+        },
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
+        "revert": null
+      }
+    ]
+  }
+}

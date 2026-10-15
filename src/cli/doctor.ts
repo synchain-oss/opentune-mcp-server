@@ -13,6 +13,7 @@ import { resolveDiscoveryDir } from '../discovery/dir.js';
 import { DISCOVERY_FILE_RE, parseDiscoveryFile, readDiscoveryBytes } from '../discovery/file.js';
 import { troubleshootingUrl } from '../errors/next-step.js';
 import { OPENTUNE_PATH_ENV, checkLaunchConfig, isWsl } from '../launch/config.js';
+import type { InstallDetector } from '../launch/install.js';
 import { SERVER_NAME, VERSION } from '../version.js';
 
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'not_implemented';
@@ -26,7 +27,6 @@ export interface CheckResult {
 
 /** Checks that are registered but not implemented yet. */
 const PLANNED = [
-  'OT_NO_OFFICIAL_INSTALL',
   'OT_VERSION_UNSUPPORTED',
   'OT_MODELS_MISSING',
   'OT_SIDECAR_INCOMPLETE',
@@ -39,6 +39,7 @@ export const DOCTOR_CHECK_IDS: readonly string[] = [
   'OT_WSL_RUNTIME',
   'OT_DISCOVERY_DIR',
   'OT_OPENTUNE_PATH',
+  'OT_NO_OFFICIAL_INSTALL',
   ...PLANNED,
 ];
 
@@ -50,6 +51,8 @@ export interface DoctorDeps {
   readonly nodeVersion: string;
   /** Kernel release on Linux, for the WSL check. */
   readonly osRelease: string | null;
+  /** Finds the official OpenTune installation (read-only). */
+  readonly officialInstall: InstallDetector;
 }
 
 const MIN_NODE_MAJOR = 22;
@@ -133,6 +136,31 @@ async function opentunePathCheck(deps: DoctorDeps): Promise<CheckResult> {
   }
 }
 
+async function officialInstallCheck(deps: DoctorDeps): Promise<CheckResult> {
+  const id = 'OT_NO_OFFICIAL_INSTALL';
+  if (deps.platform !== 'win32') {
+    return result(id, 'warn', 'Not checked: this check looks for an official OpenTune installation on Windows only.');
+  }
+  const install = await deps.officialInstall().catch(() => null);
+  if (install === null) {
+    return result(
+      id,
+      'warn',
+      'No official OpenTune installation was found (uninstall entries in the registry, usual install folders). This ' +
+        'is not an error; an OpenTune started by this server then runs in the folder of its executable.',
+    );
+  }
+  const version = install.version === null ? 'version unknown' : `version ${JSON.stringify(install.version)}`;
+  const via = install.source === 'registry' ? 'uninstall entry' : 'install folder';
+  return result(
+    id,
+    'pass',
+    `Official OpenTune installation in ${install.dir} (${version}, found by its ${via}). An OpenTune started by ` +
+      'this server uses this folder as its working directory, where a build without a models folder of its own ' +
+      'looks for the installed models.',
+  );
+}
+
 export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
   const major = Number(/^v(\d+)\./.exec(deps.nodeVersion)?.[1]);
   const node =
@@ -150,7 +178,13 @@ export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
         'Running inside WSL, which cannot reach OpenTune on Windows; run this server with Windows Node.js.',
       )
     : result('OT_WSL_RUNTIME', 'pass', 'Not running inside WSL.');
-  const checks = [node, wsl, await discoveryCheck(deps), await opentunePathCheck(deps)];
+  const checks = [
+    node,
+    wsl,
+    await discoveryCheck(deps),
+    await opentunePathCheck(deps),
+    await officialInstallCheck(deps),
+  ];
   for (const id of PLANNED) checks.push(result(id, 'not_implemented', 'This check is not implemented yet.'));
   return checks.map((c) => ({ ...c, message: redactHome(c.message, deps.home, deps.platform) }));
 }

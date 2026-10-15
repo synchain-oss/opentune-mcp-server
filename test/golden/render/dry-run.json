@@ -1,0 +1,242 @@
+{
+  "description": "A prediction: nothing applied, nothing to undo, the summary says so first.",
+  "tool": "opentune_edit_notes",
+  "input": {
+    "applied": false,
+    "noOp": false,
+    "dryRun": true,
+    "changes": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r10"
+          }
+        },
+        "label": "#0 C4 0.00-0.10s",
+        "fields": {
+          "targetMidi": {
+            "before": 60,
+            "after": 60.25,
+            "unit": "midi"
+          },
+          "offsetCents": {
+            "before": 0,
+            "after": 25,
+            "unit": "cents"
+          }
+        }
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r10"
+          }
+        },
+        "label": "#1 C#4 0.15-0.25s",
+        "fields": {
+          "targetMidi": {
+            "before": 61,
+            "after": 61.25,
+            "unit": "midi"
+          },
+          "offsetCents": {
+            "before": 0,
+            "after": 25,
+            "unit": "cents"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r10",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": null,
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "omittedChangeCount": 0
+  },
+  "rendered": {
+    "summary": "opentune_edit_notes: dry run, nothing was changed; would change 2 notes.",
+    "applied": false,
+    "noOp": false,
+    "dryRun": true,
+    "changes": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r10"
+          }
+        },
+        "label": "#0 C4 0.00-0.10s",
+        "fields": {
+          "targetMidi": {
+            "before": 60,
+            "after": 60.25,
+            "unit": "midi"
+          },
+          "offsetCents": {
+            "before": 0,
+            "after": 25,
+            "unit": "cents"
+          }
+        }
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r10"
+          }
+        },
+        "label": "#1 C#4 0.15-0.25s",
+        "fields": {
+          "targetMidi": {
+            "before": 61,
+            "after": 61.25,
+            "unit": "midi"
+          },
+          "offsetCents": {
+            "before": 0,
+            "after": 25,
+            "unit": "cents"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r10",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": null,
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "omittedChangeCount": 0,
+    "uiEffects": [],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "note",
+          "label": "#0 C4 0.00-0.10s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 0,
+              "atRevision": "r10"
+            }
+          },
+          "fields": [
+            {
+              "field": "targetMidi",
+              "before": 60,
+              "after": 60.25,
+              "unit": "midi"
+            },
+            {
+              "field": "offsetCents",
+              "before": 0,
+              "after": 25,
+              "unit": "cents"
+            }
+          ]
+        },
+        {
+          "kind": "changed",
+          "entity": "note",
+          "label": "#1 C#4 0.15-0.25s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 1,
+              "atRevision": "r10"
+            }
+          },
+          "fields": [
+            {
+              "field": "targetMidi",
+              "before": 61,
+              "after": 61.25,
+              "unit": "midi"
+            },
+            {
+              "field": "offsetCents",
+              "before": 0,
+              "after": 25,
+              "unit": "cents"
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": []
+  }
+}

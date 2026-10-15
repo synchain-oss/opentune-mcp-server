@@ -51,6 +51,7 @@ import {
   checkPackageJson,
   checkPackList,
   compareHeadingOutlines,
+  contractVectorsVerdict,
   findPullRequestTarget,
   findStdoutConsoleCalls,
   parseGitLog,
@@ -479,15 +480,7 @@ async function contractVectors() {
   const summary = JSON.parse(await fs.readFile(summaryFile, 'utf8').catch(() => 'null'));
   if (summary === null)
     return { result: 'FAIL', note: `npm run test:contract exited with ${status} and wrote no summary` };
-  const skips = Object.entries(summary.skipReasons)
-    .map(([reason, n]) => `${reason}: ${n}`)
-    .join('; ');
-  const note =
-    `${summary.total} vectors: ${summary.pass} PASS (capabilities the mock reports: ${summary.required.pass} of ` +
-    `${summary.required.total}), ${summary.fail} FAIL${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ` +
-    `${summary.skip} SKIP${skips ? ` (${skips})` : ''}`;
-  const ok = status === 0 && summary.fail === 0 && summary.required.pass === summary.required.total;
-  return { result: ok ? 'PASS' : 'FAIL', note };
+  return contractVectorsVerdict(status, summary);
 }
 
 async function contractVectorsExe() {

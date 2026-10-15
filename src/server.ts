@@ -8,6 +8,7 @@ import { serveStdio, type ServeStdioOptions, type StdioServerHandle } from '@mod
 
 import { systemProbe } from './discovery/process.js';
 import { INSTRUCTIONS } from './instructions.js';
+import { systemLaunchDeps } from './launch/start.js';
 import { createLogger, type Logger } from './log.js';
 import { Instances } from './otcp/instances.js';
 import { TOOLS } from './tools/index.js';
@@ -24,6 +25,7 @@ export function createContext(logger: Logger, env: NodeJS.ProcessEnv = process.e
     probe,
     logger,
     now: () => Date.now(),
+    launch: systemLaunchDeps(env, process.platform),
   };
 }
 

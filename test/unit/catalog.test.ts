@@ -19,6 +19,7 @@ import {
   goldenToolsText,
   sizeGate,
 } from '../../scripts/lib/catalog.mjs';
+import { goldenTools } from '../../scripts/mcpb.mjs';
 import { DOCTOR_CHECK_IDS } from '../../src/cli/doctor.js';
 import { KNOWN_ERROR_KINDS } from '../../src/errors/next-step.js';
 import { INSTRUCTIONS } from '../../src/instructions.js';
@@ -71,6 +72,14 @@ describe('tool catalog', () => {
   it('matches the golden tools/list snapshot', () => {
     expect(tools.map((t) => t.name)).toEqual(TOOLS.map((t) => t.name));
     expectFile(GOLDEN_TOOLS, goldenToolsText(tools));
+  });
+
+  // catalog:update re-syncs the manifest after this run rewrites the snapshot, so the check is skipped then.
+  it.skipIf(UPDATE)('keeps the MCPB manifest tools in step with the golden snapshot', async () => {
+    const manifest = JSON.parse(read('mcpb/manifest.json')) as { tools?: unknown };
+    expect(manifest.tools, 'mcpb/manifest.json is out of date; run npm run catalog:update').toEqual(
+      await goldenTools(),
+    );
   });
 
   it('sends the instructions in initialize and server/discover, as in the golden snapshot', () => {

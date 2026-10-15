@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 import { cancelJobTool, getJobTool } from './jobs.js';
+import { launchTool } from './launch.js';
 import { getNotesTool } from './notes.js';
 import { getProjectTool } from './project.js';
 import type { ToolDefinition } from './registry.js';
@@ -14,4 +15,5 @@ export const TOOLS: readonly ToolDefinition[] = [
   getNotesTool,
   getJobTool,
   cancelJobTool,
+  launchTool,
 ];

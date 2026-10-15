@@ -1,0 +1,302 @@
+{
+  "description": "A key change on the selected clip in the piano roll: the transport bar follows at once.",
+  "tool": "opentune_set_clip",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "key",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": null,
+        "fields": {
+          "root": {
+            "before": 9,
+            "after": 0,
+            "unit": null
+          },
+          "scale": {
+            "before": "minor",
+            "after": "major",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "key": {
+              "before": "k1",
+              "after": "k2"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "content.setKey",
+        "params": {
+          "contentId": "c:01234567:0:1",
+          "key": {
+            "root": 9,
+            "scale": "minor"
+          },
+          "expectedKeyRevision": "k2"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 1
+    },
+    "sideEffects": {
+      "uiScaleChanged": {
+        "revert": {
+          "method": "content.setKey",
+          "params": {
+            "contentId": "c:01234567:0:1",
+            "key": {
+              "root": 9,
+              "scale": "minor"
+            },
+            "expectedKeyRevision": "k2"
+          }
+        }
+      }
+    },
+    "warnings": [],
+    "job": null
+  },
+  "rendered": {
+    "summary": "opentune_set_clip: changed 1 key (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with content.setKey, see the revert line; side effects: the scale shown in the transport bar changed).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "key",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": null,
+        "fields": {
+          "root": {
+            "before": 9,
+            "after": 0,
+            "unit": null
+          },
+          "scale": {
+            "before": "minor",
+            "after": "major",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "key": {
+              "before": "k1",
+              "after": "k2"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "content.setKey",
+        "params": {
+          "contentId": "c:01234567:0:1",
+          "key": {
+            "root": 9,
+            "scale": "minor"
+          },
+          "expectedKeyRevision": "k2"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 1
+    },
+    "sideEffects": {
+      "uiScaleChanged": {
+        "revert": {
+          "method": "content.setKey",
+          "params": {
+            "contentId": "c:01234567:0:1",
+            "key": {
+              "root": 9,
+              "scale": "minor"
+            },
+            "expectedKeyRevision": "k2"
+          }
+        }
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "transport bar key selector",
+        "effect": "changed key",
+        "target": "c:01234567:0:1",
+        "visibleNow": true
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      },
+      {
+        "surface": "transport bar",
+        "effect": "scale changed",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "key",
+          "label": null,
+          "ref": {
+            "contentId": "c:01234567:0:1"
+          },
+          "fields": [
+            {
+              "field": "root",
+              "before": 9,
+              "after": 0,
+              "unit": null
+            },
+            {
+              "field": "scale",
+              "before": "minor",
+              "after": "major",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "uiScaleChanged",
+        "text": "The scale shown in the transport bar changed.",
+        "details": {
+          "revert": {
+            "method": "content.setKey",
+            "params": {
+              "contentId": "c:01234567:0:1",
+              "key": {
+                "root": 9,
+                "scale": "minor"
+              },
+              "expectedKeyRevision": "k2"
+            }
+          }
+        },
+        "revert": {
+          "method": "content.setKey",
+          "params": {
+            "contentId": "c:01234567:0:1",
+            "key": {
+              "root": 9,
+              "scale": "minor"
+            },
+            "expectedKeyRevision": "k2"
+          }
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Restore with content.setKey and these params, sent unchanged. (reverts side effect uiScaleChanged)",
+        "revert": {
+          "method": "content.setKey",
+          "params": {
+            "contentId": "c:01234567:0:1",
+            "key": {
+              "root": 9,
+              "scale": "minor"
+            },
+            "expectedKeyRevision": "k2"
+          }
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore with content.setKey and these params, sent unchanged.",
+        "revert": {
+          "method": "content.setKey",
+          "params": {
+            "contentId": "c:01234567:0:1",
+            "key": {
+              "root": 9,
+              "scale": "minor"
+            },
+            "expectedKeyRevision": "k2"
+          }
+        }
+      }
+    ]
+  }
+}
