@@ -33,6 +33,11 @@ const TOOL = 'opentune_open_audio';
 const MAX_ITEMS = 64;
 /** Where the idempotency key of import.start starts; printable ASCII, at most 128 characters. */
 const KEY_PREFIX = 'otmcp-import-';
+/**
+ * Allowance for the gap between OpenTune's clock and this process's clock (the two are read separately, and
+ * the OpenTune side can be coarse). A job created by this call can look up to this much older than the call.
+ */
+const CLOCK_SKEW_MS = 2000;
 
 export type Layout = 'single' | 'sequential' | 'separate_tracks';
 const OTCP_LAYOUT: Readonly<Record<Layout, string>> = {
@@ -212,9 +217,13 @@ export async function openAudio(ctx: ToolContext, args: OpenAudioArgs): Promise<
         },
       };
     }
-    // OpenTune answers a repeated idempotency key with the job it kept, which was created before this call.
+    // OpenTune answers a repeated idempotency key with the job it kept, which is already finished when start
+    // returns and was created before this call. A job this call created is queued or running at that point,
+    // and the clock check allows for the skew between the two clocks.
     const created = job.createdAtMs;
-    const reused = args.allow_duplicate !== true && typeof created === 'number' && created < before;
+    const endedAtStart = isTerminal(isObject(started.job) ? started.job : null);
+    const reused =
+      args.allow_duplicate !== true && endedAtStart && typeof created === 'number' && created < before - CLOCK_SKEW_MS;
     const outcome = finished(job.result, reused);
     return outcome.ok ? { ok: true, body: { ...outcome.body, job: jobRef(job) } } : outcome;
   });

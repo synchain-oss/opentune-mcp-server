@@ -38,10 +38,10 @@ afterEach(async () => {
 async function withMock(options: { manual?: boolean; instanceId?: string } = {}) {
   const t = tempDir();
   cleanup.push(t.remove);
-  const clock = options.manual === true ? new ManualClock() : undefined;
+  const clock = new ManualClock();
   const mock = await startMock({
     discoveryDir: t.dir,
-    ...(clock ? { clock } : {}),
+    ...(options.manual === true ? { clock } : {}),
     ...(options.instanceId === undefined ? {} : { instanceId: options.instanceId }),
   });
   cleanup.push(() => mock.stop());
@@ -92,6 +92,11 @@ async function ticking<T>(clock: ManualClock | undefined, work: Promise<T>): Pro
   }
 }
 
+/** The context with its time taken from the manual clock, so that the tool and the mock agree on time. */
+function withClock(ctx: ToolContext, clock: ManualClock): ToolContext {
+  return { ...ctx, now: () => clock.now() };
+}
+
 describe('opentune_open_audio', () => {
   it('imports one file given with quotes, and reports it as data, not in the summary', async () => {
     const { ctx, audio } = await withMock();
@@ -132,23 +137,38 @@ describe('opentune_open_audio', () => {
   });
 
   it('does not import the same files to the same target twice, unless allowed', async () => {
-    const { ctx, audio } = await withMock();
+    const { ctx: base, audio, clock } = await withMock({ manual: true });
+    const ctx = withClock(base, clock);
     const file = audio('a.wav');
-    const first = body(await open(ctx, { path: file }));
+    const first = body(await ticking(clock, open(ctx, { path: file })));
     expect(first.summary).not.toMatch(/earlier import/);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    const again = body(await open(ctx, { path: file }));
+    // The first job was created well before this call, and it has ended.
+    clock.advance(5000);
+    const again = body(await ticking(clock, open(ctx, { path: file })));
     expect((again.job as { jobId: string }).jobId).toBe((first.job as { jobId: string }).jobId);
     // The old job comes back: the first sentence says so, whatever the project holds now.
     expect(again.summary).toMatch(/^opentune_open_audio: This is the result of an earlier import of the same files/);
     expect(again.summary).toMatch(/allow_duplicate: true/);
     expect(await placements(ctx)).toHaveLength(1);
     // Another target is another import.
-    body(await open(ctx, { path: file, track: 3 }));
+    body(await ticking(clock, open(ctx, { path: file, track: 3 })));
     expect(await placements(ctx)).toHaveLength(2);
-    const fresh = body(await open(ctx, { path: file, allow_duplicate: true }));
+    const fresh = body(await ticking(clock, open(ctx, { path: file, allow_duplicate: true })));
     expect(fresh.summary).not.toMatch(/earlier import/);
     expect(await placements(ctx)).toHaveLength(3);
+  });
+
+  it('does not take a new import for an earlier one when the two clocks differ by a few milliseconds', async () => {
+    const { ctx: base, audio, clock } = await withMock({ manual: true });
+    // This process reads its clock 5 ms after OpenTune stamped the new job, so the job looks older than the call.
+    const ctx = { ...base, now: () => clock.now() + 5 };
+    const running = body(await open(ctx, { path: audio('a.wav'), wait_seconds: 0 }));
+    expect(['queued', 'running']).toContain((running.job as { state: string }).state);
+    expect(running.summary).not.toMatch(/earlier import/);
+    // The same skew with a job that has already ended: the clock check alone must not call it an earlier import.
+    const ended = body(await ticking(clock, open(ctx, { path: audio('b.wav') })));
+    expect(ended.job).toMatchObject({ state: 'succeeded' });
+    expect(ended.summary).not.toMatch(/earlier import/);
   });
 
   it('derives the key from the files and the target only', () => {
