@@ -543,11 +543,10 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false, 
  *     may include contributors' and Dependabot's merged commits.
  * - A push checks the commits it added (`before`..HEAD). On dev they arrived through merged pull
  *   requests, so contributors and Dependabot are allowed; so is a fast-forward push to a feature/*
- *   trunk, but a push that creates a feature/* branch or rewrites it takes project identities
- *   only, since nothing gated those commits. A push
- *   that creates the branch, or that rewrote it
- *   so that `before` is no longer in the clone (`beforeAvailable` false), is compared with the
- *   default branch instead; a rewritten default branch has nothing to compare with and is an error.
+ *   trunk. A push that creates a feature/* branch or rewrites it takes project identities only,
+ *   since nothing gated those commits, and is compared with the default branch instead (the
+ *   rewrite case is `beforeAvailable` false: the previous tip is no longer in the clone). A
+ *   rewritten default branch has nothing to compare with and is an error.
  * @param {{ event: string, baseRef?: string, before?: string, beforeAvailable?: boolean,
  *   refName?: string, defaultBranch?: string, repo: string, headRepo?: string, headRef?: string,
  *   prAuthor?: string }} context GitHub event context; `refName` is the pushed branch
@@ -570,13 +569,16 @@ export function commitCheckScope({
     // its history: no pull request gated those commits. An ordinary fast-forward push to a
     // feature/* trunk comes from a merged pull request or from merging dev back into the trunk,
     // and dev legitimately carries Dependabot and contributors' squash commits, so it keeps the
-    // relaxed rules.
+    // relaxed rules. This relies on the premise that feature/** only receives commits through
+    // merged pull requests and never through direct pushes; the repository ruleset that blocks
+    // direct pushes to feature/** and the local pre-push guard enforce it. Known boundary: a new
+    // feature/* branch is compared with origin/<default branch>, so commits that another feature
+    // trunk has not yet merged into dev (for example a contributor's squash commit) are included.
     const feature = typeof refName === 'string' && refName.startsWith('feature/');
-    const isCreate = !before || /^0+$/.test(before);
-    const strict = feature && (isCreate || !beforeAvailable);
+    const creates = !before || /^0+$/.test(before);
+    const strict = feature && (creates || !beforeAvailable);
     const allowExternalAuthors = !strict;
     const allowDependabot = !strict;
-    const creates = !before || /^0+$/.test(before);
     if (!creates) {
       if (!/^[0-9a-f]{40}$/.test(before))
         throw new Error(`push "before" is not a commit SHA: ${JSON.stringify(before)}`);
@@ -848,6 +850,19 @@ export async function addedInHistory(range, { git, headPaths, blobHead }) {
   const paths = [
     ...new Set(git(['log', '--diff-filter=A', '--name-only', '-z', '--format=', range]).split('\0').filter(Boolean)),
   ];
+  // One log over the whole range with no pathspec. A pathspec makes git simplify the history per
+  // path: a side branch that adds a file and later removes it is then pruned when a merge commit
+  // brings it in, because that merge is TREESAME to its first parent for the path.
+  const addedBy = new Map();
+  for (const record of git(['log', '--diff-filter=A', '--name-only', '-z', '--format=%x01%H', range])
+    .split('\x01')
+    .slice(1)) {
+    const commit = record.slice(0, 40);
+    for (const name of record.slice(40).split('\0')) {
+      const path = name.replace(/^\n+|\n+$/g, '');
+      if (path) addedBy.set(path, [...(addedBy.get(path) ?? []), commit]);
+    }
+  }
   /** Type and object of `path` in `rev`, or null when it is not there. */
   const entry = (rev, path) => {
     const line = git(['ls-tree', '-z', rev, '--', path]).split('\0').find(Boolean);
@@ -856,10 +871,11 @@ export async function addedInHistory(range, { git, headPaths, blobHead }) {
   };
   const found = [];
   for (const path of paths) {
+    // Every listed path must have an adding commit; a silent skip here would let a recording through.
+    const commits = addedBy.get(path);
+    if (!commits?.length)
+      throw new Error(`${path} is listed as added in ${range}, but no commit in it is recorded as adding it`);
     const inHead = present.has(path) ? entry('HEAD', path) : null;
-    const commits = git(['log', '--diff-filter=A', '--format=%H', range, '--', `:(literal)${path}`])
-      .split('\n')
-      .filter(Boolean);
     for (const commit of commits) {
       const added = entry(commit, path);
       // Only blobs have bytes to read; a submodule (gitlink) path has none.

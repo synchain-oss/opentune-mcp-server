@@ -1144,6 +1144,37 @@ describe('addedInHistory: audio added by one commit and removed by the next', ()
     const dropped = commitTree({ 'README.md': readme }, fixture);
     expect(checkNoNewAudio(await scan(dropped))).toEqual([]);
   });
+
+  it('reports a recording that a side branch added and removed when a merge commit brings the branch in', async () => {
+    // The merge is TREESAME to its first parent for take4.dat (absent in both), so a path-limited
+    // log would follow only the first parent and miss the side branch's adding commit.
+    const sideAdd = commitTree({ 'README.md': readme, 'take4.dat': wav }, base);
+    const sideGone = commitTree({ 'README.md': readme }, sideAdd);
+    const mainNote = Buffer.from('# notes, main\n');
+    const mainNext = commitTree({ 'README.md': mainNote }, base);
+    const merged = text([
+      'commit-tree',
+      treeOf({ 'README.md': mainNote }),
+      '-m',
+      'merge: side',
+      '-p',
+      mainNext,
+      '-p',
+      sideGone,
+    ]);
+    expect((await scan(merged)).map((f) => f.path)).toEqual(['take4.dat']);
+  });
+
+  it('fails instead of skipping a listed path that no adding commit accounts for', async () => {
+    const inconsistent = (args: string[]) => (args.includes('--format=') ? 'ghost.dat\0' : '');
+    await expect(
+      addedInHistory(`${base}..HEAD`, {
+        git: inconsistent,
+        headPaths: [],
+        blobHead: () => Promise.resolve(new Uint8Array()),
+      }),
+    ).rejects.toThrow(/ghost\.dat/);
+  });
 });
 
 describe('gates.mjs --no-skip', () => {
