@@ -59,6 +59,12 @@ interface Clamped {
  * handles stay. Pass one limits each moved handle to the room between the nearest handles that do
  * not move (or the ends of the content); pass two keeps the moved handles apart from each other,
  * first from the start of the grid forward and then from the end back.
+ *
+ * Every move keeps the spacing, so between two handles that stay there is always room for the
+ * handles between them. Only a grid that was set up closer than the spacing (a `given` time grid)
+ * can lack that room: the backward pass then packs the moved handles against the upper end of
+ * their room, and the first ones end up closer than the spacing to the handle or end before them,
+ * possibly past it. The mock accepts that and never refuses a move for lack of room.
  */
 function clampMoves(content: ContentRec, requests: ReadonlyMap<string, number>) {
   interface Slot {
@@ -197,9 +203,20 @@ function seededHandles(content: ContentRec): HandleRec[] {
   }));
 }
 
-/** The work of the timeGridSeed job: it runs after the call has answered and commits the handles. */
+/**
+ * The work of the timeGridSeed job: it runs after the call has answered and commits the handles.
+ * What the call checked can have changed by then, so the job checks again in the same order: the
+ * content still exists, the UI is not busy, the analysis is ready. If one fails, nothing is written
+ * and the job fails; its error is INTERNAL (the only kind besides CANCELLED that the method lists
+ * for its jobs) and its detail names the check, as in "NOT_FOUND(unknown_handle): ...".
+ */
 function seedGrid(context: MethodContext, content: ContentRec): Record<string, unknown> {
   const { world } = context;
+  if (world.contents.get(content.objectId) !== content) {
+    throw refuse('NOT_FOUND', 'unknown_handle', 'the content was removed before the seed job ran');
+  }
+  checkNotBusy(context);
+  requireReady(content);
   const handles = content.handles.length === 0 ? seededHandles(content) : [];
   if (handles.length === 0) return noOpResult(context, content, { clamped: [] });
   const done = commit(world, content, {

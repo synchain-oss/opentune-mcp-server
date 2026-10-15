@@ -9,10 +9,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
 import { editHandlers } from '../../mock/edit.js';
+import { JOB_RETENTION_COUNT, JobStore } from '../../mock/jobs.js';
 import { World } from '../../mock/model.js';
 import { SCALES, nearestInScale } from '../../mock/music.js';
-import { MIN_HANDLE_SPACING_SEC } from '../../mock/timing.js';
+import { MIN_HANDLE_SPACING_SEC, timingHandlers } from '../../mock/timing.js';
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
+import { otcpSpec } from '../support/otcp-spec.js';
 
 const sessions = new Sessions();
 afterEach(async () => {
@@ -433,6 +435,180 @@ describe('time grid', () => {
     });
     expect(result).toMatchObject({ applied: false, dryRun: true, clamped: [] });
     expect(session.mock.snapshot()).toEqual(before);
+  });
+});
+
+describe('undo entries next to writes without one', () => {
+  const revisionOf = async (session: TestSession, contentId: string) =>
+    (field((await session.ok('content.getDetails', { contentId })).asOf, 'contents') as { revision: string }[])[0]
+      ?.revision;
+
+  it('put back only what their own step changed', async () => {
+    const { session, ids, contentId } = await setup({ key: { root: 9, scale: 'minor' } });
+    const { ok, mock } = session;
+    const content = () => mock.snapshot().contents[0];
+
+    // A pitch shift, then a seeded grid: the undo of the shift leaves the grid.
+    const shifted = await ok('content.setPitchShift', { contentId, pitchShift: { semitones: 2, cents: 0 } });
+    const started = await ok('content.editTimeGrid', { contentId, op: 'seed' });
+    const job = field(await ok('job.get', { jobId: field(started, 'job', 'jobId'), waitMs: 5000 }), 'job');
+    expect(field(job, 'state')).toBe('succeeded');
+    const seeded = content()?.handles;
+    expect(seeded?.length).toBe(5);
+    await ok('edit.undo', { expectedUndoId: field(shifted, 'undo', 'undoId') });
+    expect(content()?.pitchShift).toEqual({ semitones: 0, cents: 0 });
+    expect(content()?.handles).toEqual(seeded);
+
+    // A note edit, then a key change: the undo of the edit leaves the key.
+    const notesBefore = content()?.notes;
+    const edited = await ok('content.editNotes', {
+      contentId,
+      expectedRevision: ids['clip.revision'],
+      ops: [{ op: 'shiftCents', select: { all: true }, deltaCents: 20 }],
+    });
+    await ok('content.setKey', { contentId, key: { root: 2, scale: 'dorian' } });
+    const undone = await ok('edit.undo', { expectedUndoId: field(edited, 'undo', 'undoId') });
+    expect(content()?.notes).toEqual(notesBefore);
+    expect(content()?.key).toMatchObject({ root: 2, scale: 'dorian', origin: 'manual' });
+    expect((undone.changes as { entity: string }[]).map((c) => c.entity)).toEqual(['content']);
+  });
+
+  it('do not take back notes that notesOnly generated after them', async () => {
+    const { session, ids, contentId } = await setup();
+    const { ok, mock } = session;
+    const regenerated = await ok('content.autoTune', {
+      contentId,
+      mode: 'regenerate',
+      expectedRevision: ids['clip.revision'],
+      key: { root: 0, scale: 'major' },
+    });
+    await ok('content.autoTune', {
+      contentId,
+      mode: 'notesOnly',
+      expectedRevision: await revisionOf(session, contentId),
+      params: { noteSplitCents: 150 },
+    });
+    const generated = mock.snapshot().contents[0]?.notes;
+    const undone = await ok('edit.undo', { expectedUndoId: field(regenerated, 'undo', 'undoId') });
+    expect(undone).toMatchObject({ applied: true, noOp: true, warnings: [{ code: 'UNDO_NO_EFFECT' }] });
+    expect(mock.snapshot().contents[0]?.notes).toEqual(generated);
+  });
+
+  it('end the redo history, so that no redo writes over them', async () => {
+    const { session, ids, contentId } = await setup();
+    const { ok, fails, mock } = session;
+    const regenerated = await ok('content.autoTune', {
+      contentId,
+      mode: 'regenerate',
+      expectedRevision: ids['clip.revision'],
+      key: { root: 0, scale: 'major' },
+    });
+    const undoId = field(regenerated, 'undo', 'undoId');
+    await ok('edit.undo', { expectedUndoId: undoId });
+    expect((await ok('edit.getHistory')).history).toMatchObject({ redoCount: 1 });
+    await ok('content.autoTune', {
+      contentId,
+      mode: 'notesOnly',
+      expectedRevision: await revisionOf(session, contentId),
+      params: { noteSplitCents: 150 },
+    });
+    const generated = mock.snapshot().contents[0]?.notes;
+    expect((await ok('edit.getHistory')).history).toMatchObject({ undoCount: 0, redoCount: 0 });
+    expect((await fails('edit.redo', { expectedUndoId: undoId })).data).toMatchObject({ reason: 'history_empty' });
+    expect(mock.snapshot().contents[0]?.notes).toEqual(generated);
+
+    // The same for a key change after an undone pitch shift.
+    const shifted = await ok('content.setPitchShift', { contentId, pitchShift: { semitones: 1, cents: 0 } });
+    await ok('edit.undo', { expectedUndoId: field(shifted, 'undo', 'undoId') });
+    await ok('content.setKey', { contentId, key: { root: 4, scale: 'minor' } });
+    expect((await ok('edit.getHistory')).history).toMatchObject({ redoCount: 0 });
+  });
+});
+
+describe('the timeGridSeed job', () => {
+  it('can be cancelled before it runs, and then writes no handle', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const ids = session.mock.given({ clips: [clip()] });
+    const contentId = ids['clip.contentId'] ?? '';
+    const started = await session.ok('content.editTimeGrid', { contentId, op: 'seed' });
+    const jobId = field(started, 'job', 'jobId');
+    expect(field(await session.ok('job.get', { jobId }), 'job', 'cancellable')).toBe(true);
+    expect(await session.ok('job.cancel', { jobId })).toMatchObject({ cancelRequested: true });
+    clock.advance(0);
+    const job = field(await session.ok('job.get', { jobId }), 'job');
+    expect(job).toMatchObject({
+      state: 'cancelled',
+      cancellable: false,
+      result: null,
+      error: { data: { kind: 'CANCELLED', reason: 'cancelled_by_request' } },
+    });
+    expect(await session.ok('content.getDetails', { contentId })).toMatchObject({
+      timeGrid: { seeded: false, handles: [] },
+    });
+    expect(await session.ok('job.cancel', { jobId })).toMatchObject({ cancelRequested: false });
+  });
+
+  it('checks the UI state and the analysis again when it runs, and fails without writing', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const ids = session.mock.given({ clips: [clip()] });
+    const contentId = ids['clip.contentId'] ?? '';
+    const run = async (meanwhile: () => void) => {
+      const started = await session.ok('content.editTimeGrid', { contentId, op: 'seed' });
+      meanwhile();
+      clock.advance(0);
+      return field(await session.ok('job.get', { jobId: field(started, 'job', 'jobId') }), 'job');
+    };
+    const busy = await run(() => {
+      session.mock.setBusy({ modalOpen: true });
+    });
+    expect(busy).toMatchObject({ state: 'failed', result: null, error: { data: { kind: 'INTERNAL' } } });
+    expect(field(busy, 'error', 'data', 'detail')).toMatch(/BUSY\(modal_open\)/);
+    session.mock.setBusy({ modalOpen: false });
+    const notReady = await run(() => {
+      session.mock.setAnalysis(contentId, 'running');
+    });
+    expect(field(notReady, 'error', 'data', 'detail')).toMatch(/NOT_READY\(f0_not_ready\)/);
+    expect(session.mock.snapshot().contents[0]?.handles).toEqual([]);
+  });
+
+  it('fails when its content is gone by the time it runs', () => {
+    const clock = new ManualClock();
+    const world = new World('0123456789abcdef0123456789abcdef', clock);
+    const jobs = new JobStore(otcpSpec(), clock, '01234567');
+    const content = world.addContent({ durationSec: 6, analysis: 'ready', sourcePath: null });
+    const result = timingHandlers['content.editTimeGrid']?.({
+      world,
+      params: { contentId: content.id, op: 'seed' },
+      exportLock: false,
+      hasCapability: () => true,
+      redact: (t) => t,
+      startJob: (kind, work) => jobs.start(kind, work),
+    });
+    const jobId = String(field(result, 'job', 'jobId'));
+    world.contents.delete(content.objectId);
+    clock.advance(0);
+    expect(jobs.get(jobId)).toMatchObject({ state: 'failed', error: { data: { kind: 'INTERNAL' } } });
+    expect(field(jobs.get(jobId), 'error', 'data', 'detail')).toMatch(/NOT_FOUND\(unknown_handle\)/);
+    expect(content.handles).toEqual([]);
+  });
+
+  it('is refused with BUSY(job_limit) while every retained job is still active', async () => {
+    const { session, contentId } = await setup();
+    session.mock.given({
+      jobs: Array.from({ length: JOB_RETENTION_COUNT }, (_, i) => ({
+        bind: `job${String(i)}`,
+        kind: 'import',
+        state: 'queued' as const,
+        cancellable: true,
+      })),
+    });
+    expect((await session.fails('content.editTimeGrid', { contentId, op: 'seed' })).data).toMatchObject({
+      kind: 'BUSY',
+      reason: 'job_limit',
+    });
+    expect(session.mock.snapshot().contents[0]?.handles).toEqual([]);
   });
 });
 

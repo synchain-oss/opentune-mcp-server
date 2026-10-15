@@ -9,7 +9,14 @@
 import { envelope, type MethodContext } from './context.js';
 import { MockError } from './errors.js';
 import { snapOf } from './history.js';
-import type { ContentRec, HistoryEntry, RevisionDiff, World } from './model.js';
+import {
+  sameJson,
+  type ContentRec,
+  type ContentSnap,
+  type HistoryEntry,
+  type RevisionDiff,
+  type World,
+} from './model.js';
 
 /** Hint for the retry of a write that found the content not ready yet. */
 const NOT_READY_RETRY_MS = 500;
@@ -68,10 +75,37 @@ export interface Commit {
   readonly sideEffects: Record<string, unknown>;
 }
 
+const ASPECTS = ['notes', 'key', 'pitchShift', 'handles'] as const satisfies readonly (keyof ContentSnap)[];
+type Aspect = (typeof ASPECTS)[number];
+
+/** The part of a snapshot that holds only the given aspects (those it has). */
+const pick = (snap: Partial<ContentSnap>, aspects: readonly Aspect[]): Partial<ContentSnap> =>
+  Object.fromEntries(aspects.filter((a) => snap[a] !== undefined).map((a) => [a, snap[a]]));
+
+/**
+ * A change without an undo entry is not taken back by any step either (it reports IRREVERSIBLE or
+ * a revert recipe): the undo entries of the content stop putting back the aspects it changed, and
+ * the redo history ends, so that no redo writes older values over it. The protocol does not say
+ * what such a change does to the redo history; ending it is the choice that never overwrites.
+ */
+function forgetAspects(world: World, content: ContentRec, aspects: readonly Aspect[]): void {
+  const kept = ASPECTS.filter((a) => !aspects.includes(a));
+  for (const entry of world.undoStack) {
+    for (const patch of [entry.undoPatch, entry.redoPatch]) {
+      if (patch?.content?.objectId === content.objectId) {
+        patch.content = { objectId: content.objectId, snap: pick(patch.content.snap, kept) };
+      }
+    }
+  }
+  world.redoStack = [];
+}
+
 /**
  * Applies `mutate` to the content and settles what follows from it: the revision diff, the undo
  * entry (or the descriptor of a change without one), rendering queued again, and the project
- * marked as changed. A new entry ends the redo history, as a new edit does in the UI.
+ * marked as changed. An entry holds only the aspects of the content that the change touched, so
+ * that its steps leave the other aspects as they are then. A new entry ends the redo history, as
+ * a new edit does in the UI.
  */
 export function commit(
   world: World,
@@ -86,10 +120,13 @@ export function commit(
   const before = world.capture();
   const snapBefore = snapOf(content);
   options.mutate();
+  const snapAfter = snapOf(content);
+  const changed = ASPECTS.filter((a) => !sameJson(snapBefore[a], snapAfter[a]));
   if (options.rerender) world.queueRender(content);
   let undo: unknown;
   if ('notUndoable' in options.undo) {
     undo = options.undo.notUndoable;
+    forgetAspects(world, content, changed);
   } else {
     const { seq, undoId } = world.nextUndoId();
     const { action, description, innerActions } = options.undo;
@@ -99,8 +136,8 @@ export function commit(
       action,
       description,
       innerActions: [...innerActions],
-      undoPatch: { content: { objectId: content.objectId, snap: snapBefore } },
-      redoPatch: { content: { objectId: content.objectId, snap: snapOf(content) } },
+      undoPatch: { content: { objectId: content.objectId, snap: pick(snapBefore, changed) } },
+      redoPatch: { content: { objectId: content.objectId, snap: pick(snapAfter, changed) } },
       possiblyStale: false,
       unsafe: false,
     };

@@ -348,7 +348,10 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     const context: MethodContext = {
       world,
       params: params ?? {},
-      exportLock: jobs.hasActive('export'),
+      // Read when asked, so that the work of a job that runs later sees the lock as it is then.
+      get exportLock() {
+        return jobs.hasActive('export');
+      },
       hasCapability: (c) => capabilities.includes(c),
       redact,
       startJob: (kind, work) => jobs.start(kind, work),
