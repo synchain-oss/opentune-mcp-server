@@ -135,8 +135,7 @@ export async function withInstance(
           nextStep: {
             actor: 'agent',
             tool: 'opentune_get_project',
-            message:
-              'Call opentune_get_project to get a complete clip_revision for the clip, then call again with it.',
+            message: 'Call opentune_get_project to get a complete clip_revision for the clip, then call again with it.',
           },
         }),
       };

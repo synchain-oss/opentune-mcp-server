@@ -67,7 +67,7 @@ async function tapSession(ctx: TestContext) {
   const session = await ctx.instances.session(scan.instances[0]);
   const original = session.call.bind(session);
   let hook: (method: string, result: Record<string, unknown>) => void = () => undefined;
-  session.call = async (method: string, params: Record<string, unknown>, timeoutMs = 10_000) => {
+  session.call = async (method: string, params: Record<string, unknown>, timeoutMs: number) => {
     const result = (await original(method, params, timeoutMs)) as Record<string, unknown>;
     hook(method, result);
     return result;
