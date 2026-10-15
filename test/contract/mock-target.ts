@@ -31,7 +31,7 @@ export function mockTarget(options: Omit<MockOptions, 'discoveryDir'> = {}): Con
             throw error;
           }
         },
-        runnerValue: () => undefined,
+        runnerValue: (name) => mock.runnerValue(name),
         async close() {
           await mock.stop();
           await rm(dir, { recursive: true, force: true });

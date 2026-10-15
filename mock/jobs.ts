@@ -131,6 +131,11 @@ export class JobStore {
     return view;
   }
 
+  /** A job of this kind exists that has not finished: for kind `export`, the export lock is held (section 13.2). */
+  hasActive(kind: string): boolean {
+    return [...this.#jobs.values()].some((r) => r.view.kind === kind && r.view.finishedAtMs === null);
+  }
+
   get(jobId: string): JobView | undefined {
     this.#evict(this.clock.now(), JOB_RETENTION_COUNT);
     return this.#jobs.get(jobId)?.view;

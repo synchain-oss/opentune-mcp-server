@@ -71,8 +71,16 @@ async function authenticated(instance: OtcpMock): Promise<RunnerConnection> {
   return conn;
 }
 
-/** Lets socket events through after a clock change. */
-const settle = () => new Promise((resolve) => setTimeout(resolve, 50));
+/**
+ * Returns once the server has handled every line sent so far: a session.info that follows them is
+ * answered at once, and the server handles the lines of a connection in order, so its answer shows
+ * that, for example, a job.get before it is registered as waiting. The answer is read here.
+ */
+async function roundTrip(conn: RunnerConnection): Promise<void> {
+  send(conn, { jsonrpc: '2.0', id: 'round-trip', method: 'session.info' });
+  expect(await read(conn)).toMatchObject({ id: 'round-trip', result: { flavor: 'standalone' } });
+}
+
 const closedSoon = (conn: RunnerConnection) => conn.waitClosed(performance.now() + 2000);
 
 describe('mock guards', () => {
@@ -165,8 +173,8 @@ describe('mock reproducibility', () => {
     });
     expect(bound).toEqual({ first: 'j:01234567:1', second: 'j:01234567:2' });
     expect(() =>
-      instance.given({ jobs: [{ bind: 'x', kind: 'import', state: 'succeeded', cancellable: false }] }),
-    ).toThrow(/no result for a succeeded import job/);
+      instance.given({ jobs: [{ bind: 'x', kind: 'projectOpen', state: 'succeeded', cancellable: false }] }),
+    ).toThrow(/no result for a succeeded projectOpen job/);
   });
 
   it('writes the fixed responses of Appendix A byte for byte', () => {
@@ -183,12 +191,14 @@ describe('mock reproducibility', () => {
 describe('mock timing with an injected clock', () => {
   it('closes a connection without a byte when no first line arrives within the hello timeout', async () => {
     const clock = new ManualClock();
-    const conn = await connect(await mock({ clock }));
-    await settle();
+    const instance = await mock({ clock });
+    const conn = await connect(instance);
+    // The timer starts when the server accepts the connection, which may be a turn after the client's connect.
+    await instance.whenAccepted();
     clock.advance(LIMITS.helloTimeoutMs - 1);
-    await settle();
-    expect(conn.closed).toBe(false);
+    expect(instance.openConnections).toBe(1);
     clock.advance(1);
+    expect(instance.openConnections).toBe(0);
     expect(await closedSoon(conn)).toBe(true);
     expect(conn.receivedBytes).toBe(0);
   });
@@ -199,15 +209,15 @@ describe('mock timing with an injected clock', () => {
     const { job } = instance.given({ jobs: [{ bind: 'job', kind: 'export', state: 'running', cancellable: true }] });
     const conn = await authenticated(instance);
     send(conn, { jsonrpc: '2.0', id: 1, method: 'job.get', params: { jobId: job, waitMs: LIMITS.jobWaitMaxMs } });
-    await settle();
+    await roundTrip(conn);
     clock.advance(LIMITS.jobWaitMaxMs);
     // The wait ended after 30 s with the job unchanged; idleness counts from then, not from the line.
     expect(await read(conn)).toMatchObject({ id: 1, result: { job: { state: 'running' } } });
     const bytes = conn.receivedBytes;
     clock.advance(LIMITS.idleTimeoutMs - 1);
-    await settle();
-    expect(conn.closed).toBe(false);
+    expect(instance.openConnections).toBe(1);
     clock.advance(1);
+    expect(instance.openConnections).toBe(0);
     expect(await closedSoon(conn)).toBe(true);
     expect(conn.receivedBytes).toBe(bytes);
   });
@@ -242,7 +252,7 @@ describe('mock timing with an injected clock', () => {
     const { job } = instance.given({ jobs: [{ bind: 'job', kind: 'export', state: 'running', cancellable: true }] });
     const conn = await authenticated(instance);
     send(conn, { jsonrpc: '2.0', id: 'w', method: 'job.get', params: { jobId: job, waitMs: 5000 } });
-    await settle();
+    await roundTrip(conn);
     const stopped = instance.stop();
     expect(await read(conn)).toMatchObject({ id: 'w', error: { data: { kind: 'SHUTTING_DOWN', executed: false } } });
     expect(await closedSoon(conn)).toBe(true);

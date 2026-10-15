@@ -412,7 +412,8 @@ function reuseLint() {
 
 async function contractVectors() {
   // The contract project runs every vector in spec/otcp/v1/vectors against the test mock and
-  // writes its counts here; the session and job vectors must all pass, the rest may be skipped.
+  // writes its counts here; the vectors of the capabilities the mock reports must all pass, the
+  // rest may be skipped.
   const summaryFile = path.join(ROOT, '.cache', 'contract', 'summary.json');
   await fs.rm(summaryFile, { force: true });
   const status = npmStreaming(['run', '--silent', 'test:contract'], {
@@ -425,7 +426,7 @@ async function contractVectors() {
     .map(([reason, n]) => `${reason}: ${n}`)
     .join('; ');
   const note =
-    `${summary.total} vectors: ${summary.pass} PASS (session/ and job/: ${summary.required.pass} of ` +
+    `${summary.total} vectors: ${summary.pass} PASS (capabilities the mock reports: ${summary.required.pass} of ` +
     `${summary.required.total}), ${summary.fail} FAIL${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ` +
     `${summary.skip} SKIP${skips ? ` (${skips})` : ''}`;
   const ok = status === 0 && summary.fail === 0 && summary.required.pass === summary.required.total;

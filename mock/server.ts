@@ -2,20 +2,29 @@
 // SPDX-License-Identifier: MIT
 
 // A mock OpenTune instance that speaks OTCP v1 from the specification in spec/otcp/v1: the
-// transport and session layer (PROTOCOL.md sections 3 to 5) and the jobs.v1 methods. It reports
-// only the capabilities whose methods it implements, so every other method of the protocol gets
+// transport and session layer (PROTOCOL.md sections 3 to 5), the jobs.v1 methods, the reads and
+// the undo history. The project, the contents and their tokens are a model with state of its own
+// (model.ts); the methods read and change it as the specification describes. The mock reports only
+// the capabilities whose methods it implements, so every other method of the protocol gets
 // UNSUPPORTED(capability_missing), as an instance without that capability answers. Test-only: it
 // is not part of the published package.
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
+import os from 'node:os';
 
 import { LineSplitter, decodeLine, isBlankLine } from '../src/otcp/framing.js';
 import { otcpSpec } from '../test/support/otcp-spec.js';
 import { realClock, type Clock, type Timer } from './clock.js';
+import type { MethodContext } from './context.js';
 import { resolveDiscoveryDir, writeDiscoveryFile } from './discovery.js';
+import { MockError } from './errors.js';
+import { WorkFiles } from './files.js';
+import { applyGiven, WORLD_GIVEN_MEMBERS, type GivenState } from './given.js';
+import { historyHandlers } from './history.js';
 import { JobStore, UnsupportedPrecondition, type JobSpec } from './jobs.js';
+import { TRACK_SLOTS, World, type Analysis, type BusyState } from './model.js';
 import {
   classify,
   errorLine,
@@ -27,6 +36,7 @@ import {
   type Request,
   type RequestId,
 } from './protocol.js';
+import { readHandlers } from './reads.js';
 
 export { UnsupportedPrecondition } from './jobs.js';
 
@@ -46,7 +56,7 @@ export const LIMITS = {
 } as const;
 
 /** The capabilities whose methods the mock implements. */
-export const MOCK_CAPABILITIES: readonly string[] = ['session.v1', 'jobs.v1'];
+export const MOCK_CAPABILITIES: readonly string[] = ['session.v1', 'jobs.v1', 'read.v1', 'history.v1'];
 
 const LOOPBACK = '127.0.0.1';
 const PROTOCOL = '1.0';
@@ -65,6 +75,8 @@ export interface MockOptions {
   readonly instanceId?: string;
   /** Source of timestamps and timeouts. Defaults to real time. */
   readonly clock?: Clock;
+  /** Where the files of clips and of the `files` precondition go; a temporary directory by default. */
+  readonly workDir?: string;
 }
 
 export interface GivenJob extends JobSpec {
@@ -72,10 +84,9 @@ export interface GivenJob extends JobSpec {
 }
 
 /** The `given` preconditions of a vector (vectors/README.md); the mock models the members below. */
-export interface Given {
+export interface Given extends GivenState {
   readonly jobs?: readonly GivenJob[];
   readonly withoutCapabilities?: readonly string[];
-  readonly editingScheme?: string;
   readonly [member: string]: unknown;
 }
 
@@ -96,14 +107,30 @@ export interface OtcpMock {
    * Throws UnsupportedPrecondition for preconditions the mock does not model yet.
    */
   given(given: Given): Record<string, string>;
+  /** The value of a `runner.*` name that depends on the instance's state, or undefined if unknown. */
+  runnerValue(name: string): string | number | undefined;
+  /** The data of the project and its contents, without any token, for comparing states. */
+  snapshot(): ReturnType<World['dataSnapshot']>;
+  /** Connections accepted so far, open or closed. */
+  readonly acceptedConnections: number;
+  /** Connections open now, before and after authentication. */
+  readonly openConnections: number;
+  /** Resolves once the server has accepted at least `count` connections: the listener runs on its own event loop turn. */
+  whenAccepted(count?: number): Promise<void>;
+  /** Makes the UI busy (or not), as a gesture or a dialog in OpenTune would (PROTOCOL.md section 13.2). */
+  setBusy(state: Partial<BusyState>): void;
+  /** The pitch analysis of a content finishes, fails, or is requested again. */
+  setAnalysis(contentId: string, analysis: Analysis): void;
+  /** Appends a line to the log that app.getLog reads. */
+  logLine(text: string): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
   stop(): Promise<void>;
 }
 
 interface InFlight {
   readonly id: RequestId;
-  /** Drops the pending work without answering. */
-  readonly drop: () => void;
+  /** Drops the pending work without answering. Set once the work is registered. */
+  drop: () => void;
 }
 
 interface Connection {
@@ -115,7 +142,7 @@ interface Connection {
   idleTimer: Timer | undefined;
 }
 
-const GIVEN_MEMBERS = new Set(['jobs', 'withoutCapabilities', 'editingScheme']);
+const GIVEN_MEMBERS = new Set<string>(['jobs', 'withoutCapabilities', ...WORLD_GIVEN_MEMBERS]);
 
 const PARSE_DETAILS = {
   utf8: 'the line is not valid UTF-8',
@@ -146,9 +173,12 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   const tokenDigest = sha256(token);
 
   const jobs = new JobStore(spec, clock, instanceId.slice(0, 8));
+  const world = new World(instanceId, clock);
+  const files = new WorkFiles(options.workDir);
   let capabilities = [...MOCK_CAPABILITIES];
-  let editingScheme = 'openTune';
   let preAuthCount = 0;
+  let acceptedConnections = 0;
+  const acceptWaiters: { count: number; resolve: () => void }[] = [];
   let sessionCount = 0;
   let stopping = false;
   const connections = new Set<Connection>();
@@ -218,9 +248,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       nullReasons: { name: 'no_audio_device', sampleRateHz: 'no_audio_device', bufferSizeFrame: 'no_audio_device' },
     },
     processing: {
-      tuningHz: 440,
-      editingScheme,
-      hybridMode: false,
+      tuningHz: world.prefs.tuningHz,
+      editingScheme: world.editingScheme,
+      hybridMode: world.prefs.hybridMode,
       vocoderWeight: null,
       f0Model: null,
       renderingPriority: null,
@@ -237,7 +267,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
         referenceAlignMode: 'unavailable',
       },
     },
-    language: 'en',
+    language: world.prefs.language,
     capabilities: [...capabilities],
     import: { extensions: ['.wav', '.flac', '.mp3'], maxChannels: 2, maxAnalysisSec: 600 },
     export: {
@@ -265,14 +295,17 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
         send(conn, successLine(id, { job }));
         return;
       }
-      // Section 12.2: held until the job is terminal or waitMs elapses; in flight meanwhile.
+      // Section 12.2: held until the job is terminal or waitMs elapses; in flight meanwhile. The
+      // request is registered before the wait starts, so the answer never depends on whether
+      // the wait calls back at once.
       const key = idKey(id);
-      const drop = jobs.wait(jobId, waitMs, (current) => {
+      const pending: InFlight = { id, drop: () => undefined };
+      conn.inFlight.set(key, pending);
+      pending.drop = jobs.wait(jobId, waitMs, (current) => {
         conn.inFlight.delete(key);
         send(conn, successLine(id, { job: current }));
         touch(conn);
       });
-      conn.inFlight.set(key, { id, drop });
     },
     'job.cancel': (conn, { id, params }) => {
       const outcome = jobs.cancel(String(params?.jobId));
@@ -288,6 +321,38 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
         send(conn, successLine(id, outcome));
       }
     },
+  };
+
+  const redact = (text: string): string => {
+    let out = text.split(token).join('<redacted>').split(serverProof).join('<redacted>');
+    const home = os.homedir();
+    if (home !== '') out = out.split(home).join('~');
+    return out;
+  };
+
+  const worldHandlers = { ...readHandlers, ...historyHandlers };
+
+  /** Runs a method of the model on the "main thread": synchronously, so requests apply in order. */
+  const runModel = (conn: Connection, { id, method, params }: Request) => {
+    const handler = worldHandlers[method];
+    if (handler === undefined) return false;
+    const context: MethodContext = {
+      world,
+      params: params ?? {},
+      exportLock: jobs.hasActive('export'),
+      hasCapability: (c) => capabilities.includes(c),
+      redact,
+    };
+    try {
+      send(conn, successLine(id, handler(context)));
+    } catch (error) {
+      if (error instanceof MockError) reply(conn, id, error.init);
+      else {
+        const detail = error instanceof Error ? error.message : 'unexpected failure';
+        reply(conn, id, { kind: 'INTERNAL', detail: `the mock failed in ${method}: ${detail}`, executed: true });
+      }
+    }
+    return true;
   };
 
   /** Section 3.3 rule 5, cases 7 to 13, for a valid request on an authenticated session. */
@@ -356,11 +421,10 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       return;
     }
     const handler = methods[method];
-    if (handler === undefined) {
+    if (handler !== undefined) handler(conn, request);
+    else if (!runModel(conn, request)) {
       reply(conn, id, { kind: 'INTERNAL', detail: `the mock reports ${info.capability} but lacks ${method}` });
-      return;
     }
-    handler(conn, request);
   };
 
   /** Section 3.3 rule 5, cases 2 to 6, for a line on an authenticated session. */
@@ -457,6 +521,11 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     };
     preAuthCount++;
     connections.add(conn);
+    acceptedConnections++;
+    for (const waiter of acceptWaiters.splice(0)) {
+      if (acceptedConnections >= waiter.count) waiter.resolve();
+      else acceptWaiters.push(waiter);
+    }
     conn.helloTimer = clock.setTimer(LIMITS.helloTimeoutMs, () => {
       close(conn);
     });
@@ -506,8 +575,11 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     discoveryPath = writeDiscoveryFile(discoveryDir, process.pid, discovery);
   } catch (error) {
     server.close();
+    files.dispose();
+    world.dispose();
     throw error;
   }
+  world.log(`control API listening on 127.0.0.1:${String(address.port)}; discovery file ${discoveryPath}`);
 
   let stopped: Promise<void> | undefined;
   return {
@@ -522,10 +594,49 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       if (unknown !== undefined) throw new UnsupportedPrecondition(`the mock does not model given.${unknown} yet`);
       const without = given.withoutCapabilities ?? [];
       capabilities = capabilities.filter((c) => !without.includes(c));
-      editingScheme = given.editingScheme ?? editingScheme;
-      const bindings: Record<string, string> = {};
+      const bindings = applyGiven(world, files, given);
       for (const job of given.jobs ?? []) bindings[job.bind] = jobs.add(job).jobId;
       return bindings;
+    },
+    runnerValue(name) {
+      switch (name) {
+        case 'runner.unknownContentId':
+          return world.unknownHandle('c');
+        case 'runner.unknownPlacementId':
+          return world.unknownHandle('p');
+        case 'runner.staleContentId':
+          return world.handleOfOtherInstance('c');
+        case 'runner.stalePlacementId':
+          return world.handleOfOtherInstance('p');
+        case 'runner.lastTrackId':
+          return TRACK_SLOTS - 1;
+        case 'runner.unknownTrackId':
+          return TRACK_SLOTS;
+        default:
+          return undefined;
+      }
+    },
+    snapshot: () => world.dataSnapshot(),
+    get acceptedConnections() {
+      return acceptedConnections;
+    },
+    get openConnections() {
+      return connections.size;
+    },
+    whenAccepted(count = 1) {
+      if (acceptedConnections >= count) return Promise.resolve();
+      return new Promise<void>((resolve) => {
+        acceptWaiters.push({ count, resolve });
+      });
+    },
+    setBusy(state) {
+      Object.assign(world.busy, state);
+    },
+    setAnalysis(contentId, analysis) {
+      world.setAnalysis(world.content(contentId), analysis);
+    },
+    logLine(text) {
+      world.log(text);
     },
     stop() {
       stopped ??= (async () => {
@@ -544,6 +655,8 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
           });
         });
         fs.rmSync(discoveryPath, { force: true });
+        files.dispose();
+        world.dispose();
       })();
       return stopped;
     },
