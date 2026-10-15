@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "track/delete-barrier",
   "type": "scenario",
-  "description": "A clip move made through this API on track 2 is on the undo history. Deleting track 0 moves the clip's track down, so the entry becomes possibly stale: track.delete counts it (possiblyStaleEntries, warning UNDO_ENTRIES_POSSIBLY_STALE), edit.getHistory shows possiblyStale true, and edit.undo without force refuses the entry with UNDO_CONFLICT(stale_entry) (PROTOCOL.md section 15.3 rule 6).",
+  "description": "A clip move made through this API on track 2 is on the undo history. Deleting track 0 moves the clip's track down, so the entry becomes possibly stale: track.delete counts it (possiblyStaleEntries, warning UNDO_HISTORY_POSSIBLY_STALE), edit.getHistory shows possiblyStale true, and edit.undo without force refuses the entry with UNDO_CONFLICT(stale_entry) (PROTOCOL.md section 15.3 rule 6).",
   "capability": "tracks.v1",
   "extraCapabilities": ["history.v1"],
   "since": "1.0",
@@ -83,7 +83,7 @@
               "data": null
             },
             {
-              "code": "UNDO_ENTRIES_POSSIBLY_STALE",
+              "code": "UNDO_HISTORY_POSSIBLY_STALE",
               "subject": null,
               "data": { "undo": 1, "redo": 0 }
             }

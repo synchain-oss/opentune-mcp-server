@@ -158,8 +158,8 @@ describe('decodeLine', () => {
       ok: true,
       value: { id: '\u{1F3B5}', '\u{1F3B5}': 1 },
     });
-    expect(decodeLine(b(String.raw`{"id":"🎵"}`))).toEqual({ ok: true, value: { id: '\u{1F3B5}' } });
-    expect(decodeLine(b(String.raw`{"id":"🎵"}`))).toEqual({ ok: true, value: { id: '\u{1F3B5}' } });
+    expect(decodeLine(b(String.raw`{"id":"\uD83C\uDFB5"}`))).toEqual({ ok: true, value: { id: '\u{1F3B5}' } });
+    expect(decodeLine(b(String.raw`{"id":"\ud83c\udfb5"}`))).toEqual({ ok: true, value: { id: '\u{1F3B5}' } });
     expect(decodeLine(b('{"\u{1F3B5}":["\u{1F3B5}",null,true,2]}'))).toEqual({
       ok: true,
       value: { '\u{1F3B5}': ['\u{1F3B5}', null, true, 2] },
@@ -191,6 +191,7 @@ describe('hasLoneSurrogateEscape', () => {
     for (const text of [
       '{"id":1}',
       String.raw`"🎵"`,
+      String.raw`"\uD83C\uDFB5"`,
       String.raw`"🎵é\n\"\\"`,
       String.raw`"\\ud800"`,
       String.raw`["\\🎵",{"A":"￿"}]`,

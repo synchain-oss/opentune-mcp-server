@@ -63,6 +63,12 @@ export const WARNING_TEXT = table<string>({
   OVERWROTE_OTHER_PROJECT: 'An existing project file was overwritten.',
   RENDER_NOT_CURRENT: 'The audio rendering is not current; exports wait for it.',
   NOT_SAVED_IN_PROJECT: 'The change is not saved in the project file.',
+  SCHEME_GENERATED_NOTES:
+    'Switching the editing scheme generated notes for the clip open in the piano roll, with no undo entry.',
+  SHARED_CONTENT:
+    'The new clips share their contents with the clips they were copied from; an edit of one shows in the other.',
+  UNDO_HISTORY_POSSIBLY_STALE:
+    'Deleting a track made entries of the undo or redo history possibly stale; they may address tracks that have moved.',
 });
 
 /** Side-effect names of PROTOCOL.md section 14.6. */
