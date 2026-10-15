@@ -80,6 +80,23 @@ export function jobSentence(job: unknown): string {
 /** The instance part of a job id (the first 8 hex digits of its instance id), for routing. */
 const hintOf = (jobId: string) => jobId.split(':')[1];
 
+/**
+ * INVALID_ARGUMENT when instance_id names another instance than the one that issued the job id.
+ * Sent on, the request would only get job_not_found, which wrongly suggests the job has expired.
+ */
+function instanceMismatch(args: { job_id: string; instance_id?: string | undefined }): Outcome | null {
+  const hint = hintOf(args.job_id);
+  if (args.instance_id === undefined || hint === undefined || args.instance_id.startsWith(hint)) return null;
+  return {
+    ok: false,
+    error: toolError('INVALID_ARGUMENT', {
+      detail:
+        `job_id ${args.job_id} belongs to another OpenTune instance than instance_id (a job id starts with the ` +
+        'first 8 hex digits of the id of its instance); omit instance_id or pass the instance that started the job',
+    }),
+  };
+}
+
 async function jobGet(session: OtcpSession, jobId: string, waitMs: number): Promise<Json> {
   return session.call('job.get', { jobId, waitMs }, waitMs + WAIT_MARGIN_MS);
 }
@@ -88,6 +105,8 @@ export async function getJob(
   ctx: ToolContext,
   args: { job_id: string; wait_seconds?: number | undefined; instance_id?: string | undefined },
 ): Promise<Outcome> {
+  const mismatch = instanceMismatch(args);
+  if (mismatch) return mismatch;
   const waitMs = Math.round((args.wait_seconds ?? 0) * 1000);
   return withInstance(
     ctx,
@@ -104,6 +123,8 @@ export async function cancelJob(
   ctx: ToolContext,
   args: { job_id: string; instance_id?: string | undefined },
 ): Promise<Outcome> {
+  const mismatch = instanceMismatch(args);
+  if (mismatch) return mismatch;
   return withInstance(
     ctx,
     { instanceId: args.instance_id, hint: hintOf(args.job_id) },
@@ -133,7 +154,20 @@ export async function cancelJob(
       const requested = result.cancelRequested === true;
       let job = result.job;
       // Cancellation is asynchronous: wait briefly so the result can show what the job committed.
-      if (requested && facts(job)?.terminal === false) job = (await jobGet(session, args.job_id, CANCEL_SETTLE_MS)).job;
+      // The wait is best effort. The cancellation has been requested whatever it gives, so a failed
+      // wait keeps the job as job.cancel reported it rather than turning the result into an error
+      // that would say nothing was executed.
+      if (requested && facts(job)?.terminal === false) {
+        job = await jobGet(session, args.job_id, CANCEL_SETTLE_MS).then(
+          (settled) => settled.job,
+          (error: unknown) => {
+            ctx.logger.warn(
+              `opentune_cancel_job: waiting for the cancelled job failed (${error instanceof Error ? error.message : 'unknown error'})`,
+            );
+            return job;
+          },
+        );
+      }
       const f = facts(job);
       const effect = f === null ? null : (CANCEL_EFFECT[f.kind] ?? null);
       let summary: string;

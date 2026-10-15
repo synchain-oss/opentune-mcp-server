@@ -10,7 +10,7 @@ import { z } from 'zod';
 import { startMock, type GivenJob, type OtcpMock } from '../../mock/server.js';
 import type { DiscoveryEntry } from '../../src/discovery/file.js';
 import { OtcpError, type ErrorData } from '../../src/errors/tool-error.js';
-import type { OtcpSession } from '../../src/otcp/client.js';
+import { OtcpSession } from '../../src/otcp/client.js';
 import { TOOLS } from '../../src/tools/index.js';
 import { CANCEL_EFFECT, cancelJob, getJob, jobSentence } from '../../src/tools/jobs.js';
 import { WRITE_RESULT_OUTPUT, render, withInstance, type Outcome } from '../../src/tools/registry.js';
@@ -188,6 +188,7 @@ describe('opentune_get_status', () => {
         }) as unknown,
       }),
     ]);
+    expect(b.instances).toEqual([expect.not.objectContaining({ nullReasons: expect.anything() as unknown })]);
     expect(JSON.stringify(b)).not.toContain(m.discovery.token);
     expect(JSON.stringify(b)).not.toContain(m.discovery.serverProof as string);
     expectState(await getStatus(ctx, m.discovery.instanceId), 'READY', null);
@@ -271,6 +272,27 @@ describe('opentune_get_status', () => {
     expect(b.instances).toEqual([expect.objectContaining({ info: null, nullReasons: { info: 'unavailable' } })]);
   });
 
+  it('gives a reason for each part of session.info that the instance does not report', async () => {
+    const runtime = { os: 'windows', arch: 'x64' };
+    const ctx = fakeInstances([session(() => Promise.resolve({ appVersion: '1', runtime, audioDevice: 'none' }))]);
+    const b = expectState(await getStatus(ctx, undefined), 'READY', null);
+    expect(b.instances).toEqual([
+      expect.objectContaining({
+        info: { appVersion: '1', runtime, audioDevice: null, processing: null },
+        nullReasons: { 'info.audioDevice': 'not_reported', 'info.processing': 'not_reported' },
+      }),
+    ]);
+  });
+
+  it('says when the OpenTune processes cannot be listed', async () => {
+    const ctx = context(dir());
+    ctx.probe.openTune = null;
+    const b = expectState(await getStatus(ctx, undefined), 'NOT_INSTALLED', 'path_not_configured');
+    expect(b).toMatchObject({ processes: null, nullReasons: { processes: 'not_listable' } });
+    ctx.probe.openTune = [];
+    expect(body(await getStatus(ctx, undefined))).not.toHaveProperty('nullReasons');
+  });
+
   it('reports discovery files it ignored, and configuration errors as errors', async () => {
     const d = dir();
     writeFileSync(path.join(d, '55.json'), '{}');
@@ -345,6 +367,64 @@ describe('opentune_get_job and opentune_cancel_job', () => {
       nextStep: { actor: 'agent', tool: 'opentune_get_job', args: { job_id: ids.save } },
     });
     expect(error(await cancelJob(ctx, { job_id: 'j:00000000:1' }))).toMatchObject({ kind: 'INSTANCE_NOT_FOUND' });
+  });
+
+  it('reports a requested cancellation even when waiting for the job to stop fails', async () => {
+    const d = dir();
+    const m = await startMock({ discoveryDir: d });
+    cleanup.push(() => m.stop());
+    const ctx = context(d, {
+      // The instance answers job.cancel, then fails the job.get that waits for the job to stop.
+      open: async (entry) => {
+        const session = await OtcpSession.open(entry);
+        const call = session.call.bind(session);
+        session.call = (method, params, timeoutMs) =>
+          method === 'job.get'
+            ? Promise.reject(
+                new OtcpError({
+                  kind: 'BUSY',
+                  reason: 'request_limit',
+                  retryable: true,
+                  detail: 'too many requests',
+                  executed: false,
+                }),
+              )
+            : call(method, params, timeoutMs);
+        return session;
+      },
+    });
+    const ids = given(m, [{ bind: 'imp', kind: 'import', state: 'running', cancellable: true }]);
+    const outcome = await cancelJob(ctx, { job_id: ids.imp });
+    const b = body(outcome);
+    expect(b).toMatchObject({ cancelRequested: true, effect: CANCEL_EFFECT.import, job: { state: 'running' } });
+    expect(b.summary).toBe(
+      `Cancellation of job ${ids.imp} (import) was requested; it stops at its next cancellation point. Follow it ` +
+        'with opentune_get_job.',
+    );
+    expect(JSON.stringify(outcome)).not.toContain('"executed"');
+    expect(ctx.logLines.join('\n')).toMatch(/waiting for the cancelled job failed \(BUSY\(request_limit\)\)/);
+  });
+
+  it('refuses a job id issued by another instance than instance_id, without asking OpenTune', async () => {
+    const { mock: m, ctx } = await withMock();
+    const ids = given(m, [{ bind: 'run', kind: 'import', state: 'running', cancellable: true }]);
+    const own = m.discovery.instanceId;
+    const other = `${own.startsWith('0') ? '1' : '0'}${own.slice(1)}`;
+    const foreign = `j:${other.slice(0, 8)}:1`;
+    for (const outcome of [
+      await getJob(ctx, { job_id: foreign, instance_id: own }),
+      await cancelJob(ctx, { job_id: foreign, instance_id: own }),
+    ]) {
+      expect(error(outcome)).toMatchObject({
+        kind: 'INVALID_ARGUMENT',
+        reason: null,
+        executed: false,
+        detail: expect.stringContaining(
+          `job_id ${foreign} belongs to another OpenTune instance than instance_id`,
+        ) as unknown,
+      });
+    }
+    expect(body(await getJob(ctx, { job_id: ids.run, instance_id: own })).job).toMatchObject({ state: 'running' });
   });
 
   it('needs the jobs capability', async () => {

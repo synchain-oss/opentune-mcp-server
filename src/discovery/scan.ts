@@ -7,10 +7,10 @@
 // the content that was judged; a file whose state cannot be determined is kept and treated as live,
 // because the session.hello check (serverProof, instanceId, pid) still protects the connection.
 
-import { readFile, readdir, unlink } from 'node:fs/promises';
+import { readdir, unlink } from 'node:fs/promises';
 import path from 'node:path';
 
-import { DISCOVERY_FILE_RE, MAX_DISCOVERY_BYTES, parseDiscoveryFile, type DiscoveryEntry } from './file.js';
+import { DISCOVERY_FILE_RE, parseDiscoveryFile, readDiscoveryBytes, type DiscoveryEntry } from './file.js';
 import type { ProcessProbe } from './process.js';
 
 /** Start times that differ by more than this mean the pid now belongs to another process. */
@@ -48,12 +48,12 @@ export async function scanDiscovery(dir: string, probe: ProcessProbe): Promise<S
   const ignored: IgnoredFile[] = [];
   for (const file of names) {
     const full = path.join(dir, file);
-    const bytes = await readFile(full).catch(() => null);
+    const bytes = await readDiscoveryBytes(full);
     if (bytes === null) {
       ignored.push({ file, reason: 'unreadable', problem: null, removed: false });
       continue;
     }
-    const parsed = parseDiscoveryFile(file, bytes.subarray(0, MAX_DISCOVERY_BYTES + 1));
+    const parsed = parseDiscoveryFile(file, bytes);
     if (!parsed.ok) {
       ignored.push({ file, reason: 'invalid', problem: parsed.problem, removed: false });
       continue;
@@ -78,7 +78,7 @@ export async function scanDiscovery(dir: string, probe: ProcessProbe): Promise<S
 
 /** Deletes a stale file unless it changed since it was read (a new instance may reuse the name). */
 async function removeIfUnchanged(file: string, judged: Buffer): Promise<boolean> {
-  const now = await readFile(file).catch(() => null);
+  const now = await readDiscoveryBytes(file);
   if (!now?.equals(judged)) return false;
   return unlink(file).then(
     () => true,

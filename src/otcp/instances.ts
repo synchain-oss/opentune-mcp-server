@@ -107,20 +107,28 @@ export class Instances {
     return result;
   }
 
-  /** The open session of an instance, opened (or reopened after a disconnect) when needed. */
+  /**
+   * The open session of an instance, opened (or reopened after a disconnect) when needed. Calls
+   * that arrive together share one opening: a call only removes the cache entry it read itself, and
+   * when another call has already started a new session it waits for that one instead of opening a
+   * second (which nothing would ever close, and which would hold one of OpenTune's session slots).
+   */
   async session(entry: DiscoveryEntry): Promise<OtcpSession> {
-    const cached = this.#sessions.get(entry.instanceId);
+    const id = entry.instanceId;
+    const cached = this.#sessions.get(id);
     if (cached) {
       const session = await cached.catch(() => null);
       if (session && !session.closed) return session;
-      this.#sessions.delete(entry.instanceId);
+      const current = this.#sessions.get(id);
+      if (current === cached) this.#sessions.delete(id);
+      else if (current) return this.session(entry);
     }
     const opening = this.#open(entry);
-    this.#sessions.set(entry.instanceId, opening);
+    this.#sessions.set(id, opening);
     try {
       return await opening;
     } catch (error) {
-      this.#sessions.delete(entry.instanceId);
+      if (this.#sessions.get(id) === opening) this.#sessions.delete(id);
       throw error;
     }
   }

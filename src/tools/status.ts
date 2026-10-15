@@ -144,14 +144,18 @@ async function instanceStatus(ctx: ToolContext, entry: DiscoveryEntry): Promise<
   };
   try {
     const info = await session.call('session.info', {}, INFO_TIMEOUT_MS);
+    const parts: Json = {
+      runtime: pick(info.runtime, ['os', 'arch']),
+      audioDevice: pick(info.audioDevice, ['running', 'name', 'sampleRateHz']),
+      processing: pick(info.processing, ['editingScheme', 'tuningHz', 'vocoderReady']),
+    };
+    const missing = Object.keys(parts).filter((key) => parts[key] === null);
     return {
       ...ready,
-      info: {
-        ...pick(info, ['appVersion', 'buildTag', 'sourceUrl', 'language']),
-        runtime: pick(info.runtime, ['os', 'arch']),
-        audioDevice: pick(info.audioDevice, ['running', 'name', 'sampleRateHz']),
-        processing: pick(info.processing, ['editingScheme', 'tuningHz', 'vocoderReady']),
-      },
+      info: { ...pick(info, ['appVersion', 'buildTag', 'sourceUrl', 'language']), ...parts },
+      ...(missing.length > 0
+        ? { nullReasons: Object.fromEntries(missing.map((key) => [`info.${key}`, 'not_reported'])) }
+        : {}),
     };
   } catch (error) {
     if (!(error instanceof OtcpError)) throw error;
@@ -208,7 +212,13 @@ export async function getStatus(ctx: ToolContext, instanceId: string | undefined
     return status(state, reason, { ...extra, instances }, summary);
   }
 
-  const pids = (await ctx.probe.listOpenTune()) ?? [];
+  const listed = await ctx.probe.listOpenTune();
+  const pids = listed ?? [];
+  if (listed === null) {
+    // The states below assume no OpenTune runs; say that this could not be checked.
+    extra.processes = null;
+    extra.nullReasons = { processes: 'not_listable' };
+  }
   if (pids.length > 0) {
     const starts = await Promise.all(pids.map(async (pid) => (await ctx.probe.probe(pid)).startTimeMs));
     const starting = starts.some((t) => t !== null && ctx.now() - t < STARTUP_GRACE_MS);

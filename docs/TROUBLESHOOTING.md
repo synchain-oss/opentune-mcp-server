@@ -38,6 +38,10 @@ closes OpenTune.
 
 The configured OpenTune build has the control API, but it is not running. Start it with `--control-api`.
 
+With `processes: null` and `nullReasons.processes` set to `not_listable` (in this state, `NO_API_BUILD` or
+`NOT_INSTALLED`), the server could not list the running processes, so an OpenTune without the control API may still
+be running.
+
 ### Status NO_API_BUILD
 
 `OPENTUNE_MCP_OPENTUNE_PATH` names an executable without an `opentune-control.json` for protocol major 1 next to it

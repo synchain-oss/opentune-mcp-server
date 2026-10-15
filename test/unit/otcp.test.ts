@@ -303,6 +303,77 @@ describe('Instances', () => {
     await failure(instances.session(entry));
     expect(calls).toBe(2);
   });
+
+  /** A session stand-in that only knows whether it was closed. */
+  const fakeSession = () => {
+    const s = {
+      closed: false,
+      close: () => {
+        s.closed = true;
+      },
+    };
+    return s;
+  };
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it('reopens a closed session once for calls that arrive together, and can close every session it opened', async () => {
+    const opened: ReturnType<typeof fakeSession>[] = [];
+    const instances = new Instances({
+      env: {},
+      platform: 'linux',
+      home: '/home/user',
+      probe: fakeProbe(),
+      open: () => {
+        const s = fakeSession();
+        opened.push(s);
+        return Promise.resolve(s as unknown as OtcpSession);
+      },
+    });
+    const entry = entryOf(discoveryContent(5));
+    (await instances.session(entry)).close();
+    const [a, b] = await Promise.all([instances.session(entry), instances.session(entry)]);
+    expect(opened).toHaveLength(2);
+    expect(a).toBe(opened[1]);
+    expect(b).toBe(a);
+    instances.close();
+    await settle();
+    expect(opened.map((s) => s.closed)).toEqual([true, true]);
+  });
+
+  it('keeps the newer opening when an older one fails', async () => {
+    const pending: { resolve: (s: OtcpSession) => void; reject: (e: unknown) => void }[] = [];
+    const instances = new Instances({
+      env: {},
+      platform: 'linux',
+      home: '/home/user',
+      probe: fakeProbe(),
+      open: () =>
+        new Promise<OtcpSession>((resolve, reject) => {
+          pending.push({ resolve, reject });
+        }),
+    });
+    const entry = entryOf(discoveryContent(5));
+    const older = instances.session(entry);
+    instances.close();
+    const newer = instances.session(entry);
+    expect(pending).toHaveLength(2);
+    pending[0]?.reject(
+      new OtcpError({
+        kind: 'CONNECTION_LOST',
+        reason: 'connect_failed',
+        retryable: true,
+        detail: 'x',
+        executed: false,
+      }),
+    );
+    await failure(older);
+    const s = fakeSession();
+    pending[1]?.resolve(s as unknown as OtcpSession);
+    expect(await newer).toBe(s);
+    instances.close();
+    await settle();
+    expect(s.closed).toBe(true);
+  });
 });
 
 describe('selectInstance', () => {

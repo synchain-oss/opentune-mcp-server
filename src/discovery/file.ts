@@ -6,8 +6,34 @@
 // (`$defs/knownMembers`): every member this version defines must be present with its type and form,
 // and members a later version adds are ignored. A unit test compares this check with the schema.
 
+import { open } from 'node:fs/promises';
+
 /** Largest discovery file a client accepts. */
 export const MAX_DISCOVERY_BYTES = 8192;
+
+/**
+ * Reads at most MAX_DISCOVERY_BYTES + 1 bytes of a discovery file: enough for parseDiscoveryFile to
+ * reject a file that is too large, without reading all of an oversized file into memory. Resolves
+ * with null when the file cannot be read (missing, a directory, no permission).
+ */
+export async function readDiscoveryBytes(file: string): Promise<Buffer | null> {
+  const handle = await open(file, 'r').catch(() => null);
+  if (handle === null) return null;
+  try {
+    const buffer = Buffer.alloc(MAX_DISCOVERY_BYTES + 1);
+    let length = 0;
+    while (length < buffer.length) {
+      const { bytesRead } = await handle.read(buffer, length, buffer.length - length, length);
+      if (bytesRead === 0) break;
+      length += bytesRead;
+    }
+    return buffer.subarray(0, length);
+  } catch {
+    return null;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+}
 
 /** Names of discovery files; temporary files and anything else in the directory are ignored. */
 export const DISCOVERY_FILE_RE = /^[1-9][0-9]*\.json$/;

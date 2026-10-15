@@ -6,11 +6,11 @@
 // checks that are planned but not implemented yet are listed with the status not_implemented.
 // Output hides the home directory, and secrets of discovery files are only reported as present.
 
-import { readFile, readdir } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
 import { resolveDiscoveryDir } from '../discovery/dir.js';
-import { DISCOVERY_FILE_RE, parseDiscoveryFile } from '../discovery/file.js';
+import { DISCOVERY_FILE_RE, parseDiscoveryFile, readDiscoveryBytes } from '../discovery/file.js';
 import { troubleshootingUrl } from '../errors/next-step.js';
 import { OPENTUNE_PATH_ENV, checkLaunchConfig, isWsl } from '../launch/config.js';
 import { SERVER_NAME, VERSION } from '../version.js';
@@ -87,7 +87,7 @@ async function discoveryCheck(deps: DoctorDeps): Promise<CheckResult> {
   }
   const lines: string[] = [];
   for (const name of names) {
-    const bytes = await readFile(path.join(dir.dir, name)).catch(() => null);
+    const bytes = await readDiscoveryBytes(path.join(dir.dir, name));
     const parsed = bytes === null ? null : parseDiscoveryFile(name, bytes);
     lines.push(
       parsed?.ok

@@ -7,13 +7,20 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { resolveDiscoveryDir } from '../../src/discovery/dir.js';
-import { knownMembersProblem, parseDiscoveryFile } from '../../src/discovery/file.js';
+import {
+  MAX_DISCOVERY_BYTES,
+  knownMembersProblem,
+  parseDiscoveryFile,
+  readDiscoveryBytes,
+} from '../../src/discovery/file.js';
 import {
   parseEpochMs,
   parsePidLines,
   parseProcStartTime,
   parseTasklist,
+  pgrepPids,
   pidAlive,
+  runTool,
   systemProbe,
 } from '../../src/discovery/process.js';
 import { scanDiscovery } from '../../src/discovery/scan.js';
@@ -203,6 +210,24 @@ describe('scanDiscovery', () => {
     expect(existsSync(path.join(dir, '201.json'))).toBe(true);
   });
 
+  it('reads at most one byte more than a discovery file may have', async () => {
+    const { dir, probe, write } = setup();
+    const content = discoveryContent(401);
+    write(401, content);
+    writeFileSync(path.join(dir, '402.json'), Buffer.alloc(1024 * 1024, 0x20));
+    mkdirSync(path.join(dir, '403.json'));
+    expect((await readDiscoveryBytes(path.join(dir, '401.json')))?.toString('utf8')).toBe(JSON.stringify(content));
+    expect((await readDiscoveryBytes(path.join(dir, '402.json')))?.length).toBe(MAX_DISCOVERY_BYTES + 1);
+    expect(await readDiscoveryBytes(path.join(dir, '403.json'))).toBeNull();
+    expect(await readDiscoveryBytes(path.join(dir, '404.json'))).toBeNull();
+    const result = await scanDiscovery(dir, probe);
+    expect(result.instances.map((i) => i.pid)).toEqual([401]);
+    expect(result.ignored).toEqual([
+      { file: '402.json', reason: 'invalid', problem: 'larger than 8192 bytes', removed: false },
+      { file: '403.json', reason: 'unreadable', problem: null, removed: false },
+    ]);
+  });
+
   it('keeps a stale file that changed after it was judged', async () => {
     const { dir, write } = setup();
     write(301, discoveryContent(301));
@@ -242,6 +267,30 @@ describe('process probes', () => {
     expect(parseEpochMs('')).toBeNull();
     expect(parseEpochMs('nan')).toBeNull();
   });
+
+  it('lists no OpenTune only when pgrep says nothing matched', () => {
+    expect(pgrepPids({ ok: true, output: '12\n34\n' })).toEqual([12, 34]);
+    expect(pgrepPids({ ok: false, exitCode: 1 })).toEqual([]);
+    // pgrep missing, stopped after the time limit, or failing otherwise: cannot be determined.
+    expect(pgrepPids({ ok: false, exitCode: null })).toBeNull();
+    expect(pgrepPids({ ok: false, exitCode: 2 })).toBeNull();
+  });
+
+  it('reports the output, the exit status, or that a tool did not run', async () => {
+    const { dir, remove } = tempDir();
+    cleanup.push(remove);
+    const script = path.join(dir, 'tool.mjs');
+    writeFileSync(
+      script,
+      "const code = Number(process.argv[2]); if (code === 0) console.log('12'); process.exit(code);\n",
+    );
+    expect(await runTool(process.execPath, [script, '0'])).toEqual({
+      ok: true,
+      output: expect.stringMatching(/^12\r?\n$/) as unknown,
+    });
+    expect(await runTool(process.execPath, [script, '1'])).toEqual({ ok: false, exitCode: 1 });
+    expect(await runTool(path.join(dir, 'missing-tool'), [])).toEqual({ ok: false, exitCode: null });
+  }, 20_000);
 
   it('reads this process: alive, started when Node started', async () => {
     const probe = systemProbe();

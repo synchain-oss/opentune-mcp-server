@@ -46,10 +46,11 @@ export async function checkLaunchConfig(env: NodeJS.ProcessEnv, platform: NodeJS
     : { state: 'no_api', reason: 'protocol_mismatch' };
 }
 
-/** True inside the Windows Subsystem for Linux. */
+/** True inside the Windows Subsystem for Linux. An empty variable counts as unset. */
 export function isWsl(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, osRelease: string | null): boolean {
   if (platform !== 'linux') return false;
-  return Boolean(env.WSL_DISTRO_NAME ?? env.WSL_INTEROP) || /microsoft/i.test(osRelease ?? '');
+  const set = (value: string | undefined) => value !== undefined && value !== '';
+  return set(env.WSL_DISTRO_NAME) || set(env.WSL_INTEROP) || /microsoft/i.test(osRelease ?? '');
 }
 
 /** The kernel release string on Linux (for isWsl), or null. */

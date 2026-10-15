@@ -14,6 +14,7 @@ import {
   runDoctor,
   type DoctorDeps,
 } from '../../src/cli/doctor.js';
+import { isWsl } from '../../src/launch/config.js';
 import { discoveryContent, tempDir } from '../support/context.js';
 
 const cleanup: (() => void)[] = [];
@@ -73,6 +74,13 @@ describe('doctor', () => {
     expect(doctorExitCode(checks)).toBe(1);
   });
 
+  it('treats an empty WSL variable as unset and falls through to the next one', () => {
+    expect(isWsl({ WSL_DISTRO_NAME: '', WSL_INTEROP: '/run/WSL/1_interop' }, 'linux', null)).toBe(true);
+    expect(isWsl({ WSL_DISTRO_NAME: '', WSL_INTEROP: '' }, 'linux', null)).toBe(false);
+    expect(isWsl({}, 'linux', '5.15.0-microsoft-standard-WSL2')).toBe(true);
+    expect(isWsl({ WSL_DISTRO_NAME: 'Ubuntu' }, 'win32', null)).toBe(false);
+  });
+
   it('accepts an API build and rejects one without a manifest', async () => {
     const base = setup();
     const bin = path.join(base.home, 'bin');
@@ -98,6 +106,7 @@ describe('doctor', () => {
     const content = discoveryContent(321);
     writeFileSync(path.join(deps.discovery, '321.json'), JSON.stringify(content));
     writeFileSync(path.join(deps.discovery, '322.json'), '{}');
+    writeFileSync(path.join(deps.discovery, '323.json'), Buffer.alloc(1024 * 1024, 0x20));
     const checks = await runDoctor(deps);
     const discovery = byId(checks, 'OT_DISCOVERY_DIR');
     expect(discovery?.status).toBe('pass');
@@ -105,6 +114,7 @@ describe('doctor', () => {
       `321.json: instance ${content.instanceId as string}, OpenTune "1.2.3", token present (redacted)`,
     );
     expect(discovery?.message).toContain('322.json: ignored (member protocolMajors is missing)');
+    expect(discovery?.message).toContain('323.json: ignored (larger than 8192 bytes)');
     for (const json of [false, true]) {
       const out = formatDoctor(checks, json);
       expect(out).not.toContain(content.token as string);

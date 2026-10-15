@@ -71,18 +71,43 @@ export function parseEpochMs(text: string): number | null {
 
 const TOOL_TIMEOUT_MS = 5000;
 
-/** Runs a system tool; resolves with its stdout, or null if it failed, was missing or timed out. */
-function run(file: string, args: readonly string[], env?: NodeJS.ProcessEnv): Promise<string | null> {
+/**
+ * What running a system tool gave: its standard output, or the exit status it failed with. The
+ * exit status is null when the tool did not exit on its own: it is missing, could not start or ran
+ * out of time.
+ */
+export type ToolRun =
+  { readonly ok: true; readonly output: string } | { readonly ok: false; readonly exitCode: number | null };
+
+/** Runs a system tool by absolute path, without a shell, with a time limit. */
+export function runTool(file: string, args: readonly string[], env?: NodeJS.ProcessEnv): Promise<ToolRun> {
   return new Promise((resolve) => {
     execFile(
       file,
       args,
       { timeout: TOOL_TIMEOUT_MS, windowsHide: true, shell: false, encoding: 'utf8', ...(env ? { env } : {}) },
       (error, stdout) => {
-        resolve(error ? null : stdout);
+        if (!error) resolve({ ok: true, output: stdout });
+        else
+          resolve({ ok: false, exitCode: typeof error.code === 'number' && error.killed !== true ? error.code : null });
       },
     );
   });
+}
+
+/** The output of a run that succeeded, else null. */
+const run = async (file: string, args: readonly string[], env?: NodeJS.ProcessEnv): Promise<string | null> => {
+  const result = await runTool(file, args, env);
+  return result.ok ? result.output : null;
+};
+
+/**
+ * OpenTune pids from a pgrep run. pgrep exits with status 1 when nothing matches; any other failure
+ * (pgrep missing, a timeout, another exit status) means the processes cannot be listed: null.
+ */
+export function pgrepPids(result: ToolRun): readonly number[] | null {
+  if (result.ok) return parsePidLines(result.output);
+  return result.exitCode === 1 ? [] : null;
 }
 
 const system32 = (tool: string) => path.win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', tool);
@@ -132,9 +157,7 @@ export function systemProbe(): ProcessProbe {
         const out = await run(system32('tasklist.exe'), ['/FI', 'IMAGENAME eq OpenTune.exe', '/FO', 'CSV', '/NH']);
         return out === null ? null : parseTasklist(out);
       }
-      // pgrep exits with status 1 when nothing matches, which run() reports as a failure.
-      const out = await run('/usr/bin/pgrep', ['-x', 'OpenTune']);
-      return out === null ? [] : parsePidLines(out);
+      return pgrepPids(await runTool('/usr/bin/pgrep', ['-x', 'OpenTune']));
     },
   };
 }
