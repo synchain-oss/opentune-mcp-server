@@ -587,7 +587,13 @@ async function main() {
     ['contract vectors (exe)', contractVectorsExe],
     ['tools/list size gate', () => sizeGate(ROOT, BUNDLE)],
     ['token canary', notYet('not yet: no OTCP client or MCP tool output to check for the token')],
-    ['output budget', notYet('not yet: no read tools, and the mock has no project content to read')],
+    [
+      'output budget',
+      npmScriptStep(
+        'test:budget',
+        'one result of opentune_get_notes (800-note clip, every page size) and opentune_get_project (24 clips) is at most 20,000 characters',
+      ),
+    ],
     [
       'docs consistency',
       npmScriptStep(

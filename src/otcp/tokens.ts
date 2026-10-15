@@ -68,10 +68,40 @@ export function decodeArrangementRevision(value: string): string | null {
   return token !== null && token.length > 0 && token.length <= 256 ? token : null;
 }
 
+const isTokenString = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= 256;
+
+/**
+ * The clip_revision for a content's tokens as a read result's `asOf.contents[]` reports them
+ * (`revision`, `gridRevision`, `keyRevision`) and the geometry hash of the placement the clip is
+ * read through. Null when the content's tokens are missing or malformed. `geometryHash` is null
+ * when the placement is unknown; a write that depends on the geometry then needs a fresh read.
+ */
+export function clipRevisionFrom(content: unknown, geometryHash: unknown): string | null {
+  if (typeof content !== 'object' || content === null) return null;
+  const c = content as Record<string, unknown>;
+  if (!isTokenString(c.revision) || !isTokenString(c.gridRevision) || !isTokenString(c.keyRevision)) return null;
+  return encodeClipRevision({
+    content: c.revision,
+    grid: c.gridRevision,
+    key: c.keyRevision,
+    geometry: isTokenString(geometryHash) ? geometryHash : null,
+  });
+}
+
+/** The clip_revision lacks a token the operation depends on; the caller must read the clip again. */
+export class MissingTokenError extends Error {
+  constructor(readonly aspect: Aspect) {
+    super(`the clip_revision has no ${aspect} token`);
+    this.name = 'MissingTokenError';
+  }
+}
+
 /**
  * The expected-value params of `method` for the aspects an operation depends on. Throws for an
- * aspect the method does not accept or a token the clip_revision lacks: both are programming errors
- * of the calling tool, not user errors.
+ * aspect the method does not accept (a programming error of the calling tool). Throws a
+ * MissingTokenError for a token the clip_revision lacks; tool runs turn that into an actionable
+ * INVALID_ARGUMENT.
  */
 export function expectedParams(method: string, tokens: ClipTokens, depends: readonly Aspect[]): Record<string, string> {
   const accepted = METHOD_ASPECTS[method] ?? [];
@@ -79,7 +109,7 @@ export function expectedParams(method: string, tokens: ClipTokens, depends: read
   for (const aspect of depends) {
     if (!accepted.includes(aspect)) throw new Error(`${method} takes no expected value for the ${aspect} aspect`);
     const token = tokens[aspect];
-    if (token === null) throw new Error(`the clip_revision has no ${aspect} token`);
+    if (token === null) throw new MissingTokenError(aspect);
     params[EXPECTED_PARAM[aspect]] = token;
   }
   return params;
