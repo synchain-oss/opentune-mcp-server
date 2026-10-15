@@ -135,6 +135,20 @@ function removeOtherEntries(file: string, own: string): void {
       const removed = spawnSync(icacls, [file, '/remove:g', `*${sid}`], { windowsHide: true });
       if (removed.status !== 0) throw new Error(`icacls failed to remove ${sid} from ${file}`);
     }
+    // Read the rights back: a wrongly resolved alias yields a valid but different SID, which
+    // /remove:g accepts without removing the entry. Anything left is a failure, never a pass.
+    const after = spawnSync(icacls, [file, '/save', saved], { windowsHide: true });
+    if (after.status !== 0) throw new Error(`icacls failed to read back the access rights of ${file}`);
+    let left: string[];
+    try {
+      left = otherTrustees(fs.readFileSync(saved).toString('utf16le'), own);
+    } catch (error) {
+      left = [(error as Error).message];
+    }
+    if (left.length > 0) {
+      fs.rmSync(file, { force: true });
+      throw new Error(`access rights of ${file} still list other trustees after removal: ${left.join(', ')}`);
+    }
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

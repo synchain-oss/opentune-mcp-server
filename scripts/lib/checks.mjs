@@ -610,14 +610,14 @@ export function commitCheckScope({
   }
   if (event === 'workflow_dispatch') {
     // A manual run of the full suite on a branch: the commits the branch holds beyond the default
-    // branch. They came in through merged pull requests (a trunk) or are being tried before one,
-    // so the relaxed rules of an ordinary trunk push apply; the pull request that follows is held
-    // to project identities by its own run.
+    // branch. The strict rules of a pull request apply (no outside authors, no Dependabot
+    // exemption): a manual run on the head of a pull request produces the same mcp-gate check on
+    // the same commit, and a relaxed result would cover the strict one of the pull request.
     if (!defaultBranch) throw new Error('manual run: the default branch is unknown');
     return {
       base: `origin/${defaultBranch}`,
-      allowExternalAuthors: true,
-      allowDependabot: true,
+      allowExternalAuthors: false,
+      allowDependabot: false,
       reason: `manual run: commits not on ${defaultBranch}`,
     };
   }

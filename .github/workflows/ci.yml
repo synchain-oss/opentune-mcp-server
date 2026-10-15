@@ -26,6 +26,8 @@ on:
   push:
     branches: [dev, "feature/**"]
   # 手动触发：在任意分支上跑完整档，合并前验证只在 Windows 等完整档才暴露的改动。
+  # 提交身份按 PR 的严格规则核对（不放宽外部作者与 Dependabot），否则同一 SHA 上放宽档的
+  # mcp-gate 会盖掉 PR 上严格档的结果。
   workflow_dispatch:
 
 permissions:

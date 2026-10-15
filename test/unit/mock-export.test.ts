@@ -106,7 +106,8 @@ describe('ifExists and the final rename', () => {
     expect(filesIn(dir).filter((name) => name.endsWith('.tmp'))).toEqual([]);
   });
 
-  it('rename: fails with ALREADY_EXISTS when all 999 names are taken', async () => {
+  // Creating 999 files is slow on Windows runners (about 6.5 s), beyond the default 5 s timeout.
+  it('rename: fails with ALREADY_EXISTS when all 999 names are taken', { timeout: 60_000 }, async () => {
     const { clock, session } = await open();
     const ids = session.mock.given({ ...clipGiven, files: [{ bind: 'existing', kind: 'existing' }] });
     const dir = path.dirname(ids.existing ?? '');

@@ -163,7 +163,10 @@ describe('mock guards', () => {
         expect(dacl?.[2]).toMatch(/^\(A;;FA;;;[^;()]+\)$/);
         const trustees = sddlTrusteeFields(sddl);
         expect(trustees).toHaveLength(1);
-        expect(resolveTrustee(trustees[0] ?? '', sid)?.toLowerCase()).toBe(sid.toLowerCase());
+        // Judged without the code under test: the trustee is the user's SID itself, or LA when the
+        // user is the built-in administrator (RID 500); no other alias is accepted.
+        const trustee = (trustees[0] ?? '').toLowerCase();
+        expect(trustee === sid.toLowerCase() || (trustee === 'la' && sid.endsWith('-500'))).toBe(true);
       }
 
       it('in an ordinary temporary directory', async () => {

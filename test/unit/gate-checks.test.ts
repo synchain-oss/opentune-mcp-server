@@ -693,11 +693,11 @@ describe('commitCheckScope', () => {
     expect(() => commitCheckScope({ ...push, refName: 'feature/v2', defaultBranch: '' })).toThrow(/default branch/);
   });
 
-  it('compares a manual run with the default branch, as a push to a trunk does', () => {
+  it('compares a manual run with the default branch under the strict rules of a pull request', () => {
     expect(commitCheckScope({ event: 'workflow_dispatch', defaultBranch: 'dev', repo })).toMatchObject({
       base: 'origin/dev',
-      allowExternalAuthors: true,
-      allowDependabot: true,
+      allowExternalAuthors: false,
+      allowDependabot: false,
     });
     expect(() => commitCheckScope({ event: 'workflow_dispatch', repo })).toThrow(/default branch/);
   });
