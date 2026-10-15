@@ -28,6 +28,17 @@ describe('parseArgs', () => {
     expect(parseArgs([arg])).toEqual({ kind: 'usage-error', message: `unknown argument ${JSON.stringify(arg)}` });
   });
 
+  it('recognises doctor and its --json flag, and nothing else after it', () => {
+    expect(parseArgs(['doctor'])).toEqual({ kind: 'doctor', json: false });
+    expect(parseArgs(['doctor', '--json'])).toEqual({ kind: 'doctor', json: true });
+    expect(parseArgs(['doctor', '--client', 'x'])).toEqual({
+      kind: 'usage-error',
+      message: 'unknown argument "--client"',
+    });
+    expect(parseArgs(['--json'])).toEqual({ kind: 'usage-error', message: 'unknown argument "--json"' });
+    expect(parseArgs(['doctor', '-h'])).toEqual({ kind: 'help' });
+  });
+
   it('rejects an unknown argument next to --version', () => {
     expect(parseArgs(['--version', '--bogus'])).toEqual({ kind: 'usage-error', message: 'unknown argument "--bogus"' });
   });
