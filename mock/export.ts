@@ -67,7 +67,7 @@ function wavHeader(channels: number, frames: number): Buffer {
 const errnoOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
 
 /** A rename that never replaces: a hard link, then removal of the temporary name (section 20.4, last row). */
-function renameNoReplace(temp: string, target: string): 'done' | 'exists' {
+export function renameNoReplace(temp: string, target: string): 'done' | 'exists' {
   try {
     fs.linkSync(temp, target);
   } catch (error) {

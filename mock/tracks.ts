@@ -398,8 +398,10 @@ const remove: Handler = (context) => {
     });
   }
   world.setVisibleTrackCount(world.visibleTrackCount - 1);
-  if (world.activeTrackId > trackId) world.activeTrackId -= 1;
-  world.activeTrackId = Math.min(world.activeTrackId, world.visibleTrackCount - 1);
+  if (world.activeTrackId !== null) {
+    if (world.activeTrackId > trackId) world.activeTrackId -= 1;
+    world.activeTrackId = Math.min(world.activeTrackId, world.visibleTrackCount - 1);
+  }
   world.touchArrangement();
   world.touchTrackState();
   world.markDirty();

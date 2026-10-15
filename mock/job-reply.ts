@@ -12,6 +12,7 @@ import type { World } from './model.js';
 export function jobStartedResult(
   world: World,
   job: Pick<JobView, 'jobId' | 'kind' | 'state'>,
+  extra?: Record<string, unknown>,
 ): Record<string, unknown> {
   return envelope(world, {
     applied: false,
@@ -21,5 +22,6 @@ export function jobStartedResult(
     undo: null,
     dirtyBefore: world.project.dirty,
     job: { jobId: job.jobId, kind: job.kind, state: job.state },
+    ...(extra === undefined ? {} : { extra }),
   });
 }

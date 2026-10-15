@@ -61,6 +61,8 @@ export interface JobControl {
   /** Cancellation was requested; the driver stops at this cancellation point (section 12.3). */
   readonly cancelRequested: boolean;
   progress(update: Partial<JobProgress>): void;
+  /** The job passes its last cancellation point: it can no longer be cancelled (project.open, section 12.3). */
+  lockCancellation(): void;
 }
 
 /** One step of a job, called on the "main thread" by the clock; steps never overlap. */
@@ -247,6 +249,9 @@ export class JobStore {
           updatedAtMs: this.clock.now(),
           progress: { ...record.view.progress, ...update },
         };
+      },
+      lockCancellation: () => {
+        record.view = { ...record.view, cancellable: false, updatedAtMs: this.clock.now() };
       },
     };
     let step: JobStep;

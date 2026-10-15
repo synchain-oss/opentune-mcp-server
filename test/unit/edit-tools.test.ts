@@ -497,6 +497,9 @@ describe('opentune_autotune_range', () => {
 
   it('needs reference.v1 for mode reference and says what to do instead', async () => {
     const env = await setup();
+    // An instance without the capability: the tool refuses before it sends anything.
+    const capabilities = env.session.hello.capabilities as string[];
+    capabilities.splice(capabilities.indexOf('reference.v1'), 1);
     const out = failure(await autotune(env.ctx, await args(env, { mode: 'reference' })));
     expect(out).toMatchObject({ kind: 'UNSUPPORTED', reason: 'capability_missing', executed: false });
     expect(out.detail).toContain('reference.v1');
@@ -506,8 +509,7 @@ describe('opentune_autotune_range', () => {
 
   it('sends mode reference with the placement and nothing else when the build has reference.v1', async () => {
     const env = await setup();
-    (env.session.hello.capabilities as string[]).push('reference.v1');
-    // The mock cannot align to a reference; it refuses, so only the request is checked.
+    // The clip has no reference binding, so the mock refuses; only the request is checked here.
     await autotune(env.ctx, await args(env, { mode: 'reference' }));
     expect(sent(env, 'content.autoTune')[0]?.params).toEqual({
       contentId: env.contentId,

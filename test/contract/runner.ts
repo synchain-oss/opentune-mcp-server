@@ -55,6 +55,8 @@ class Run {
   readonly connections = new Map<string, RunnerConnection>();
   /** Per connection and request id, the methods of the requests sent, oldest first. */
   readonly #sent = new Map<string, Map<string, string[]>>();
+  /** The method that started each job seen so far, by jobId. */
+  readonly #jobStartedBy = new Map<string, string>();
   #stepEnd = performance.now();
 
   constructor(
@@ -181,17 +183,27 @@ class Run {
         .validate(`methods/${method}.schema.json#/$defs/result`, message.result)
         .map((p) => `${method} result ${p}`),
     );
-    // A terminal job's result is that of the method that started it.
+    // A terminal job's result is that of the method that started it. The run remembers which method
+    // started each job and checks against that method's jobResult. A job it did not see start (the
+    // vector does not send the request) falls back to a job kind that more than one method starts
+    // (referenceAnalysis): the result must then be valid for at least one of them, and the problems
+    // reported are those of the closest fit.
     const job = isObject(message.result) ? message.result.job : undefined;
+    if (isObject(job) && typeof job.jobId === 'string' && !this.#jobStartedBy.has(job.jobId)) {
+      const starts = [...spec.jobStarters.values()].some((starters) => starters.includes(method));
+      if (starts) this.#jobStartedBy.set(job.jobId, method);
+    }
     if (isObject(job) && isObject(job.result) && typeof job.kind === 'string') {
       const kind = job.kind;
-      const starter = spec.jobStarters.get(kind);
-      if (starter !== undefined) {
-        problems.push(
-          ...spec
-            .validate(`methods/${starter}.schema.json#/$defs/jobResult`, job.result)
-            .map((p) => `${kind} job result ${p}`),
-        );
+      const known = typeof job.jobId === 'string' ? this.#jobStartedBy.get(job.jobId) : undefined;
+      const starters = known === undefined ? (spec.jobStarters.get(kind) ?? []) : [known];
+      const attempts = starters.map((starter) =>
+        spec
+          .validate(`methods/${starter}.schema.json#/$defs/jobResult`, job.result)
+          .map((p) => `${kind} job result ${p}`),
+      );
+      if (attempts.length > 0 && !attempts.some((a) => a.length === 0)) {
+        problems.push(...attempts.reduce((best, a) => (a.length < best.length ? a : best)));
       }
     }
     return problems;

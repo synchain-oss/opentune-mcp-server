@@ -17,6 +17,8 @@ export const TRACK_SLOTS = 8;
 export const INITIAL_VISIBLE_TRACKS = 4;
 /** Time the mock needs to render a content again after an edit. */
 export const RENDER_SETTLE_MS = 30;
+/** Time the mock needs to compute the reference alignment data of a content. */
+export const ALIGNMENT_SETTLE_MS = 30;
 /** Default note parameters of the note generator. */
 export const DEFAULT_NOTE_PARAMS = { retuneSpeed: 0.5, vibratoDepth: 0, vibratoRateHz: 6, pitchDriftScale: 1 } as const;
 
@@ -69,6 +71,8 @@ export interface ContentRec {
   revision: string;
   render: { published: string; desired: string };
   alignmentReady: boolean;
+  /** OpenTune generated notes for this content at some point (import, AUTO, selection in the openDyne scheme). */
+  notesGenerated: boolean;
   handleSeq: number;
 }
 
@@ -116,6 +120,35 @@ export interface PlacementState {
   fadeOutSec: number;
 }
 
+/** A dialog open in the window (ui.getState, ui.dismiss). */
+export interface DialogRec {
+  kind: 'trackColour' | 'confirm' | 'pitchShift' | 'preferences' | 'message' | 'unknown';
+  trackId: number | null;
+  /** The colour a track-colour dialog shows; closing the dialog commits it to the track. */
+  colour: string | null;
+}
+
+/** The audio device setup of the installation (audio.get, audio.set). */
+export interface AudioRec {
+  running: boolean;
+  deviceType: string;
+  outputDevice: string;
+  sampleRateHz: number;
+  bufferSizeFrame: number;
+  outputChannelPair: number;
+  /** Test interface: the device fails to open with any changed setup. */
+  failsToOpen: boolean;
+}
+
+/** What the audio settings page offers; the mock's stand-in device is the only one. */
+export const AUDIO_AVAILABLE = {
+  deviceTypes: ['Mock Audio'],
+  outputDevices: ['Mock Output'],
+  sampleRatesHz: [44100, 48000],
+  bufferSizesFrame: [256, 512],
+  outputChannelPairCount: 1,
+} as const;
+
 /** The state an undo or redo step puts back. */
 export interface Patch {
   /** Only the aspects in `snap` are put back; an aspect left out stays as it is. */
@@ -154,6 +187,8 @@ export interface Vector {
   arrangement: string;
   trackState: string;
   contents: Map<number, Record<Component, string>>;
+  /** The contentId of each content, as it was then (the epoch changes when a project is opened). */
+  ids: Map<number, string>;
 }
 
 export interface RevisionPair {
@@ -187,6 +222,16 @@ export const DETECTED_KEY: KeyRec = { root: 0, scale: 'major', origin: 'automati
 
 const COLOURS = ['#E57373', '#64B5F6', '#81C784', '#FFD54F', '#BA68C8', '#4DB6AC', '#FF8A65', '#A1887F'] as const;
 
+/** A track as OpenTune starts it: shown if it is one of the first, with unit volume and its own colour. */
+export const defaultTrack = (trackId: number): TrackRec => ({
+  trackId,
+  visible: trackId < INITIAL_VISIBLE_TRACKS,
+  muted: false,
+  solo: false,
+  volumeLinear: 1,
+  colour: COLOURS[trackId % COLOURS.length] ?? '#888888',
+});
+
 export const sameJson = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
 export const clone = <T>(value: T): T => structuredClone(value);
 /** Seconds are reported to 6 decimal places (section 8.2). */
@@ -196,13 +241,33 @@ const REVISION_COMPONENTS: readonly Component[] = ['notes', 'pitch', 'content'];
 
 export class World {
   readonly short: string;
-  readonly epoch = 0;
+  /** Increases whenever every content is discarded at once, which opening a project does (section 9). */
+  epoch = 0;
   readonly project: { path: string | null; dirty: boolean } = { path: null, dirty: false };
+  /** Counts changes saved with the project, so that a save can tell whether the project changed while it ran. */
+  changeCount = 0;
   editingScheme = 'openTune';
   readonly busy: BusyState = { pointerDown: false, modalOpen: false, importInProgress: false, projectOperation: false };
   readonly tracks: TrackRec[];
   visibleTrackCount = INITIAL_VISIBLE_TRACKS;
-  activeTrackId = 0;
+  activeTrackId: number | null = null;
+  workspace: 'arrangement' | 'pianoRoll' = 'arrangement';
+  pianoRollContent: ContentRec | null = null;
+  /** The dialogs open, from the bottom of the stack to the top. */
+  dialogs: DialogRec[] = [];
+  /** The first-run overlay is on screen. */
+  onboardingShowing = false;
+  /** The scale shown in the transport bar; it follows the key of the selected clip. */
+  uiScale: { root: number; scale: string } = { root: 0, scale: 'major' };
+  readonly audio: AudioRec = {
+    running: false,
+    deviceType: AUDIO_AVAILABLE.deviceTypes[0],
+    outputDevice: AUDIO_AVAILABLE.outputDevices[0],
+    sampleRateHz: 44100,
+    bufferSizeFrame: 512,
+    outputChannelPair: 0,
+    failsToOpen: false,
+  };
   readonly contents = new Map<number, ContentRec>();
   readonly placements = new Map<number, PlacementRec>();
   selectedPlacementIds: string[] = [];
@@ -216,17 +281,27 @@ export class World {
     audioDeviceRunning: false,
     lastControl: null as { call: string; atMs: number } | null,
   };
-  readonly prefs = { tuningHz: TUNING_HZ, hybridMode: false, onboardingShown: true, language: 'en' };
+  readonly prefs = {
+    tuningHz: TUNING_HZ,
+    hybridMode: false,
+    experimentalFeatures: false,
+    onboardingShown: true,
+    language: 'en',
+    /** The most recent first; user-global, so opening another project leaves it alone. */
+    recentProjects: [] as string[],
+  };
   arrangement: string;
   trackState: string;
   undoStack: HistoryEntry[] = [];
   redoStack: HistoryEntry[] = [];
   readonly logLines: string[] = [];
+  /** The reference analysis job of each placement (by placementId), so that a repeated call joins it. */
+  readonly referenceJobs = new Map<string, string>();
   #tick = 0;
   #contentSeq = 0;
   #placementSeq = 0;
   #undoSeq = 0;
-  readonly #renderTimers = new Set<Timer>();
+  readonly #timers = new Set<Timer>();
 
   constructor(
     readonly instanceId: string,
@@ -235,14 +310,7 @@ export class World {
     this.short = instanceId.slice(0, 8);
     this.arrangement = this.mint('a');
     this.trackState = this.mint('t');
-    this.tracks = Array.from({ length: TRACK_SLOTS }, (_, trackId) => ({
-      trackId,
-      visible: trackId < INITIAL_VISIBLE_TRACKS,
-      muted: false,
-      solo: false,
-      volumeLinear: 1,
-      colour: COLOURS[trackId % COLOURS.length] ?? '#888888',
-    }));
+    this.tracks = Array.from({ length: TRACK_SLOTS }, (_, trackId) => defaultTrack(trackId));
   }
 
   /** Milliseconds since the Unix epoch, from the injectable clock. */
@@ -283,6 +351,7 @@ export class World {
       revision: this.mint('r'),
       render: { published: '', desired: '' },
       alignmentReady: false,
+      notesGenerated: false,
       handleSeq: 0,
     };
     content.render = { published: content.revision, desired: content.revision };
@@ -392,15 +461,55 @@ export class World {
     return placement.content;
   }
 
+  /**
+   * Replaces the project, as opening one does: every clip and content is removed, the handles of
+   * the old project become stale (a new epoch), the tracks go back to their initial state, the
+   * selection and the editor are reset and both histories are cleared. Returns how many history
+   * entries were cleared.
+   */
+  resetProject(): { undoCount: number; redoCount: number } {
+    const cleared = { undoCount: this.undoStack.length, redoCount: this.redoStack.length };
+    this.contents.clear();
+    this.placements.clear();
+    this.epoch++;
+    this.selectedPlacementIds = [];
+    this.activeTrackId = null;
+    this.workspace = 'arrangement';
+    this.pianoRollContent = null;
+    this.undoStack = [];
+    this.redoStack = [];
+    for (const track of this.tracks) Object.assign(track, defaultTrack(track.trackId));
+    this.visibleTrackCount = INITIAL_VISIBLE_TRACKS;
+    this.arrangement = this.mint('a');
+    this.trackState = this.mint('t');
+    return cleared;
+  }
+
   /** Queues rendering of a content again; it settles RENDER_SETTLE_MS later (section 14.6). */
   queueRender(content: ContentRec): void {
     const desired = this.mint('d');
     content.render.desired = desired;
-    const timer = this.clock.setTimer(RENDER_SETTLE_MS, () => {
-      this.#renderTimers.delete(timer);
+    this.after(RENDER_SETTLE_MS, () => {
       content.render.published = content.render.desired;
     });
-    this.#renderTimers.add(timer);
+  }
+
+  /** Runs `work` on the "main thread" `ms` later; a timer still pending when the world is disposed never runs. */
+  after(ms: number, work: () => void): void {
+    const timer = this.clock.setTimer(ms, () => {
+      this.#timers.delete(timer);
+      work();
+    });
+    this.#timers.add(timer);
+  }
+
+  /** Queues the reference alignment analysis of a content; its data is there ALIGNMENT_SETTLE_MS later. */
+  queueAlignment(content: ContentRec): void {
+    this.after(ALIGNMENT_SETTLE_MS, () => {
+      if (this.contents.get(content.objectId) !== content || content.alignmentReady) return;
+      content.alignmentReady = true;
+      this.touch(content, 'reference');
+    });
   }
 
   capture(): Vector {
@@ -408,6 +517,7 @@ export class World {
       arrangement: this.arrangement,
       trackState: this.trackState,
       contents: new Map([...this.contents].map(([id, c]) => [id, { ...c.comp }])),
+      ids: new Map([...this.contents].map(([id, c]) => [id, c.id])),
     };
   }
 
@@ -425,7 +535,7 @@ export class World {
         if (a !== b) changed[component] = { before: a, after: b };
       }
       if (Object.keys(changed).length > 0) {
-        contents.push({ contentId: `c:${this.short}:${String(this.epoch)}:${String(id)}`, changed });
+        contents.push({ contentId: after.ids.get(id) ?? before.ids.get(id) ?? '', changed });
       }
     }
     return {
@@ -497,12 +607,13 @@ export class World {
   /** section 15.5: after a change saved with the project, the flag is set. */
   markDirty(): void {
     this.project.dirty = true;
+    this.changeCount++;
   }
 
   uiSnapshot() {
     return {
-      workspace: 'arrangement',
-      pianoRollContentId: null,
+      workspace: this.workspace,
+      pianoRollContentId: this.pianoRollContent?.id ?? null,
       activeTrackId: this.activeTrackId,
       selectedPlacementIds: [...this.selectedPlacementIds],
       visibleTrackCount: this.visibleTrackCount,
@@ -524,9 +635,9 @@ export class World {
   }
 
   /** Why a write is refused now, if it is (section 13.2); `exportLock` is held by a running export job. */
-  busyReason(exportLock: boolean): string | undefined {
+  busyReason(exportLock: boolean, ignoreModal = false): string | undefined {
     if (this.busy.pointerDown) return BUSY_REASONS.pointerDown;
-    if (this.busy.modalOpen) return BUSY_REASONS.modalOpen;
+    if (!ignoreModal && (this.busy.modalOpen || this.dialogs.length > 0)) return BUSY_REASONS.modalOpen;
     if (this.busy.importInProgress) return BUSY_REASONS.importInProgress;
     if (exportLock) return 'export_in_progress';
     if (this.busy.projectOperation) return BUSY_REASONS.projectOperation;
@@ -574,7 +685,7 @@ export class World {
   }
 
   dispose(): void {
-    for (const timer of this.#renderTimers) timer.cancel();
-    this.#renderTimers.clear();
+    for (const timer of this.#timers) timer.cancel();
+    this.#timers.clear();
   }
 }

@@ -24,11 +24,14 @@ import { stripHome } from './privacy.js';
 import { WorkFiles } from './files.js';
 import { applyGiven, WORLD_GIVEN_MEMBERS, type GivenState } from './given.js';
 import { arrangementHandlers } from './arrangement.js';
+import { audioHandlers } from './audio.js';
 import { editHandlers } from './edit.js';
 import { ExportService } from './export.js';
 import { historyHandlers } from './history.js';
 import { IMPORT_LIMITS, ImportService } from './import.js';
 import { JobStore, oneShot, UnsupportedPrecondition, type JobSpec } from './jobs.js';
+import { prefsHandlers } from './prefs.js';
+import { ProjectService } from './project.js';
 import { TRACK_SLOTS, World, type Analysis, type BusyState } from './model.js';
 import {
   classify,
@@ -42,9 +45,11 @@ import {
   type RequestId,
 } from './protocol.js';
 import { readHandlers } from './reads.js';
+import { referenceHandlers } from './reference.js';
 import { timingHandlers } from './timing.js';
 import { trackHandlers } from './tracks.js';
 import { transportHandlers } from './transport.js';
+import { uiHandlers } from './ui.js';
 
 export { UnsupportedPrecondition } from './jobs.js';
 
@@ -76,6 +81,12 @@ export const MOCK_CAPABILITIES: readonly string[] = [
   'tracks.v1',
   'arrangement.v1',
   'transport.v1',
+  'ui.bridge',
+  'ui.onboardingClose',
+  'reference.v1',
+  'project.io',
+  'prefs.write',
+  'audio.device',
 ];
 
 const LOOPBACK = '127.0.0.1';
@@ -201,6 +212,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   const files = new WorkFiles(options.workDir);
   const exporter = new ExportService(world, jobs, files, clock);
   const importer = new ImportService(world, jobs, files, clock, spec);
+  const projects = new ProjectService(world, jobs, files);
   let capabilities = [...MOCK_CAPABILITIES];
   let preAuthCount = 0;
   let acceptedConnections = 0;
@@ -266,13 +278,20 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       arch: process.arch,
       pid: process.pid,
     },
-    audioDevice: {
-      running: false,
-      name: null,
-      sampleRateHz: null,
-      bufferSizeFrame: null,
-      nullReasons: { name: 'no_audio_device', sampleRateHz: 'no_audio_device', bufferSizeFrame: 'no_audio_device' },
-    },
+    audioDevice: world.audio.running
+      ? {
+          running: true,
+          name: world.audio.outputDevice,
+          sampleRateHz: world.audio.sampleRateHz,
+          bufferSizeFrame: world.audio.bufferSizeFrame,
+        }
+      : {
+          running: false,
+          name: null,
+          sampleRateHz: null,
+          bufferSizeFrame: null,
+          nullReasons: { name: 'no_audio_device', sampleRateHz: 'no_audio_device', bufferSizeFrame: 'no_audio_device' },
+        },
     processing: {
       tuningHz: world.prefs.tuningHz,
       editingScheme: world.editingScheme,
@@ -283,7 +302,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       backend: null,
       vocoderReady: false,
       vocoderReconfiguring: false,
-      experimentalFeatures: false,
+      experimentalFeatures: world.prefs.experimentalFeatures,
       referenceAlignMode: null,
       nullReasons: {
         vocoderWeight: 'unavailable',
@@ -362,6 +381,11 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     ...trackHandlers,
     ...arrangementHandlers,
     ...transportHandlers,
+    ...uiHandlers,
+    ...referenceHandlers,
+    ...prefsHandlers,
+    ...audioHandlers,
+    ...projects.handlers,
     'import.start': importer.start,
     'export.start': exporter.start,
   };
@@ -380,6 +404,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       hasCapability: (c) => capabilities.includes(c),
       redact,
       startJob: (kind, work) => jobs.start({ kind }, oneShot(work)),
+      jobs,
     };
     try {
       send(conn, successLine(id, handler(context)));

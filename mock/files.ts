@@ -9,6 +9,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { projectBytes, singleClipProject } from './projectfile.js';
+
 export const WAV_SAMPLE_RATE_HZ = 16_000;
 const TONE_HZ = 220;
 
@@ -37,7 +39,8 @@ export function wavBytes(durationSec: number, voiced: boolean): Buffer {
   return Buffer.concat([header, data]);
 }
 
-export type GivenFileKind = 'audio' | 'absent' | 'existing' | 'noAccess' | 'undecodable';
+export type GivenFileKind =
+  'audio' | 'absent' | 'existing' | 'noAccess' | 'undecodable' | 'project' | 'projectMissingMedia';
 
 export interface GivenFile {
   readonly bind: string;
@@ -80,7 +83,8 @@ export class WorkFiles {
    * binds `<bind>.next`, the name a rename on collision writes (PROTOCOL.md section 19 rule 3).
    */
   provide(file: GivenFile): Record<string, string> {
-    const extension = file.extension ?? '.wav';
+    const isProject = file.kind === 'project' || file.kind === 'projectMissingMedia';
+    const extension = file.extension ?? (isProject ? '.otproj' : '.wav');
     const dir = this.#fresh();
     const target = path.join(dir, `${file.bind}${extension}`);
     switch (file.kind) {
@@ -100,6 +104,15 @@ export class WorkFiles {
         fs.mkdirSync(locked);
         this.#denied.add(locked);
         return { [file.bind]: path.join(locked, `${file.bind}${extension}`) };
+      }
+      case 'project':
+      case 'projectMissingMedia': {
+        // One clip on track 0 that shows a WAV file next to the project file; the second kind leaves the WAV out.
+        const durationSec = file.durationSec ?? 1;
+        const media = path.join(dir, `${file.bind}-media.wav`);
+        if (file.kind === 'project') fs.writeFileSync(media, wavBytes(durationSec, true));
+        fs.writeFileSync(target, projectBytes(singleClipProject(media, durationSec)));
+        return { [file.bind]: target };
       }
       case 'absent':
         return { [file.bind]: target };

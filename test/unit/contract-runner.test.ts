@@ -246,13 +246,13 @@ describe('runVector against the mock', () => {
   });
 
   it('skips, and never passes, a vector whose capability the mock does not report', async () => {
-    const other = [...vectors.values()].find((v) => v.extraCapabilities?.includes('reference.v1') === true);
-    if (other === undefined) throw new Error('no vector that needs reference.v1');
+    // The mock reports every capability of the specification now, so the vector asks for one it cannot have.
+    const other = { ...vector('session/hello-ok'), capability: 'future.v9' };
     const outcome = await runVector(other, target);
     expect(outcome).toEqual({
       id: other.id,
       result: 'SKIP',
-      note: 'mock target lacks reference.v1 (methods not implemented)',
+      note: 'mock target lacks future.v9 (methods not implemented)',
     });
   });
 

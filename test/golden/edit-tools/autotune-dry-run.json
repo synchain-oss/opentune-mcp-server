@@ -61,7 +61,7 @@
     "ui": {
       "workspace": "arrangement",
       "pianoRollContentId": null,
-      "activeTrackId": 0,
+      "activeTrackId": null,
       "selectedPlacementIds": [],
       "visibleTrackCount": 4
     },
