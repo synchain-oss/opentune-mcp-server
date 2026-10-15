@@ -53,7 +53,8 @@ function flagsOf(envelope: Json): string[] {
   const removed = asList(envelope.removed).length;
   if (removed > 0 || warningCodes(envelope).some((c) => DESTRUCTIVE_WARNINGS.has(c))) flags.push('destructive');
   const undo = isObject(envelope.undo) ? envelope.undo : null;
-  if (undo !== null && undo.undoable === false) {
+  // A result that changed nothing has nothing to undo; the no_op reason says only that.
+  if (undo !== null && undo.undoable === false && undo.reason !== 'no_op') {
     flags.push(`not undoable: ${undoReasonText(undo.reason)}`);
     const revert = isObject(undo.revert) ? undo.revert : null;
     const method = revert === null ? null : token(revert.method, 'method');
@@ -75,6 +76,24 @@ function flagsOf(envelope: Json): string[] {
   return flags;
 }
 
+/**
+ * What a result that changed nothing, or that only started a job, still did to the project: an
+ * undo or redo step used up (UNDO_NO_EFFECT) and a change of the unsaved-changes mark. Such a
+ * result reads as harmless, so these go into the first sentence too.
+ */
+function stateFlags(envelope: Json, warnings: readonly string[]): string[] {
+  const dirty = isObject(envelope.dirty) ? envelope.dirty : {};
+  const usedUp = warnings.includes('UNDO_NO_EFFECT');
+  let mark: string | null = null;
+  if (dirty.before === false && dirty.after === true) mark = 'the project is now marked as changed';
+  else if (dirty.before === true && dirty.after === false) mark = 'the project is no longer marked as changed';
+  else if (usedUp && dirty.before === true && dirty.after === true) mark = 'the project is still marked as changed';
+  if (usedUp) return [`the undo or redo step is used up${mark === null ? '' : ` and ${mark}`}`];
+  return mark === null ? [] : [mark];
+}
+
+const inParens = (flags: readonly string[]): string => (flags.length === 0 ? '' : ` (${flags.join('; ')})`);
+
 export function summarize(envelope: Json, tool: string): string {
   const warnings = warningCodes(envelope);
   const tail = warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
@@ -84,24 +103,22 @@ export function summarize(envelope: Json, tool: string): string {
     const kind = token(job.kind, 'camel');
     const state = token(job.state, 'camel');
     const named = id === null ? 'a job' : `job ${id}${kind === null ? '' : ` (${kind})`}`;
+    const flagText = inParens([...flagsOf(envelope), ...stateFlags(envelope, warnings)]);
     return (
-      `${tool}: started ${named}${state === null ? '' : `, ${state}`}; nothing is committed until it finishes. ` +
-      `Follow it with opentune_get_job.${tail}`
+      `${tool}: started ${named}${state === null ? '' : `, ${state}`}${flagText}; ` +
+      `nothing is committed until it finishes. Follow it with opentune_get_job.${tail}`
     );
   }
-  if (envelope.noOp === true) {
-    const dirty = isObject(envelope.dirty) ? envelope.dirty : {};
-    const marked = dirty.before === false && dirty.after === true ? ' The project is still marked as changed.' : '';
-    return `${tool}: nothing was changed, which is a success.${marked}${tail}`;
-  }
-  const dryRun = envelope.dryRun === true;
-  const flags = flagsOf(envelope);
-  const flagText = flags.length === 0 ? '' : ` (${flags.join('; ')})`;
-  const lead = dryRun
-    ? `${tool}: dry run, nothing was changed; would ${didPhrase(envelope, true)}`
-    : `${tool}: ${didPhrase(envelope, false)}`;
   const undo = isObject(envelope.undo) ? envelope.undo : null;
   const undoId = undo?.undoable === true ? token(undo.undoId, 'undoId') : null;
   const undoText = undoId === null ? '' : ` Undo it as one step with undoId ${undoId}.`;
-  return `${lead}${flagText}.${undoText}${tail}`;
+  if (envelope.noOp === true) {
+    const flagText = inParens([...flagsOf(envelope), ...stateFlags(envelope, warnings)]);
+    return `${tool}: nothing was changed, which is a success${flagText}.${undoText}${tail}`;
+  }
+  const dryRun = envelope.dryRun === true;
+  const lead = dryRun
+    ? `${tool}: dry run, nothing was changed; would ${didPhrase(envelope, true)}`
+    : `${tool}: ${didPhrase(envelope, false)}`;
+  return `${lead}${inParens(flagsOf(envelope))}.${undoText}${tail}`;
 }

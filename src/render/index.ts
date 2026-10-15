@@ -152,14 +152,11 @@ export function isWriteEnvelope(value: unknown): value is Json {
  */
 export function writeBody(envelope: Json, ctx: RenderContext): Body {
   const rendering = renderWrite(envelope, ctx);
-  // Object.assign keeps summary first and lets the rendering win over a same-named envelope member.
-  const body = { summary: rendering.summary };
-  return Object.assign(body, envelope, {
-    summary: rendering.summary,
-    uiEffects: rendering.uiEffects,
-    changeTable: rendering.changeTable,
-    lines: rendering.lines,
-  });
+  // The leading summary keeps it first; the rendering, spread last, wins over a same-named envelope
+  // member. Spreading defines members, so an envelope member named __proto__ stays a data member
+  // instead of replacing the prototype of the body, as Object.assign would.
+  const leading: Json = { summary: rendering.summary, ...envelope };
+  return { ...leading, ...rendering };
 }
 
 /** The outcome for the result of a write call: the rendered body, or INTERNAL when it is no write envelope. */

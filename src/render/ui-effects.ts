@@ -8,7 +8,7 @@
 
 import type { Json } from '../otcp/client.js';
 import { entitiesOf, isObject } from './changes.js';
-import { token } from './text.js';
+import { table, token } from './text.js';
 
 export interface UiEffect {
   readonly surface: string;
@@ -40,7 +40,7 @@ const ARRANGEMENT: Where = {
 const ALWAYS = (surface: string): Where => ({ surface, visible: () => true, howToSee: '' });
 const HIDDEN = (surface: string, howToSee: string): Where => ({ surface, visible: () => false, howToSee });
 
-const BY_ENTITY: Readonly<Record<string, Where>> = {
+const BY_ENTITY = table<Where>({
   note: PIANO_ROLL,
   content: PIANO_ROLL,
   timeHandle: PIANO_ROLL,
@@ -48,7 +48,7 @@ const BY_ENTITY: Readonly<Record<string, Where>> = {
   track: ARRANGEMENT,
   key: {
     surface: 'transport bar key selector',
-    visible: (_ui, _contentId, sideEffects) => 'uiScaleChanged' in sideEffects,
+    visible: (_ui, _contentId, sideEffects) => Object.hasOwn(sideEffects, 'uiScaleChanged'),
     howToSee: 'Select the clip; the key selector in the transport bar then shows its key.',
   },
   pitchShift: HIDDEN('clip pitch shift', 'Select the clip and open its pitch-shift dialog.'),
@@ -57,10 +57,10 @@ const BY_ENTITY: Readonly<Record<string, Where>> = {
   tempo: ALWAYS('transport bar'),
   transport: ALWAYS('transport bar'),
   dialog: ALWAYS('dialog'),
-};
+});
 const UNKNOWN = HIDDEN('unknown', 'Look at the OpenTune window.');
 
-const SIDE_EFFECT_WHERE: Readonly<Record<string, Where & { effect: string }>> = {
+const SIDE_EFFECT_WHERE = table<Where & { effect: string }>({
   notesGenerated: { ...HIDDEN('piano roll', 'Open the clip in the piano roll.'), effect: 'notes generated' },
   referenceAnalysisQueued: {
     ...HIDDEN('background work', 'The analysis runs in the background.'),
@@ -75,7 +75,7 @@ const SIDE_EFFECT_WHERE: Readonly<Record<string, Where & { effect: string }>> = 
   tracksRevealed: { ...ALWAYS('arrangement view'), effect: 'hidden tracks revealed' },
   dialogClosed: { ...ALWAYS('dialog'), effect: 'dialog closed' },
   dialogCommitted: { ...ALWAYS('dialog'), effect: 'dialog value committed' },
-};
+});
 
 function targetOf(ref: unknown): { target: string; contentId: string | null } {
   const r = isObject(ref) ? ref : {};

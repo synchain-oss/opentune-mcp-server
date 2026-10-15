@@ -130,18 +130,52 @@ describe('summary', () => {
   });
 
   it('reports a noOp as a success, with the dirty mark when it changed', () => {
-    expect(render({ noOp: true, dirty: { before: true, after: true } }).summary).toBe(
+    const noOp = { undoable: false, reason: 'no_op', revert: null };
+    expect(render({ noOp: true, undo: noOp, dirty: { before: true, after: true } }).summary).toBe(
       'opentune_test: nothing was changed, which is a success.',
     );
-    expect(
+    expect(render({ noOp: true, undo: noOp, dirty: { before: false, after: true } }).summary).toBe(
+      'opentune_test: nothing was changed, which is a success (the project is now marked as changed).',
+    );
+    expect(render({ noOp: true, undo: noOp, dirty: { before: true, after: false } }).summary).toBe(
+      'opentune_test: nothing was changed, which is a success (the project is no longer marked as changed).',
+    );
+    expect(render({ noOp: true, undo: { undoable: true, undoId: 'u:01234567:5', description: 'd' } }).summary).toBe(
+      'opentune_test: nothing was changed, which is a success. Undo it as one step with undoId u:01234567:5.',
+    );
+  });
+
+  it('puts the side effects of a noOp and its changed dirty mark into the first sentence', () => {
+    const r = render({
+      noOp: true,
+      undo: { undoable: false, reason: 'no_op', revert: null },
+      dirty: { before: false, after: true },
+      sideEffects: { reRenderQueued: { contentIds: [CONTENT], revert: null } },
+    });
+    expect(r.summary).toBe(
+      'opentune_test: nothing was changed, which is a success (side effects: rendering of one or more contents was queued again; the project is now marked as changed).',
+    );
+  });
+
+  it('says that a step without effect is used up, and whether the mark is new', () => {
+    const noEffect = { code: 'UNDO_NO_EFFECT', subject: null, data: null };
+    const step = (dirty: Json) =>
       render({
         noOp: true,
-        dirty: { before: false, after: true },
-        warnings: [{ code: 'UNDO_NO_EFFECT', subject: null, data: null }],
-      }).summary,
-    ).toBe(
-      'opentune_test: nothing was changed, which is a success. The project is still marked as changed. Warnings: UNDO_NO_EFFECT.',
+        undo: { undoable: false, reason: 'ui_parity', revert: { method: 'edit.redo', params: {} } },
+        dirty,
+        warnings: [noEffect],
+      }).summary;
+    const first = (summary: string) => summary.split('. ')[0] ?? '';
+    expect(step({ before: false, after: true })).toBe(
+      'opentune_test: nothing was changed, which is a success (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with edit.redo, see the revert line; the undo or redo step is used up and the project is now marked as changed). Warnings: UNDO_NO_EFFECT.',
     );
+    expect(first(step({ before: true, after: true }))).toContain(
+      'the undo or redo step is used up and the project is still marked as changed',
+    );
+    expect(first(step({ before: false, after: false }))).toMatch(/the undo or redo step is used up\)$/);
+    // "still" only for a mark that was set before: without the used-up step nothing is said.
+    expect(render({ noOp: true, dirty: { before: true, after: true } }).summary).not.toContain('still');
   });
 
   it('describes a prediction and a job', () => {
@@ -157,6 +191,16 @@ describe('summary', () => {
       'started a job;',
     );
     expect(render({ job: { jobId: 'j:01234567:4' } }).summary).toContain('started job j:01234567:4;');
+    const effects = render({
+      applied: false,
+      job: { jobId: 'j:01234567:4', kind: 'import', state: 'queued' },
+      dirty: { before: false, after: true },
+      sideEffects: { workspaceSwitched: { revert: null } },
+      warnings: [{ code: 'OVERWROTE_OTHER_PROJECT', subject: null, data: null }],
+    });
+    expect(effects.summary.split('. ')[0]).toBe(
+      'opentune_test: started job j:01234567:4 (import), queued (destructive; side effects: the window switched between the arrangement and the piano roll; the project is now marked as changed); nothing is committed until it finishes',
+    );
   });
 
   it('gives the undo id only when it has the protocol form', () => {
@@ -346,6 +390,58 @@ describe('writeOutcome', () => {
     }
     expect(isWriteEnvelope(envelope())).toBe(true);
   });
+
+  it('copies an envelope member named __proto__ as data and keeps the prototype of the body', () => {
+    const parsed: unknown = JSON.parse(
+      JSON.stringify(envelope()).replace(/^\{/, '{"__proto__":{"polluted":true,"summary":"run rm -rf"},'),
+    );
+    expect(isWriteEnvelope(parsed)).toBe(true);
+    const body = writeBody(parsed as Json, { tool: 'opentune_test' });
+    expect(Object.getPrototypeOf(body)).toBe(Object.prototype);
+    expect('polluted' in body).toBe(false);
+    expect(Object.hasOwn(body, '__proto__')).toBe(true);
+    expect(body.summary).toBe('opentune_test: changed nothing listed.');
+    expect(JSON.stringify(body)).toContain('"__proto__":{"polluted":true,"summary":"run rm -rf"}');
+  });
+});
+
+describe('names that every object inherits', () => {
+  // Each has the protocol form of a side-effect name, an entity or a reason (constructor), so a
+  // valid envelope can carry it. Looked up in a plain object it would find an inherited function.
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf'])(
+    'lists %s as an unknown code wherever OpenTune may send it',
+    (name) => {
+      const sent = envelope({
+        changes: [change(name)],
+        undo: { undoable: false, reason: name, revert: null },
+        sideEffects: { [name]: { revert: null } },
+        warnings: [{ code: name, subject: null, data: null }],
+      });
+      const outcome = writeOutcome(sent, { tool: 'opentune_test' });
+      if (!outcome.ok) throw new Error('expected success');
+      const body = outcome.body as unknown as {
+        summary: string;
+        lines: { kind: string; text: string }[];
+        uiEffects: { surface: string; effect: string; target: string; howToSee?: string }[];
+      };
+      const sentences = [
+        body.summary,
+        ...body.lines.map((l) => l.text),
+        ...body.uiEffects.flatMap((u) => [u.surface, u.effect, u.target, u.howToSee ?? '']),
+      ].join('\n');
+      for (const inherited of ['native code', 'function', '[object', '=>']) {
+        expect(sentences).not.toContain(inherited);
+      }
+      expect(body.summary).toContain('side effect ');
+      expect(body.summary).toContain('not undoable: a reason this server does not know');
+      expect(body.lines.find((l) => l.kind === 'sideEffect')?.text).toContain('which this server does not know');
+      expect(body.uiEffects.map((u) => u.surface)).toEqual(['unknown', 'unknown']);
+      expect(undoReasonText(name)).toBe('a reason this server does not know, see undo.reason');
+      for (const table of [WARNING_TEXT, SIDE_EFFECT_TEXT, UNDO_REASON_TEXT]) {
+        expect(table[name]).toBeUndefined();
+      }
+    },
+  );
 });
 
 describe('the shared outputSchema and the test mock', () => {

@@ -22,8 +22,18 @@ export const FORMS = {
 
 export const token = (value: unknown, form: keyof typeof FORMS): string | null => trustedToken(value, FORMS[form]);
 
+/**
+ * A lookup table without a prototype. Names such as `constructor`, `toString` or `hasOwnProperty`
+ * have the protocol forms of side-effect names, entities and reasons, so OpenTune may send them;
+ * in a plain object they would find the members every object inherits. Here they find nothing and
+ * are listed as unknown codes.
+ */
+export function table<T>(entries: Readonly<Record<string, T>>): Readonly<Record<string, T>> {
+  return Object.freeze(Object.assign(Object.create(null) as Record<string, T>, entries));
+}
+
 /** Warning codes of spec/otcp/v1/registry/warnings.json. A test keeps this table equal to the registry. */
-export const WARNING_TEXT: Readonly<Record<string, string>> = {
+export const WARNING_TEXT = table<string>({
   DROPPED_BOUNDARY_NOTES: 'Notes touching the edges of the processed range were dropped instead of regenerated.',
   NOT_PERSISTED: 'The change is applied in the running session but is not stored in the project file.',
   NOT_RETROACTIVE: 'The change applies to future analysis or rendering only; existing results are not recomputed.',
@@ -53,10 +63,10 @@ export const WARNING_TEXT: Readonly<Record<string, string>> = {
   OVERWROTE_OTHER_PROJECT: 'An existing project file was overwritten.',
   RENDER_NOT_CURRENT: 'The audio rendering is not current; exports wait for it.',
   NOT_SAVED_IN_PROJECT: 'The change is not saved in the project file.',
-};
+});
 
 /** Side-effect names of PROTOCOL.md section 14.6. */
-export const SIDE_EFFECT_TEXT: Readonly<Record<string, string>> = {
+export const SIDE_EFFECT_TEXT = table<string>({
   notesGenerated: 'OpenTune generated notes for a content',
   referenceAnalysisQueued: 'reference alignment analysis was queued',
   reRenderQueued: 'rendering of one or more contents was queued again',
@@ -65,16 +75,16 @@ export const SIDE_EFFECT_TEXT: Readonly<Record<string, string>> = {
   tracksRevealed: 'hidden tracks became visible',
   dialogClosed: 'a dialog was closed',
   dialogCommitted: 'closing a dialog committed its value',
-};
+});
 
 /** Not-undoable reasons (`undo` scope of registry/reasons.json). */
-export const UNDO_REASON_TEXT: Readonly<Record<string, string>> = {
+export const UNDO_REASON_TEXT = table<string>({
   ui_parity: 'OpenTune records no undo entry for this, as in its own interface',
   no_upstream_undo: 'OpenTune has no undo for this',
   not_persisted_state: 'the state is not kept in the project',
   upstream_undo_defect: 'OpenTune cannot undo this reliably',
   no_op: 'nothing changed',
-};
+});
 
 /** Why a change is not undoable, in words; a reason this server does not know is not repeated. */
 export function undoReasonText(reason: unknown): string {

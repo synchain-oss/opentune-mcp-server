@@ -165,6 +165,23 @@ async function fromMock(): Promise<Record<string, Scenario>> {
     tool: 'opentune_edit_timing',
     envelope: job,
   };
+
+  // An undo entry recorded before a track was deleted, applied with force, changes nothing.
+  const stale = await sessions.open({ instanceId: INSTANCE });
+  const staleIds = stale.mock.given({
+    dirty: false,
+    clips: [clip({ trackId: 1 })],
+    history: {
+      undo: [{ bind: 'move', origin: 'control', action: 'clipMove', clip: 'clip', trackDeletedAfter: true }],
+      redo: [],
+    },
+  });
+  out['undo-no-effect'] = {
+    description:
+      'An undo step that changed nothing (UNDO_NO_EFFECT): a success, but the step is used up and the project is now marked as changed, and the first sentence says so.',
+    tool: 'opentune_undo',
+    envelope: await stale.ok('edit.undo', { expectedUndoId: staleIds.move, force: true }),
+  };
   return out;
 }
 
@@ -244,6 +261,18 @@ function written(): Record<string, Scenario> {
         ui: WINDOW,
       }),
     },
+    'no-op-side-effects': {
+      description:
+        'A call that changed nothing it targeted but queued rendering again and newly marked the project as changed: both are in the first sentence.',
+      tool: 'opentune_set_clip',
+      envelope: base({
+        noOp: true,
+        undo: { undoable: false, reason: 'no_op', revert: null },
+        dirty: { before: false, after: true },
+        sideEffects: { reRenderQueued: { contentIds: [CONTENT], revert: null } },
+        ui: WINDOW,
+      }),
+    },
     'untrusted-strings-unknown-codes': {
       description:
         'Names, labels and codes of unknown form stay data; unknown warning codes and side effects are listed as they came.',
@@ -319,6 +348,8 @@ describe('write result rendering golden snapshots', () => {
       'not-undoable-revert',
       'pitch-shift-warning',
       'no-op',
+      'no-op-side-effects',
+      'undo-no-effect',
       'dry-run',
       'many-changes',
       'clip-delete-upstream-undo-defect',
