@@ -148,13 +148,47 @@ const sleep = (ms: number) =>
 /** How long a refused creation of the lock file counts as a lock being released, not as an error. */
 export const LOCK_DENIED_MS = 2000;
 
-/** Creates the lock file; fails with EEXIST when it exists. */
-export type CreateLockFile = (file: string) => Promise<void>;
+/** The file operations of the lock; tests replace them to force a particular interleaving of calls. */
+export interface LockFiles {
+  /** Creates the lock file; fails with EEXIST when it exists. */
+  readonly create: (file: string) => Promise<void>;
+  /** The modification time of a file in ms since the Unix epoch, or null when it cannot be read. */
+  readonly modified: (file: string) => Promise<number | null>;
+}
 
-const createLockFile: CreateLockFile = async (file) => {
-  const handle = await open(file, 'wx', 0o600);
-  await handle.close();
+export const LOCK_FILES: LockFiles = {
+  create: async (file) => {
+    const handle = await open(file, 'wx', 0o600);
+    await handle.close();
+  },
+  modified: (file) =>
+    stat(file).then(
+      (s) => s.mtimeMs,
+      () => null,
+    ),
 };
+
+/**
+ * Removes the lock file `file` if it is older than LOCK_STALE_MS, and tells whether it did. The file
+ * is first renamed to a name of its own, which only one caller can do, and checked there: when
+ * another call has replaced the stale lock with its own lock in the meantime, that lock was moved
+ * and is put back instead of being deleted.
+ */
+export async function removeStaleLock(file: string, files: LockFiles = LOCK_FILES): Promise<boolean> {
+  const moved = `${file}.${randomBytes(8).toString('hex')}.stale`;
+  const renamed = await rename(file, moved).then(
+    () => true,
+    () => false,
+  );
+  if (!renamed) return false;
+  const mtimeMs = await files.modified(moved);
+  if (mtimeMs !== null && Date.now() - mtimeMs <= LOCK_STALE_MS) {
+    await rename(moved, file).catch(() => rm(moved, { force: true }).catch(() => undefined));
+    return false;
+  }
+  await rm(moved, { force: true }).catch(() => undefined);
+  return true;
+}
 
 /**
  * Takes the launch lock of `dir`, creating the directory if needed, and returns the function that
@@ -164,15 +198,16 @@ const createLockFile: CreateLockFile = async (file) => {
 export async function acquireLock(
   dir: string,
   pollMs: number,
-  create: CreateLockFile = createLockFile,
+  replaced: Partial<LockFiles> = {},
 ): Promise<() => Promise<void>> {
+  const files: LockFiles = { ...LOCK_FILES, ...replaced };
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const file = path.join(dir, LOCK_FILE);
   const giveUp = Date.now() + 2 * LOCK_STALE_MS;
   let deniedSince: number | null = null;
   for (;;) {
     try {
-      await create(file);
+      await files.create(file);
       return () => unlink(file).catch(() => undefined);
     } catch (error) {
       const { code } = error as NodeJS.ErrnoException;
@@ -187,14 +222,8 @@ export async function acquireLock(
       if (code !== 'EEXIST') throw error;
       deniedSince = null;
     }
-    const info = await stat(file).catch(() => null);
-    if (info !== null && Date.now() - info.mtimeMs > LOCK_STALE_MS) {
-      const removed = await unlink(file).then(
-        () => true,
-        () => false,
-      );
-      if (removed) continue;
-    }
+    const mtimeMs = await files.modified(file);
+    if (mtimeMs !== null && Date.now() - mtimeMs > LOCK_STALE_MS && (await removeStaleLock(file, files))) continue;
     if (Date.now() > giveUp) throw new Error('the launch lock is held by another call');
     await sleep(pollMs);
   }

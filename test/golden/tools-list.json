@@ -195,13 +195,13 @@
   {
     "name": "opentune_launch",
     "title": "Start OpenTune",
-    "description": "OpenTune (audio vocal pitch editor): starts the OpenTune build configured for this server (OPENTUNE_MCP_OPENTUNE_PATH) with its control API and waits up to 30 seconds until it is ready, then reports the state like opentune_get_status, with a nextStep. Starts nothing when OpenTune already runs (alreadyRunning), runs without the control API, or no API build is configured; the result says why. Repeated or concurrent calls share one start. allow_second_instance needs the user's explicit consent. Never closes OpenTune.",
+    "description": "OpenTune (audio vocal pitch editor): starts the OpenTune build configured for this server (OPENTUNE_MCP_OPENTUNE_PATH) with its control API and waits up to 30 seconds until it is ready, then reports the state like opentune_get_status, with a nextStep. Starts nothing when OpenTune already runs (alreadyRunning), may run without the control API, or no API build is configured; the result says why. Repeated or concurrent calls share one start. allow_second_instance needs the user's explicit consent; each call with it starts one more instance once earlier starts are done. Never closes OpenTune.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "properties": {
         "allow_second_instance": {
-          "description": "Start another instance although one with the control API is running. Only when the user explicitly asked for a second OpenTune instance. Default false: report the running one.",
+          "description": "Start OpenTune even though an instance with the control API runs, or even though this server cannot list the running processes to rule out an OpenTune without the control API. Only when the user explicitly asked for a second instance, or confirmed that no OpenTune runs. Default false: start nothing then.",
           "type": "boolean"
         }
       },
@@ -210,7 +210,7 @@
     "annotations": {
       "readOnlyHint": false,
       "destructiveHint": false,
-      "idempotentHint": true,
+      "idempotentHint": false,
       "openWorldHint": false
     }
   }

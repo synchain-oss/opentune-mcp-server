@@ -8,7 +8,7 @@
 
 import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,6 +20,7 @@ import { manifestProblem } from '../../src/launch/config.js';
 import { detectOfficialInstall, installDir, parseRegQuery, systemInstallDetector } from '../../src/launch/install.js';
 import {
   LOCK_DENIED_MS,
+  LOCK_FILES,
   LOCK_STALE_MS,
   acquireLock,
   launchDir,
@@ -27,12 +28,13 @@ import {
   nonceHash,
   readRecords,
   readReadyFile,
+  removeStaleLock,
   writeRecord,
 } from '../../src/launch/records.js';
 import { launchArgs, startProcess, type LaunchDeps, type SpawnFn } from '../../src/launch/start.js';
 import type { ToolRun } from '../../src/discovery/process.js';
 import { launch, launchTool } from '../../src/tools/launch.js';
-import type { Outcome } from '../../src/tools/registry.js';
+import { render, type Outcome } from '../../src/tools/registry.js';
 import { STATUS_REASON_STEPS, STATUS_TEXT, getStatus } from '../../src/tools/status.js';
 import { INITIALIZE, fakeProbe, mcpClient, tempDir, testContext, type TestContext } from '../support/context.js';
 
@@ -183,11 +185,20 @@ describe('opentune_launch', () => {
     async () => {
       const install = dir();
       const data = dir();
+      const lock = path.join(data, 'control', 'instances', 'launching', 'launch.lock');
+      let lockedDuringDetection: boolean | null = null;
       const { ctx, calls } = setup({
         env: { OPENTUNE_MCP_DISCOVERY_DIR: '', OPENTUNE_DATA_DIR: data },
-        launch: { officialInstall: () => Promise.resolve({ dir: install, version: '1.8.0', source: 'registry' }) },
+        launch: {
+          officialInstall: () => {
+            lockedDuringDetection = existsSync(lock);
+            return Promise.resolve({ dir: install, version: '1.8.0', source: 'registry' });
+          },
+        },
       });
       const b = body(await launch(ctx, {}));
+      // The detection (registry queries, possibly slow) does not run while the launch lock is held.
+      expect(lockedDuringDetection).toBe(false);
       expect(b).toMatchObject({ launched: true, state: 'READY', workingDirectory: 'official_install' });
       expect(calls[0]?.options.cwd).toBe(install);
       expect(calls[0]?.args.some((a) => a.startsWith('--control-api-dir='))).toBe(false);
@@ -320,6 +331,55 @@ describe('opentune_launch', () => {
     expect(body(await launch(ctx, {}))).toMatchObject({ launched: false, state: 'STARTING' });
     expect(calls).toHaveLength(0);
   });
+
+  it(
+    'starts nothing when the running processes cannot be listed, until the user confirms that none runs',
+    async () => {
+      const { ctx, calls } = setup();
+      ctx.probe.openTune = null;
+      const unlisted = { processes: null, nullReasons: { processes: 'not_listable' } };
+      // get_status leads the agent here; the process list it could not read is reported, not taken as empty.
+      expect(body(await getStatus(ctx, undefined))).toMatchObject({
+        state: 'NOT_RUNNING',
+        nextStep: { actor: 'agent', tool: 'opentune_launch' },
+        ...unlisted,
+      });
+      const refused = await launch(ctx, {});
+      expect(refused).toMatchObject({
+        ok: false,
+        error: {
+          kind: 'OPENTUNE_NOT_AVAILABLE',
+          reason: 'process_list_unavailable',
+          retryable: false,
+          executed: false,
+          nextStep: {
+            actor: 'user',
+            message: expect.stringMatching(/Only after the user confirms, .*allow_second_instance: true/) as unknown,
+          },
+          url: expect.stringMatching(/#error-opentune_not_available$/) as unknown,
+        },
+        context: unlisted,
+      });
+      expect(render(refused)).toMatchObject({ isError: true, structuredContent: unlisted });
+      expect(calls).toHaveLength(0);
+
+      // A configuration problem comes first: confirming would not help.
+      const unset = setup({ env: { OPENTUNE_MCP_OPENTUNE_PATH: '' } });
+      unset.ctx.probe.openTune = null;
+      expect(body(await launch(unset.ctx, {}))).toMatchObject({
+        launched: false,
+        state: 'NOT_INSTALLED',
+        reason: 'path_not_configured',
+        ...unlisted,
+      });
+
+      // After the user confirmed that no OpenTune runs.
+      const b = body(await launch(ctx, { allow_second_instance: true }));
+      expect(calls).toHaveLength(1);
+      expect(b).toMatchObject({ launched: true, state: 'READY', instances: [{ state: 'READY' }] });
+    },
+    TIMEOUT,
+  );
 
   it(
     'reports a running instance as alreadyRunning and starts a second one only when allowed',
@@ -484,23 +544,91 @@ describe('launch records', () => {
     expect(readdirSync(d)).toEqual([]);
   });
 
+  /** A lock file in a new launching directory, left behind long ago or just created. */
+  function lockFile(stale: boolean): { d: string; lock: string } {
+    const d = launchDir(dir());
+    mkdirSync(d, { recursive: true });
+    const lock = path.join(d, 'launch.lock');
+    writeFileSync(lock, 'held');
+    if (stale) {
+      const old = (Date.now() - 2 * LOCK_STALE_MS) / 1000;
+      utimesSync(lock, old, old);
+    }
+    return { d, lock };
+  }
+
+  it('remove only a lock left behind, and put back a lock that has replaced it', async () => {
+    const fresh = lockFile(false);
+    expect(await removeStaleLock(fresh.lock)).toBe(false);
+    expect(readdirSync(fresh.d)).toEqual(['launch.lock']);
+    expect(readFileSync(fresh.lock, 'utf8')).toBe('held');
+    const stale = lockFile(true);
+    expect(await removeStaleLock(stale.lock)).toBe(true);
+    expect(readdirSync(stale.d)).toEqual([]);
+    expect(await removeStaleLock(stale.lock)).toBe(false);
+  });
+
+  it('let only one of two calls that saw the same lock left behind take the lock', async () => {
+    const { d, lock } = lockFile(true);
+    // The late call reads the age of the old lock, then pauses until the other call has replaced it
+    // with its own lock; it then acts on what it saw, as a slower process would.
+    let seen!: () => void;
+    const lateHasSeen = new Promise<void>((resolve) => {
+      seen = resolve;
+    });
+    let resume!: () => void;
+    const paused = new Promise<void>((resolve) => {
+      resume = resolve;
+    });
+    let first = true;
+    const late = acquireLock(d, 10, {
+      modified: async (file) => {
+        const mtimeMs = await LOCK_FILES.modified(file);
+        if (first && file === lock) {
+          first = false;
+          seen();
+          await paused;
+        }
+        return mtimeMs;
+      },
+    });
+    let lateHolds = false;
+    void late.then(() => {
+      lateHolds = true;
+    });
+    await lateHasSeen;
+    const releaseEarly = await acquireLock(d, 10);
+    resume();
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(lateHolds).toBe(false);
+    expect(readdirSync(d)).toEqual(['launch.lock']);
+    await releaseEarly();
+    await (
+      await late
+    )();
+    expect(lateHolds).toBe(true);
+    expect(existsSync(lock)).toBe(false);
+  });
+
   it('wait out a brief refusal to create the lock file, but not a lasting one', async () => {
     const d = launchDir(dir());
     const fail = (code: string) => Promise.reject(Object.assign(new Error(code), { code }));
     let attempts = 0;
-    const release = await acquireLock(d, 10, (file) => {
-      attempts += 1;
-      // Windows: the name of a lock file another call has just deleted cannot be reused at once.
-      if (attempts <= 3) return fail('EPERM');
-      writeFileSync(file, '', { flag: 'wx' });
-      return Promise.resolve();
+    const release = await acquireLock(d, 10, {
+      create: (file) => {
+        attempts += 1;
+        // Windows: the name of a lock file another call has just deleted cannot be reused at once.
+        if (attempts <= 3) return fail('EPERM');
+        writeFileSync(file, '', { flag: 'wx' });
+        return Promise.resolve();
+      },
     });
     expect(attempts).toBe(4);
     await release();
     const started = Date.now();
-    await expect(acquireLock(d, 50, () => fail('EACCES'))).rejects.toMatchObject({ code: 'EACCES' });
+    await expect(acquireLock(d, 50, { create: () => fail('EACCES') })).rejects.toMatchObject({ code: 'EACCES' });
     expect(Date.now() - started).toBeGreaterThanOrEqual(LOCK_DENIED_MS);
-    await expect(acquireLock(d, 10, () => fail('ENOSPC'))).rejects.toMatchObject({ code: 'ENOSPC' });
+    await expect(acquireLock(d, 10, { create: () => fail('ENOSPC') })).rejects.toMatchObject({ code: 'ENOSPC' });
     expect(readdirSync(d)).toEqual([]);
   });
 });

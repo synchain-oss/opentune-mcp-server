@@ -54,7 +54,8 @@ available. Start it by hand to see what happens, and run `opentune-mcp doctor`.
 
 With `processes: null` and `nullReasons.processes` set to `not_listable` (in this state, `NO_API_BUILD` or
 `NOT_INSTALLED`), the server could not list the running processes, so an OpenTune without the control API may still
-be running.
+be running. `opentune_launch` then starts nothing until the user confirms that no OpenTune runs (see
+[OPENTUNE_NOT_AVAILABLE](#error-opentune_not_available)).
 
 ### Status NO_API_BUILD
 
@@ -85,7 +86,11 @@ waits, the folder `launching` in the discovery directory holds `<pid>.json` (the
 nonce, never a token) and the ready file, so that `opentune_get_status` reports [STARTING](#status-starting) and
 repeated or concurrent calls wait for the same start. It starts nothing when an instance with the control API already
 runs (`alreadyRunning`; a second instance needs `allow_second_instance` and the user's explicit consent) or an OpenTune
-without the control API runs. It never ends a process, also not after a timeout.
+without the control API runs. When the server cannot list the running processes, it cannot rule out the latter and
+also starts nothing (error [OPENTUNE_NOT_AVAILABLE](#error-opentune_not_available), `reason`
+`process_list_unavailable`). `allow_second_instance: true` is not idempotent: every call with it starts one more
+instance once the earlier starts are done, so use it only once per consent. It never ends a process, also not after a
+timeout.
 
 ## Errors
 
@@ -177,6 +182,12 @@ Check the status and re-read the state before retrying.
 ### Error OPENTUNE_NOT_AVAILABLE
 
 No instance with the control API is running. Check the status and follow its next step.
+
+From `opentune_launch` with `reason` `process_list_unavailable` (and `processes: null`, `nullReasons.processes`
+`not_listable`, as in [NOT_RUNNING](#status-not_running)): the server could not list the running processes, so it
+cannot tell whether an OpenTune without the control API already runs, and starting would open a second instance next
+to it. Nothing was started. Make sure no OpenTune is running; only after the user has confirmed this, call
+`opentune_launch` again with `allow_second_instance: true`. That is the only way past this check.
 
 ### Error MULTIPLE_INSTANCES
 

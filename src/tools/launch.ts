@@ -4,17 +4,20 @@
 // opentune_launch: starts the OpenTune build configured in OPENTUNE_MCP_OPENTUNE_PATH with its
 // control API, waits until it announces itself, and reports the result in the shape of
 // opentune_get_status. It starts nothing when an instance with the control API already runs
-// (unless the user asked for a second one), when an OpenTune without the control API runs, or
-// when the configuration does not allow it; a call that arrives while another call's start is
-// under way waits for that start instead. The started instance is accepted only if its discovery
-// file carries the nonce passed to the process. No process is ever stopped, also not after a
-// timeout. The executable, its arguments and its environment come from the configuration only.
+// (unless the user asked for a second one), when an OpenTune without the control API runs, when
+// the running processes cannot be listed to rule that out (unless the user confirmed that none
+// runs), or when the configuration does not allow it; a call that arrives while another call's
+// start is under way waits for that start instead. The started instance is accepted only if its
+// discovery file carries the nonce passed to the process. No process is ever stopped, also not
+// after a timeout. The executable, its arguments and its environment come from the configuration
+// only.
 
 import { z } from 'zod';
 
 import { toolError } from '../errors/tool-error.js';
 import type { DiscoveryEntry } from '../discovery/file.js';
 import { checkLaunchConfig, isWsl, readOsRelease } from '../launch/config.js';
+import type { OfficialInstall } from '../launch/install.js';
 import {
   acquireLock,
   launchDir,
@@ -81,11 +84,27 @@ const notStarted = (state: StatusState, reason: string | null, extra: Json = {})
   outcome: notStartedOutcome(state, reason, extra),
 });
 
+/** The process list could not be read, so an OpenTune without the control API may be running. */
+const processListUnavailable = (context: Json): Plan => ({
+  kind: 'outcome',
+  outcome: {
+    ok: false,
+    error: toolError('OPENTUNE_NOT_AVAILABLE', {
+      reason: 'process_list_unavailable',
+      detail:
+        'the running processes could not be listed, so it is unknown whether OpenTune already runs without the ' +
+        'control API; nothing was started',
+    }),
+    context,
+  },
+});
+
 /** Decides, under the launch lock, whether to start, to wait for another start or to report. */
 async function decide(
   ctx: ToolContext,
   discovery: { readonly dir: string; readonly override: boolean },
   allowSecond: boolean,
+  install: OfficialInstall | null,
 ): Promise<Plan> {
   const scan = await ctx.instances.scan();
   if (!('instances' in scan)) return { kind: 'outcome', outcome: { ok: false, error: scan } };
@@ -104,24 +123,31 @@ async function decide(
 
   // OpenTune processes without a discovery file: listed by name, or started earlier by this server
   // and still silent after the launch wait.
-  const listed = (await ctx.probe.listOpenTune()) ?? [];
-  const silent = [...new Set([...listed, ...records.map((r) => r.record.pid)])].filter((pid) => !announced.has(pid));
+  const listed = await ctx.probe.listOpenTune();
+  // As in opentune_get_status: a process list that cannot be read is reported, never taken as empty.
+  const unlisted: Json = listed === null ? { processes: null, nullReasons: { processes: 'not_listable' } } : {};
+  const silent = [...new Set([...(listed ?? []), ...records.map((r) => r.record.pid)])].filter(
+    (pid) => !announced.has(pid),
+  );
   if (silent.length > 0) {
     const starts = await Promise.all(silent.map(async (pid) => (await ctx.probe.probe(pid)).startTimeMs));
     const starting = starts.some((t) => t !== null && ctx.now() - t < STARTUP_GRACE_MS);
     return notStarted(starting ? 'STARTING' : 'RUNNING_WITHOUT_API', null, {
+      ...unlisted,
       processes: silent.map((pid) => ({ pid })),
     });
   }
 
   const config = await checkLaunchConfig(ctx.env, ctx.platform);
-  if (config.state === 'unset') return notStarted('NOT_INSTALLED', 'path_not_configured');
-  if (config.state === 'invalid') return notStarted('NOT_INSTALLED', config.reason);
-  if (config.state === 'no_api') return notStarted('NO_API_BUILD', config.reason);
+  if (config.state === 'unset') return notStarted('NOT_INSTALLED', 'path_not_configured', unlisted);
+  if (config.state === 'invalid') return notStarted('NOT_INSTALLED', config.reason, unlisted);
+  if (config.state === 'no_api') return notStarted('NO_API_BUILD', config.reason, unlisted);
+  // Without the process list, an OpenTune running without the control API cannot be ruled out, and a
+  // start would open a second instance next to it. Only the user can rule it out.
+  if (listed === null && !allowSecond) return processListUnavailable(unlisted);
 
   const nonce = newNonce();
   const hash = nonceHash(nonce);
-  const install = await ctx.launch.officialInstall().catch(() => null);
   const startedAtMs = ctx.now();
   const started = await startProcess(ctx.launch.spawn, {
     exe: config.path,
@@ -227,6 +253,9 @@ export async function launch(
   const dir = ctx.instances.dir();
   if (!dir.ok)
     return { ok: false, error: toolError('CONFIG_INVALID', { reason: 'discovery_dir', detail: dir.problem }) };
+  // Read-only and possibly slow (registry queries on Windows). It only picks the working directory of
+  // a start, so it runs before the lock, which then covers just "decide, start, write the record".
+  const install = await ctx.launch.officialInstall().catch(() => null);
   let release: () => Promise<void>;
   try {
     release = await acquireLock(launchDir(dir.dir), ctx.launch.pollMs);
@@ -241,6 +270,7 @@ export async function launch(
       ctx,
       { dir: dir.dir, override: dir.source === 'override' },
       args.allow_second_instance === true,
+      install,
     );
   } finally {
     await release();
@@ -264,19 +294,21 @@ export const launchTool = defineTool({
     'OpenTune (audio vocal pitch editor): starts the OpenTune build configured for this server ' +
     '(OPENTUNE_MCP_OPENTUNE_PATH) with its control API and waits up to 30 seconds until it is ready, then reports ' +
     'the state like opentune_get_status, with a nextStep. Starts nothing when OpenTune already runs ' +
-    '(alreadyRunning), runs without the control API, or no API build is configured; the result says why. Repeated ' +
-    "or concurrent calls share one start. allow_second_instance needs the user's explicit consent. Never closes " +
-    'OpenTune.',
+    '(alreadyRunning), may run without the control API, or no API build is configured; the result says why. ' +
+    "Repeated or concurrent calls share one start. allow_second_instance needs the user's explicit consent; each " +
+    'call with it starts one more instance once earlier starts are done. Never closes OpenTune.',
   inputSchema: z.strictObject({
     allow_second_instance: z
       .boolean()
       .optional()
       .describe(
-        'Start another instance although one with the control API is running. Only when the user explicitly ' +
-          'asked for a second OpenTune instance. Default false: report the running one.',
+        'Start OpenTune even though an instance with the control API runs, or even though this server cannot list ' +
+          'the running processes to rule out an OpenTune without the control API. Only when the user explicitly ' +
+          'asked for a second instance, or confirmed that no OpenTune runs. Default false: start nothing then.',
       ),
   }),
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  // Not idempotent: with allow_second_instance, a call after an earlier start has finished starts another instance.
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   capabilities: ['session.v1'],
   otcpMethods: ['session.hello', 'session.info'],
   run: (args, ctx) => launch(ctx, args),

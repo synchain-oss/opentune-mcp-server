@@ -19,31 +19,35 @@ narrow:
 - The started instance is accepted only if its discovery file carries the launch nonce. `launching/<pid>.json` in the
   discovery directory (pid, start time, SHA-256 of the nonce; never the nonce or a token) lets repeated and concurrent
   calls share one start and lets `opentune_get_status` report `STARTING`.
+- When the running processes cannot be listed, an OpenTune without the control API cannot be ruled out, so the tool
+  starts nothing and returns an error whose next step asks the user to confirm that no OpenTune runs; only then may
+  the agent call again with `allow_second_instance: true`.
 
 ## Files
 
-| File                          | Change                                                                                               |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------- |
-| `test/golden/tools-list.json` | Adds `opentune_launch` (input `allow_second_instance?`; not read-only, not destructive, idempotent). |
-| `docs/reference.md`           | Regenerated: the new tool.                                                                           |
-| `docs/TROUBLESHOOTING.md`     | New section "Starting OpenTune"; new reasons below; `OT_NO_OFFICIAL_INSTALL` is now implemented.     |
-| `mcpb/manifest.json`          | Tools list synced from the golden catalog (`node scripts/mcpb.mjs sync-tools`).                      |
+| File                          | Change                                                                                                                                                                 |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/golden/tools-list.json` | Adds `opentune_launch` (input `allow_second_instance?`; not read-only, not destructive, not idempotent: each call with `allow_second_instance: true` starts one more). |
+| `docs/reference.md`           | Regenerated: the new tool.                                                                                                                                             |
+| `docs/TROUBLESHOOTING.md`     | New section "Starting OpenTune"; new reasons below; `OT_NO_OFFICIAL_INSTALL` is now implemented.                                                                       |
+| `mcpb/manifest.json`          | Tools list synced from the golden catalog (`node scripts/mcpb.mjs sync-tools`).                                                                                        |
 
 The MCP instructions (`test/golden/instructions.txt`) and the OTCP specification (`spec/otcp/v1/`) are not changed;
 the tool uses the start options, discovery file member `launchNonce` and ready file the specification already defines.
 
 Result changes of `opentune_get_status` that the golden files do not cover:
 
-| State / error                   | Change                                                                                                |
-| ------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `NOT_RUNNING`                   | `nextStep` is now `{actor: "agent", tool: "opentune_launch"}` (was a user step).                      |
-| `RUNNING_WITHOUT_API`           | The user step mentions restarting with `opentune_launch`; a launched process silent past 30 s counts. |
-| `STARTING`                      | New `reason` `launch_pending` for a process `opentune_launch` started; other starts keep `null`.      |
-| `NOT_READY`                     | New reasons `launch_timeout` (agent step: check the status again) and `launch_unverified` (user).     |
-| `NOT_RUNNING`                   | New reason `launch_exited` (user step).                                                               |
-| `NO_API_BUILD`                  | New reason `manifest_too_large` (`opentune-control.json` larger than 8 KiB).                          |
-| `CONFIG_INVALID` (error)        | New reason `launch_failed` (the system could not start the configured executable).                    |
-| doctor `OT_NO_OFFICIAL_INSTALL` | Implemented: `pass` with the folder and version, `warn` when none is found or not on Windows.         |
+| State / error                    | Change                                                                                                   |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `NOT_RUNNING`                    | `nextStep` is now `{actor: "agent", tool: "opentune_launch"}` (was a user step).                         |
+| `RUNNING_WITHOUT_API`            | The user step mentions restarting with `opentune_launch`; a launched process silent past 30 s counts.    |
+| `STARTING`                       | New `reason` `launch_pending` for a process `opentune_launch` started; other starts keep `null`.         |
+| `NOT_READY`                      | New reasons `launch_timeout` (agent step: check the status again) and `launch_unverified` (user).        |
+| `NOT_RUNNING`                    | New reason `launch_exited` (user step).                                                                  |
+| `NO_API_BUILD`                   | New reason `manifest_too_large` (`opentune-control.json` larger than 8 KiB).                             |
+| `CONFIG_INVALID` (error)         | New reason `launch_failed` (the system could not start the configured executable).                       |
+| `OPENTUNE_NOT_AVAILABLE` (error) | New reason `process_list_unavailable` from `opentune_launch` (user step; `processes: null` with reason). |
+| doctor `OT_NO_OFFICIAL_INSTALL`  | Implemented: `pass` with the folder and version, `warn` when none is found or not on Windows.            |
 
 ## Compatibility
 

@@ -103,6 +103,11 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'UNSUPPORTED/job_not_cancellable': agent(
     'This job cannot be cancelled now; it continues. Follow it with opentune_get_job.',
   ),
+  'OPENTUNE_NOT_AVAILABLE/process_list_unavailable': user(
+    'This server cannot list the running processes, so it cannot tell whether OpenTune already runs without the ' +
+      'control API. Ask the user to make sure no OpenTune is running. Only after the user confirms, call ' +
+      'opentune_launch again with allow_second_instance: true.',
+  ),
   'CONFIG_INVALID/launch_failed': user(
     'The configured OpenTune executable could not be started (see detail). Ask the user to check ' +
       'OPENTUNE_MCP_OPENTUNE_PATH ("opentune-mcp doctor" checks it).',
