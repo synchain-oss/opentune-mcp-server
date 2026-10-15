@@ -49,7 +49,7 @@
     "test:unit": "vitest run --coverage --project unit",
     "test:stdio": "vitest run --project stdio",
     "test:contract": "vitest run --project contract",
-    "test:catalog": "vitest run --project unit test/unit/catalog.test.ts",
+    "test:catalog": "vitest run --project unit test/unit/catalog.test.ts test/unit/render-golden.test.ts",
     "catalog:update": "node scripts/update-catalog.mjs",
     "gates": "node scripts/gates.mjs"
   },

@@ -1,0 +1,228 @@
+{
+  "description": "A key change has no undo entry: the first sentence says so and names the revert recipe.",
+  "tool": "opentune_set_clip",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "key",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1",
+        "fields": {
+          "root": {
+            "before": 9,
+            "after": 0,
+            "unit": null
+          },
+          "scale": {
+            "before": "minor",
+            "after": "major",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "key": {
+              "before": "k7",
+              "after": "k30"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r26",
+          "gridRevision": "g6",
+          "keyRevision": "k30"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "content.setKey",
+        "params": {
+          "contentId": "c:01234567:0:1",
+          "key": {
+            "root": 9,
+            "scale": "minor"
+          },
+          "expectedKeyRevision": "k30"
+        }
+      }
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null
+  },
+  "rendered": {
+    "summary": "opentune_set_clip: changed 1 key (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with content.setKey, see the revert line).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "key",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1",
+        "fields": {
+          "root": {
+            "before": 9,
+            "after": 0,
+            "unit": null
+          },
+          "scale": {
+            "before": "minor",
+            "after": "major",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "key": {
+              "before": "k7",
+              "after": "k30"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r26",
+          "gridRevision": "g6",
+          "keyRevision": "k30"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "content.setKey",
+        "params": {
+          "contentId": "c:01234567:0:1",
+          "key": {
+            "root": 9,
+            "scale": "minor"
+          },
+          "expectedKeyRevision": "k30"
+        }
+      }
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "transport bar key selector",
+        "effect": "changed key",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Select the clip; the key selector in the transport bar then shows its key."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "key",
+          "label": "Content 1",
+          "ref": {
+            "contentId": "c:01234567:0:1"
+          },
+          "fields": [
+            {
+              "field": "root",
+              "before": 9,
+              "after": 0,
+              "unit": null
+            },
+            {
+              "field": "scale",
+              "before": "minor",
+              "after": "major",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore with content.setKey and these params, sent unchanged.",
+        "revert": {
+          "method": "content.setKey",
+          "params": {
+            "contentId": "c:01234567:0:1",
+            "key": {
+              "root": 9,
+              "scale": "minor"
+            },
+            "expectedKeyRevision": "k30"
+          }
+        }
+      }
+    ]
+  }
+}
