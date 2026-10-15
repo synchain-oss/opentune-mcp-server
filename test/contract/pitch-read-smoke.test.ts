@@ -44,9 +44,10 @@ class Client {
       });
       // Nothing else may be sent until the server has proven it is the instance the discovery file
       // names; otherwise a different process on a stale port would receive the writes below. The
-      // message names the field only, never its value.
+      // message names the field only, never its value. A field the discovery file lacks fails too:
+      // then there is nothing to prove against, and an undefined on both sides would compare equal.
       for (const key of ['serverProof', 'instanceId', 'pid'] as const) {
-        if (hello[key] !== instance.discovery[key]) {
+        if (instance.discovery[key] === undefined || hello[key] !== instance.discovery[key]) {
           throw new Error(`session.hello: ${key} does not match the discovery file`);
         }
       }

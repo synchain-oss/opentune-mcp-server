@@ -9,7 +9,8 @@
 //                               [--allow-dependabot] [--no-skip]
 //   --base   branch the current branch will be merged into; the commits in <ref>..HEAD are
 //            checked for attribution, sign-off and identity, and the files that are new since
-//            the merge base must not be audio (default: origin/feature/v1)
+//            the merge base, or added by a commit in the range and removed again, must not be
+//            audio (default: origin/feature/v1)
 //   --only   comma-separated, case-insensitive substrings of check names; runs just those checks
 //            (for re-running one failure). A table from a partial run is not a gates result.
 //   --allow-external-authors
@@ -24,7 +25,7 @@
 //            uses it where a check must actually run (a SKIP there means a tool was not installed).
 //            Without it SKIP rows keep their reason and do not fail the run.
 
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -40,6 +41,7 @@ import {
   AUDIO_FIXTURE_DIR,
   AUDIO_SNIFF_BYTES,
   GIT_LOG_FORMAT,
+  addedInHistory,
   checkBundleShape,
   checkCommits,
   checkLockfile,
@@ -112,6 +114,30 @@ function git(args) {
   if (result.error) throw result.error;
   if (result.status !== 0) throw new Error(`git ${args.join(' ')} failed: ${result.stderr.trim()}`);
   return result.stdout;
+}
+
+/**
+ * The first `bytes` bytes of a blob (`<commit>:<path>`). The process is stopped once they have
+ * arrived, so a large recording is not read whole.
+ */
+function gitBlobHead(spec, bytes) {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['cat-file', '-p', spec], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
+    const chunks = [];
+    let total = 0;
+    let stderr = '';
+    child.stdout.on('data', (chunk) => {
+      chunks.push(chunk);
+      total += chunk.length;
+      if (total >= bytes) child.kill();
+    });
+    child.stderr.on('data', (chunk) => (stderr += chunk));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (total < bytes && code !== 0) reject(new Error(`git cat-file ${spec} failed: ${stderr.trim()}`));
+      else resolve(Buffer.concat(chunks).subarray(0, bytes));
+    });
+  });
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -367,10 +393,14 @@ async function noNewAudio(base) {
       await handle.close();
     }
   }
+  // Also the files that a commit on this branch added and a later commit removed: the history
+  // keeps them, and a merge commit or a push puts them on the branch for good.
+  const headPaths = git(['ls-tree', '-r', '-z', '--name-only', 'HEAD']).split('\0').filter(Boolean);
+  added.push(...(await addedInHistory(`${base}..HEAD`, { git, headPaths, blobHead: gitBlobHead })));
   return verdict(
     checkNoNewAudio(added),
-    `${added.length} file(s) new since the merge base with ${base}: no audio (by extension or signature) ` +
-      `outside ${AUDIO_FIXTURE_DIR}`,
+    `${added.length} file(s) new since the merge base with ${base}, including those added and removed again ` +
+      `in ${base}..HEAD: no audio (by extension or signature) outside ${AUDIO_FIXTURE_DIR}`,
   );
 }
 
