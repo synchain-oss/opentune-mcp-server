@@ -1,0 +1,62 @@
+{
+  "manifest_version": "0.3",
+  "name": "opentune-mcp",
+  "display_name": "OpenTune MCP Server (by Synchain)",
+  "version": "0.0.0",
+  "description": "Lets AI agents operate OpenTune Standalone, an editor for the pitch and timing of recorded vocals, and reports every result in a clear, structured form.",
+  "long_description": "OpenTune MCP Server (by Synchain) is a local MCP server. It talks to a build of OpenTune Standalone that has the control interface, over a loopback-only connection; it listens on no network port. Choose that OpenTune executable in the settings below. Run opentune-mcp doctor from a terminal if something does not work.",
+  "author": {
+    "name": "Synchain",
+    "email": "contact@synchain.ca",
+    "url": "https://www.synchain.ca"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/synchain-oss/opentune-mcp-server"
+  },
+  "homepage": "https://github.com/synchain-oss/opentune-mcp-server#readme",
+  "support": "https://github.com/synchain-oss/opentune-mcp-server/issues",
+  "license": "MIT",
+  "keywords": ["opentune", "vocal", "pitch-correction", "audio"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/opentune-mcp.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/opentune-mcp.mjs"],
+      "env": {
+        "OPENTUNE_MCP_OPENTUNE_PATH": "${user_config.opentune_path}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "opentune_get_status",
+      "description": "OpenTune (audio vocal pitch editor): reports whether this server can use OpenTune now, as one state (READY, NOT_READY, PROTOCOL_MISMATCH, STARTING, RUNNING_WITHOUT_API, NOT_RUNNING, NO_API_BUILD, NOT_INSTALLED, WSL_UNSUPPORTED_RUNTIME) with a nextStep saying who should do what. Call it first, and again whenever a tool error says so. Lists the running instances with their instance_id; when several run, ask the user which one to use. Read-only: it never starts, stops or changes OpenTune."
+    },
+    {
+      "name": "opentune_get_job",
+      "description": "OpenTune (audio vocal pitch editor): reports a long-running job (import, export, analysis, project open or save): state queued, running, succeeded, failed or cancelled, progress, and when it has ended its result or error. With wait_seconds it waits up to that long for the job to end. Finished jobs are kept for 30 minutes. Read-only."
+    },
+    {
+      "name": "opentune_cancel_job",
+      "description": "OpenTune (audio vocal pitch editor): asks OpenTune to stop a running job and reports the outcome. Work the job already committed stays: an import keeps the items imported so far, and the result lists them with how to revert each; an export never touches the target file. Project saves, preference changes and project opens past their preparation cannot be cancelled; the error then says so and the job continues."
+    }
+  ],
+  "tools_generated": false,
+  "user_config": {
+    "opentune_path": {
+      "type": "file",
+      "title": "OpenTune executable",
+      "description": "The OpenTune executable to start when needed. Choose a build of OpenTune Standalone that includes the control interface (the file opentune-control.json sits next to it). Leave empty to use only an OpenTune you have already started.",
+      "required": false,
+      "default": ""
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32", "darwin"],
+    "runtimes": {
+      "node": ">=22"
+    }
+  }
+}

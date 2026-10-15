@@ -31,12 +31,37 @@ describe('parseArgs', () => {
   it('recognises doctor and its --json flag, and nothing else after it', () => {
     expect(parseArgs(['doctor'])).toEqual({ kind: 'doctor', json: false });
     expect(parseArgs(['doctor', '--json'])).toEqual({ kind: 'doctor', json: true });
-    expect(parseArgs(['doctor', '--client', 'x'])).toEqual({
-      kind: 'usage-error',
-      message: 'unknown argument "--client"',
-    });
+    expect(parseArgs(['doctor', '--bogus'])).toEqual({ kind: 'usage-error', message: 'unknown argument "--bogus"' });
     expect(parseArgs(['--json'])).toEqual({ kind: 'usage-error', message: 'unknown argument "--json"' });
     expect(parseArgs(['doctor', '-h'])).toEqual({ kind: 'help' });
+  });
+
+  it('recognises doctor --client with an optional --full-paths', () => {
+    expect(parseArgs(['doctor', '--client', 'cursor'])).toEqual({
+      kind: 'client-config',
+      client: 'cursor',
+      fullPaths: false,
+    });
+    expect(parseArgs(['doctor', '--client=claude-desktop', '--full-paths'])).toEqual({
+      kind: 'client-config',
+      client: 'claude-desktop',
+      fullPaths: true,
+    });
+    expect(parseArgs(['doctor', '--full-paths', '--client', 'claude-code'])).toEqual({
+      kind: 'client-config',
+      client: 'claude-code',
+      fullPaths: true,
+    });
+  });
+
+  it.each([
+    [['doctor', '--client'], '--client needs a value'],
+    [['doctor', '--client', 'vscode'], 'unknown client "vscode"; use one of claude-code, claude-desktop, cursor'],
+    [['doctor', '--client='], 'unknown client ""; use one of claude-code, claude-desktop, cursor'],
+    [['doctor', '--client', 'cursor', '--json'], '--json does not apply with --client'],
+    [['doctor', '--full-paths'], '--full-paths only applies with --client'],
+  ])('rejects %j', (argv, message) => {
+    expect(parseArgs(argv)).toEqual({ kind: 'usage-error', message });
   });
 
   it('rejects an unknown argument next to --version', () => {

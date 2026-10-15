@@ -3,12 +3,14 @@
 
 import { SERVER_NAME, VERSION } from '../version.js';
 import { parseArgs } from './args.js';
+import type { ClientName } from './client-config.js';
 
 /** Exit code for invalid command-line usage (same convention as most CLIs). */
 export const EXIT_USAGE = 2;
 
 export const USAGE = `Usage: ${SERVER_NAME} [--help | --version]
        ${SERVER_NAME} doctor [--json]
+       ${SERVER_NAME} doctor --client <claude-code|claude-desktop|cursor> [--full-paths]
 
 OpenTune MCP Server (by Synchain): a local MCP server that lets AI agents
 operate OpenTune Standalone. MCP clients start it with no arguments; it then
@@ -22,6 +24,10 @@ Commands:
   doctor         Check the set-up (Node.js, WSL, discovery directory,
                  OPENTUNE_MCP_OPENTUNE_PATH) without starting the server.
                  --json prints the results as JSON. Exit code 1 if a check fails.
+  doctor --client <name>
+                 Print the configuration that registers this server with a
+                 client; it writes nothing. The home directory is shown as ~
+                 unless --full-paths is given.
 
 Documentation: https://github.com/synchain-oss/opentune-mcp-server#readme
 `;
@@ -35,6 +41,8 @@ export interface CliDeps {
   readonly serve: () => void;
   /** Runs the doctor checks and prints them; resolves with the exit code. */
   readonly doctor: (json: boolean) => Promise<number>;
+  /** Prints the configuration for an MCP client; returns the exit code. */
+  readonly clientConfig: (client: ClientName, fullPaths: boolean) => number;
 }
 
 /**
@@ -55,6 +63,8 @@ export function run(argv: readonly string[], deps: CliDeps): number | Promise<nu
       return 0;
     case 'doctor':
       return deps.doctor(command.json);
+    case 'client-config':
+      return deps.clientConfig(command.client, command.fullPaths);
     case 'usage-error':
       deps.writeStderr(`${SERVER_NAME}: ${command.message}\nRun '${SERVER_NAME} --help' for usage.\n`);
       return EXIT_USAGE;
