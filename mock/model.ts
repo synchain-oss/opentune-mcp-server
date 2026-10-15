@@ -105,11 +105,28 @@ export interface ContentSnap {
   handles: HandleRec[];
 }
 
+/** The properties of a placement that arrangement edits change (the geometry, the gain and the fades). */
+export interface PlacementState {
+  trackId: number;
+  startTimelineSec: number;
+  durationSec: number;
+  clipInContentSec: number;
+  gainLinear: number;
+  fadeInSec: number;
+  fadeOutSec: number;
+}
+
 /** The state an undo or redo step puts back. */
 export interface Patch {
   /** Only the aspects in `snap` are put back; an aspect left out stays as it is. */
   content?: { objectId: number; snap: Partial<ContentSnap> };
-  placement?: { serial: number; startTimelineSec: number };
+  /** Only the properties in `state` are put back; a property left out stays as it is. */
+  placements?: {
+    serial: number;
+    state: Partial<PlacementState>;
+    /** The serial of the clip it is bound to as reference, or null for none; left out: unchanged. */
+    reference?: number | null;
+  }[];
 }
 
 export interface HistoryEntry {
@@ -125,6 +142,11 @@ export interface HistoryEntry {
   redoPatch: Patch | null;
   possiblyStale: boolean;
   unsafe: boolean;
+  /**
+   * The track positions the entry addresses (the tracks of the clips it changed), for an entry made
+   * through the API; absent for an entry that addresses none or that the server cannot inspect.
+   */
+  tracks?: number[];
 }
 
 /** The world revision vector (section 14.4) at one moment. */
@@ -223,6 +245,11 @@ export class World {
     }));
   }
 
+  /** Milliseconds since the Unix epoch, from the injectable clock. */
+  now(): number {
+    return this.clock.now();
+  }
+
   /** A new token. Tokens are opaque, never repeat, and are only compared for equality. */
   mint(prefix: string): string {
     return `${prefix}${String(++this.#tick)}`;
@@ -264,23 +291,23 @@ export class World {
   }
 
   addPlacement(
-    init: Pick<PlacementRec, 'trackId' | 'content' | 'name' | 'startTimelineSec' | 'durationSec'>,
+    init: Pick<PlacementRec, 'trackId' | 'content' | 'name' | 'startTimelineSec' | 'durationSec'> &
+      Partial<Pick<PlacementRec, 'clipInContentSec' | 'gainLinear' | 'fadeInSec' | 'fadeOutSec' | 'reference'>>,
   ): PlacementRec {
     const serial = ++this.#placementSeq;
     const placement: PlacementRec = {
       serial,
       id: `p:${this.short}:${String(this.epoch)}:${String(serial)}`,
-      ...init,
       clipInContentSec: 0,
       gainLinear: 1,
       fadeInSec: 0,
       fadeOutSec: 0,
       reference: null,
+      ...init,
       geometryHash: this.mint('h'),
     };
     this.placements.set(serial, placement);
-    if (init.trackId >= this.visibleTrackCount) this.visibleTrackCount = init.trackId + 1;
-    for (const track of this.tracks) track.visible = track.trackId < this.visibleTrackCount;
+    if (init.trackId >= this.visibleTrackCount) this.setVisibleTrackCount(init.trackId + 1);
     return placement;
   }
 
@@ -328,6 +355,41 @@ export class World {
   touchGeometry(placement: PlacementRec): void {
     placement.geometryHash = this.mint('h');
     this.arrangement = this.mint('a');
+  }
+
+  /** A change of a placement that its geometryHash does not cover (gain, fades, reference). */
+  touchArrangement(): void {
+    this.arrangement = this.mint('a');
+  }
+
+  touchTrackState(): void {
+    this.trackState = this.mint('t');
+  }
+
+  /** Shows the first `count` track slots; the visibility of every slot follows. */
+  setVisibleTrackCount(count: number): void {
+    this.visibleTrackCount = count;
+    for (const track of this.tracks) track.visible = track.trackId < count;
+  }
+
+  /** Shows the tracks up to `trackId` and returns those that were hidden before. */
+  revealThrough(trackId: number): number[] {
+    const revealed: number[] = [];
+    for (let id = this.visibleTrackCount; id <= trackId; id++) revealed.push(id);
+    if (revealed.length > 0) {
+      this.setVisibleTrackCount(trackId + 1);
+      this.touchTrackState();
+    }
+    return revealed;
+  }
+
+  /** Takes a placement out of the project; its content goes with it when no other placement shows it. */
+  removePlacement(placement: PlacementRec): ContentRec | null {
+    this.placements.delete(placement.serial);
+    this.selectedPlacementIds = this.selectedPlacementIds.filter((id) => id !== placement.id);
+    if (this.placementsOf(placement.content).length > 0) return null;
+    this.contents.delete(placement.content.objectId);
+    return placement.content;
   }
 
   /** Queues rendering of a content again; it settles RENDER_SETTLE_MS later (section 14.6). */
@@ -495,7 +557,18 @@ export class World {
         trackId: p.trackId,
         startTimelineSec: p.startTimelineSec,
         durationSec: p.durationSec,
+        clipInContentSec: p.clipInContentSec,
+        gainLinear: p.gainLinear,
+        fadeInSec: p.fadeInSec,
+        fadeOutSec: p.fadeOutSec,
         reference: p.reference?.id ?? null,
+      })),
+      tracks: this.tracks.map(({ visible, muted, solo, volumeLinear, colour }) => ({
+        visible,
+        muted,
+        solo,
+        volumeLinear,
+        colour,
       })),
     };
   }

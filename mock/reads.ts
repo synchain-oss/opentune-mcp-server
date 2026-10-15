@@ -11,6 +11,7 @@ import { refuse } from './errors.js';
 import { historyView } from './history.js';
 import type { ContentRec, NoteRec, PlacementRec, World } from './model.js';
 import { round6 } from './model.js';
+import { MIN_HANDLE_SPACING_SEC } from './timing.js';
 import {
   DEFAULT_NOTE_SPLIT_CENTS,
   HOP_SEC,
@@ -332,6 +333,7 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
           contentSec: round6(h.contentSec),
           outputSec: round6(h.outputSec),
         })),
+        minHandleSpacingSec: MIN_HANDLE_SPACING_SEC,
       },
       reference: {
         referencePlacementId: via.reference?.id ?? null,
