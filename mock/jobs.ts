@@ -7,7 +7,8 @@
 
 import type { OtcpSpec } from '../test/support/otcp-spec.js';
 import type { Clock, Timer } from './clock.js';
-import { makeError, type ErrorObject } from './protocol.js';
+import { refuse } from './errors.js';
+import { makeError, type ErrorInit, type ErrorObject } from './protocol.js';
 
 export const JOB_RETENTION_MS = 1_800_000;
 export const JOB_RETENTION_COUNT = 64;
@@ -37,10 +38,31 @@ export interface JobView {
   readonly error: ErrorObject | null;
 }
 
+/** How a job driven by the store ends. A failed or cancelled job may carry the work it committed. */
+export type JobOutcome =
+  | { readonly state: 'succeeded'; readonly result: Readonly<Record<string, unknown>> }
+  | { readonly state: 'failed'; readonly error: ErrorInit; readonly result?: Readonly<Record<string, unknown>> }
+  | { readonly state: 'cancelled'; readonly result?: Readonly<Record<string, unknown>> };
+
+/** What a driver does in one step: ask to be called again after `next` ms, or end the job. */
+export type JobStep = { readonly next: number } | { readonly done: JobOutcome };
+
+/** What a driver sees and can change while it runs. */
+export interface JobControl {
+  /** Cancellation was requested; the driver stops at this cancellation point (section 12.3). */
+  readonly cancelRequested: boolean;
+  progress(update: Partial<JobProgress>): void;
+}
+
+/** One step of a job, called on the "main thread" by the clock; steps never overlap. */
+export type JobDriver = (control: JobControl) => JobStep;
+
 interface JobRecord {
   view: JobView;
   cancelRequested: boolean;
   readonly waiters: Set<() => void>;
+  driver?: JobDriver | undefined;
+  timer?: Timer | undefined;
 }
 
 export interface JobSpec {
@@ -112,9 +134,7 @@ export class JobStore {
         detail: `the ${spec.kind} job failed`,
       });
     }
-    this.#evict(now, JOB_RETENTION_COUNT - 1);
-    if (this.#jobs.size >= JOB_RETENTION_COUNT) throw new Error('all retained jobs are still active (BUSY job_limit)');
-    const jobId = `j:${this.instanceIdShort}:${String(++this.#seq)}`;
+    const jobId = this.#reserve(now);
     const view: JobView = {
       jobId,
       kind: spec.kind,
@@ -129,6 +149,119 @@ export class JobStore {
     };
     this.#jobs.set(jobId, { view, cancelRequested: false, waiters: new Set() });
     return view;
+  }
+
+  /** Makes room for one more job (section 12.4) and returns its id; BUSY(job_limit) if every retained job is active. */
+  #reserve(now: number): string {
+    this.#evict(now, JOB_RETENTION_COUNT - 1);
+    if (this.#jobs.size >= JOB_RETENTION_COUNT) {
+      throw refuse('BUSY', 'job_limit', 'every retained job is still active', 1000);
+    }
+    return `j:${this.instanceIdShort}:${String(++this.#seq)}`;
+  }
+
+  /**
+   * Starts a job that the store drives: queued now, then one step of `driver` after another on the
+   * clock, the first right away. The job is running from its first step on.
+   */
+  start(spec: { readonly kind: string; readonly cancellable: boolean }, driver: JobDriver): JobView {
+    const now = this.clock.now();
+    const jobId = this.#reserve(now);
+    const view: JobView = {
+      jobId,
+      kind: spec.kind,
+      state: 'queued',
+      cancellable: spec.cancellable,
+      createdAtMs: now,
+      updatedAtMs: now,
+      finishedAtMs: null,
+      progress: progressOf('queued'),
+      result: null,
+      error: null,
+    };
+    const record: JobRecord = { view, cancelRequested: false, waiters: new Set(), driver };
+    this.#jobs.set(jobId, record);
+    this.#schedule(record, 0);
+    return view;
+  }
+
+  #schedule(record: JobRecord, ms: number): void {
+    record.timer?.cancel();
+    record.timer = this.clock.setTimer(ms, () => {
+      record.timer = undefined;
+      this.#step(record);
+    });
+  }
+
+  #step(record: JobRecord): void {
+    if (record.driver === undefined || TERMINAL.has(record.view.state)) return;
+    if (record.view.state === 'queued') {
+      record.view = {
+        ...record.view,
+        state: 'running',
+        updatedAtMs: this.clock.now(),
+        progress: progressOf('running'),
+      };
+    }
+    const control: JobControl = {
+      get cancelRequested() {
+        return record.cancelRequested;
+      },
+      progress: (update) => {
+        record.view = {
+          ...record.view,
+          updatedAtMs: this.clock.now(),
+          progress: { ...record.view.progress, ...update },
+        };
+      },
+    };
+    let step: JobStep;
+    try {
+      step = record.driver(control);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'unexpected failure';
+      step = { done: { state: 'failed', error: { kind: 'INTERNAL', detail: `the job failed: ${detail}` } } };
+    }
+    if ('next' in step) this.#schedule(record, step.next);
+    else this.#finish(record, step.done);
+  }
+
+  /** Moves a job to its terminal state and wakes everyone who waits for it. */
+  #finish(record: JobRecord, outcome: JobOutcome): void {
+    const now = this.clock.now();
+    record.timer?.cancel();
+    record.timer = undefined;
+    record.driver = undefined;
+    const progress = {
+      ...progressOf(outcome.state),
+      itemsDone: record.view.progress.itemsDone,
+      itemsTotal: record.view.progress.itemsTotal,
+    };
+    record.view = {
+      ...record.view,
+      state: outcome.state,
+      cancellable: false,
+      updatedAtMs: now,
+      finishedAtMs: now,
+      progress,
+      result: outcome.state === 'succeeded' ? outcome.result : (outcome.result ?? null),
+      error:
+        outcome.state === 'succeeded'
+          ? null
+          : outcome.state === 'cancelled'
+            ? this.#cancelledError()
+            : makeError(this.spec, outcome.error),
+    };
+    for (const waiter of [...record.waiters]) waiter();
+  }
+
+  /** Stops every pending step and wait; the store is not used afterwards. */
+  dispose(): void {
+    for (const record of this.#jobs.values()) {
+      record.timer?.cancel();
+      record.timer = undefined;
+      record.driver = undefined;
+    }
   }
 
   /** A job of this kind exists that has not finished: for kind `export`, the export lock is held (section 13.2). */
@@ -176,6 +309,11 @@ export class JobStore {
     if (!record.view.cancellable) return 'not_cancellable';
     record.cancelRequested = true;
     record.view = { ...record.view, cancellable: false, updatedAtMs: this.clock.now() };
+    if (record.driver !== undefined) {
+      // The driver stops at its next step, which comes right after the response.
+      this.#schedule(record, 0);
+      return { cancelRequested: true, job: record.view };
+    }
     // The job reaches its next cancellation point right after the response.
     this.clock.setTimer(0, () => {
       const now = this.clock.now();
