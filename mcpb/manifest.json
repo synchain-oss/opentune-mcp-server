@@ -53,6 +53,10 @@
     {
       "name": "opentune_launch",
       "description": "OpenTune (audio vocal pitch editor): starts the OpenTune build configured for this server (OPENTUNE_MCP_OPENTUNE_PATH) with its control API and waits up to 30 seconds until it is ready, then reports the state like opentune_get_status, with a nextStep. Starts nothing when OpenTune already runs (alreadyRunning), may run without the control API, or no API build is configured; the result says why. Repeated or concurrent calls share one start. allow_second_instance needs the user's explicit consent; each call with it starts one more instance once earlier starts are done. Never closes OpenTune."
+    },
+    {
+      "name": "opentune_analyze_pitch",
+      "description": "OpenTune (audio vocal pitch editor): measures how far the detected pitch of a clip is from its notes, in cents (detected minus target, positive = sharp). Per note: median deviation, stability (standard deviation), onset and release deviation; notes beyond threshold_cents (default 25) are flagged; notes are grouped into phrases at silences over 0.4 s. detail summary (default, small) gives totals, worst notes and flagged note indexes for opentune_edit_notes plus clip_revision; phrases and notes are paged. from and to are seconds of the source audio. Read-only."
     }
   ],
   "tools_generated": false,
