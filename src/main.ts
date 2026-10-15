@@ -11,6 +11,7 @@ import { doctorExitCode, formatDoctor, runDoctor } from './cli/doctor.js';
 import { run } from './cli/run.js';
 import { writeCliStdout } from './cli/stdout.js';
 import { readOsRelease } from './launch/config.js';
+import { systemInstallDetector } from './launch/install.js';
 import { createLogger, stderrSink } from './log.js';
 import { startStdioServer } from './server.js';
 
@@ -29,6 +30,7 @@ const exitCode = run(process.argv.slice(2), {
       home: os.homedir(),
       nodeVersion: process.version,
       osRelease: await readOsRelease(process.platform),
+      officialInstall: systemInstallDetector(process.env, process.platform),
     });
     writeCliStdout(formatDoctor(checks, json));
     return doctorExitCode(checks);

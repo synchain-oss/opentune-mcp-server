@@ -4,25 +4,53 @@
 // The OpenTune executable this server may start, which comes only from the user's configuration
 // (OPENTUNE_MCP_OPENTUNE_PATH): an absolute path to an existing regular file, with an
 // opentune-control.json next to it that lists protocol major 1. Tool input never influences it.
-// Starting the process is not implemented here; this module only reports whether the
-// configuration allows it, for opentune_get_status and doctor. Also detects WSL, where this server
-// cannot reach an OpenTune that runs on Windows.
+// opentune_launch starts nothing this check does not accept; opentune_get_status and doctor report
+// it. Also detects WSL, where this server cannot reach an OpenTune that runs on Windows.
 
 import { readFile, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isAbsoluteLocalPath } from '../discovery/dir.js';
+import { MAX_DISCOVERY_BYTES, readDiscoveryBytes } from '../discovery/file.js';
 
 export const OPENTUNE_PATH_ENV = 'OPENTUNE_MCP_OPENTUNE_PATH';
 /** The file an API build ships next to its executable. */
 export const CONTROL_MANIFEST = 'opentune-control.json';
+/** Largest opentune-control.json this server reads: 8 KiB, the bound of the reader it shares with discovery files. */
+export const MAX_MANIFEST_BYTES = MAX_DISCOVERY_BYTES;
 const PROTOCOL_MAJOR = 1;
+
+export type ManifestProblem = 'manifest_missing' | 'manifest_too_large' | 'manifest_invalid' | 'protocol_mismatch';
 
 export type LaunchConfig =
   | { readonly state: 'unset' }
   | { readonly state: 'invalid'; readonly reason: 'not_absolute' | 'not_found' | 'not_a_file' }
-  | { readonly state: 'no_api'; readonly reason: 'manifest_missing' | 'manifest_invalid' | 'protocol_mismatch' }
-  | { readonly state: 'ok'; readonly path: string };
+  | { readonly state: 'no_api'; readonly reason: ManifestProblem }
+  | { readonly state: 'ok'; readonly path: string; readonly dir: string };
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+
+/**
+ * Checks opentune-control.json. Its format is defined by the packaging of the API build; until it
+ * is final, only `protocolMajors` (a list of positive integers) is read and other members are
+ * ignored. A file larger than MAX_MANIFEST_BYTES, or that is not a UTF-8 JSON object with such a
+ * list, is invalid.
+ */
+export function manifestProblem(bytes: Buffer | null): ManifestProblem | null {
+  if (bytes === null) return 'manifest_missing';
+  if (bytes.length > MAX_MANIFEST_BYTES) return 'manifest_too_large';
+  let value: unknown;
+  try {
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
+  } catch {
+    return 'manifest_invalid';
+  }
+  const majors = isObject(value) ? value.protocolMajors : undefined;
+  if (!Array.isArray(majors) || !majors.every((m) => typeof m === 'number' && Number.isInteger(m) && m >= 1)) {
+    return 'manifest_invalid';
+  }
+  return majors.includes(PROTOCOL_MAJOR) ? null : 'protocol_mismatch';
+}
 
 export async function checkLaunchConfig(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Promise<LaunchConfig> {
   const exe = env[OPENTUNE_PATH_ENV];
@@ -32,18 +60,9 @@ export async function checkLaunchConfig(env: NodeJS.ProcessEnv, platform: NodeJS
   if (info === null) return { state: 'invalid', reason: 'not_found' };
   if (!info.isFile()) return { state: 'invalid', reason: 'not_a_file' };
   const p = platform === 'win32' ? path.win32 : path.posix;
-  const text = await readFile(p.join(p.dirname(exe), CONTROL_MANIFEST), 'utf8').catch(() => null);
-  if (text === null) return { state: 'no_api', reason: 'manifest_missing' };
-  let majors: unknown;
-  try {
-    majors = (JSON.parse(text) as { protocolMajors?: unknown }).protocolMajors;
-  } catch {
-    return { state: 'no_api', reason: 'manifest_invalid' };
-  }
-  if (!Array.isArray(majors)) return { state: 'no_api', reason: 'manifest_invalid' };
-  return majors.includes(PROTOCOL_MAJOR)
-    ? { state: 'ok', path: exe }
-    : { state: 'no_api', reason: 'protocol_mismatch' };
+  const dir = p.dirname(exe);
+  const problem = manifestProblem(await readDiscoveryBytes(p.join(dir, CONTROL_MANIFEST)));
+  return problem === null ? { state: 'ok', path: exe, dir } : { state: 'no_api', reason: problem };
 }
 
 /** True inside the Windows Subsystem for Linux. An empty variable counts as unset. */

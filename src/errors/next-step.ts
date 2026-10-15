@@ -103,6 +103,10 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'UNSUPPORTED/job_not_cancellable': agent(
     'This job cannot be cancelled now; it continues. Follow it with opentune_get_job.',
   ),
+  'CONFIG_INVALID/launch_failed': user(
+    'The configured OpenTune executable could not be started (see detail). Ask the user to check ' +
+      'OPENTUNE_MCP_OPENTUNE_PATH ("opentune-mcp doctor" checks it).',
+  ),
 };
 
 /** The default next step, retryability and anchor kind of an error. Unknown kinds use INTERNAL. */
