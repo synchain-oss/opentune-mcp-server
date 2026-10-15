@@ -97,3 +97,10 @@ export const clip = (extra: Partial<GivenClip> = {}): GivenClip => ({
   ],
   ...extra,
 });
+
+/** A name that `mock.given(...)` bound; throws when the mock bound none. */
+export function need(bound: Record<string, string>, name: string): string {
+  const value = bound[name];
+  if (value === undefined) throw new Error(`the mock bound no ${name}`);
+  return value;
+}

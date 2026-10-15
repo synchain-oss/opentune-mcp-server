@@ -37,6 +37,7 @@ import { checkText, loadPatterns } from './check-attribution.mjs';
 import { sizeGate } from './lib/catalog.mjs';
 import { checkNotices } from './gen-notices.mjs';
 import { fetchTool } from './fetch-tool.mjs';
+import { McpbToolUnavailable, packMcpb, validateMcpb } from './mcpb.mjs';
 import {
   ALLOWED_EMAILS,
   AUDIO_FIXTURE_DIR,
@@ -50,6 +51,7 @@ import {
   checkPackageJson,
   checkPackList,
   compareHeadingOutlines,
+  contractVectorsVerdict,
   findPullRequestTarget,
   findStdoutConsoleCalls,
   parseGitLog,
@@ -252,6 +254,25 @@ async function bundleStdoutHygiene() {
   );
 }
 
+async function mcpbPackage() {
+  // Two packs of the same inputs must be byte-identical; then the manifest and the package must
+  // pass the MCPB tool's own validation. CI only checks the package here; it does not upload it.
+  const first = await packMcpb(ROOT);
+  const second = await packMcpb(ROOT);
+  if (first.sha256 !== second.sha256)
+    return { result: 'FAIL', note: `two packs differ: ${first.sha256} vs ${second.sha256}` };
+  try {
+    await validateMcpb(ROOT, first.path);
+  } catch (error) {
+    if (error instanceof McpbToolUnavailable) throw new Skip(error.message);
+    return { result: 'FAIL', note: error instanceof Error ? error.message : String(error) };
+  }
+  return {
+    result: 'PASS',
+    note: `${first.name} (${first.files.join(', ')}) packed twice with identical sha256 ${first.sha256}; mcpb validate and info pass`,
+  };
+}
+
 function packList() {
   const { status, stdout } = npmCapture(['pack', '--dry-run', '--json', '--ignore-scripts']);
   if (status !== 0) return { result: 'FAIL', note: `npm pack --dry-run exited with ${status}` };
@@ -451,8 +472,26 @@ async function contractVectors() {
   // rest may be skipped.
   const summaryFile = path.join(ROOT, '.cache', 'contract', 'summary.json');
   await fs.rm(summaryFile, { force: true });
+  // OTCP_TARGET_EXE cleared: the vectors against a started build are the next row's, and must
+  // neither run twice nor turn this row red.
   const status = npmStreaming(['run', '--silent', 'test:contract'], {
-    env: { ...process.env, OTCP_CONTRACT_SUMMARY: summaryFile },
+    env: { ...process.env, OTCP_CONTRACT_SUMMARY: summaryFile, OTCP_TARGET_EXE: '' },
+  });
+  const summary = JSON.parse(await fs.readFile(summaryFile, 'utf8').catch(() => 'null'));
+  if (summary === null)
+    return { result: 'FAIL', note: `npm run test:contract exited with ${status} and wrote no summary` };
+  return contractVectorsVerdict(status, summary);
+}
+
+async function contractVectorsExe() {
+  // The same vectors against a started OpenTune build, only when OTCP_TARGET_EXE names one. CI
+  // never sets it, so this row is a SKIP there.
+  if (!process.env.OTCP_TARGET_EXE) throw new Skip('OTCP_TARGET_EXE is not set');
+  const summaryFile = path.join(ROOT, '.cache', 'contract', 'summary-exe.json');
+  await fs.rm(summaryFile, { force: true });
+  // Only the exe vectors run; the pattern has no space, so it survives the shell on Windows.
+  const status = npmStreaming(['run', '--silent', 'test:contract', '--', '-t', 'against.the.exe'], {
+    env: { ...process.env, OTCP_CONTRACT_SUMMARY_EXE: summaryFile, OTCP_CONTRACT_SUMMARY: '' },
   });
   const summary = JSON.parse(await fs.readFile(summaryFile, 'utf8').catch(() => 'null'));
   if (summary === null)
@@ -460,12 +499,15 @@ async function contractVectors() {
   const skips = Object.entries(summary.skipReasons)
     .map(([reason, n]) => `${reason}: ${n}`)
     .join('; ');
+  // How the started instances ended; the problems among them already failed their vectors.
+  const i = summary.instances;
   const note =
-    `${summary.total} vectors: ${summary.pass} PASS (capabilities the mock reports: ${summary.required.pass} of ` +
-    `${summary.required.total}), ${summary.fail} FAIL${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ` +
-    `${summary.skip} SKIP${skips ? ` (${skips})` : ''}`;
-  const ok = status === 0 && summary.fail === 0 && summary.required.pass === summary.required.total;
-  return { result: ok ? 'PASS' : 'FAIL', note };
+    `${summary.total} vectors: ${summary.pass} PASS, ${summary.fail} FAIL` +
+    `${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ${summary.skip} SKIP${skips ? ` (${skips})` : ''}; ` +
+    `instances: ${i.verified} stopped normally, ${i.forced} ended by force (clean-up not verified), ` +
+    `${i.exitedEarly} ended by themselves, ${i.leftDiscoveryFile} left their discovery file, ` +
+    `${i.notEnded} not confirmed as started by this run and not ended`;
+  return { result: status === 0 && summary.fail === 0 ? 'PASS' : 'FAIL', note };
 }
 
 function notYet(reason) {
@@ -517,6 +559,7 @@ async function main() {
     ['typecheck (tsc)', npmScriptStep('typecheck', 'tsc --noEmit: 0 errors')],
     ['unit tests + coverage (vitest)', npmScriptStep('test:unit', 'unit project passed; coverage thresholds met')],
     ['build (esbuild)', npmScriptStep('build', `${BUNDLE} built`)],
+    ['MCPB package (deterministic, mcpb validate)', mcpbPackage],
     ['bundle shape', bundleShape],
     ['bundle stdout hygiene', bundleStdoutHygiene],
     ['npm pack --dry-run', packList],
@@ -534,9 +577,16 @@ async function main() {
     ['README en/zh-CN heading outline', readmeParity],
     ['no pull_request_target', pullRequestTarget],
     ['contract vectors (mock)', contractVectors],
+    ['contract vectors (exe)', contractVectorsExe],
     ['tools/list size gate', () => sizeGate(ROOT, BUNDLE)],
     ['token canary', notYet('not yet: no OTCP client or MCP tool output to check for the token')],
-    ['output budget', notYet('not yet: no read tools, and the mock has no project content to read')],
+    [
+      'output budget',
+      npmScriptStep(
+        'test:budget',
+        'one result of opentune_get_notes (800-note clip, every page size) and opentune_get_project (24 clips) is at most 20,000 characters',
+      ),
+    ],
     [
       'docs consistency',
       npmScriptStep(
