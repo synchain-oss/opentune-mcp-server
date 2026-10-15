@@ -218,7 +218,16 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
     const wanted = content.notes
       .map((note, index) => ({ note, index }))
       .filter(({ note }) => overlaps(note.startContentSec, note.endContentSec, range));
-    const tokens = [content.revision, content.comp.grid, content.comp.key, placement?.geometryHash ?? ''].join('|');
+    // The cursor is bound to the tokens and to how the notes are read: the range as given (a content
+    // or a timeline range) and the placement, so a cursor of another read gets the same error as a stale one.
+    const tokens = [
+      content.revision,
+      content.comp.grid,
+      content.comp.key,
+      placement?.id ?? '',
+      placement?.geometryHash ?? '',
+      JSON.stringify(asked ?? null),
+    ].join('|');
     const offset = typeof params.cursor === 'string' ? decodeCursor(params.cursor, tokens) : 0;
     const limit = typeof params.limit === 'number' ? params.limit : DEFAULT_NOTES_LIMIT;
     const page = wanted.slice(offset, offset + limit);

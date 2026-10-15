@@ -23,10 +23,11 @@ import { MockError } from './errors.js';
 import { stripHome } from './privacy.js';
 import { WorkFiles } from './files.js';
 import { applyGiven, WORLD_GIVEN_MEMBERS, type GivenState } from './given.js';
+import { editHandlers } from './edit.js';
 import { ExportService } from './export.js';
 import { historyHandlers } from './history.js';
 import { IMPORT_LIMITS, ImportService } from './import.js';
-import { JobStore, UnsupportedPrecondition, type JobSpec } from './jobs.js';
+import { JobStore, oneShot, UnsupportedPrecondition, type JobSpec } from './jobs.js';
 import { TRACK_SLOTS, World, type Analysis, type BusyState } from './model.js';
 import {
   classify,
@@ -40,6 +41,7 @@ import {
   type RequestId,
 } from './protocol.js';
 import { readHandlers } from './reads.js';
+import { timingHandlers } from './timing.js';
 
 export { UnsupportedPrecondition } from './jobs.js';
 
@@ -66,6 +68,8 @@ export const MOCK_CAPABILITIES: readonly string[] = [
   'history.v1',
   'import.v1',
   'export.v1',
+  'edit.v1',
+  'timing.v1',
 ];
 
 const LOOPBACK = '127.0.0.1';
@@ -347,6 +351,8 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   const worldHandlers: Readonly<Record<string, Handler>> = {
     ...readHandlers,
     ...historyHandlers,
+    ...editHandlers,
+    ...timingHandlers,
     'import.start': importer.start,
     'export.start': exporter.start,
   };
@@ -358,9 +364,13 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     const context: MethodContext = {
       world,
       params: params ?? {},
-      exportLock: jobs.hasActive('export'),
+      // Read when asked, so that the work of a job that runs later sees the lock as it is then.
+      get exportLock() {
+        return jobs.hasActive('export');
+      },
       hasCapability: (c) => capabilities.includes(c),
       redact,
+      startJob: (kind, work) => jobs.start({ kind }, oneShot(work)),
     };
     try {
       send(conn, successLine(id, handler(context)));

@@ -17,6 +17,15 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 
 const TERMINAL: ReadonlySet<JobState> = new Set(['succeeded', 'failed', 'cancelled']);
 
+/** Kinds whose jobs can be cancelled when they start (the table of section 12.3). */
+const CANCELLABLE_KINDS: ReadonlySet<string> = new Set([
+  'import',
+  'export',
+  'referenceAnalysis',
+  'timeGridSeed',
+  'projectOpen',
+]);
+
 export interface JobProgress {
   readonly fraction: number | null;
   readonly phase: string | null;
@@ -66,6 +75,16 @@ interface JobRecord {
   /** Called when the store stops with the job unfinished. */
   onDispose?: (() => void) | undefined;
 }
+
+/**
+ * A driver for a job that finishes on its first step: `work` runs then and its return value becomes
+ * the result (a throw fails the job with INTERNAL). A job cancelled before that step ends cancelled
+ * and `work` never runs.
+ */
+export const oneShot =
+  (work: () => Record<string, unknown>): JobDriver =>
+  (control) =>
+    control.cancelRequested ? { done: { state: 'cancelled' } } : { done: { state: 'succeeded', result: work() } };
 
 export interface JobSpec {
   readonly kind: string;
@@ -167,7 +186,7 @@ export class JobStore {
    * clock, the first right away. The job is running from its first step on.
    */
   start(
-    spec: { readonly kind: string; readonly cancellable: boolean },
+    spec: { readonly kind: string; readonly cancellable?: boolean },
     driver: JobDriver,
     onDispose?: () => void,
   ): JobView {
@@ -177,7 +196,7 @@ export class JobStore {
       jobId,
       kind: spec.kind,
       state: 'queued',
-      cancellable: spec.cancellable,
+      cancellable: spec.cancellable ?? CANCELLABLE_KINDS.has(spec.kind),
       createdAtMs: now,
       updatedAtMs: now,
       finishedAtMs: null,
@@ -323,6 +342,8 @@ export class JobStore {
     }
     // The job reaches its next cancellation point right after the response.
     this.clock.setTimer(0, () => {
+      // A job that got there first, through its own step, stays as it ended: terminal states never change.
+      if (TERMINAL.has(record.view.state)) return;
       const now = this.clock.now();
       record.view = {
         ...record.view,
