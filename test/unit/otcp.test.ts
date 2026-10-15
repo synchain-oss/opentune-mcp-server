@@ -242,7 +242,7 @@ describe('Instances', () => {
     const first = await instances.session(entry);
     expect(await instances.session(entry)).toBe(first);
     expect(missingCapability(first, ['jobs.v1'])).toBeNull();
-    expect(missingCapability(first, ['project.io'])).toMatchObject({
+    expect(missingCapability(first, ['future.v9'])).toMatchObject({
       kind: 'UNSUPPORTED',
       reason: 'capability_missing',
     });

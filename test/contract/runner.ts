@@ -181,17 +181,19 @@ class Run {
         .validate(`methods/${method}.schema.json#/$defs/result`, message.result)
         .map((p) => `${method} result ${p}`),
     );
-    // A terminal job's result is that of the method that started it.
+    // A terminal job's result is that of the method that started it. A job kind that more than one
+    // method starts (referenceAnalysis) shows only which of them it was by its result, so the result
+    // must be valid for at least one of them; the problems reported are those of the closest fit.
     const job = isObject(message.result) ? message.result.job : undefined;
     if (isObject(job) && isObject(job.result) && typeof job.kind === 'string') {
       const kind = job.kind;
-      const starter = spec.jobStarters.get(kind);
-      if (starter !== undefined) {
-        problems.push(
-          ...spec
-            .validate(`methods/${starter}.schema.json#/$defs/jobResult`, job.result)
-            .map((p) => `${kind} job result ${p}`),
-        );
+      const attempts = (spec.jobStarters.get(kind) ?? []).map((starter) =>
+        spec
+          .validate(`methods/${starter}.schema.json#/$defs/jobResult`, job.result)
+          .map((p) => `${kind} job result ${p}`),
+      );
+      if (attempts.length > 0 && !attempts.some((a) => a.length === 0)) {
+        problems.push(...attempts.reduce((best, a) => (a.length < best.length ? a : best)));
       }
     }
     return problems;

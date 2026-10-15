@@ -40,8 +40,12 @@ export interface OtcpSpec {
   readonly errorKinds: ReadonlyMap<string, ErrorKindInfo>;
   /** Reason codes by `<scope>/<code>`, each with its own JSON-RPC code or null. */
   readonly reasons: ReadonlyMap<string, number | null>;
-  /** The method that starts each job kind (x-otcp.startsJob). */
-  readonly jobStarters: ReadonlyMap<string, string>;
+  /**
+   * The methods that start each job kind (x-otcp.startsJob). A kind can have more than one: both
+   * content.analyzeReference and content.autoTune (mode reference) start a referenceAnalysis job,
+   * and each defines the result of the job it starts.
+   */
+  readonly jobStarters: ReadonlyMap<string, readonly string[]>;
   /**
    * Validates a value against the schema at `ref`, a path below spec/otcp/v1 with an optional
    * fragment (`methods/job.get.schema.json#/$defs/params`). Returns the problems; empty when valid.
@@ -82,7 +86,7 @@ function load(): OtcpSpec {
   }
 
   const methods = new Map<string, MethodInfo>();
-  const jobStarters = new Map<string, string>();
+  const jobStarters = new Map<string, string[]>();
   for (const entry of (readJson('methods/index.json') as IndexFile).methods) {
     const file = methodFiles.get(entry.method);
     const startsJob = file?.['x-otcp'].startsJob ?? null;
@@ -94,7 +98,7 @@ function load(): OtcpSpec {
       valueCapabilities: file?.['x-otcp'].valueCapabilities ?? {},
       startsJob,
     });
-    if (startsJob !== null) jobStarters.set(startsJob, entry.method);
+    if (startsJob !== null) jobStarters.set(startsJob, [...(jobStarters.get(startsJob) ?? []), entry.method]);
   }
 
   const errorKinds = new Map<string, ErrorKindInfo>(

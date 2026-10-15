@@ -136,7 +136,7 @@ export class ImportService {
       for (let id = 0; id < TRACK_SLOTS; id++) if (!used.has(id)) return id;
       throw refuse('INVALID_ARGUMENT', 'track_capacity', 'every track already holds a clip');
     }
-    return world.activeTrackId;
+    return world.activeTrackId ?? 0;
   }
 
   readonly start: Handler = (context) => {
@@ -279,6 +279,7 @@ export class ImportService {
   #generateNotes(clip: Committed, by: 'request' | 'focus'): void {
     const { content } = clip;
     if (content.analysis !== 'ready') return;
+    content.notesGenerated = true;
     content.notes = segmentDetected(content.durationSec, DEFAULT_NOTE_SPLIT_CENTS).map((s) => ({
       startContentSec: s.startContentSec,
       endContentSec: s.endContentSec,

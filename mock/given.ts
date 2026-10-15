@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: MIT
 
 // The `given` preconditions of a contract vector (spec/otcp/v1/vectors/README.md, "Preconditions")
-// that concern project state: the editing scheme, the unsaved-changes flag, clips, files and the
-// undo and redo histories. A test sets them up directly on the model, never through OTCP. Jobs and
+// that concern project and window state: the editing scheme, the unsaved-changes flag, clips, files,
+// the undo and redo histories, dialogs, the first-run onboarding, preferences and the audio device. A test sets them up directly on the model, never through OTCP. Jobs and
 // capabilities belong to the server and are handled there.
 
 import type { WorkFiles, GivenFile } from './files.js';
 import { snapOf } from './history.js';
+import { openDialogs } from './ui.js';
 import {
   DEFAULT_NOTE_PARAMS,
   DETECTED_KEY,
@@ -58,6 +59,24 @@ export interface GivenState {
   /** The number of track slots shown, counted from track 0, or `all` for every slot. */
   readonly visibleTrackCount?: number | 'all';
   readonly audio?: { readonly running: boolean; readonly failsToOpen?: boolean };
+  /** The dialogs open, from the bottom of the stack to the top. */
+  readonly dialogs?: readonly GivenDialog[];
+  readonly onboarding?: 'notShown' | 'shown' | 'showing';
+  readonly preferences?: {
+    readonly tuningHz?: number;
+    readonly hybridMode?: boolean;
+    readonly experimentalFeatures?: boolean;
+    /** The binds of given files, the most recent first. */
+    readonly recentProjects?: readonly string[];
+  };
+  /** The bind of a given file that is the current project's file. */
+  readonly projectFile?: string;
+}
+
+export interface GivenDialog {
+  readonly kind: 'trackColour' | 'confirm' | 'pitchShift' | 'preferences' | 'message' | 'unknown';
+  readonly trackId?: number;
+  readonly colour?: string;
 }
 
 /** The members of a vector's `given` that this module establishes. */
@@ -70,6 +89,10 @@ export const WORLD_GIVEN_MEMBERS = [
   'history',
   'visibleTrackCount',
   'audio',
+  'dialogs',
+  'onboarding',
+  'preferences',
+  'projectFile',
 ] as const;
 
 /** The clip that `clipOnEveryTrack` adds to an empty track (vectors/README.md, Preconditions). */
@@ -93,6 +116,8 @@ function createClip(world: World, files: WorkFiles, clip: GivenClip, bindings: R
   } else if (clip.analysis === 'ready') {
     content.key = { ...DETECTED_KEY };
   }
+  // Notes the precondition gives were generated at some time; a ready clip without them never had notes generated.
+  content.notesGenerated = clip.notes !== undefined;
   if (clip.analysis === 'ready') {
     content.notes = [...(clip.notes ?? [])]
       .sort((a, b) => a.startContentSec - b.startContentSec)
@@ -262,7 +287,39 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
   if (given.visibleTrackCount !== undefined) {
     world.setVisibleTrackCount(given.visibleTrackCount === 'all' ? TRACK_SLOTS : given.visibleTrackCount);
   }
-  if (given.audio !== undefined) world.transport.audioDeviceRunning = given.audio.running;
+  if (given.audio !== undefined) {
+    world.audio.running = given.audio.running;
+    world.audio.failsToOpen = given.audio.failsToOpen === true;
+    world.transport.audioDeviceRunning = given.audio.running;
+  }
+  if (given.dialogs !== undefined) {
+    openDialogs(
+      world,
+      given.dialogs.map((d) => ({ kind: d.kind, trackId: d.trackId ?? null, colour: d.colour ?? null })),
+    );
+  }
+  if (given.onboarding !== undefined) {
+    world.prefs.onboardingShown = given.onboarding === 'shown';
+    world.onboardingShowing = given.onboarding === 'showing';
+  }
+  if (given.preferences !== undefined) {
+    const { tuningHz, hybridMode, experimentalFeatures, recentProjects } = given.preferences;
+    if (tuningHz !== undefined) world.prefs.tuningHz = tuningHz;
+    if (hybridMode !== undefined) world.prefs.hybridMode = hybridMode;
+    if (experimentalFeatures !== undefined) world.prefs.experimentalFeatures = experimentalFeatures;
+    if (recentProjects !== undefined) {
+      world.prefs.recentProjects = recentProjects.map((bind) => {
+        const file = bindings[bind];
+        if (file === undefined) throw new Error(`recentProjects names the file ${bind}, which no file binds`);
+        return file;
+      });
+    }
+  }
+  if (given.projectFile !== undefined) {
+    const file = bindings[given.projectFile];
+    if (file === undefined) throw new Error(`projectFile names the file ${given.projectFile}, which no file binds`);
+    world.project.path = file;
+  }
   world.project.dirty = given.dirty ?? false;
   // Tokens are read after every precondition is in place (vectors/README.md).
   for (const [bind, placement] of byBind) {

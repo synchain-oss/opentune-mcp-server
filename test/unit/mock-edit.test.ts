@@ -269,23 +269,6 @@ describe('content.autoTune', () => {
     expect((await session.ok('edit.getHistory')).history).toMatchObject({ undoCount: 0 });
     expect((await notes()).length).toBe(field(done, 'noteCount', 'after'));
   });
-
-  it('refuses reference mode, which needs a capability the mock does not report', () => {
-    const world = new World('0123456789abcdef0123456789abcdef', new ManualClock());
-    const content = world.addContent({ durationSec: 6, analysis: 'ready', sourcePath: null });
-    const run = () =>
-      editHandlers['content.autoTune']?.({
-        world,
-        params: { contentId: content.id, mode: 'reference', expectedRevision: content.revision },
-        exportLock: false,
-        hasCapability: () => false,
-        redact: (t) => t,
-        startJob: () => {
-          throw new Error('no job here');
-        },
-      });
-    expect(run).toThrow(/reference\.v1/);
-  });
 });
 
 describe('content.setKey', () => {
@@ -319,6 +302,12 @@ describe('content.setKey', () => {
       redact: (t) => t,
       startJob: () => {
         throw new Error('no job here');
+      },
+      jobs: {
+        start: () => {
+          throw new Error('no job here');
+        },
+        get: () => undefined,
       },
     });
     expect(result?.sideEffects).toMatchObject({
@@ -591,6 +580,7 @@ describe('the timeGridSeed job', () => {
       hasCapability: () => true,
       redact: (t) => t,
       startJob: (kind, work) => jobs.start({ kind }, oneShot(work)),
+      jobs,
     });
     const jobId = String(field(result, 'job', 'jobId'));
     world.contents.delete(content.objectId);

@@ -6,6 +6,8 @@
 // app.getLog. They read the model and never change it; reads are not gated by the analysis state
 // (spec/otcp/v1/PROTOCOL.md sections 11 and 16).
 
+import fs from 'node:fs';
+
 import type { Handler } from './context.js';
 import { refuse } from './errors.js';
 import { historyView } from './history.js';
@@ -193,7 +195,10 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
         timeGridIdentity: world.gridIsIdentity(c),
         ...(c.key === null ? { nullReasons: { key: 'not_analyzed' } } : {}),
       })),
-      selection: { selectedPlacementIds: [...world.selectedPlacementIds], pianoRollContentId: null },
+      selection: {
+        selectedPlacementIds: [...world.selectedPlacementIds],
+        pianoRollContentId: world.pianoRollContent?.id ?? null,
+      },
       transport: { ...world.transport, timeSignature: { ...world.transport.timeSignature } },
       history: hasHistory ? historyView(world) : null,
     };
@@ -360,7 +365,7 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
       vocoderWeight: null,
       f0Model: null,
       renderingPriority: null,
-      experimentalFeatures: false,
+      experimentalFeatures: world.prefs.experimentalFeatures,
       referenceAlignMode: null,
       nullReasons: {
         vocoderWeight: 'unavailable',
@@ -371,7 +376,7 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
     },
     onboardingShown: world.prefs.onboardingShown,
     language: world.prefs.language,
-    recentProjects: [],
+    recentProjects: world.prefs.recentProjects.map((file) => ({ path: file, exists: fs.existsSync(file) })),
   }),
 
   'app.getLog': ({ world, params, redact }) => {

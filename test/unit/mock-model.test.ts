@@ -196,6 +196,12 @@ describe('undo history', () => {
         startJob: () => {
           throw new Error('no job here');
         },
+        jobs: {
+          start: () => {
+            throw new Error('no job here');
+          },
+          get: () => undefined,
+        },
       });
     world.undoStack = [entry(), entry()];
     const [lower, upper] = world.undoStack;

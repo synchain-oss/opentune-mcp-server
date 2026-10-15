@@ -5,7 +5,7 @@
 // (spec/otcp/v1/PROTOCOL.md section 14).
 
 import { refuse } from './errors.js';
-import type { JobView } from './jobs.js';
+import type { JobStore, JobView } from './jobs.js';
 import type { ContentRec, PlacementRec, RevisionDiff, World } from './model.js';
 
 export interface MethodContext {
@@ -19,6 +19,8 @@ export interface MethodContext {
   readonly redact: (text: string) => string;
   /** Starts a job that runs `work` shortly and completes with its result. */
   readonly startJob: (kind: string, work: () => Record<string, unknown>) => JobView;
+  /** For a job with steps of its own, and to look a job up. */
+  readonly jobs: Pick<JobStore, 'start' | 'get'>;
 }
 
 /** Answers with the result, or throws a MockError. Runs "on the main thread": synchronously, one at a time. */
