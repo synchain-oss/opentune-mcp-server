@@ -5,6 +5,9 @@
 // that the repository scanners look for (personal paths, foreign e-mail addresses) are
 // assembled at runtime so that this file does not trip the scan it is testing.
 
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -945,5 +948,37 @@ describe('audioKind / checkNoNewAudio', () => {
       'x/test/fixtures/vocals/y.wav',
     ];
     expect(checkNoNewAudio(lookAlikes.map((path) => ({ path, head: wav })))).toHaveLength(lookAlikes.length);
+  });
+});
+
+describe('gates.mjs --no-skip', () => {
+  // "output budget" is a placeholder check that reports SKIP until its tool exists, so it gives a
+  // deterministic SKIP row without running any real gate. "no pull_request_target" is a file scan
+  // that passes on this repository.
+  const gates = fileURLToPath(new URL('../../scripts/gates.mjs', import.meta.url));
+  const run = (only: string, ...extra: string[]) =>
+    spawnSync(process.execPath, [gates, '--base', 'HEAD', '--only', only, ...extra], {
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+
+  it('keeps SKIP rows passing without the flag', () => {
+    const r = run('output budget');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/\| output budget \| SKIP \|/);
+  });
+
+  it('fails and names the skipped check with the flag', () => {
+    const r = run('output budget', '--no-skip');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--no-skip: 1 check(s) skipped: output budget');
+    expect(r.stdout).toContain('counts as a failure: output budget');
+  });
+
+  it('passes with the flag when nothing is skipped', () => {
+    const r = run('no pull_request_target', '--no-skip');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/\| no pull_request_target \| PASS \|/);
   });
 });
