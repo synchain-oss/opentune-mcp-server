@@ -7,8 +7,14 @@
 //
 // Per vector: a fresh temporary OPENTUNE_DATA_DIR, the process started with `shell: false`, the
 // ready file and launch nonce of PROTOCOL.md section 5.5 and the options table, the discovery file
-// read back from <data dir>/control/instances and checked against both. The only process this
-// target ever ends is the one it started itself.
+// read back from <data dir>/control/instances and checked against both.
+//
+// This target ends only the process it started itself and, when the ready file names another pid
+// (a launcher that starts the real process), that process once it is confirmed to come from this
+// launch: its discovery file carries the launch nonce, and the start time the operating system
+// reports for it lies between the launch and the ready file and matches the discovery file. A
+// process it cannot confirm is never ended; that is reported instead. No process is ever looked up
+// or ended by name.
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -19,6 +25,8 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { resolveDiscoveryDir } from '../../mock/discovery.js';
+import { pidAlive, systemProbe, type ProcessInfo } from '../../src/discovery/process.js';
+import { otcpSpec } from '../support/otcp-spec.js';
 import { RunnerConnection } from './connection.js';
 import { PreconditionUnavailable, type ContractTarget } from './target.js';
 
@@ -29,6 +37,8 @@ export interface ExeTargetOptions {
   readonly args?: readonly string[];
   /** How long to wait for the ready file, for the hello and for the exit; 30 s unless given. */
   readonly timeoutMs?: number;
+  /** Whether a pid runs and when it started; asks the operating system unless given. */
+  readonly probe?: (pid: number) => Promise<ProcessInfo>;
 }
 
 export type ExeConfig = { readonly skip: string } | { readonly options: ExeTargetOptions };
@@ -39,12 +49,28 @@ export interface ExeCleanupStats {
   verified: number;
   /** Ended by force; whether the instance cleans up after itself was not verified. */
   forced: number;
+  /** Had already ended by itself before the vector was over. */
+  exitedEarly: number;
+  /** Exited after a normal stop request but left its discovery file behind. */
+  leftDiscoveryFile: number;
+  /** Named by the ready file but not confirmed as started by this target, so left running. */
+  notEnded: number;
 }
+
+export type ExeTarget = ContractTarget & {
+  readonly stats: ExeCleanupStats;
+  /** What the close() calls since the last call found wrong with the instance; each makes its vector FAIL. */
+  takeProblems(): string[];
+};
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const POLL_MS = 50;
 const STDERR_TAIL_CHARS = 2000;
 const HELLO_ID = 'otcp-exe-hello';
+/** How far two readings of one process's start time may differ (PROTOCOL.md section 5.4 rule 2). */
+const START_TOLERANCE_MS = 2000;
+const PROBE_ATTEMPTS = 3;
+const READY_FILE_REF = 'schemas/discovery-file.schema.json#/$defs/readyFileKnownMembers';
 
 /** Reads OTCP_TARGET_EXE, OTCP_TARGET_ARGS and OTCP_TARGET_TIMEOUT_MS. Throws on a bad value. */
 export function exeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ExeConfig {
@@ -97,14 +123,176 @@ async function readJson(file: string): Promise<unknown> {
   }
 }
 
-export function exeTarget(options: ExeTargetOptions): ContractTarget & { readonly stats: ExeCleanupStats } {
+/** Resolves true when `event` settles within `ms`, false otherwise; the timer never outlives it. */
+async function within(event: Promise<unknown>, ms: number): Promise<boolean> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<false>((resolve) => {
+    timer = setTimeout(() => {
+      resolve(false);
+    }, ms);
+  });
+  try {
+    return await Promise.race([event.then(() => true), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Sends a signal; false when the process is gone already. */
+function signal(pid: number, name: NodeJS.Signals): boolean {
+  try {
+    process.kill(pid, name);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false;
+    throw error;
+  }
+}
+
+/** Waits until no process with `pid` runs; false when one still does after `ms`. */
+async function gone(pid: number, ms: number): Promise<boolean> {
+  const deadline = Date.now() + ms;
+  for (;;) {
+    if (pidAlive(pid) === false) return true;
+    if (Date.now() >= deadline) return false;
+    await sleep(POLL_MS);
+  }
+}
+
+const sameStart = (a: number, b: number) => Math.abs(a - b) <= START_TOLERANCE_MS;
+
+/** How the instance ended. */
+type Ending =
+  | { readonly how: 'clean' }
+  | { readonly how: 'forced' }
+  | { readonly how: 'exited'; readonly detail: string }
+  | { readonly how: 'notEnded'; readonly detail: string };
+
+/** The process the ready file names, when it is not the started one and was confirmed as coming from this launch. */
+interface Owned {
+  readonly pid: number;
+  readonly startTimeMs: number;
+}
+
+type Hello = { readonly protocol: string; readonly capabilities: string[] } | { readonly problem: string };
+
+/** A session.hello of the target's own, checked against the discovery file (PROTOCOL.md section 4.3). */
+async function ownHello(discovery: Record<string, unknown>, timeoutMs: number): Promise<Hello> {
+  let conn: RunnerConnection | undefined;
+  try {
+    conn = await RunnerConnection.open(Number(discovery.port));
+    const hello = {
+      jsonrpc: '2.0',
+      id: HELLO_ID,
+      method: 'session.hello',
+      params: { token: discovery.token, protocol: '1.0', client: { name: 'otcp-exe-target', version: '1.0.0' } },
+    };
+    conn.write(Buffer.from(`${JSON.stringify(hello)}\n`, 'utf8'));
+    const line = await conn.readLine(timeoutMs);
+    if (line === 'closed' || line === 'timeout') return { problem: `session.hello got no answer (${line})` };
+    let message: unknown;
+    try {
+      message = JSON.parse(line.toString('utf8'));
+    } catch {
+      // Not the parser's message: it can quote the line, and the line holds the server proof.
+      return { problem: 'session.hello got an answer that is not JSON' };
+    }
+    const result = isObject(message) && isObject(message.result) ? message.result : undefined;
+    if (result === undefined) return { problem: 'session.hello did not succeed' };
+    const differs = ['serverProof', 'instanceId', 'pid'].filter((member) => result[member] !== discovery[member]);
+    if (differs.length > 0) {
+      return { problem: `the session.hello result differs from the discovery file in ${differs.join(', ')}` };
+    }
+    if (!Array.isArray(result.capabilities) || typeof result.protocol !== 'string') {
+      return { problem: 'the session.hello result has no capabilities or protocol' };
+    }
+    return {
+      protocol: result.protocol,
+      capabilities: result.capabilities.filter((c): c is string => typeof c === 'string'),
+    };
+  } catch (error) {
+    return { problem: `session.hello failed: ${error instanceof Error ? error.message : String(error)}` };
+  } finally {
+    conn?.destroy();
+  }
+}
+
+export function exeTarget(options: ExeTargetOptions): ExeTarget {
   checkExe(options.exe);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const stats: ExeCleanupStats = { verified: 0, forced: 0 };
+  // A probe of its own per question, so no start time is remembered across a reuse of the pid.
+  const probeOnce = options.probe ?? ((pid: number) => systemProbe().probe(pid));
+  // Reading a start time runs a system tool with a time limit (PowerShell on Windows), which a
+  // busy machine can miss; an unknown answer is asked again before it counts.
+  const probe = async (pid: number): Promise<ProcessInfo> => {
+    let info = await probeOnce(pid);
+    for (let attempt = 1; attempt < PROBE_ATTEMPTS && info.alive !== false && info.startTimeMs === null; attempt++) {
+      info = await probeOnce(pid);
+    }
+    return info;
+  };
+  const stats: ExeCleanupStats = { verified: 0, forced: 0, exitedEarly: 0, leftDiscoveryFile: 0, notEnded: 0 };
+  let problems: string[] = [];
+
+  const notEndedNote = (pid: number, reason: string) =>
+    `pid ${String(pid)}, named by the ready file, could not be confirmed as started by this target (${reason}); ` +
+    'it was not ended';
+
+  /** Whether `pid` is the process this launch started: why not, or its start time. */
+  const confirm = async (
+    pid: number,
+    discovery: unknown,
+    nonce: string,
+    launchedAtMs: number,
+    readyAtMs: number,
+  ): Promise<Owned | string> => {
+    if (!isObject(discovery)) return 'it has no readable discovery file';
+    if (discovery.pid !== pid) return 'its discovery file names another pid';
+    if (discovery.launchNonce !== nonce) return 'its discovery file does not carry the launch nonce';
+    const info = await probe(pid);
+    if (info.alive !== true) return info.alive === false ? 'it is not running' : 'whether it runs is unknown';
+    const started = info.startTimeMs;
+    if (started === null) return 'the operating system did not report its start time';
+    if (started < launchedAtMs - START_TOLERANCE_MS || started > readyAtMs + START_TOLERANCE_MS) {
+      return 'it did not start between the launch and the ready file';
+    }
+    const recorded = discovery.processStartTimeMs;
+    if (typeof recorded !== 'number' || !sameStart(started, recorded)) {
+      return 'its start time is not the processStartTimeMs of its discovery file';
+    }
+    return { pid, startTimeMs: started };
+  };
+
+  /** Ends a confirmed process that this target did not start itself, after checking it is still that process. */
+  const stopOwned = async (owned: Owned, graceful: boolean): Promise<Ending> => {
+    const now = await probe(owned.pid);
+    const notRunning = { how: 'exited', detail: `pid ${String(owned.pid)} no longer ran` } as const;
+    if (now.alive === false) return notRunning;
+    if (now.alive !== true || now.startTimeMs === null) {
+      return { how: 'notEnded', detail: notEndedNote(owned.pid, 'its start time could not be read again') };
+    }
+    // Another process with the same pid: the instance itself ended.
+    if (!sameStart(now.startTimeMs, owned.startTimeMs)) return notRunning;
+    const normal = graceful && process.platform !== 'win32';
+    if (!signal(owned.pid, normal ? 'SIGTERM' : 'SIGKILL')) return notRunning;
+    if (await gone(owned.pid, timeoutMs)) return normal ? { how: 'clean' } : { how: 'forced' };
+    // Still there after the time allowed: by force, if it still is that process.
+    const again = await probe(owned.pid);
+    if (again.alive === true && again.startTimeMs !== null && sameStart(again.startTimeMs, owned.startTimeMs)) {
+      signal(owned.pid, 'SIGKILL');
+      await gone(owned.pid, timeoutMs);
+    }
+    return { how: 'forced' };
+  };
 
   return {
     name: 'exe',
     stats,
+    takeProblems() {
+      const taken = problems;
+      problems = [];
+      return taken;
+    },
     async open() {
       const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ot-exe-'));
       const instancesDir = path.join(dataDir, 'control', 'instances');
@@ -113,47 +301,80 @@ export function exeTarget(options: ExeTargetOptions): ContractTarget & { readonl
       let secrets: string[] = [nonce];
       let child: ChildProcess | undefined;
       let exited: { code: number | null; signal: NodeJS.Signals | null } | undefined;
+      let exitEvent: Promise<void> = Promise.resolve();
       let spawnError: Error | undefined;
       let stderrTail = '';
+      /** The pid of the instance, once the ready file names it. */
+      let instancePid: number | undefined = undefined;
+      let owned: Owned | undefined;
+      let unconfirmed: string | undefined;
 
-      const exitState = () => exited;
       const redacted = (text: string) => {
         let out = text.replace(/[0-9a-fA-F]{32,}/g, '[redacted]');
         for (const secret of secrets) if (secret !== '') out = out.replaceAll(secret, '[redacted]');
         return out;
       };
       const describe = (problem: string) => {
-        const tail = redacted(stderrTail).trim();
-        return `${problem}${tail === '' ? '' : `; stderr tail:\n${tail}`}`;
+        const tail = stderrTail.trim();
+        return redacted(`${problem}${tail === '' ? '' : `; stderr tail:\n${tail}`}`);
       };
+      const exitState = () => exited;
+      const exitText = () => (exited === undefined ? 'unknown' : (exited.signal ?? `exit code ${String(exited.code)}`));
+
       // Ends the process this target started. Windows has no normal stop request to send, so
       // there kill() ends it outright and the clean-up on exit cannot be verified.
-      const stop = async (graceful: boolean): Promise<'clean' | 'forced'> => {
+      const stopChild = async (graceful: boolean): Promise<Ending> => {
         const proc = child;
-        if (proc === undefined || exitState() !== undefined) return 'forced';
-        const done = new Promise<void>((resolve) => {
-          proc.once('exit', () => {
-            resolve();
-          });
-        });
+        if (proc?.pid === undefined) return { how: 'exited', detail: 'it did not start' };
+        // Gone already, and the exit event is on its way.
+        if (exited === undefined && pidAlive(proc.pid) === false) await within(exitEvent, timeoutMs);
+        if (exited !== undefined) return { how: 'exited', detail: exitText() };
         const normal = graceful && process.platform !== 'win32';
         proc.kill(normal ? 'SIGTERM' : 'SIGKILL');
-        const timer = sleep(timeoutMs, 'timeout');
-        const first = await Promise.race([done.then(() => 'done'), timer]);
-        if (first === 'timeout') {
+        if (!(await within(exitEvent, timeoutMs))) {
           proc.kill('SIGKILL');
-          await done;
-          return 'forced';
+          await within(exitEvent, timeoutMs);
+          return { how: 'forced' };
         }
-        return normal && exitState()?.code === 0 ? 'clean' : 'forced';
+        // Read again: the exit came while this function waited.
+        return normal && exitState()?.code === 0 ? { how: 'clean' } : { how: 'forced' };
+      };
+      // Ends the instance: the started process, or the confirmed process it started and then the
+      // started process (the launcher) if it still runs. An unconfirmed process is left alone.
+      const end = async (graceful: boolean): Promise<Ending> => {
+        if (instancePid === undefined || instancePid === child?.pid) return stopChild(graceful);
+        const ending =
+          owned === undefined
+            ? ({ how: 'notEnded', detail: notEndedNote(instancePid, unconfirmed ?? 'not checked') } as const)
+            : await stopOwned(owned, graceful);
+        await stopChild(false);
+        return ending;
+      };
+      const removeDataDir = async (): Promise<string | undefined> => {
+        try {
+          await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+          return undefined;
+        } catch {
+          return 'the temporary data folder could not be removed';
+        }
       };
       const fail = async (problem: string): Promise<never> => {
-        const message = describe(problem);
-        await stop(false);
-        await rm(dataDir, { recursive: true, force: true });
-        throw new Error(message);
+        const notes = [problem];
+        try {
+          const ending = await end(false);
+          if (ending.how === 'notEnded') {
+            stats.notEnded++;
+            notes.push(ending.detail);
+          }
+        } catch (error) {
+          notes.push(`stopping it failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+        const removal = await removeDataDir();
+        if (removal !== undefined) notes.push(removal);
+        throw new Error(describe(notes.join('; ')));
       };
 
+      const launchedAtMs = Date.now();
       try {
         // Never a real OpenTune folder, whatever the temporary directory is.
         resolveDiscoveryDir(instancesDir);
@@ -175,83 +396,74 @@ export function exeTarget(options: ExeTargetOptions): ContractTarget & { readonl
         await rm(dataDir, { recursive: true, force: true });
         throw error;
       }
-      child.stderr?.on('data', (chunk: Buffer) => {
+      const started = child;
+      exitEvent = new Promise<void>((resolve) => {
+        started.once('exit', (code, sig) => {
+          exited = { code, signal: sig };
+          resolve();
+        });
+      });
+      started.stderr?.on('data', (chunk: Buffer) => {
         stderrTail = (stderrTail + chunk.toString('utf8')).slice(-STDERR_TAIL_CHARS);
       });
-      child.once('error', (error) => {
+      started.once('error', (error) => {
         spawnError = error;
       });
-      child.once('exit', (code, signal) => {
-        exited = { code, signal };
-      });
 
-      // Wait for the ready file; a process that ends first is a failure at once.
+      // Wait for the ready file; a process that ends first is a failure at once, unless it is a
+      // launcher whose instance writes the ready file after it.
       const deadline = Date.now() + timeoutMs;
       let ready: unknown;
       for (;;) {
         if (spawnError !== undefined) return fail(`the executable could not be started: ${spawnError.message}`);
         ready = existsSync(readyFile) ? await readJson(readyFile) : undefined;
         if (ready !== undefined) break;
-        if (exited !== undefined) {
-          const how = exited.signal ?? `exit code ${String(exited.code)}`;
-          return fail(`the process ended (${how}) before it wrote the ready file`);
+        if (exited !== undefined && exited.code !== 0) {
+          return fail(`the process ended (${exitText()}) before it wrote the ready file`);
         }
-        if (Date.now() >= deadline) return fail(`no ready file within ${String(timeoutMs)} ms`);
+        if (Date.now() >= deadline) {
+          const after = exited === undefined ? '' : ` (the started process had ended with ${exitText()})`;
+          return fail(`no ready file within ${String(timeoutMs)} ms${after}`);
+        }
         await sleep(POLL_MS);
       }
-      if (!isObject(ready) || !Number.isInteger(ready.pid) || typeof ready.instanceId !== 'string') {
-        return fail('the ready file does not hold {pid, instanceId}');
+      const readyAtMs = Date.now();
+      const readyProblems = otcpSpec().validate(READY_FILE_REF, ready);
+      if (readyProblems.length > 0 || !isObject(ready)) {
+        return fail(`the ready file is not valid: ${readyProblems.join('; ')}`);
       }
       const readyPid = ready.pid as number;
+      instancePid = readyPid;
 
       const discoveryFile = path.join(instancesDir, `${String(readyPid)}.json`);
       const discovery = await readJson(discoveryFile);
+      if (isObject(discovery)) {
+        secrets = [nonce, discovery.token, discovery.serverProof].filter((v): v is string => typeof v === 'string');
+      }
+      if (readyPid !== started.pid) {
+        // A launcher: the instance is another process, which may be ended only once confirmed.
+        const confirmation = await confirm(readyPid, discovery, nonce, launchedAtMs, readyAtMs);
+        if (typeof confirmation === 'string') unconfirmed = confirmation;
+        else owned = confirmation;
+      }
       if (!isObject(discovery))
         return fail(`no readable discovery file for pid ${String(readyPid)} in control/instances`);
-      secrets = [nonce, discovery.token, discovery.serverProof].filter((v): v is string => typeof v === 'string');
       if (discovery.pid !== readyPid) return fail('the discovery file names another pid than the ready file');
       if (discovery.instanceId !== ready.instanceId) {
         return fail('the discovery file and the ready file differ in instanceId');
       }
       if (discovery.launchNonce !== nonce) return fail('the launch nonce of the discovery file is not the one passed');
+      if (unconfirmed !== undefined)
+        return fail(`the ready file names pid ${String(readyPid)}, not the started process`);
 
       // The capabilities come from a session.hello of this target's own; the runner opens its own connections.
-      let capabilities: string[];
-      let protocol: string;
-      let conn: RunnerConnection | undefined;
-      try {
-        conn = await RunnerConnection.open(Number(discovery.port));
-        const hello = {
-          jsonrpc: '2.0',
-          id: HELLO_ID,
-          method: 'session.hello',
-          params: { token: discovery.token, protocol: '1.0', client: { name: 'otcp-exe-target', version: '1.0.0' } },
-        };
-        conn.write(Buffer.from(`${JSON.stringify(hello)}\n`, 'utf8'));
-        const line = await conn.readLine(timeoutMs);
-        if (line === 'closed' || line === 'timeout') return await fail(`session.hello got no answer (${line})`);
-        const message = JSON.parse(line.toString('utf8')) as unknown;
-        const result = isObject(message) && isObject(message.result) ? message.result : undefined;
-        if (
-          result === undefined ||
-          result.serverProof !== discovery.serverProof ||
-          !Array.isArray(result.capabilities) ||
-          typeof result.protocol !== 'string'
-        ) {
-          return await fail('session.hello did not succeed with the serverProof of the discovery file');
-        }
-        capabilities = result.capabilities.filter((c): c is string => typeof c === 'string');
-        protocol = result.protocol;
-      } catch (error) {
-        return await fail(`session.hello failed: ${error instanceof Error ? error.message : String(error)}`);
-      } finally {
-        conn?.destroy();
-      }
+      const hello = await ownHello(discovery, timeoutMs);
+      if ('problem' in hello) return fail(hello.problem);
 
       return {
         discovery,
-        protocol,
-        capabilities,
+        protocol: hello.protocol,
+        capabilities: hello.capabilities,
         establish(given) {
           // No preparatory calls yet: only vectors without preconditions run on a real instance.
           const members = Object.keys(given);
@@ -261,17 +473,35 @@ export function exeTarget(options: ExeTargetOptions): ContractTarget & { readonl
           );
         },
         runnerValue: () => undefined,
+        // Never throws: the runner's result for the vector must survive. What goes wrong here is
+        // left for takeProblems(), which makes the vector FAIL.
         async close() {
-          const how = await stop(true);
-          const left = existsSync(discoveryFile);
-          await rm(dataDir, { recursive: true, force: true });
-          if (how === 'clean') {
-            if (left) throw new Error('the instance exited normally but left its discovery file behind');
-            stats.verified++;
-          } else {
-            // Ended by force: the clean-up on exit was not verified.
-            stats.forced++;
+          const found: string[] = [];
+          try {
+            const ending = await end(true);
+            if (ending.how === 'clean') {
+              if (existsSync(discoveryFile)) {
+                stats.leftDiscoveryFile++;
+                found.push('the instance exited after a normal stop request but left its discovery file behind');
+              } else {
+                stats.verified++;
+              }
+            } else if (ending.how === 'forced') {
+              // Ended by force: the clean-up on exit was not verified.
+              stats.forced++;
+            } else if (ending.how === 'exited') {
+              stats.exitedEarly++;
+              found.push(`the instance ended by itself before the vector was over (${ending.detail})`);
+            } else {
+              stats.notEnded++;
+              found.push(ending.detail);
+            }
+          } catch (error) {
+            found.push(`stopping the instance failed: ${error instanceof Error ? error.message : String(error)}`);
           }
+          const removal = await removeDataDir();
+          if (removal !== undefined) found.push(removal);
+          problems.push(...found.map(redacted));
         },
       };
     },

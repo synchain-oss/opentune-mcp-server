@@ -42,10 +42,35 @@ capabilities the instance reports run; the rest are skipped with that reason, as
 preconditions (`given`), which this target cannot establish yet.
 
 Afterwards the process is asked to stop normally and the discovery file is checked to be gone.
-Windows has no normal stop request to send, so there the target ends the process it started and
-records that the clean-up on exit was not verified. It never ends any other process. On a failed
-start the error carries the tail of the process's stderr with token, server proof and nonce
-removed.
+Windows has no normal stop request to send, so there the target ends the process and records that
+the clean-up on exit was not verified. On a failed start the error carries the tail of the
+process's stderr with token, server proof and nonce removed.
+
+### Which processes the target ends
+
+Only the process it started, and the process the ready file names when that is another one (the
+executable is a launcher that hands over to the real process). That second process is ended only
+once it is confirmed to come from this launch: its discovery file carries the launch nonce, and the
+start time the operating system reports for it lies between the launch and the ready file and
+matches `processStartTimeMs` of its discovery file (within 2 s). The start time is read again
+before every stop request, so a reused pid is never signalled. A process that cannot be confirmed
+is never ended: the vector fails with "could not be confirmed as started by this target … it was
+not ended", and the process keeps running until you end it yourself. No process is looked up or
+ended by name.
+
+### How the instances ended
+
+Each run reports, next to the PASS / FAIL / SKIP counts, how many instances
+
+- stopped normally with their discovery file removed;
+- were ended by force (Windows, or no exit in time), so the clean-up on exit was not verified;
+- ended by themselves during a vector, with the exit code when it is known;
+- exited after a normal stop request but left their discovery file behind;
+- could not be confirmed as started by this run and were not ended.
+
+The last three are deviations: each one also makes the vector it happened in FAIL, whatever the
+vector itself gave.
 
 `OTCP_CONTRACT_SUMMARY_EXE` (a file path) makes the run write its counts as JSON, which is how
-`npm run gates` fills its "contract vectors (exe)" row.
+`npm run gates` fills its "contract vectors (exe)" row. The "contract vectors (mock)" row clears
+`OTCP_TARGET_EXE` for its own run, so setting it starts no executable there.

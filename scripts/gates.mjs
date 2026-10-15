@@ -451,8 +451,10 @@ async function contractVectors() {
   // rest may be skipped.
   const summaryFile = path.join(ROOT, '.cache', 'contract', 'summary.json');
   await fs.rm(summaryFile, { force: true });
+  // OTCP_TARGET_EXE cleared: the vectors against a started build are the next row's, and must
+  // neither run twice nor turn this row red.
   const status = npmStreaming(['run', '--silent', 'test:contract'], {
-    env: { ...process.env, OTCP_CONTRACT_SUMMARY: summaryFile },
+    env: { ...process.env, OTCP_CONTRACT_SUMMARY: summaryFile, OTCP_TARGET_EXE: '' },
   });
   const summary = JSON.parse(await fs.readFile(summaryFile, 'utf8').catch(() => 'null'));
   if (summary === null)
@@ -474,9 +476,9 @@ async function contractVectorsExe() {
   if (!process.env.OTCP_TARGET_EXE) throw new Skip('OTCP_TARGET_EXE is not set');
   const summaryFile = path.join(ROOT, '.cache', 'contract', 'summary-exe.json');
   await fs.rm(summaryFile, { force: true });
-  // The pattern has no space, so it survives the shell on Windows.
+  // Only the exe vectors run; the pattern has no space, so it survives the shell on Windows.
   const status = npmStreaming(['run', '--silent', 'test:contract', '--', '-t', 'against.the.exe'], {
-    env: { ...process.env, OTCP_CONTRACT_SUMMARY_EXE: summaryFile },
+    env: { ...process.env, OTCP_CONTRACT_SUMMARY_EXE: summaryFile, OTCP_CONTRACT_SUMMARY: '' },
   });
   const summary = JSON.parse(await fs.readFile(summaryFile, 'utf8').catch(() => 'null'));
   if (summary === null)
@@ -484,9 +486,14 @@ async function contractVectorsExe() {
   const skips = Object.entries(summary.skipReasons)
     .map(([reason, n]) => `${reason}: ${n}`)
     .join('; ');
+  // How the started instances ended; the problems among them already failed their vectors.
+  const i = summary.instances;
   const note =
     `${summary.total} vectors: ${summary.pass} PASS, ${summary.fail} FAIL` +
-    `${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ${summary.skip} SKIP${skips ? ` (${skips})` : ''}`;
+    `${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ${summary.skip} SKIP${skips ? ` (${skips})` : ''}; ` +
+    `instances: ${i.verified} stopped normally, ${i.forced} ended by force (clean-up not verified), ` +
+    `${i.exitedEarly} ended by themselves, ${i.leftDiscoveryFile} left their discovery file, ` +
+    `${i.notEnded} not confirmed as started by this run and not ended`;
   return { result: status === 0 && summary.fail === 0 ? 'PASS' : 'FAIL', note };
 }
 

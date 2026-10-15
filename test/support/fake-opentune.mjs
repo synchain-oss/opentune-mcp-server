@@ -5,26 +5,58 @@
 // target: it takes the same options, writes a discovery file and a ready file, listens on the
 // loopback address and answers session.hello. `--mode=<name>` makes it misbehave in one way.
 // Not part of the published package.
+//
+// Launcher modes start a second copy of this script, which writes the files, and exit at once,
+// as a launcher that hands over to the real process does.
+//
+// Every copy that keeps running ends by itself once its OPENTUNE_DATA_DIR is gone, so a test that
+// fails cannot leave one behind; with `--marker=<file>` it first writes how it ended to that file.
 
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const option = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
 const mode = option('mode') ?? 'ok';
 const readyFile = option('control-api-ready-file');
 const nonce = option('control-api-launch-nonce');
+const marker = option('marker');
 const dataDir = process.env.OPENTUNE_DATA_DIR;
 
-if (mode === 'early-exit') {
-  // The secrets a real server must never print are made up here, at run time.
-  process.stderr.write(`start-up failed, token ${randomBytes(32).toString('hex')}\n`);
-  process.exit(3);
-}
-if (mode === 'no-ready') {
-  setInterval(() => {}, 1000);
+const endWith = (how, code) => {
+  if (marker !== undefined) fs.writeFileSync(marker, how);
+  process.exit(code);
+};
+
+const LAUNCHED = { launcher: 'ok', 'launcher-bad-start': 'bad-start' };
+if (mode in LAUNCHED) {
+  const args = process.argv.slice(2).filter((a) => !a.startsWith('--mode='));
+  const instance = spawn(process.execPath, [fileURLToPath(import.meta.url), `--mode=${LAUNCHED[mode]}`, ...args], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  instance.unref();
+  instance.once('spawn', () => process.exit(0));
 } else {
+  // A stand-in must never outlive its test.
+  setInterval(() => {
+    if (!fs.existsSync(dataDir)) endWith('watchdog', 0);
+  }, 500);
+  setTimeout(() => endWith('lifetime', 0), 120_000).unref();
+
+  if (mode === 'early-exit') {
+    // The secrets a real server must never print are made up here, at run time.
+    process.stderr.write(`start-up failed, token ${randomBytes(32).toString('hex')}, nonce ${nonce}\n`);
+    process.exit(3);
+  }
+  if (mode !== 'no-ready') serve();
+}
+
+function serve() {
   const token = randomBytes(32).toString('hex');
   const serverProof = randomBytes(16).toString('hex');
   const instanceId = randomBytes(16).toString('hex');
@@ -49,7 +81,10 @@ if (mode === 'no-ready') {
               },
             }
           : { jsonrpc: '2.0', id: request.id, error: { code: -32001, message: 'UNAUTHENTICATED', data: {} } };
-        socket.write(`${JSON.stringify(reply)}\n`);
+        socket.write(`${JSON.stringify(reply)}\n`, () => {
+          // Ends by itself, without removing its discovery file, as a crash would.
+          if (mode === 'exit-after-hello') process.exit(5);
+        });
       }
     });
     socket.on('error', () => {});
@@ -58,6 +93,7 @@ if (mode === 'no-ready') {
     const dir = path.join(dataDir, 'control', 'instances');
     fs.mkdirSync(dir, { recursive: true });
     const discoveryPid = mode === 'pid-mismatch' ? process.pid + 1 : process.pid;
+    const startedAt = Math.round(performance.timeOrigin);
     const discovery = {
       protocolMajors: [1],
       pid: discoveryPid,
@@ -65,7 +101,8 @@ if (mode === 'no-ready') {
       port: server.address().port,
       token,
       serverProof,
-      processStartTimeMs: Date.now(),
+      // bad-start: a start time the operating system does not confirm.
+      processStartTimeMs: mode === 'bad-start' ? startedAt - 600_000 : startedAt,
       launchNonce: mode === 'bad-nonce' ? `${nonce}x` : nonce,
       appVersion: '0.0.0-fake',
       build: { commit: '0'.repeat(40), tag: null },
@@ -80,7 +117,7 @@ if (mode === 'no-ready') {
     fs.renameSync(`${readyFile}.tmp`, readyFile);
     process.on('SIGTERM', () => {
       if (mode !== 'no-cleanup') fs.rmSync(discoveryFile, { force: true });
-      process.exit(0);
+      endWith('sigterm', 0);
     });
   });
 }
