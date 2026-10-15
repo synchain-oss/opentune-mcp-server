@@ -100,6 +100,11 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'UNSUPPORTED/capability_missing': user(
     'This OpenTune build lacks the feature (see detail). Ask the user to update to a build that has it.',
   ),
+  'UNDO_CONFLICT/history_empty': user('There is nothing to undo or redo here. Tell the user.'),
+  'UNSUPPORTED/undo_unsafe_build': user(
+    'This OpenTune build cannot undo or redo the top step safely (a clip split, merge or delete). Tell the user; ' +
+      'they can decide in the OpenTune window. Do not force it.',
+  ),
   'UNSUPPORTED/job_not_cancellable': agent(
     'This job cannot be cancelled now; it continues. Follow it with opentune_get_job.',
   ),
