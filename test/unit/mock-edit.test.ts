@@ -563,13 +563,19 @@ describe('the timeGridSeed job', () => {
     const busy = await run(() => {
       session.mock.setBusy({ modalOpen: true });
     });
-    expect(busy).toMatchObject({ state: 'failed', result: null, error: { data: { kind: 'INTERNAL' } } });
-    expect(field(busy, 'error', 'data', 'detail')).toMatch(/BUSY\(modal_open\)/);
+    expect(busy).toMatchObject({
+      state: 'failed',
+      result: null,
+      error: { message: 'BUSY', data: { kind: 'BUSY', reason: 'modal_open', retryable: true, executed: false } },
+    });
     session.mock.setBusy({ modalOpen: false });
     const notReady = await run(() => {
       session.mock.setAnalysis(contentId, 'running');
     });
-    expect(field(notReady, 'error', 'data', 'detail')).toMatch(/NOT_READY\(f0_not_ready\)/);
+    expect(notReady).toMatchObject({
+      state: 'failed',
+      error: { data: { kind: 'NOT_READY', reason: 'f0_not_ready', executed: false } },
+    });
     expect(session.mock.snapshot().contents[0]?.handles).toEqual([]);
   });
 
@@ -589,9 +595,24 @@ describe('the timeGridSeed job', () => {
     const jobId = String(field(result, 'job', 'jobId'));
     world.contents.delete(content.objectId);
     clock.advance(0);
-    expect(jobs.get(jobId)).toMatchObject({ state: 'failed', error: { data: { kind: 'INTERNAL' } } });
-    expect(field(jobs.get(jobId), 'error', 'data', 'detail')).toMatch(/NOT_FOUND\(unknown_handle\)/);
+    expect(jobs.get(jobId)).toMatchObject({
+      state: 'failed',
+      error: { data: { kind: 'NOT_FOUND', reason: 'unknown_handle', executed: false } },
+    });
     expect(content.handles).toEqual([]);
+  });
+
+  it('fails with INTERNAL when its work throws anything but a protocol error', () => {
+    const clock = new ManualClock();
+    const jobs = new JobStore(otcpSpec(), clock, '01234567');
+    const job = jobs.start(
+      { kind: 'timeGridSeed' },
+      oneShot(() => {
+        throw new Error('unexpected');
+      }),
+    );
+    clock.advance(0);
+    expect(jobs.get(job.jobId)).toMatchObject({ state: 'failed', error: { data: { kind: 'INTERNAL' } } });
   });
 
   it('is refused with BUSY(job_limit) while every retained job is still active', async () => {

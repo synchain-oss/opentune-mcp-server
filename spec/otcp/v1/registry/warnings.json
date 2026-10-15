@@ -86,7 +86,7 @@
     {
       "code": "REPLACES_ALL_NOTES",
       "since": "1.0",
-      "description": "The operation replaced every note of the content."
+      "description": "The operation replaced every note of the content. data is {removedCount, createdCount}: how many notes it removed and how many it created."
     },
     {
       "code": "UNDO_NO_EFFECT",

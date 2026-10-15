@@ -54,7 +54,7 @@
       "code": "confirm_required",
       "scope": "INVALID_ARGUMENT",
       "since": "1.0",
-      "description": "The request is destructive (for example it deletes a track, or saves over an existing file other than the current project file) and needs confirm: true."
+      "description": "The request is destructive (for example it deletes a track or clips, or saves over an existing file other than the current project file) and needs confirm: true."
     },
     {
       "code": "path_not_absolute",
@@ -445,7 +445,7 @@
       "code": "track_capacity",
       "scope": "INVALID_ARGUMENT",
       "since": "1.0",
-      "description": "The import needs more tracks after the target track than OpenTune has."
+      "description": "The import needs more tracks after the target track than OpenTune has, or it asked for a track without clips (newTrack) and every track holds clips."
     },
     {
       "code": "reference_not_bound",
@@ -493,7 +493,7 @@
       "code": "dialog_commits_on_close",
       "scope": "INVALID_ARGUMENT",
       "since": "1.0",
-      "description": "Closing an open dialog would commit the value it shows, as closing the track-colour dialog does, or the server cannot tell whether it would; the request did not accept that with acceptCommit. Nothing was closed."
+      "description": "Closing an open dialog would commit the value it shows, as closing the track-colour dialog does, or the server cannot tell whether it would; the request did not accept that with confirm: true. Nothing was closed."
     },
     {
       "code": "split_out_of_range",

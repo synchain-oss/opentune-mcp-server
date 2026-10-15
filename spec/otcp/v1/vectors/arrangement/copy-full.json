@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "arrangement/copy-full",
   "type": "request",
-  "description": "mode full copies a clip as duplicating it does: the copy gets a complete copy of the source content. The copy starts where its source starts, so both play at once (warning STACKED_ON_SOURCE).",
+  "description": "mode full copies a clip as duplicating it does: the copy gets a complete copy of the source content. The copy starts where its source starts, so both play at once (warning STACKED_ON_SOURCE). The revert recipe deletes the copy with arrangement.edit, which needs the end user's consent (requiresConsent true).",
   "capability": "arrangement.v1",
   "since": "1.0",
   "method": "arrangement.copy",
@@ -78,7 +78,8 @@
           "params": {
             "expectedArrangementRevision": { "$any": "string" },
             "ops": [{ "op": "delete", "placementIds": [{ "$any": "string" }] }]
-          }
+          },
+          "requiresConsent": true
         }
       },
       "dirty": { "before": false, "after": true },

@@ -11,6 +11,7 @@ import { snapOf } from './history.js';
 import {
   DEFAULT_NOTE_PARAMS,
   DETECTED_KEY,
+  TRACK_SLOTS,
   type Analysis,
   type ContentRec,
   type ContentSnap,
@@ -48,12 +49,17 @@ export interface GivenState {
   readonly editingScheme?: string;
   readonly dirty?: boolean;
   readonly clips?: readonly GivenClip[];
+  /** Every track slot that no clip of `clips` is on holds one more clip. */
+  readonly clipOnEveryTrack?: boolean;
   readonly files?: readonly GivenFile[];
   readonly history?: { readonly undo: readonly GivenHistoryEntry[]; readonly redo: readonly GivenHistoryEntry[] };
 }
 
 /** The members of a vector's `given` that this module establishes. */
-export const WORLD_GIVEN_MEMBERS = ['editingScheme', 'dirty', 'clips', 'files', 'history'] as const;
+export const WORLD_GIVEN_MEMBERS = ['editingScheme', 'dirty', 'clips', 'clipOnEveryTrack', 'files', 'history'] as const;
+
+/** The clip that `clipOnEveryTrack` adds to an empty track (vectors/README.md, Preconditions). */
+const FILLER_CLIP_SEC = 2;
 
 const GIVEN_KEY_CONFIDENCE = 0.9;
 
@@ -219,6 +225,20 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
     }
     const placement = byBind.get(clip.bind);
     if (placement !== undefined && reference !== undefined) placement.reference = reference;
+  }
+  if (given.clipOnEveryTrack === true) {
+    const used = new Set([...world.placements.values()].map((p) => p.trackId));
+    for (let trackId = 0; trackId < TRACK_SLOTS; trackId++) {
+      if (used.has(trackId)) continue;
+      // No name binds these clips, so their bindings go nowhere.
+      const filler = {
+        bind: `track${String(trackId)}Filler`,
+        trackId,
+        startTimelineSec: 0,
+        durationSec: FILLER_CLIP_SEC,
+      };
+      createClip(world, files, { ...filler, analysis: 'ready' }, {});
+    }
   }
   for (const file of given.files ?? []) Object.assign(bindings, files.provide(file));
   if (given.history !== undefined) buildHistory(world, given.history, byBind, bindings);

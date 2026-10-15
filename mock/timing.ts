@@ -207,8 +207,8 @@ function seededHandles(content: ContentRec): HandleRec[] {
  * The work of the timeGridSeed job: it runs after the call has answered and commits the handles.
  * What the call checked can have changed by then, so the job checks again in the same order: the
  * content still exists, the UI is not busy, the analysis is ready. If one fails, nothing is written
- * and the job fails; its error is INTERNAL (the only kind besides CANCELLED that the method lists
- * for its jobs) and its detail names the check, as in "NOT_FOUND(unknown_handle): ...".
+ * and the job fails with that check's error (NOT_FOUND, BUSY or NOT_READY, which the method lists
+ * in x-otcp.jobErrors).
  */
 function seedGrid(context: MethodContext, content: ContentRec): Record<string, unknown> {
   const { world } = context;

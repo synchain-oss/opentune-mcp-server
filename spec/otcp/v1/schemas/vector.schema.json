@@ -225,6 +225,10 @@
         "editingScheme": { "enum": ["openTune", "openDyne"] },
         "dirty": { "type": "boolean" },
         "clips": { "type": "array", "items": { "$ref": "#/$defs/givenClip" } },
+        "clipOnEveryTrack": {
+          "description": "Every track slot that no clip of clips is on holds one more clip (vectors/README.md, Preconditions).",
+          "const": true
+        },
         "files": { "type": "array", "items": { "$ref": "#/$defs/givenFile" } },
         "history": {
           "type": "object",
@@ -264,7 +268,14 @@
             "additionalProperties": false,
             "properties": {
               "kind": {
-                "enum": ["trackColour", "confirm", "pitchShift", "message"]
+                "enum": [
+                  "trackColour",
+                  "confirm",
+                  "pitchShift",
+                  "preferences",
+                  "message",
+                  "unknown"
+                ]
               },
               "trackId": { "$ref": "common.schema.json#/$defs/trackId" },
               "colour": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" }

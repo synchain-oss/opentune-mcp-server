@@ -7,7 +7,7 @@
 
 import type { OtcpSpec } from '../test/support/otcp-spec.js';
 import type { Clock, Timer } from './clock.js';
-import { refuse } from './errors.js';
+import { MockError, refuse } from './errors.js';
 import { makeError, type ErrorInit, type ErrorObject } from './protocol.js';
 
 export const JOB_RETENTION_MS = 1_800_000;
@@ -78,13 +78,21 @@ interface JobRecord {
 
 /**
  * A driver for a job that finishes on its first step: `work` runs then and its return value becomes
- * the result (a throw fails the job with INTERNAL). A job cancelled before that step ends cancelled
- * and `work` never runs.
+ * the result. A MockError that `work` throws fails the job with that error, so a check that the job
+ * repeats reports its own kind and reason; any other throw fails it with INTERNAL. A job cancelled
+ * before that step ends cancelled and `work` never runs.
  */
 export const oneShot =
   (work: () => Record<string, unknown>): JobDriver =>
-  (control) =>
-    control.cancelRequested ? { done: { state: 'cancelled' } } : { done: { state: 'succeeded', result: work() } };
+  (control) => {
+    if (control.cancelRequested) return { done: { state: 'cancelled' } };
+    try {
+      return { done: { state: 'succeeded', result: work() } };
+    } catch (error) {
+      if (error instanceof MockError) return { done: { state: 'failed', error: error.init } };
+      throw error;
+    }
+  };
 
 export interface JobSpec {
   readonly kind: string;

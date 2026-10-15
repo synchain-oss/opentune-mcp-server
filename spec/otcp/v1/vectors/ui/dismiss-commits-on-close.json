@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "ui/dismiss-commits-on-close",
   "type": "request",
-  "description": "Closing the track-colour dialog would commit the colour it shows. Without acceptCommit the call fails with INVALID_ARGUMENT(dialog_commits_on_close) and closes nothing.",
+  "description": "Closing the track-colour dialog would commit the colour it shows. Without confirm true the call fails with INVALID_ARGUMENT(dialog_commits_on_close) and closes nothing.",
   "capability": "ui.bridge",
   "since": "1.0",
   "method": "ui.dismiss",

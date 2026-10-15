@@ -1,8 +1,8 @@
 {
   "$schema": "../../schemas/vector.schema.json",
-  "id": "ui/dismiss-accept-commit",
+  "id": "ui/dismiss-confirm-commit",
   "type": "request",
-  "description": "With acceptCommit true, ui.dismiss closes the track-colour dialog and its colour is committed, as in OpenTune: changes lists the track's colour, sideEffects.dialogCommitted reports the commit, the project is marked as changed and the warning DIALOG_CLOSE_COMMITTED says so. The colour change has no undo entry (undo reason ui_parity); the revert recipe sets the previous colour with track.set.",
+  "description": "With confirm true, ui.dismiss closes the track-colour dialog and its colour is committed, as in OpenTune: changes lists the track's colour, sideEffects.dialogCommitted reports the commit, the project is marked as changed and the warning DIALOG_CLOSE_COMMITTED says so. The colour change has no undo entry (undo reason ui_parity); the revert recipe sets the previous colour with track.set.",
   "capability": "ui.bridge",
   "extraCapabilities": ["tracks.v1"],
   "since": "1.0",
@@ -16,7 +16,7 @@
     "jsonrpc": "2.0",
     "id": 1,
     "method": "ui.dismiss",
-    "params": { "target": "dialogs", "acceptCommit": true }
+    "params": { "target": "dialogs", "confirm": true }
   },
   "response": {
     "jsonrpc": "2.0",

@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "arrangement/copy-window",
   "type": "request",
-  "description": "mode window copies a clip as pasting it does: the copy gets a new content that holds the part of the source content the clip shows. As in OpenTune there is no undo entry (undo reason ui_parity); the revert recipe removes the copy with arrangement.edit.",
+  "description": "mode window copies a clip as pasting it does: the copy gets a new content that holds the part of the source content the clip shows. As in OpenTune there is no undo entry (undo reason ui_parity); the revert recipe removes the copy with arrangement.edit, op delete, which needs the end user's consent (requiresConsent true).",
   "capability": "arrangement.v1",
   "since": "1.0",
   "method": "arrangement.copy",
@@ -78,7 +78,8 @@
           "params": {
             "expectedArrangementRevision": { "$any": "string" },
             "ops": [{ "op": "delete", "placementIds": [{ "$any": "string" }] }]
-          }
+          },
+          "requiresConsent": true
         }
       },
       "dirty": { "before": false, "after": true },
