@@ -23,7 +23,7 @@ const PROTOCOL_MAJOR = 1;
 export type ManifestProblem = 'manifest_missing' | 'manifest_too_large' | 'manifest_invalid' | 'protocol_mismatch';
 
 export type LaunchConfig =
-  | { readonly state: 'unset' }
+  | { readonly state: 'unset'; readonly unfilledPlaceholder?: true }
   | { readonly state: 'invalid'; readonly reason: 'not_absolute' | 'not_found' | 'not_a_file' }
   | { readonly state: 'no_api'; readonly reason: ManifestProblem }
   | { readonly state: 'ok'; readonly path: string; readonly dir: string };
@@ -52,9 +52,25 @@ export function manifestProblem(bytes: Buffer | null): ManifestProblem | null {
   return majors.includes(PROTOCOL_MAJOR) ? null : 'protocol_mismatch';
 }
 
+/** A MCPB user-config reference a host passed through without substituting it, e.g. ${user_config.opentune_path}. */
+const UNFILLED_PLACEHOLDER = /^\$\{user_config\.[^}]*\}$/;
+
+export const isUnfilledPlaceholder = (value: string | undefined): boolean =>
+  value !== undefined && UNFILLED_PLACEHOLDER.test(value.trim());
+
+/** The configured OpenTune path; empty and unsubstituted placeholders count as not set. */
+export function configuredOpentunePath(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env[OPENTUNE_PATH_ENV];
+  return value === undefined || value === '' || isUnfilledPlaceholder(value) ? undefined : value;
+}
+
 export async function checkLaunchConfig(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): Promise<LaunchConfig> {
-  const exe = env[OPENTUNE_PATH_ENV];
-  if (exe === undefined || exe === '') return { state: 'unset' };
+  const exe = configuredOpentunePath(env);
+  if (exe === undefined) {
+    return isUnfilledPlaceholder(env[OPENTUNE_PATH_ENV])
+      ? { state: 'unset', unfilledPlaceholder: true }
+      : { state: 'unset' };
+  }
   if (!isAbsoluteLocalPath(exe, platform)) return { state: 'invalid', reason: 'not_absolute' };
   const info = await stat(exe).catch(() => null);
   if (info === null) return { state: 'invalid', reason: 'not_found' };

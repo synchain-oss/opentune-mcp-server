@@ -8,12 +8,14 @@
 import os from 'node:os';
 
 import { doctorExitCode, formatDoctor, runDoctor } from './cli/doctor.js';
+import { formatClientConfig } from './cli/client-config.js';
 import { run } from './cli/run.js';
 import { writeCliStdout } from './cli/stdout.js';
 import { readOsRelease } from './launch/config.js';
 import { systemInstallDetector } from './launch/install.js';
 import { createLogger, stderrSink } from './log.js';
 import { startStdioServer } from './server.js';
+import { VERSION } from './version.js';
 
 const logger = createLogger();
 
@@ -34,6 +36,19 @@ const exitCode = run(process.argv.slice(2), {
     });
     writeCliStdout(formatDoctor(checks, json));
     return doctorExitCode(checks);
+  },
+  clientConfig: (client, fullPaths) => {
+    writeCliStdout(
+      formatClientConfig(client, {
+        env: process.env,
+        platform: process.platform,
+        home: os.homedir(),
+        execPath: process.execPath,
+        version: VERSION,
+        fullPaths,
+      }),
+    );
+    return 0;
   },
 });
 

@@ -18,6 +18,7 @@ import type { ProcessProbe } from '../discovery/process.js';
 import type { LaunchDeps } from '../launch/start.js';
 import type { Json, OtcpSession } from '../otcp/client.js';
 import { missingCapability, selectInstance, type Instances } from '../otcp/instances.js';
+import { MissingTokenError } from '../otcp/tokens.js';
 import { serializeResult } from '../sanitize/untrusted.js';
 
 export interface ToolContext {
@@ -128,6 +129,20 @@ export async function withInstance(
     return await fn(session, chosen.entry);
   } catch (error) {
     if (error instanceof OtcpError) return { ok: false, error: fromOtcpError(error.data) };
+    if (error instanceof MissingTokenError) {
+      return {
+        ok: false,
+        error: toolError('INVALID_ARGUMENT', {
+          reason: 'revision_incomplete',
+          detail: `the revision given lacks its ${error.aspect} part, which this operation needs`,
+          nextStep: {
+            actor: 'agent',
+            tool: 'opentune_get_project',
+            message: 'Call opentune_get_project to get a complete clip_revision for the clip, then call again with it.',
+          },
+        }),
+      };
+    }
     throw error;
   }
 }

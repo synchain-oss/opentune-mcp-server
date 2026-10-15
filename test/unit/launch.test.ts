@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
 // SPDX-License-Identifier: MIT
 
-// opentune_launch against a stand-in executable (test/support/fake-opentune.mjs) that the tests
+// opentune_launch against a stand-in executable (test/support/fake-launch-opentune.mjs) that the tests
 // start with process.execPath and the command line the tool builds. The tool's own spawn options
 // are recorded and asserted. Every process a test starts is ended by the test itself afterwards:
 // the server never ends one.
@@ -35,7 +35,7 @@ import type { Outcome } from '../../src/tools/registry.js';
 import { STATUS_REASON_STEPS, STATUS_TEXT, getStatus } from '../../src/tools/status.js';
 import { INITIALIZE, fakeProbe, mcpClient, tempDir, testContext, type TestContext } from '../support/context.js';
 
-const FAKE = fileURLToPath(new URL('../support/fake-opentune.mjs', import.meta.url));
+const FAKE = fileURLToPath(new URL('../support/fake-launch-opentune.mjs', import.meta.url));
 const TIMEOUT = 30_000;
 
 const cleanup: (() => unknown)[] = [];

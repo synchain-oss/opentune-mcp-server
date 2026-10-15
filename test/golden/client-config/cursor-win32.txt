@@ -1,0 +1,23 @@
+Cursor: put this in ~/.cursor/mcp.json (all projects) or .cursor/mcp.json (one project).
+
+{
+  "mcpServers": {
+    "opentune": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@synchain/opentune-mcp"
+      ],
+      "env": {
+        "OPENTUNE_MCP_OPENTUNE_PATH": "~\\Apps\\OpenTune\\OpenTune.exe"
+      }
+    }
+  }
+}
+
+Paths are shown with ~ for your home directory, but neither a JSON configuration file nor every shell expands
+~, so write the full path there, or run this command again with --full-paths.
+
+Nothing was written; this command only prints.

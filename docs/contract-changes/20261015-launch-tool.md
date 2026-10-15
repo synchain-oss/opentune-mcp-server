@@ -27,6 +27,7 @@ narrow:
 | `test/golden/tools-list.json` | Adds `opentune_launch` (input `allow_second_instance?`; not read-only, not destructive, idempotent). |
 | `docs/reference.md`           | Regenerated: the new tool.                                                                           |
 | `docs/TROUBLESHOOTING.md`     | New section "Starting OpenTune"; new reasons below; `OT_NO_OFFICIAL_INSTALL` is now implemented.     |
+| `mcpb/manifest.json`          | Tools list synced from the golden catalog (`node scripts/mcpb.mjs sync-tools`).                      |
 
 The MCP instructions (`test/golden/instructions.txt`) and the OTCP specification (`spec/otcp/v1/`) are not changed;
 the tool uses the start options, discovery file member `launchNonce` and ready file the specification already defines.

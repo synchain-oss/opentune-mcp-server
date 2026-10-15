@@ -1,0 +1,21 @@
+Cursor: put this in ~/.cursor/mcp.json (all projects) or .cursor/mcp.json (one project).
+
+{
+  "mcpServers": {
+    "opentune": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "@synchain/opentune-mcp"
+      ],
+      "env": {
+        "OPENTUNE_MCP_OPENTUNE_PATH": "<absolute path of the OpenTune executable>"
+      }
+    }
+  }
+}
+
+Replace <absolute path of the OpenTune executable> with the real path (OPENTUNE_MCP_OPENTUNE_PATH is not set in this shell), or
+leave the setting out to use only an OpenTune you have already started.
+
+Nothing was written; this command only prints.

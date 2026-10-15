@@ -1,0 +1,32 @@
+Claude Desktop, recommended: install the MCPB package. It needs no Node.js setup of its own and asks for the
+OpenTune executable in a settings form.
+
+  1. Download https://github.com/synchain-oss/opentune-mcp-server/releases/download/v1.2.3/opentune-mcp-1.2.3.mcpb
+     and https://github.com/synchain-oss/opentune-mcp-server/releases/download/v1.2.3/opentune-mcp-1.2.3.mcpb.sha256 (the expected sha256 of the package).
+  2. Compare the checksum: sha256sum -c opentune-mcp-1.2.3.mcpb.sha256   (Windows: certutil -hashfile <file> SHA256).
+  3. Open the .mcpb file, or drag it into Settings > Extensions, and choose Install.
+  4. In the extension settings, set "OpenTune executable" to a build of OpenTune with the control interface.
+
+Advanced: register the npm package by hand instead.
+  Add this to ~/Library/Application Support/Claude/claude_desktop_config.json (create the file if it does not exist), then restart Claude Desktop.
+
+{
+  "mcpServers": {
+    "opentune": {
+      "command": "~/.nvm/versions/node/v22.12.0/bin/npx",
+      "args": [
+        "-y",
+        "@synchain/opentune-mcp"
+      ],
+      "env": {
+        "PATH": "~/.nvm/versions/node/v22.12.0/bin:/usr/local/bin:/usr/bin:/bin",
+        "OPENTUNE_MCP_OPENTUNE_PATH": "/Applications/OpenTune.app/Contents/MacOS/OpenTune"
+      }
+    }
+  }
+}
+
+Paths are shown with ~ for your home directory, but neither a JSON configuration file nor every shell expands
+~, so write the full path there, or run this command again with --full-paths.
+
+Nothing was written; this command only prints.

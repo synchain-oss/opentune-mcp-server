@@ -1,111 +1,123 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
 // SPDX-License-Identifier: MIT
 
-// A stand-in for an OpenTune build with the control API, for the tests of opentune_launch. The
-// tests start it with process.execPath and the command line opentune_launch builds. It reads the
-// options of spec/otcp/v1/PROTOCOL.md section 6.3 as OpenTune does, writes its discovery file
-// (section 5) and the ready file (section 5.5), and answers session.hello and session.info on
-// 127.0.0.1. It writes only to the directory named by --control-api-dir= or OPENTUNE_DATA_DIR and
-// exits without writing anything when neither is given, so it never touches a real OpenTune
-// folder. Plain JavaScript, so that it runs on every supported Node.js without a build step.
+// A stand-in for an OpenTune executable, started with process.execPath by the tests of the exe
+// target: it takes the same options, writes a discovery file and a ready file, listens on the
+// loopback address and answers session.hello. `--mode=<name>` makes it misbehave in one way.
+// Not part of the published package.
 //
-// OT_FAKE_MODE selects the behaviour: `ready` (default), `silent` (runs, announces nothing),
-// `other_nonce` (announces itself with another launch nonce), `no_nonce` (ignores the nonce and the
-// ready file options, like a build without them) or `exit` (exits at once). It ends itself after
-// OT_FAKE_LIFETIME_MS (default 20 s) so that no test can leave it running for long.
+// Launcher modes start a second copy of this script, which writes the files, and exit at once,
+// as a launcher that hands over to the real process does.
+//
+// Every copy that keeps running ends by itself once its OPENTUNE_DATA_DIR is gone, so a test that
+// fails cannot leave one behind; with `--marker=<file>` it first writes how it ended to that file.
 
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
+import fs from 'node:fs';
 import net from 'node:net';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-const mode = process.env.OT_FAKE_MODE ?? 'ready';
-const lifetime = Number(process.env.OT_FAKE_LIFETIME_MS ?? 20_000);
-setTimeout(() => process.exit(0), lifetime);
+const option = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+const mode = option('mode') ?? 'ok';
+const readyFile = option('control-api-ready-file');
+const nonce = option('control-api-launch-nonce');
+const marker = option('marker');
+const dataDir = process.env.OPENTUNE_DATA_DIR;
 
-const option = (name) => {
-  const prefix = `--${name}=`;
-  const arg = process.argv.slice(2).find((a) => a.startsWith(prefix));
-  return arg === undefined ? null : arg.slice(prefix.length);
+const endWith = (how, code) => {
+  if (marker !== undefined) fs.writeFileSync(marker, how);
+  process.exit(code);
 };
 
-if (mode === 'exit' || !process.argv.includes('--control-api')) process.exit(0);
+const LAUNCHED = { launcher: 'ok', 'launcher-bad-start': 'bad-start' };
+if (mode in LAUNCHED) {
+  const args = process.argv.slice(2).filter((a) => !a.startsWith('--mode='));
+  const instance = spawn(process.execPath, [fileURLToPath(import.meta.url), `--mode=${LAUNCHED[mode]}`, ...args], {
+    detached: true,
+    stdio: 'ignore',
+    windowsHide: true,
+  });
+  instance.unref();
+  instance.once('spawn', () => process.exit(0));
+} else {
+  // A stand-in must never outlive its test.
+  setInterval(() => {
+    if (!fs.existsSync(dataDir)) endWith('watchdog', 0);
+  }, 500);
+  setTimeout(() => endWith('lifetime', 0), 120_000).unref();
 
-const dataDir = process.env.OPENTUNE_DATA_DIR;
-const dir = option('control-api-dir') ?? (dataDir ? path.join(dataDir, 'control', 'instances') : null);
-if (dir === null) process.exit(2);
-
-/** Writes through a temporary file and a rename, as the protocol requires. */
-function writeAtomically(file, content) {
-  mkdirSync(path.dirname(file), { recursive: true });
-  const temp = `${file}.${String(process.pid)}.tmp`;
-  writeFileSync(temp, `${JSON.stringify(content)}\n`);
-  renameSync(temp, file);
+  if (mode === 'early-exit') {
+    // The secrets a real server must never print are made up here, at run time.
+    process.stderr.write(`start-up failed, token ${randomBytes(32).toString('hex')}, nonce ${nonce}\n`);
+    process.exit(3);
+  }
+  if (mode !== 'no-ready') serve();
 }
 
-const instanceId = randomBytes(16).toString('hex');
-const token = randomBytes(32).toString('hex');
-const serverProof = randomBytes(16).toString('hex');
-const nonce = option('control-api-launch-nonce');
-const readyFile = option('control-api-ready-file');
-
-const server = net.createServer((socket) => {
-  let buffer = '';
-  socket.setEncoding('utf8');
-  socket.on('error', () => undefined);
-  socket.on('data', (chunk) => {
-    buffer += chunk;
-    for (let i = buffer.indexOf('\n'); i >= 0; i = buffer.indexOf('\n')) {
-      const request = JSON.parse(buffer.slice(0, i));
-      buffer = buffer.slice(i + 1);
-      const reply = (result) => socket.write(`${JSON.stringify({ jsonrpc: '2.0', id: request.id, result })}\n`);
-      if (request.method === 'session.hello' && request.params?.token === token) {
-        reply({
-          protocol: '1.0',
-          instanceId,
-          pid: process.pid,
-          serverProof,
-          appVersion: '0.0.0-fake',
-          capabilities: ['session.v1'],
+function serve() {
+  const token = randomBytes(32).toString('hex');
+  const serverProof = randomBytes(16).toString('hex');
+  const instanceId = randomBytes(16).toString('hex');
+  const server = net.createServer((socket) => {
+    let buffered = '';
+    socket.on('data', (chunk) => {
+      buffered += chunk.toString('utf8');
+      for (let at = buffered.indexOf('\n'); at >= 0; at = buffered.indexOf('\n')) {
+        const request = JSON.parse(buffered.slice(0, at));
+        buffered = buffered.slice(at + 1);
+        const ok = request.method === 'session.hello' && request.params?.token === token;
+        const reply = ok
+          ? {
+              jsonrpc: '2.0',
+              id: request.id,
+              result: {
+                protocol: '1.0',
+                instanceId,
+                pid: process.pid,
+                serverProof: mode === 'bad-proof' ? randomBytes(16).toString('hex') : serverProof,
+                capabilities: ['session.v1'],
+              },
+            }
+          : { jsonrpc: '2.0', id: request.id, error: { code: -32001, message: 'UNAUTHENTICATED', data: {} } };
+        socket.write(`${JSON.stringify(reply)}\n`, () => {
+          // Ends by itself, without removing its discovery file, as a crash would.
+          if (mode === 'exit-after-hello') process.exit(5);
         });
-      } else if (request.method === 'session.info') {
-        reply({
-          appVersion: '0.0.0-fake',
-          runtime: { os: process.platform, arch: process.arch },
-          audioDevice: { running: false, name: null, sampleRateHz: null },
-          processing: { editingScheme: 'notes', tuningHz: 440, vocoderReady: false },
-        });
-      } else {
-        socket.write(
-          `${JSON.stringify({
-            jsonrpc: '2.0',
-            id: request.id ?? null,
-            error: { code: -32601, message: 'not implemented by the fake', data: { kind: 'UNSUPPORTED' } },
-          })}\n`,
-        );
       }
-    }
+    });
+    socket.on('error', () => {});
   });
-});
-
-server.listen(0, '127.0.0.1', () => {
-  if (mode === 'silent') return;
-  const startedAtMs = Date.now();
-  writeAtomically(path.join(dir, `${String(process.pid)}.json`), {
-    protocolMajors: [1],
-    pid: process.pid,
-    processStartTimeMs: Math.round(performance.timeOrigin),
-    instanceId,
-    port: server.address().port,
-    token,
-    serverProof,
-    launchNonce: mode === 'other_nonce' ? randomBytes(24).toString('base64url') : mode === 'no_nonce' ? null : nonce,
-    appVersion: '0.0.0-fake',
-    build: { commit: '0'.repeat(40), tag: null },
-    buildTag: null,
-    sourceUrl: 'https://github.com/synchain-oss/OpenTune',
-    startedAtMs,
-    flavor: 'standalone',
+  server.listen({ host: '127.0.0.1', port: 0 }, () => {
+    const dir = path.join(dataDir, 'control', 'instances');
+    fs.mkdirSync(dir, { recursive: true });
+    const discoveryPid = mode === 'pid-mismatch' ? process.pid + 1 : process.pid;
+    const startedAt = Math.round(performance.timeOrigin);
+    const discovery = {
+      protocolMajors: [1],
+      pid: discoveryPid,
+      instanceId,
+      port: server.address().port,
+      token,
+      serverProof,
+      // bad-start: a start time the operating system does not confirm.
+      processStartTimeMs: mode === 'bad-start' ? startedAt - 600_000 : startedAt,
+      launchNonce: mode === 'bad-nonce' ? `${nonce}x` : nonce,
+      appVersion: '0.0.0-fake',
+      build: { commit: '0'.repeat(40), tag: null },
+      buildTag: null,
+      sourceUrl: 'https://github.com/synchain-oss/opentune-mcp-server',
+      startedAtMs: Date.now(),
+      flavor: 'standalone',
+    };
+    const discoveryFile = path.join(dir, `${process.pid}.json`);
+    fs.writeFileSync(discoveryFile, `${JSON.stringify(discovery)}\n`);
+    fs.writeFileSync(`${readyFile}.tmp`, `${JSON.stringify({ pid: process.pid, instanceId })}\n`);
+    fs.renameSync(`${readyFile}.tmp`, readyFile);
+    process.on('SIGTERM', () => {
+      if (mode !== 'no-cleanup') fs.rmSync(discoveryFile, { force: true });
+      endWith('sigterm', 0);
+    });
   });
-  if (readyFile !== null && mode !== 'no_nonce') writeAtomically(readyFile, { pid: process.pid, instanceId });
-});
+}
