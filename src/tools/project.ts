@@ -16,7 +16,6 @@ import { clipRevisionFrom, encodeArrangementRevision } from '../otcp/tokens.js';
 import { defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
 
 const READ_TIMEOUT_MS = 15_000;
-const HISTORY_CAPABILITY = 'history.v1';
 
 const isObject = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -71,17 +70,10 @@ export async function getProject(ctx: ToolContext, args: GetProjectArgs): Promis
     const tokens = new Map(asArray(asOf.contents).map((c) => [c.contentId, c] as const));
     const arrangement = typeof asOf.arrangementRevision === 'string' ? asOf.arrangementRevision : null;
 
+    // The history tops come from the same main-thread step as the rest of the project. project.get
+    // reports history null with nullReasons.history when the build lacks history.v1.
     const nullReasons: Json = { ...(isObject(project.nullReasons) ? project.nullReasons : {}) };
-    delete nullReasons.history;
-    let history: unknown = null;
-    if (args.include_history === true) {
-      if (!session.hello.capabilities.includes(HISTORY_CAPABILITY)) {
-        nullReasons.history = 'capability_missing';
-      } else {
-        history = (await session.call('edit.getHistory', {}, READ_TIMEOUT_MS)).history ?? null;
-        if (history === null) nullReasons.history = 'unavailable';
-      }
-    }
+    if (args.include_history !== true) delete nullReasons.history;
     if (arrangement === null) nullReasons.arrangement_revision = 'unavailable';
 
     const dirty = isObject(project.project) && project.project.dirty === true;
@@ -106,7 +98,7 @@ export async function getProject(ctx: ToolContext, args: GetProjectArgs): Promis
         arrangement_revision: arrangement === null ? null : encodeArrangementRevision(arrangement),
         selection: project.selection ?? null,
         transport: project.transport ?? null,
-        ...(args.include_history === true ? { history } : {}),
+        ...(args.include_history === true ? { history: project.history ?? null } : {}),
         derived: Array.isArray(project.derived) ? project.derived : [],
         ...(Object.keys(nullReasons).length > 0 ? { nullReasons } : {}),
       },
@@ -143,6 +135,6 @@ export const getProjectTool = defineTool({
   }),
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   capabilities: ['read.v1'],
-  otcpMethods: ['project.get', 'edit.getHistory'],
+  otcpMethods: ['project.get'],
   run: (args, ctx) => getProject(ctx, args),
 });

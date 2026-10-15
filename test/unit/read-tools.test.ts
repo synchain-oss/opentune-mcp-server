@@ -239,7 +239,7 @@ describe('opentune_get_project', () => {
   it('is declared as a read-only tool of the read capability', () => {
     expect(getProjectTool.annotations.readOnlyHint).toBe(true);
     expect(getProjectTool.capabilities).toEqual(['read.v1']);
-    expect(getProjectTool.otcpMethods).toEqual(['project.get', 'edit.getHistory']);
+    expect(getProjectTool.otcpMethods).toEqual(['project.get']);
   });
 });
 

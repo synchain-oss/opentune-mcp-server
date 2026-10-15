@@ -36,7 +36,7 @@ OTCP capabilities: `session.v1`. OTCP methods: `session.hello`, `session.info`.
 
 OpenTune (audio vocal pitch editor): reads the open project: path and unsaved-changes flag, tracks (volume, mute, solo), clips with timeline start, end and source file, a summary of each clip content (analysis state, key, note count, pitch shift), the selection and the transport. Every clip carries a clip_revision and the result an arrangement_revision: pass them as expected_revision to write tools. track_ids limits the result to those tracks; include_history adds the undo and redo tops. Read-only.
 
-OTCP capabilities: `read.v1`. OTCP methods: `project.get`, `edit.getHistory`.
+OTCP capabilities: `read.v1`. OTCP methods: `project.get`.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |

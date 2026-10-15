@@ -17,10 +17,10 @@ The OTCP specification (`spec/otcp/v1/`) and the MCP instructions are not change
 
 ## Tool surface
 
-| Tool                   | Input                                                                                                  | OTCP methods                                  |
-| ---------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------------------- |
-| `opentune_get_project` | `track_ids?`, `include_history?`, `instance_id?`                                                       | `project.get`, `edit.getHistory` (on request) |
-| `opentune_get_notes`   | `clip`, `clock` (required), `from?`, `to?`, `cursor?`, `limit?` (default 100, max 200), `instance_id?` | `content.getNotes`, `project.get` (geometry)  |
+| Tool                   | Input                                                                                                  | OTCP methods                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------ | -------------------------------------------- |
+| `opentune_get_project` | `track_ids?`, `include_history?`, `instance_id?`                                                       | `project.get`                                |
+| `opentune_get_notes`   | `clip`, `clock` (required), `from?`, `to?`, `cursor?`, `limit?` (default 100, max 200), `instance_id?` | `content.getNotes`, `project.get` (geometry) |
 
 Both are read-only (`readOnlyHint: true`, `openWorldHint: false`) and need the `read.v1` capability.
 
