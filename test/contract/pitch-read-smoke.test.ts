@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { generateTone, writeToneFiles } from '../support/harmonic-tone.js';
+import { generateTone, type ToneFiles, writeToneFiles } from '../support/harmonic-tone.js';
 import { RunnerConnection } from './connection.js';
 import { mockTarget } from './mock-target.js';
 import type { ContractTarget, TargetInstance } from './target.js';
@@ -36,11 +36,24 @@ class Client {
 
   static async connect(instance: TargetInstance): Promise<Client> {
     const client = new Client(await RunnerConnection.open(Number(instance.discovery.port)));
-    await client.call('session.hello', {
-      token: instance.discovery.token,
-      protocol: instance.protocol,
-      client: { name: 'otcp-pitch-smoke', version: '1.0.0' },
-    });
+    try {
+      const hello = await client.call('session.hello', {
+        token: instance.discovery.token,
+        protocol: instance.protocol,
+        client: { name: 'otcp-pitch-smoke', version: '1.0.0' },
+      });
+      // Nothing else may be sent until the server has proven it is the instance the discovery file
+      // names; otherwise a different process on a stale port would receive the writes below. The
+      // message names the field only, never its value.
+      for (const key of ['serverProof', 'instanceId', 'pid'] as const) {
+        if (hello[key] !== instance.discovery[key]) {
+          throw new Error(`session.hello: ${key} does not match the discovery file`);
+        }
+      }
+    } catch (error) {
+      client.close();
+      throw error;
+    }
     return client;
   }
 
@@ -67,7 +80,9 @@ async function waitForJob(client: Client, jobId: string): Promise<Json> {
   while (Date.now() < deadline) {
     const { job } = (await client.call('job.get', { jobId, waitMs: 5000 })) as { job: Json };
     if (job.state === 'succeeded') return job;
-    if (job.state === 'failed' || job.state === 'cancelled') throw new Error(`job ${job.state}`);
+    if (job.state === 'failed' || job.state === 'cancelled') {
+      throw new Error(`job ${job.state}: ${JSON.stringify(job.error)}`);
+    }
   }
   throw new Error('the import job did not finish in time');
 }
@@ -85,27 +100,31 @@ describe.each(targets)('pitch read path on $target.name', ({ target, skipReason 
     'reports detected pitch and note starts of generated audio',
     async () => {
       const instance = await target.open();
-      const client = await Client.connect(instance);
-      const info = await client.call('session.info', {});
-      const extensions = (info.import as { extensions: string[] }).extensions;
-      expect(extensions).toContain('.wav');
-
-      // No method sets tuningHz, so the instance's own value defines the truth.
-      const prefs = await client.call('prefs.get', {});
-      const tuningHz = (prefs.processing as { tuningHz: number }).tuningHz;
-
-      const tone = generateTone({
-        seed: 1,
-        tuningHz,
-        notes: [
-          { midi: 57, durationSec: 0.6 },
-          { midi: 62, durationSec: 0.6 },
-          { midi: 64, cents: 30, durationSec: 0.6 },
-          { midi: 67, durationSec: 0.6 },
-        ],
-      });
-      const files = await writeToneFiles(tone, 'smoke');
+      // Everything created after the instance is released in the finally block, whichever step fails.
+      let client: Client | undefined;
+      let files: ToneFiles | undefined;
       try {
+        client = await Client.connect(instance);
+        const info = await client.call('session.info', {});
+        const extensions = (info.import as { extensions: string[] }).extensions;
+        expect(extensions).toContain('.wav');
+
+        // No method sets tuningHz, so the instance's own value defines the truth.
+        const prefs = await client.call('prefs.get', {});
+        const tuningHz = (prefs.processing as { tuningHz: number }).tuningHz;
+
+        const tone = generateTone({
+          seed: 1,
+          tuningHz,
+          notes: [
+            { midi: 57, durationSec: 0.6 },
+            { midi: 62, durationSec: 0.6 },
+            { midi: 64, cents: 30, durationSec: 0.6 },
+            { midi: 67, durationSec: 0.6 },
+          ],
+        });
+        files = await writeToneFiles(tone, 'smoke');
+
         const started = await client.call('import.start', {
           items: [{ path: files.wavPath }],
           layout: 'single',
@@ -113,21 +132,30 @@ describe.each(targets)('pitch read path on $target.name', ({ target, skipReason 
         });
         const jobId = (started.job as { jobId: string }).jobId;
         const job = await waitForJob(client, jobId);
-        const items = (job.result as { items: { contentId: string | null; f0State: string | null }[] }).items;
+        const items = (job.result as { items: { contentId: string | null; f0State: string | null; error: unknown }[] })
+          .items;
         const contentId = items[0]?.contentId;
-        expect(contentId).toBeTruthy();
+        expect(contentId, `import item 0: ${JSON.stringify(items[0]?.error)}`).toBeTruthy();
         expect(items[0]?.f0State).toBe('ready');
 
         const notes = (await client.call('content.getNotes', { contentId, limit: 500 })) as {
           tuningHz: number;
           notes: { startContentSec: number; detectedMidi: number | null; offsetCents: number }[];
+          nextCursor: string | null;
         };
         const curve = (await client.call('content.getPitchCurve', { contentId })) as {
+          f0State: string;
           hopSec: number;
           startContentSec: number;
           stepFrame: number;
           originalMidi: (number | null)[];
+          nextCursor: string | null;
         };
+        // A curve that is not ready comes back empty rather than as an error.
+        expect(curve.f0State, 'pitch curve f0State').toBe('ready');
+        // Both results are read as a single page; a longer tone or a finer hop must fail here.
+        expect(notes.nextCursor, 'notes nextCursor').toBeNull();
+        expect(curve.nextCursor, 'pitch curve nextCursor').toBeNull();
         expect(notes.tuningHz).toBe(tuningHz);
         expect(notes.notes).toHaveLength(tone.truth.notes.length);
 
@@ -156,9 +184,12 @@ describe.each(targets)('pitch read path on $target.name', ({ target, skipReason 
           );
         });
       } finally {
-        client.close();
-        await files.cleanup();
-        await instance.close();
+        client?.close();
+        try {
+          await files?.cleanup();
+        } finally {
+          await instance.close();
+        }
       }
     },
     TIMEOUT_MS * 2,
