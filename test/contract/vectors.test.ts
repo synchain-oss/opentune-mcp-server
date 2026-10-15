@@ -13,6 +13,7 @@ import path from 'node:path';
 import { afterAll, describe, it } from 'vitest';
 
 import { MOCK_CAPABILITIES } from '../../mock/server.js';
+import { registerExeVectors } from './exe-vectors.js';
 import { mockTarget } from './mock-target.js';
 import { runVector, type Outcome } from './runner.js';
 import { loadVectors, type Vector } from './vectors.js';
@@ -68,3 +69,6 @@ describe('contract vectors against the mock', () => {
     }
   });
 });
+
+// The same vectors against a started OpenTune; skipped, with the reason, unless OTCP_TARGET_EXE is set.
+registerExeVectors();

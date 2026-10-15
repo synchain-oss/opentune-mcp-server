@@ -467,6 +467,28 @@ async function contractVectors() {
   return { result: ok ? 'PASS' : 'FAIL', note };
 }
 
+async function contractVectorsExe() {
+  // The same vectors against a started OpenTune build, only when OTCP_TARGET_EXE names one. CI
+  // never sets it, so this row is a SKIP there.
+  if (!process.env.OTCP_TARGET_EXE) throw new Skip('OTCP_TARGET_EXE is not set');
+  const summaryFile = path.join(ROOT, '.cache', 'contract', 'summary-exe.json');
+  await fs.rm(summaryFile, { force: true });
+  // The pattern has no space, so it survives the shell on Windows.
+  const status = npmStreaming(['run', '--silent', 'test:contract', '--', '-t', 'against.the.exe'], {
+    env: { ...process.env, OTCP_CONTRACT_SUMMARY_EXE: summaryFile },
+  });
+  const summary = JSON.parse(await fs.readFile(summaryFile, 'utf8').catch(() => 'null'));
+  if (summary === null)
+    return { result: 'FAIL', note: `npm run test:contract exited with ${status} and wrote no summary` };
+  const skips = Object.entries(summary.skipReasons)
+    .map(([reason, n]) => `${reason}: ${n}`)
+    .join('; ');
+  const note =
+    `${summary.total} vectors: ${summary.pass} PASS, ${summary.fail} FAIL` +
+    `${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ${summary.skip} SKIP${skips ? ` (${skips})` : ''}`;
+  return { result: status === 0 && summary.fail === 0 ? 'PASS' : 'FAIL', note };
+}
+
 function notYet(reason) {
   return () => {
     throw new Skip(reason);
@@ -533,6 +555,7 @@ async function main() {
     ['README en/zh-CN heading outline', readmeParity],
     ['no pull_request_target', pullRequestTarget],
     ['contract vectors (mock)', contractVectors],
+    ['contract vectors (exe)', contractVectorsExe],
     ['tools/list size gate', notYet('not yet: no tools are registered')],
     ['token canary', notYet('not yet: no OTCP client or MCP tool output to check for the token')],
     ['output budget', notYet('not yet: no read tools, and the mock has no project content to read')],
