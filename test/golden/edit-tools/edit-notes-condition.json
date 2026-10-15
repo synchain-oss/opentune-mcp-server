@@ -160,7 +160,7 @@
       },
       {
         "kind": "undo",
-        "text": "Undoable as one step: undo it with expectedUndoId u:01234567:4.",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:4.",
         "undoId": "u:01234567:4",
         "description": "Edit notes"
       }
@@ -170,6 +170,7 @@
         "op": 0,
         "matched": 1
       }
-    ]
+    ],
+    "clip_revision": "cr1.WyJyMjQiLCJnNiIsImsxNyIsImgxMSJd"
   }
 }

@@ -8,6 +8,7 @@
 
 import type { Json } from '../otcp/client.js';
 import { asList, entitiesOf, isObject, type TableRow } from './changes.js';
+import { revertFlag, revertPlan } from './revert.js';
 import { SIDE_EFFECT_TEXT, token, undoReasonText } from './text.js';
 
 /** Warning codes that make a result destructive on their own. */
@@ -56,15 +57,7 @@ function flagsOf(envelope: Json): string[] {
   // A result that changed nothing has nothing to undo; the no_op reason says only that.
   if (undo !== null && undo.undoable === false && undo.reason !== 'no_op') {
     flags.push(`not undoable: ${undoReasonText(undo.reason)}`);
-    const revert = isObject(undo.revert) ? undo.revert : null;
-    const method = revert === null ? null : token(revert.method, 'method');
-    if (method === null) flags.push('cannot be restored by any request');
-    else
-      flags.push(
-        revert?.requiresConsent === true
-          ? `can be restored with ${method} only after the user explicitly agrees`
-          : `can be restored with ${method}, see the revert line`,
-      );
+    flags.push(revertFlag(revertPlan(undo.revert)));
   }
   const effects = Object.keys(isObject(envelope.sideEffects) ? envelope.sideEffects : {});
   if (effects.length > 0) {

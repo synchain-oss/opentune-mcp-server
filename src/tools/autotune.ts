@@ -25,6 +25,7 @@ import {
   isOutcome,
   resolveContent,
   revisionTokens,
+  withClipRevision,
   type KeyArg,
 } from './clip-write.js';
 import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Outcome } from './registry.js';
@@ -221,8 +222,11 @@ export async function autotune(ctx: Parameters<typeof withInstance>[0], args: Au
     }
     Object.assign(params, expectedParams('content.autoTune', tokens, depends));
 
-    const outcome = writeOutcome(await session.call('content.autoTune', params, WRITE_TIMEOUT_MS), { tool: TOOL });
-    return outcome.ok ? { ok: true, body: leadReplaces(outcome.body, TOOL) as typeof outcome.body } : outcome;
+    const envelope = await session.call('content.autoTune', params, WRITE_TIMEOUT_MS);
+    const outcome = writeOutcome(envelope, { tool: TOOL });
+    if (!outcome.ok) return outcome;
+    const body = leadReplaces(outcome.body, TOOL) as typeof outcome.body;
+    return { ok: true, body: withClipRevision(body, target, tokens, [envelope]) };
   });
 }
 
@@ -262,7 +266,7 @@ export const autotuneTool = defineTool({
     instance_id: INSTANCE_FIELD,
   }),
   outputSchema: WRITE_RESULT_OUTPUT,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   capabilities: ['edit.v1', 'read.v1'],
   otcpMethods: ['content.autoTune', 'content.getDetails', 'project.get'],
   run: (args, ctx) => autotune(ctx, args),

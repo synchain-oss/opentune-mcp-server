@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: MIT
 
 // opentune_set_clip: the key and the pitch shift of one clip. The key change has no undo entry (as
-// in OpenTune's transport bar), so its result carries the revert recipe; the pitch shift is one
-// undo step. When both are given they are two requests, and the result reports each one on its
-// own. The key request goes first: it is the only one that can conflict with the expected
-// revision, so a conflict stops the call before anything is applied.
+// in OpenTune's transport bar), so its result carries the way back, as a call of this tool; the
+// pitch shift is one undo step. When both are given they are two requests, and the result reports
+// each one on its own. The key request goes first: it is the only one that can conflict with the
+// expected revision, so a conflict stops the call before anything is applied. A failed request
+// stops the call too, and the error lists what the requests before it applied.
 
 import { z } from 'zod';
 
-import { OtcpError, fromOtcpError } from '../errors/tool-error.js';
+import { OtcpError, fromOtcpError, type ToolError } from '../errors/tool-error.js';
 import type { Json } from '../otcp/client.js';
 import { expectedParams } from '../otcp/tokens.js';
 import { writeOutcome } from '../render/index.js';
@@ -20,12 +21,14 @@ import {
   REVISION_FIELD,
   WRITE_TIMEOUT_MS,
   invalid,
+  isObject,
   isOutcome,
   resolveContent,
   revisionTokens,
+  withClipRevision,
   type KeyArg,
 } from './clip-write.js';
-import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Outcome } from './registry.js';
+import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Body, type Outcome } from './registry.js';
 
 const TOOL = 'opentune_set_clip';
 
@@ -66,45 +69,42 @@ export async function setClip(ctx: Parameters<typeof withInstance>[0], args: Set
       });
     }
 
-    const results: { method: string; outcome: Outcome }[] = [];
+    // Each request runs only after the one before it succeeded. When a later one fails, the error
+    // carries the results that did take effect, so nothing applied goes unreported.
+    const results: { method: string; body: Body; envelope: unknown }[] = [];
+    const failedAfter = (error: ToolError): Outcome => ({
+      ok: false,
+      error,
+      context: { applied_before_error: results.map((r) => ({ method: r.method, ...r.body })) },
+    });
     for (const call of calls) {
+      let envelope: unknown;
       try {
-        results.push({
-          method: call.method,
-          outcome: writeOutcome(await session.call(call.method, call.params, WRITE_TIMEOUT_MS), { tool: TOOL }),
-        });
+        envelope = await session.call(call.method, call.params, WRITE_TIMEOUT_MS);
       } catch (error) {
         if (!(error instanceof OtcpError) || results.length === 0) throw error;
-        // The first request has taken effect: say so next to the error of the second.
-        return {
-          ok: false,
-          error: fromOtcpError(error.data),
-          context: {
-            applied_before_error: results.map((r) => ({
-              method: r.method,
-              ...(r.outcome.ok ? r.outcome.body : { error: r.outcome.error }),
-            })),
-          },
-        };
+        return failedAfter(fromOtcpError(error.data));
       }
+      const outcome = writeOutcome(envelope, { tool: TOOL });
+      if (!outcome.ok) return results.length === 0 ? outcome : failedAfter(outcome.error);
+      results.push({ method: call.method, body: outcome.body, envelope });
     }
 
+    const envelopes = results.map((r) => r.envelope);
     const [only, second] = results;
     if (only === undefined) return invalid('nothing to set');
-    if (second === undefined) return only.outcome;
-    const failed = results.find((r) => !r.outcome.ok);
-    if (failed !== undefined) return failed.outcome;
-    const bodies = results.map((r) => (r.outcome.ok ? r.outcome.body : { summary: '' }));
+    if (second === undefined) return { ok: true, body: withClipRevision(only.body, target, tokens, envelopes) };
     const rest = (summary: string) => summary.replace(`${TOOL}: `, '');
-    return {
-      ok: true,
-      body: {
-        summary:
-          `${TOOL}: two requests were made, reported separately in results. ` +
-          `Key: ${rest(bodies[0]?.summary ?? '')} Pitch shift: ${rest(bodies[1]?.summary ?? '')}`,
-        results: results.map((r, i) => ({ method: r.method, ...bodies[i] })),
-      },
+    // The key change has no undo entry: when it changed something, the first sentence says so.
+    const keyChanged = only.body.noOp !== true && !(isObject(only.body.undo) && only.body.undo.undoable === true);
+    const lead = keyChanged ? 'the key change cannot be undone (restore it as the results say); ' : '';
+    const body: Body = {
+      summary:
+        `${TOOL}: ${lead}two requests were made, reported separately in results. ` +
+        `Key: ${rest(only.body.summary)} Pitch shift: ${rest(second.body.summary)}`,
+      results: results.map((r) => ({ method: r.method, ...r.body })),
     };
+    return { ok: true, body: withClipRevision(body, target, tokens, envelopes) };
   });
 }
 
@@ -113,10 +113,11 @@ export const setClipTool = defineTool({
   title: 'Set OpenTune clip key and pitch shift',
   description:
     'OpenTune (audio vocal pitch editor): sets the key (root and scale) and/or the pitch shift (whole semitones ' +
-    'plus cents) of a clip. The key change cannot be undone (as in OpenTune); the result gives the request that ' +
-    'restores the previous key. The pitch shift is one undo step; it does not transpose the key. With both, two ' +
-    'requests run, key first, and the result reports each. Needs the clip_revision as expected_revision; only the ' +
-    'key part of it is checked. Setting the current value changes nothing.',
+    'plus cents) of a clip. The key change cannot be undone (as in OpenTune); the result gives the ' +
+    'opentune_set_clip call that restores the previous key. The pitch shift is one undo step; it does not ' +
+    'transpose the key. With both, two requests run, key first, and the result reports each. Needs the ' +
+    'clip_revision as expected_revision; only the key part of it is checked. The result returns the new ' +
+    'clip_revision. Setting the current value changes nothing.',
   inputSchema: z.strictObject({
     clip: CLIP_FIELD,
     expected_revision: REVISION_FIELD,

@@ -2,16 +2,16 @@
 // SPDX-License-Identifier: MIT
 
 // What the tools that edit one clip share: the input fields (clip, expected_revision, key,
-// instance_id), reading the clip_revision back into the tokens an operation depends on, and
-// turning a clip id into the content id OTCP addresses. A clip is a placement id (p:...) or a
-// content id (c:...); OTCP edits address contents.
+// instance_id), reading the clip_revision back into the tokens an operation depends on, turning a
+// clip id into the content id OTCP addresses, and the clip_revision a write result hands back. A
+// clip is a placement id (p:...) or a content id (c:...); OTCP edits address contents.
 
 import { z } from 'zod';
 
 import { toolError } from '../errors/tool-error.js';
 import type { Json, OtcpSession } from '../otcp/client.js';
-import { decodeClipRevision, type ClipTokens } from '../otcp/tokens.js';
-import type { Outcome } from './registry.js';
+import { decodeClipRevision, encodeClipRevision, type Aspect, type ClipTokens } from '../otcp/tokens.js';
+import type { Body, Outcome } from './registry.js';
 
 /** Timeout of one write request, in ms. */
 export const WRITE_TIMEOUT_MS = 30_000;
@@ -31,7 +31,10 @@ export const REVISION_FIELD = z
   .string()
   .min(1)
   .max(2048)
-  .describe('The clip_revision of the clip from opentune_get_project or opentune_get_notes, passed back unchanged.');
+  .describe(
+    'The clip_revision of the clip from opentune_get_project, opentune_get_notes or the last write result for ' +
+      'it, passed back unchanged.',
+  );
 
 export const INSTANCE_FIELD = z
   .string()
@@ -89,11 +92,14 @@ export function revisionTokens(expected: string): ClipTokens | Outcome {
 export const isOutcome = (value: unknown): value is Outcome =>
   typeof value === 'object' && value !== null && 'ok' in value;
 
+/** A clip as OTCP addresses it: the content, and the placement when the clip id is one. */
+export interface ClipTarget {
+  readonly contentId: string;
+  readonly placementId: string | null;
+}
+
 /** The content a clip id addresses, with the placement when the clip is one. */
-export async function resolveContent(
-  session: OtcpSession,
-  clip: string,
-): Promise<{ contentId: string; placementId: string | null } | Outcome> {
+export async function resolveContent(session: OtcpSession, clip: string): Promise<ClipTarget | Outcome> {
   if (clip.startsWith('c:')) return { contentId: clip, placementId: null };
   const project = await session.call('project.get', {}, READ_TIMEOUT_MS);
   const found = (Array.isArray(project.placements) ? project.placements : []).find(
@@ -109,4 +115,56 @@ export async function resolveContent(
     };
   }
   return { contentId: found.contentId, placementId: clip };
+}
+
+const isToken = (value: unknown): value is string =>
+  typeof value === 'string' && value.length > 0 && value.length <= 256;
+
+const listOf = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+/**
+ * The body with the clip_revision to pass to the next write, so that the caller can go on editing
+ * without reading the clip again. It holds the tokens the write results report for the content and
+ * for the placement (PROTOCOL.md section 14.5), the later result winning, and the caller's own
+ * token for an aspect no result reports: a note edit does not touch the placement, so the geometry
+ * token stays as the caller passed it; if it is stale, a later write that depends on it conflicts
+ * instead of overwriting. Null, with nullReasons.clip_revision, when no result reports the content.
+ */
+export function withClipRevision(
+  body: Body,
+  target: ClipTarget,
+  prior: ClipTokens,
+  envelopes: readonly unknown[],
+): Body {
+  const tokens: Record<Aspect, string | null> = { ...prior };
+  let reported = false;
+  for (const envelope of envelopes) {
+    const reportedTokens = isObject(envelope) && isObject(envelope.tokens) ? envelope.tokens : {};
+    const content = listOf(reportedTokens.contents).find(
+      (c): c is Json => isObject(c) && c.contentId === target.contentId,
+    );
+    if (
+      content !== undefined &&
+      isToken(content.revision) &&
+      isToken(content.gridRevision) &&
+      isToken(content.keyRevision)
+    ) {
+      tokens.content = content.revision;
+      tokens.grid = content.gridRevision;
+      tokens.key = content.keyRevision;
+      reported = true;
+    }
+    const placement = listOf(reportedTokens.placements).find(
+      (p): p is Json => isObject(p) && target.placementId !== null && p.placementId === target.placementId,
+    );
+    if (placement !== undefined && isToken(placement.geometryHash)) tokens.geometry = placement.geometryHash;
+  }
+  const reasons: Json = { ...(isObject(body.nullReasons) ? body.nullReasons : {}) };
+  if (!reported) reasons.clip_revision = 'unavailable';
+  else if (target.placementId !== null && tokens.geometry === null) reasons.clip_revision_geometry = 'unavailable';
+  return {
+    ...body,
+    clip_revision: reported ? encodeClipRevision(tokens) : null,
+    ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}),
+  };
 }

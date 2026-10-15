@@ -151,7 +151,8 @@
       {
         "kind": "revert",
         "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
-        "revert": null
+        "revert": null,
+        "restore": null
       }
     ]
   }

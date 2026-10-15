@@ -56,7 +56,7 @@ export const undoTool = defineTool({
     'undo_id names; otherwise UNDO_CONFLICT, and then ask the user (the history has changed). Only edits that ' +
     'reported an undo id can be undone. A step that changes nothing still uses up the undo step and marks the ' +
     'project changed (UNDO_NO_EFFECT). Clip split, merge and delete cannot be undone safely in some builds ' +
-    '(undo_unsafe_build). The result gives the redo that takes this back.',
+    '(undo_unsafe_build). The result gives the opentune_redo call that takes this back.',
   inputSchema: input,
   outputSchema: WRITE_RESULT_OUTPUT,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -72,7 +72,7 @@ export const redoTool = defineTool({
     'OpenTune (audio vocal pitch editor): redoes the step on top of the redo history, but only if it is the step ' +
     'undo_id names (the id the undo result reported); otherwise UNDO_CONFLICT, and then ask the user. Any edit ' +
     'without an undo entry made after the undo clears the redo history. A step that changes nothing still uses ' +
-    'up the redo step (UNDO_NO_EFFECT). The result gives the undo that takes this back.',
+    'up the redo step (UNDO_NO_EFFECT). The result gives the opentune_undo call that takes this back.',
   inputSchema: input,
   outputSchema: WRITE_RESULT_OUTPUT,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

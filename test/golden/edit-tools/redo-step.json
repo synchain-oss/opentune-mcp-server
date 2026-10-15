@@ -5,7 +5,7 @@
     "undo_id": "u:01234567:5"
   },
   "result": {
-    "summary": "opentune_redo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with edit.undo, see the revert line; side effects: rendering of one or more contents was queued again).",
+    "summary": "opentune_redo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_undo, see the revert line; side effects: rendering of one or more contents was queued again).",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -149,11 +149,17 @@
       },
       {
         "kind": "revert",
-        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore with edit.undo and these params, sent unchanged.",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_undo with the arguments in restore, as they are.",
         "revert": {
           "method": "edit.undo",
           "params": {
             "expectedUndoId": "u:01234567:5"
+          }
+        },
+        "restore": {
+          "tool": "opentune_undo",
+          "arguments": {
+            "undo_id": "u:01234567:5"
           }
         }
       }

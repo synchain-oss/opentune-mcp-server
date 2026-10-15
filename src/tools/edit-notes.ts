@@ -4,7 +4,8 @@
 // opentune_edit_notes: edits of existing notes, as the piano roll does, in one undo step. Notes are
 // chosen by index, by a content-clock time range, all at once, or by a condition (the sung pitch is
 // more than N cents from the note's target); a condition is resolved here, by reading the notes at
-// the revision the caller holds, into the indexes OTCP takes. Notes are never added or removed.
+// the revision the caller holds, into the indexes OTCP takes. All conditions are resolved before
+// any op runs, and conditions on the same range share one read. Notes are never added or removed.
 
 import { z } from 'zod';
 
@@ -24,6 +25,8 @@ import {
   isOutcome,
   resolveContent,
   revisionTokens,
+  withClipRevision,
+  type ClipTarget,
   type KeyArg,
 } from './clip-write.js';
 import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
@@ -140,7 +143,8 @@ async function resolveSelect(
   select: Select,
   notesFrom: NoteSource,
 ): Promise<{ select: Json; matched: number | null } | 'none' | Outcome> {
-  if ('indices' in select) return { select: { indices: [...select.indices] }, matched: null };
+  // OTCP takes each index once; a repeated one would select the same note again.
+  if ('indices' in select) return { select: { indices: [...new Set(select.indices)] }, matched: null };
   if ('all' in select) return { select: { all: true }, matched: null };
   if ('off_target_cents_over' in select) {
     if ((select.from_sec === undefined) !== (select.to_sec === undefined)) {
@@ -173,19 +177,20 @@ export async function editNotes(ctx: ToolContext, args: EditNotesArgs): Promise<
   return withInstance(ctx, { instanceId: args.instance_id }, ['edit.v1', 'read.v1'], async (session) => {
     const target = await resolveContent(session, args.clip);
     if (isOutcome(target)) return target;
-    return runOps(session, target.contentId, tokens, args);
+    return runOps(session, target, tokens, args);
   });
 }
 
 async function runOps(
   session: OtcpSession,
-  contentId: string,
+  target: ClipTarget,
   tokens: ClipTokens,
   args: EditNotesArgs,
 ): Promise<Outcome> {
+  const { contentId } = target;
   // The indexes mean something only at the revision the caller holds; a read at another revision
   // would resolve a condition to the wrong notes.
-  const notesFrom: NoteSource = async (range) => {
+  const readAtRevision: NoteSource = async (range) => {
     const read = await readNotes(session, contentId, range);
     if (isOutcome(read)) return read;
     if (read.revision !== null && tokens.content !== null && read.revision !== tokens.content) {
@@ -198,6 +203,16 @@ async function runOps(
       };
     }
     return read.notes;
+  };
+  // Every condition looks at the notes before any op runs, so ops on the same range share one read.
+  const reads = new Map<string, Promise<NoteFacts[] | Outcome>>();
+  const notesFrom: NoteSource = (range) => {
+    const key = JSON.stringify(range);
+    const known = reads.get(key);
+    if (known !== undefined) return known;
+    const read = readAtRevision(range);
+    reads.set(key, read);
+    return read;
   };
 
   const ops: Json[] = [];
@@ -250,6 +265,8 @@ async function runOps(
         noOp: true,
         dryRun: args.dry_run === true,
         selection_resolved: resolved,
+        // No request was sent, so the clip is as the caller's revision describes it.
+        clip_revision: args.expected_revision,
       },
     };
   }
@@ -260,9 +277,11 @@ async function runOps(
     ...expectedParams('content.editNotes', tokens, depends),
     ...(args.dry_run === true ? { dryRun: true } : {}),
   };
-  const outcome = writeOutcome(await session.call('content.editNotes', params, WRITE_TIMEOUT_MS), { tool: TOOL });
-  if (!outcome.ok || resolved.length === 0) return outcome;
-  return { ok: true, body: { ...outcome.body, selection_resolved: resolved } };
+  const envelope = await session.call('content.editNotes', params, WRITE_TIMEOUT_MS);
+  const outcome = writeOutcome(envelope, { tool: TOOL });
+  if (!outcome.ok) return outcome;
+  const body = resolved.length === 0 ? outcome.body : { ...outcome.body, selection_resolved: resolved };
+  return { ok: true, body: withClipRevision(body, target, tokens, [envelope]) };
 }
 
 // Input -----------------------------------------------------------------------------------------
@@ -281,7 +300,8 @@ const SELECT = z.union([
 const SELECT_DOC =
   'select = {indices:[...]} (from opentune_get_notes), {from_sec,to_sec} (source-audio seconds, overlapping), ' +
   '{all:true}, or {off_target_cents_over:N, from_sec?, to_sec?} (voiced notes whose sung pitch is more than N ' +
-  'cents from their target).';
+  'cents from their target). Every condition is evaluated on the notes at expected_revision, before any op runs, ' +
+  'so an earlier op does not change what a later condition selects.';
 
 const OP = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('setTargetPitch'), select: SELECT, target_midi: z.number().min(0).max(127) }),

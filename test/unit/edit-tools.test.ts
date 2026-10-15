@@ -13,7 +13,9 @@ import { z } from 'zod';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { OtcpError } from '../../src/errors/tool-error.js';
 import type { OtcpSession } from '../../src/otcp/client.js';
+import { decodeClipRevision } from '../../src/otcp/tokens.js';
 import { autotune, autotuneTool, subtractRanges, type AutotuneArgs } from '../../src/tools/autotune.js';
+import { withClipRevision } from '../../src/tools/clip-write.js';
 import { editNotes, editNotesTool, indicesOverCents, offTargetCents } from '../../src/tools/edit-notes.js';
 import { redoTool, undoTool } from '../../src/tools/history.js';
 import { getNotes } from '../../src/tools/notes.js';
@@ -90,6 +92,22 @@ const failure = (outcome: Outcome) => {
 };
 const sent = (env: Env, method: string) => env.calls.filter((c) => c.method === method);
 
+interface RevertLine {
+  readonly kind: string;
+  readonly restore: { readonly tool: string; readonly arguments: Record<string, unknown> } | null;
+}
+/** The tool call of the result's revert line. */
+const restoreOf = (out: Record<string, unknown>) =>
+  (out.lines as RevertLine[]).find((l) => l.kind === 'revert')?.restore;
+/** Runs a tool as an MCP client would: the arguments go through its input schema first. */
+const call = (tool: ToolDefinition, env: Env, args: Record<string, unknown>) =>
+  tool.run(tool.inputSchema.parse(args), env.ctx);
+/** Makes the instance answer `method` with something that is not a write envelope. */
+function answerOddly(env: Env, method: string) {
+  const original = env.session.call.bind(env.session);
+  env.session.call = (m, params, timeoutMs) => (m === method ? Promise.resolve({}) : original(m, params, timeoutMs));
+}
+
 async function notesOf(env: Env) {
   const out = body(await getNotes(env.ctx, { clip: env.placement, clock: 'content' }));
   return out.notes as { index: number; targetMidi: number; offsetCents: number; retuneSpeed: number }[];
@@ -98,8 +116,9 @@ async function notesOf(env: Env) {
 const SELECT_ALL = { all: true } as const;
 
 describe('opentune_set_clip', () => {
-  it('sets the key: not undoable, with the way back in the summary and the lines', async () => {
+  it('sets the key: not undoable, with the way back as a call of this tool that works as given', async () => {
     const env = await setup();
+    const before = (await env.otcp('content.getDetails', { contentId: env.contentId })).key as Record<string, unknown>;
     const out = body(
       await setClip(env.ctx, {
         clip: env.placement,
@@ -108,12 +127,23 @@ describe('opentune_set_clip', () => {
       }),
     );
     expect(out.summary).toMatch(
-      /^opentune_set_clip: changed 1 key \(not undoable: .*can be restored with content\.setKey/,
+      /^opentune_set_clip: changed 1 key \(not undoable: .*can be restored with opentune_set_clip/,
     );
     expect(out.undo).toMatchObject({ undoable: false, reason: 'ui_parity' });
-    expect(out.lines).toEqual(expect.arrayContaining([expect.objectContaining({ kind: 'revert' })]));
+    const restore = restoreOf(out);
+    expect(restore).toEqual({
+      tool: 'opentune_set_clip',
+      arguments: { clip: env.contentId, key: { root: before.root, scale: before.scale } },
+    });
     const details = await env.otcp('content.getDetails', { contentId: env.contentId });
     expect(details.key).toMatchObject({ root: 2, scale: 'minor' });
+    // The line says: these arguments, and the latest clip_revision, which this result returns.
+    const restored = body(
+      await call(setClipTool, env, { ...restore?.arguments, expected_revision: out.clip_revision }),
+    );
+    expect(restored.applied).toBe(true);
+    const after = await env.otcp('content.getDetails', { contentId: env.contentId });
+    expect(after.key).toMatchObject({ root: before.root, scale: before.scale });
   });
 
   it('sets the pitch shift as one undo step and warns that the key is not transposed', async () => {
@@ -148,7 +178,59 @@ describe('opentune_set_clip', () => {
     const results = out.results as { method: string; undo: { undoable: boolean } }[];
     expect(results.map((r) => r.method)).toEqual(['content.setKey', 'content.setPitchShift']);
     expect(results.map((r) => r.undo.undoable)).toEqual([false, true]);
-    expect(out.summary).toMatch(/^opentune_set_clip: two requests .*Key: .*Pitch shift: /);
+    // The key change cannot be undone, and the first sentence says so before anything else.
+    expect(out.summary).toMatch(
+      /^opentune_set_clip: the key change cannot be undone \(restore it as the results say\); two requests .*Key: .*Pitch shift: /,
+    );
+    expect(out.summary.split('. ')[0]).toContain('cannot be undone');
+  });
+
+  it('leaves the key out of the first sentence when the key did not change', async () => {
+    const env = await setup();
+    const current = (await env.otcp('content.getDetails', { contentId: env.contentId })).key as {
+      root: number;
+      scale: string;
+    };
+    const out = body(
+      await setClip(env.ctx, {
+        clip: env.placement,
+        expected_revision: await env.revision(),
+        key: { root: current.root, scale: current.scale },
+        pitch_shift: { semitones: 1, cents: 0 },
+      }),
+    );
+    expect((out.results as { noOp: boolean }[]).map((r) => r.noOp)).toEqual([true, false]);
+    expect(out.summary).toMatch(/^opentune_set_clip: two requests were made/);
+    expect(out.summary).not.toContain('cannot be undone');
+  });
+
+  it('stops when the first request returns no write envelope, and sends nothing after it', async () => {
+    const env = await setup();
+    answerOddly(env, 'content.setKey');
+    const outcome = await setClip(env.ctx, {
+      clip: env.placement,
+      expected_revision: await env.revision(),
+      key: { root: 7, scale: 'major' },
+      pitch_shift: { semitones: 1, cents: 0 },
+    });
+    expect(failure(outcome)).toMatchObject({ kind: 'INTERNAL', executed: null });
+    expect(sent(env, 'content.setPitchShift')).toHaveLength(0);
+    if (outcome.ok) throw new Error('unreachable');
+    expect(outcome.context).toBeUndefined();
+  });
+
+  it('reports the applied key change when the second request returns no write envelope', async () => {
+    const env = await setup();
+    answerOddly(env, 'content.setPitchShift');
+    const outcome = await setClip(env.ctx, {
+      clip: env.placement,
+      expected_revision: await env.revision(),
+      key: { root: 7, scale: 'major' },
+      pitch_shift: { semitones: 1, cents: 0 },
+    });
+    expect(failure(outcome)).toMatchObject({ kind: 'INTERNAL', executed: null });
+    if (outcome.ok) throw new Error('unreachable');
+    expect(outcome.context).toMatchObject({ applied_before_error: [{ method: 'content.setKey', applied: true }] });
   });
 
   it('reports the applied key change next to the error when the second request fails', async () => {
@@ -604,14 +686,15 @@ describe('opentune_edit_notes', () => {
 
   it('sends nothing when no note matches the condition', async () => {
     const env = await setup();
+    const revision = await env.revision();
     const out = body(
       await editNotes(env.ctx, {
         clip: env.placement,
-        expected_revision: await env.revision(),
+        expected_revision: revision,
         ops: [{ op: 'shiftCents', select: { off_target_cents_over: 1200 }, delta_cents: 5 }],
       }),
     );
-    expect(out).toMatchObject({ applied: false, noOp: true });
+    expect(out).toMatchObject({ applied: false, noOp: true, clip_revision: revision });
     expect(out.summary).toContain('no note matched');
     expect(sent(env, 'content.editNotes')).toHaveLength(0);
   });
@@ -710,6 +793,39 @@ describe('opentune_edit_notes', () => {
     expect(sent(env, 'content.editNotes')).toHaveLength(0);
   });
 
+  it('sends a repeated index once', async () => {
+    const env = await setup();
+    body(
+      await editNotes(env.ctx, {
+        clip: env.placement,
+        expected_revision: await env.revision(),
+        ops: [{ op: 'shiftCents', select: { indices: [1, 0, 1] }, delta_cents: 5 }],
+      }),
+    );
+    expect(sent(env, 'content.editNotes')[0]?.params.ops).toEqual([
+      { op: 'shiftCents', select: { indices: [1, 0] }, deltaCents: 5 },
+    ]);
+  });
+
+  it('evaluates every condition before any op runs, with one read of the notes per range', async () => {
+    const env = await setup();
+    const out = body(
+      await editNotes(env.ctx, {
+        clip: env.placement,
+        expected_revision: await env.revision(),
+        ops: [
+          { op: 'shiftCents', select: { off_target_cents_over: 100 }, delta_cents: 50 },
+          { op: 'setParams', select: { off_target_cents_over: 100 }, retune_speed: 0.4 },
+          { op: 'shiftCents', select: { off_target_cents_over: 100, from_sec: 0, to_sec: 2.5 }, delta_cents: 1 },
+        ],
+      }),
+    );
+    expect(sent(env, 'content.getNotes')).toHaveLength(2);
+    const ops = sent(env, 'content.editNotes')[0]?.params.ops as { select: unknown }[];
+    expect(ops[1]?.select).toEqual(ops[0]?.select);
+    expect(out.selection_resolved).toHaveLength(3);
+  });
+
   it('computes the distance of a sung pitch from the target in cents', () => {
     expect(offTargetCents({ index: 0, detectedMidi: 60.25, targetMidi: 60 })).toBeCloseTo(25);
     expect(offTargetCents({ index: 0, detectedMidi: null, targetMidi: 60 })).toBeNull();
@@ -749,9 +865,13 @@ describe('opentune_undo and opentune_redo', () => {
     expect(undone.undo).toMatchObject({ undoable: false, revert: { method: 'edit.redo' } });
     expect((await notesOf(env))[0]?.offsetCents).toBe(before);
     expect(sent(env, 'edit.undo')[0]?.params).toEqual({ expectedUndoId: undoId });
-    const redone = body(await run(redoTool, env, { undo_id: undoId }));
+    // The way back is a call of opentune_redo, run here exactly as the line gives it.
+    const back = restoreOf(undone);
+    expect(back).toEqual({ tool: 'opentune_redo', arguments: { undo_id: undoId } });
+    const redone = body(await run(redoTool, env, back?.arguments ?? {}));
     expect(redone.applied).toBe(true);
     expect((await notesOf(env))[0]?.offsetCents).toBe((before ?? 0) + 25);
+    expect(restoreOf(redone)).toEqual({ tool: 'opentune_undo', arguments: { undo_id: undoId } });
   });
 
   it('answers UNDO_CONFLICT with a step for the user when the top step is not the one named', async () => {
@@ -830,6 +950,114 @@ describe('opentune_undo and opentune_redo', () => {
   });
 });
 
+describe('the clip_revision of a write result', () => {
+  it('lets the next write go ahead without reading the clip again', async () => {
+    const env = await setup();
+    const old = await env.revision();
+    const first = body(
+      await editNotes(env.ctx, {
+        clip: env.placement,
+        expected_revision: old,
+        ops: [{ op: 'shiftCents', select: { indices: [0] }, delta_cents: 10 }],
+      }),
+    );
+    // The revision read before the write is stale now; the one the result returned is not.
+    const stale = failure(
+      await editNotes(env.ctx, {
+        clip: env.placement,
+        expected_revision: old,
+        ops: [{ op: 'shiftCents', select: { indices: [1] }, delta_cents: 10 }],
+      }),
+    );
+    expect(stale).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'content_changed' });
+    const second = body(
+      await editNotes(env.ctx, {
+        clip: env.placement,
+        expected_revision: first.clip_revision as string,
+        ops: [{ op: 'shiftCents', select: { indices: [1] }, delta_cents: 10 }],
+      }),
+    );
+    expect(second.applied).toBe(true);
+    // A key change advances the key part, so an edit that uses the clip key goes ahead with it too.
+    const keyed = body(
+      await setClip(env.ctx, {
+        clip: env.placement,
+        expected_revision: second.clip_revision as string,
+        key: { root: 4, scale: 'minor' },
+        pitch_shift: { semitones: 1, cents: 0 },
+      }),
+    );
+    const snapped = body(
+      await editNotes(env.ctx, {
+        clip: env.placement,
+        expected_revision: keyed.clip_revision as string,
+        ops: [{ op: 'snapToScale', select: SELECT_ALL, scale: 'clip' }],
+      }),
+    );
+    expect(snapped.applied).toBe(true);
+    expect(sent(env, 'content.editNotes').at(-1)?.params).toHaveProperty('expectedKeyRevision');
+    const tuned = body(
+      await autotune(env.ctx, {
+        clip: env.placement,
+        expected_revision: snapped.clip_revision as string,
+        mode: 'snapNotes',
+        scale: 'clip',
+      }),
+    );
+    expect(tuned.applied).toBe(true);
+    // It is the revision a fresh read gives.
+    expect(tuned.clip_revision).toBe(await env.revision());
+  });
+
+  it('takes the tokens the results report, the caller ones for the rest, and is null with a reason otherwise', () => {
+    const prior = { content: 'r1', grid: 'g1', key: 'k1', geometry: 'h1' };
+    const target = { contentId: 'c:01234567:0:1', placementId: 'p:01234567:0:1' };
+    const reported = (n: number, placements: unknown[] = []) => ({
+      tokens: {
+        arrangementRevision: 'a1',
+        contents: [
+          {
+            contentId: target.contentId,
+            revision: `r${String(n)}`,
+            gridRevision: `g${String(n)}`,
+            keyRevision: `k${String(n)}`,
+          },
+        ],
+        placements,
+      },
+    });
+    const none = withClipRevision({ summary: 's', nullReasons: { ui: 'no_editor' } }, target, prior, [
+      { tokens: { arrangementRevision: 'a1', contents: [], placements: [] } },
+    ]);
+    expect(none.clip_revision).toBeNull();
+    expect(none.nullReasons).toEqual({ ui: 'no_editor', clip_revision: 'unavailable' });
+    const moved = withClipRevision({ summary: 's' }, target, prior, [
+      reported(2),
+      reported(3, [{ placementId: target.placementId, geometryHash: 'h3' }]),
+    ]);
+    expect(decodeClipRevision(moved.clip_revision as string)).toEqual({
+      content: 'r3',
+      grid: 'g3',
+      key: 'k3',
+      geometry: 'h3',
+    });
+    expect(moved).not.toHaveProperty('nullReasons');
+    const unknownGeometry = withClipRevision({ summary: 's' }, target, { ...prior, geometry: null }, [reported(2)]);
+    expect(decodeClipRevision(unknownGeometry.clip_revision as string)?.geometry).toBeNull();
+    expect(unknownGeometry.nullReasons).toEqual({ clip_revision_geometry: 'unavailable' });
+    const byContent = withClipRevision({ summary: 's' }, { ...target, placementId: null }, prior, [
+      'odd',
+      reported(4, [{ placementId: target.placementId, geometryHash: 'h9' }]),
+    ]);
+    expect(decodeClipRevision(byContent.clip_revision as string)).toEqual({
+      content: 'r4',
+      grid: 'g4',
+      key: 'k4',
+      geometry: 'h1',
+    });
+  });
+});
+
 describe('tool declarations', () => {
   const tools: [ToolDefinition, string[]][] = [
     [setClipTool, ['edit.v1', 'read.v1']],
@@ -843,6 +1071,13 @@ describe('tool declarations', () => {
     for (const [tool, capabilities] of tools) {
       expect(tool.capabilities, tool.name).toEqual(capabilities);
       expect(tool.annotations.readOnlyHint, tool.name).toBe(false);
+    }
+  });
+
+  it('mark AUTO as destructive (it removes or replaces notes), and the edits that keep every note as not', () => {
+    expect(autotuneTool.annotations.destructiveHint).toBe(true);
+    for (const tool of [setClipTool, editNotesTool, undoTool, redoTool]) {
+      expect(tool.annotations.destructiveHint, tool.name).toBe(false);
     }
   });
 

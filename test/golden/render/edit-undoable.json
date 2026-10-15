@@ -332,7 +332,7 @@
       },
       {
         "kind": "undo",
-        "text": "Undoable as one step: undo it with expectedUndoId u:01234567:1.",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
         "undoId": "u:01234567:1",
         "description": "Edit notes"
       }
