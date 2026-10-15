@@ -135,19 +135,44 @@ describe('mock guards', () => {
     expect(statSync(instance.discoveryPath).mode & 0o777).toBe(0o600);
   });
 
-  it.runIf(process.platform === 'win32')(
+  // A new file gets the default DACL of the process token (explicit entries for SYSTEM, Administrators and
+  // the user) when its directory has nothing to inherit, as on CI runners; `/inheritance:r` cannot drop those.
+  describe.runIf(process.platform === 'win32')(
     'gives only the current user access to the discovery file (Windows)',
-    async () => {
-      const instance = await mock();
-      const icacls = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'icacls.exe');
-      const out = spawnSync(icacls, [instance.discoveryPath], { encoding: 'utf8' }).stdout;
-      const aces = out
-        .split(/\r?\n/)
-        .map((l) => l.replace(instance.discoveryPath, '').trim())
-        .filter((l) => /\(.*\)/.test(l));
-      expect(aces).toHaveLength(1);
-      expect(aces[0]).not.toContain('(I)');
-      expect(aces[0]).toContain('(F)');
+    () => {
+      const system32 = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32');
+
+      const sidOf = (): string => {
+        const who = spawnSync(path.join(system32, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' });
+        const sid = /,"(S-1-[0-9-]+)"\s*$/.exec(who.stdout.trim())?.[1] ?? '';
+        expect(sid).not.toBe('');
+        return sid;
+      };
+
+      // Reads the DACL as SDDL, which names trustees by SID and so does not depend on the console code page.
+      function expectOnlyCurrentUser(file: string): void {
+        const saved = path.join(tempDir(), 'acl.txt');
+        expect(spawnSync(path.join(system32, 'icacls.exe'), [file, '/save', saved]).status).toBe(0);
+        const sddl = readFileSync(saved).toString('utf16le');
+        const dacl = /D:([A-Z]*)((?:\([^)]*\))*)/.exec(sddl);
+        expect(dacl?.[1]).toContain('P');
+        expect(dacl?.[2]).toBe(`(A;;FA;;;${sidOf()})`);
+      }
+
+      it('in an ordinary temporary directory', async () => {
+        expectOnlyCurrentUser((await mock()).discoveryPath);
+      });
+
+      it('in a directory with no inheritable entries', async () => {
+        const dir = tempDir();
+        const who = spawnSync(path.join(system32, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' });
+        const sid = /"(S-1-[0-9-]+)"\s*$/.exec(who.stdout.trim())?.[1] ?? '';
+        expect(sid).not.toBe('');
+        // Protected, with a plain entry that has neither (OI) nor (CI): nothing flows down to new files.
+        const set = spawnSync(path.join(system32, 'icacls.exe'), [dir, '/inheritance:r', '/grant:r', `*${sid}:(F)`]);
+        expect(set.status).toBe(0);
+        expectOnlyCurrentUser((await mock({ discoveryDir: dir })).discoveryPath);
+      });
     },
   );
 });
