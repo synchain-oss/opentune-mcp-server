@@ -162,6 +162,9 @@ export const WRITE_RESULT_MEMBERS = [
   'sideEffects',
   'warnings',
   'job',
+  'uiEffects',
+  'changeTable',
+  'lines',
 ] as const;
 
 /**

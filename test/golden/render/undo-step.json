@@ -1,0 +1,252 @@
+{
+  "description": "The result of an undo step: it creates no undo entry of its own and carries the redo as revert.",
+  "tool": "opentune_undo",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "content",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1",
+        "fields": {
+          "revision": {
+            "before": "r14",
+            "after": "r18",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n12",
+              "after": "n16"
+            },
+            "pitch": {
+              "before": "p13",
+              "after": "p17"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r18",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "edit.redo",
+        "params": {
+          "expectedUndoId": "u:01234567:1"
+        }
+      }
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "entry": {
+      "undoId": "u:01234567:1",
+      "description": "Edit notes",
+      "origin": "control",
+      "possiblyStale": false,
+      "unsafe": false
+    }
+  },
+  "rendered": {
+    "summary": "opentune_undo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with edit.redo, see the revert line; side effects: rendering of one or more contents was queued again).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "content",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1",
+        "fields": {
+          "revision": {
+            "before": "r14",
+            "after": "r18",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n12",
+              "after": "n16"
+            },
+            "pitch": {
+              "before": "p13",
+              "after": "p17"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r18",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "edit.redo",
+        "params": {
+          "expectedUndoId": "u:01234567:1"
+        }
+      }
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "entry": {
+      "undoId": "u:01234567:1",
+      "description": "Edit notes",
+      "origin": "control",
+      "possiblyStale": false,
+      "unsafe": false
+    },
+    "uiEffects": [
+      {
+        "surface": "piano roll",
+        "effect": "changed content",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      },
+      {
+        "surface": "background work",
+        "effect": "rendering queued again",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Playback and export use the new result once rendering is done."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "content",
+          "label": "Content 1",
+          "ref": {
+            "contentId": "c:01234567:0:1"
+          },
+          "fields": [
+            {
+              "field": "revision",
+              "before": "r14",
+              "after": "r18",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore with edit.redo and these params, sent unchanged.",
+        "revert": {
+          "method": "edit.redo",
+          "params": {
+            "expectedUndoId": "u:01234567:1"
+          }
+        }
+      }
+    ]
+  }
+}
