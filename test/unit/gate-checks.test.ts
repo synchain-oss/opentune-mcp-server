@@ -679,7 +679,7 @@ describe('commitCheckScope', () => {
 
   it('compares a push that rewrote its branch with the default branch', () => {
     const push = { event: 'push', before: sha, beforeAvailable: false, defaultBranch: 'dev', repo };
-    // A feature/* trunk takes project identities only (see the feature/* describe below).
+    // A rewritten feature/* trunk takes project identities only (see the feature/* describe below).
     const scope = commitCheckScope({ ...push, refName: 'feature/v2' });
     expect(scope).toMatchObject({ base: 'origin/dev', allowExternalAuthors: false, allowDependabot: false });
     expect(scope.reason).toContain('rewrote the branch');
@@ -740,9 +740,11 @@ describe('commitCheckScope', () => {
   });
 });
 
-describe('feature/* pushes take project identities only', () => {
-  // A push to a feature/* trunk skips the pull request gate, so outside and Dependabot commits
-  // must fail there; the trunk's own squash merges (GitHub's web merge) must still pass.
+describe('feature/* pushes: strict for creation and rewrites, relaxed for fast-forwards', () => {
+  // A push that creates a feature/* branch or rewrites its history brings in commits no pull
+  // request gated, so project identities only. An ordinary fast-forward push comes from a merged
+  // pull request or from dev merged back into the trunk, where Dependabot and contributor squash
+  // commits are legitimate.
   const repo = 'synchain-oss/opentune-mcp-server';
   const sha = 'c'.repeat(40);
   const PROJECT = 'noreply@synchain.ca';
@@ -767,8 +769,8 @@ describe('feature/* pushes take project identities only', () => {
     scope: { allowExternalAuthors: boolean; allowDependabot: boolean },
   ) => checkCommits([commit], scope);
 
-  it('turns off the outside-author and Dependabot exemptions for every feature/* push', () => {
-    expect(trunk()).toMatchObject({ base: sha, allowExternalAuthors: false, allowDependabot: false });
+  it('turns off the exemptions for a feature/* push that creates or rewrites the branch only', () => {
+    expect(trunk()).toMatchObject({ base: sha, allowExternalAuthors: true, allowDependabot: true });
     expect(trunk({ before: '0'.repeat(40) })).toMatchObject({
       base: 'origin/dev',
       allowExternalAuthors: false,
@@ -786,7 +788,7 @@ describe('feature/* pushes take project identities only', () => {
     expect(dev({ before: '0'.repeat(40) })).toMatchObject({ allowExternalAuthors: true, allowDependabot: true });
   });
 
-  it('fails an outside author pushed to a feature/* trunk, and passes it on dev', () => {
+  it('fails an outside author in a creating or rewriting feature/* push, passes it on a fast-forward and on dev', () => {
     const outsiderCommit = commitOf({
       name: 'Contributor',
       email: outsider,
@@ -794,11 +796,13 @@ describe('feature/* pushes take project identities only', () => {
       committerEmail: outsider,
       body: `fix: y\n\nSigned-off-by: Contributor <${outsider}>`,
     });
-    expect(check(outsiderCommit, trunk())).not.toEqual([]);
+    expect(check(outsiderCommit, trunk({ before: '0'.repeat(40) }))).not.toEqual([]);
+    expect(check(outsiderCommit, trunk({ beforeAvailable: false }))).not.toEqual([]);
+    expect(check(outsiderCommit, trunk())).toEqual([]);
     expect(check(outsiderCommit, dev())).toEqual([]);
   });
 
-  it("fails Dependabot's commit pushed to a feature/* trunk, and exempts it on dev", () => {
+  it("fails Dependabot's commit in a creating or rewriting feature/* push, exempts it on a fast-forward and on dev", () => {
     const botCommit = commitOf({
       name: DEPENDABOT_NAME,
       email: DEPENDABOT_EMAIL,
@@ -806,17 +810,21 @@ describe('feature/* pushes take project identities only', () => {
       committerEmail: WEB_MERGE_COMMITTER_EMAIL,
       body: `chore(deps): bump x\n\nSigned-off-by: support <${join('support', '@', 'github.com')}>`,
     });
-    expect(check(botCommit, trunk())).not.toEqual([]);
+    expect(check(botCommit, trunk({ before: '0'.repeat(40) }))).not.toEqual([]);
+    expect(check(botCommit, trunk({ beforeAvailable: false }))).not.toEqual([]);
+    expect(check(botCommit, trunk())).toEqual([]);
     expect(check(botCommit, dev())).toEqual([]);
   });
 
-  it("passes GitHub's web-merge squash commit of the maintainer on a feature/* trunk", () => {
+  it("passes GitHub's web-merge squash commit of the maintainer on every feature/* push", () => {
     const webMerge = commitOf({
       email: GITHUB_NOREPLY,
       committerName: WEB_MERGE_COMMITTER_NAME,
       committerEmail: WEB_MERGE_COMMITTER_EMAIL,
     });
     expect(check(webMerge, trunk())).toEqual([]);
+    expect(check(webMerge, trunk({ before: '0'.repeat(40) }))).toEqual([]);
+    expect(check(webMerge, trunk({ beforeAvailable: false }))).toEqual([]);
   });
 });
 
@@ -1108,6 +1116,23 @@ describe('addedInHistory: audio added by one commit and removed by the next', ()
 
   it('leaves a recording that HEAD still has to the working-tree scan', async () => {
     expect(await scan(kept)).toEqual([]);
+  });
+
+  it('reports a recording that a later commit rewrote in place as text', async () => {
+    const rewritten = commitTree({ 'README.md': readme, 'take1.dat': Buffer.from('just text\n') }, added);
+    const found = await scan(rewritten);
+    expect(found.map((f) => f.path)).toEqual(['take1.dat']);
+    expect(checkNoNewAudio(found)).toHaveLength(1);
+  });
+
+  it('skips a submodule path instead of failing', async () => {
+    const readmeBlob = text(['hash-object', '-w', '--stdin'], readme);
+    const tree = text(
+      ['mktree'],
+      [`100644 blob ${readmeBlob}\tREADME.md`, `160000 commit ${'d'.repeat(40)}\tsub`, ''].join('\n'),
+    );
+    const withSub = text(['commit-tree', tree, '-m', 'feat: sub', '-p', base]);
+    expect(await scan(withSub)).toEqual([]);
   });
 
   it('finds nothing on a branch that never added audio', async () => {

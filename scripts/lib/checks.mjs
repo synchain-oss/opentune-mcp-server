@@ -542,8 +542,9 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false, 
  *   - into prod: the commits are dev's history, which reached dev through gated pull requests and
  *     may include contributors' and Dependabot's merged commits.
  * - A push checks the commits it added (`before`..HEAD). On dev they arrived through merged pull
- *   requests, so contributors and Dependabot are allowed; a feature/* trunk takes project identities
- *   only, since its pushes (a new branch's first push included) bypass the pull request gate. A push
+ *   requests, so contributors and Dependabot are allowed; so is a fast-forward push to a feature/*
+ *   trunk, but a push that creates a feature/* branch or rewrites it takes project identities
+ *   only, since nothing gated those commits. A push
  *   that creates the branch, or that rewrote it
  *   so that `before` is no longer in the clone (`beforeAvailable` false), is compared with the
  *   default branch instead; a rewritten default branch has nothing to compare with and is an error.
@@ -565,9 +566,14 @@ export function commitCheckScope({
   prAuthor,
 }) {
   if (event === 'push') {
-    // A feature/* trunk has no pull request gate in front of every push (a new branch's first push
-    // and direct pushes skip it), so outside and Dependabot authors are not accepted there.
-    const strict = typeof refName === 'string' && refName.startsWith('feature/');
+    // A feature/* push is held to project identities only when it creates the branch or rewrites
+    // its history: no pull request gated those commits. An ordinary fast-forward push to a
+    // feature/* trunk comes from a merged pull request or from merging dev back into the trunk,
+    // and dev legitimately carries Dependabot and contributors' squash commits, so it keeps the
+    // relaxed rules.
+    const feature = typeof refName === 'string' && refName.startsWith('feature/');
+    const isCreate = !before || /^0+$/.test(before);
+    const strict = feature && (isCreate || !beforeAvailable);
     const allowExternalAuthors = !strict;
     const allowDependabot = !strict;
     const creates = !before || /^0+$/.test(before);
@@ -579,9 +585,7 @@ export function commitCheckScope({
           base: before,
           allowExternalAuthors,
           allowDependabot,
-          reason: strict
-            ? 'push to a feature/* trunk: the commits this push added, project identities only'
-            : 'push: the commits this push added, which arrived through merged pull requests',
+          reason: 'push: the commits this push added, which arrived through merged pull requests',
         };
       }
     }
@@ -828,10 +832,11 @@ export function checkNoNewAudio(added) {
 }
 
 /**
- * Files that a commit in `range` added and that HEAD no longer has (a recording committed and
- * deleted by a later commit still sits in the history that a merge would keep). Each comes with
- * the first bytes of the blob from every commit that added it. Paths HEAD still has are left to
- * the working-tree scan, so they are not returned here.
+ * Files that a commit in `range` added and that HEAD no longer has, or has with different content
+ * (a recording committed and deleted or rewritten by a later commit still sits in the history that
+ * a merge would keep). Each comes with the first bytes of the blob from every commit that added it.
+ * A path whose blob at HEAD is the added one is left to the working-tree scan. Known limit: `git
+ * log` without -m does not list files that a merge commit itself brings in.
  * @param {string} range e.g. "origin/feature/v1..HEAD"
  * @param {{ git: (args: string[]) => string, headPaths: Iterable<string>,
  *   blobHead: (spec: string, bytes: number) => Promise<Uint8Array> }} io
@@ -843,13 +848,27 @@ export async function addedInHistory(range, { git, headPaths, blobHead }) {
   const paths = [
     ...new Set(git(['log', '--diff-filter=A', '--name-only', '-z', '--format=', range]).split('\0').filter(Boolean)),
   ];
+  /** Type and object of `path` in `rev`, or null when it is not there. */
+  const entry = (rev, path) => {
+    const line = git(['ls-tree', '-z', rev, '--', path]).split('\0').find(Boolean);
+    const m = /^\d+ (\w+) ([0-9a-f]+)\t/.exec(line ?? '');
+    return m ? { type: m[1], oid: m[2] } : null;
+  };
   const found = [];
   for (const path of paths) {
-    if (present.has(path)) continue;
+    const inHead = present.has(path) ? entry('HEAD', path) : null;
     const commits = git(['log', '--diff-filter=A', '--format=%H', range, '--', `:(literal)${path}`])
       .split('\n')
       .filter(Boolean);
-    for (const commit of commits) found.push({ path, head: await blobHead(`${commit}:${path}`, AUDIO_SNIFF_BYTES) });
+    for (const commit of commits) {
+      const added = entry(commit, path);
+      // Only blobs have bytes to read; a submodule (gitlink) path has none.
+      if (!added || added.type !== 'blob') continue;
+      // The same blob at HEAD is covered by the working-tree scan; a path replaced in place (a
+      // recording turned into text by the next commit) is not, so it is read here.
+      if (inHead && inHead.type === 'blob' && inHead.oid === added.oid) continue;
+      found.push({ path, head: await blobHead(`${commit}:${path}`, AUDIO_SNIFF_BYTES) });
+    }
   }
   return found;
 }
