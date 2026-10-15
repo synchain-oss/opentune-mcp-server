@@ -181,10 +181,11 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
-      - name: Gates (build, bundle shape, stdout hygiene, pack list, package.json policy, notices)
+      # --no-skip：MCPB 校验工具装不上时这里必须红，不能当作跳过。
+      - name: Gates (build, MCPB package, bundle shape, stdout hygiene, pack list, package.json policy, notices)
         run: |
-          node scripts/gates.mjs --base HEAD \
-            --only "build (esbuild),bundle shape,bundle stdout hygiene,npm pack --dry-run,package.json:,THIRD-PARTY-NOTICES" \
+          node scripts/gates.mjs --base HEAD --no-skip \
+            --only "build (esbuild),MCPB package,bundle shape,bundle stdout hygiene,npm pack --dry-run,package.json:,THIRD-PARTY-NOTICES" \
             | tee -a "$GITHUB_STEP_SUMMARY"
       # 用户怎么装就怎么验：打出 tarball，装进一个空目录，确认没有带进任何依赖、bin 入口可执行。
       - name: Install the packed tarball into an empty directory

@@ -37,6 +37,7 @@ import { checkText, loadPatterns } from './check-attribution.mjs';
 import { sizeGate } from './lib/catalog.mjs';
 import { checkNotices } from './gen-notices.mjs';
 import { fetchTool } from './fetch-tool.mjs';
+import { McpbToolUnavailable, packMcpb, validateMcpb } from './mcpb.mjs';
 import {
   ALLOWED_EMAILS,
   AUDIO_FIXTURE_DIR,
@@ -250,6 +251,25 @@ async function bundleStdoutHygiene() {
     'heuristic scan of the whole bundle, bundled dependencies included: no stdout-writing console method ' +
       'reached directly (console.log), by bracket access (console["log"]) or by destructuring ({ log } = console)',
   );
+}
+
+async function mcpbPackage() {
+  // Two packs of the same inputs must be byte-identical; then the manifest and the package must
+  // pass the MCPB tool's own validation. The package is written under .cache/mcpb for CI to upload.
+  const first = await packMcpb(ROOT);
+  const second = await packMcpb(ROOT);
+  if (first.sha256 !== second.sha256)
+    return { result: 'FAIL', note: `two packs differ: ${first.sha256} vs ${second.sha256}` };
+  try {
+    await validateMcpb(ROOT, first.path);
+  } catch (error) {
+    if (error instanceof McpbToolUnavailable) throw new Skip(error.message);
+    return { result: 'FAIL', note: error instanceof Error ? error.message : String(error) };
+  }
+  return {
+    result: 'PASS',
+    note: `${first.name} (${first.files.join(', ')}) packed twice with identical sha256 ${first.sha256}; mcpb validate and info pass`,
+  };
 }
 
 function packList() {
@@ -517,6 +537,7 @@ async function main() {
     ['typecheck (tsc)', npmScriptStep('typecheck', 'tsc --noEmit: 0 errors')],
     ['unit tests + coverage (vitest)', npmScriptStep('test:unit', 'unit project passed; coverage thresholds met')],
     ['build (esbuild)', npmScriptStep('build', `${BUNDLE} built`)],
+    ['MCPB package (deterministic, mcpb validate)', mcpbPackage],
     ['bundle shape', bundleShape],
     ['bundle stdout hygiene', bundleStdoutHygiene],
     ['npm pack --dry-run', packList],

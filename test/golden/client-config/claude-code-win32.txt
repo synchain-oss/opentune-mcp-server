@@ -1,0 +1,10 @@
+Claude Code: run this once in a terminal.
+
+  claude mcp add --env OPENTUNE_MCP_OPENTUNE_PATH="~\Apps\OpenTune\OpenTune.exe" opentune -- cmd /c npx -y @synchain/opentune-mcp
+
+Add --scope user to use the server in every project (the default is the current project only).
+
+Paths are shown with ~ for your home directory; clients do not expand ~ inside JSON, so write the full path
+there, or run this command again with --full-paths.
+
+Nothing was written; this command only prints.
