@@ -142,15 +142,21 @@ describe('mock guards', () => {
     () => {
       const system32 = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32');
 
+      const sidOf = (): string => {
+        const who = spawnSync(path.join(system32, 'whoami.exe'), ['/user', '/fo', 'csv', '/nh'], { encoding: 'utf8' });
+        const sid = /,"(S-1-[0-9-]+)"\s*$/.exec(who.stdout.trim())?.[1] ?? '';
+        expect(sid).not.toBe('');
+        return sid;
+      };
+
+      // Reads the DACL as SDDL, which names trustees by SID and so does not depend on the console code page.
       function expectOnlyCurrentUser(file: string): void {
-        const out = spawnSync(path.join(system32, 'icacls.exe'), [file], { encoding: 'utf8' }).stdout;
-        const aces = out
-          .split(/\r?\n/)
-          .map((l) => l.replace(file, '').trim())
-          .filter((l) => /\(.*\)/.test(l));
-        expect(aces).toHaveLength(1);
-        expect(aces[0]).not.toContain('(I)');
-        expect(aces[0]).toContain('(F)');
+        const saved = path.join(tempDir(), 'acl.txt');
+        expect(spawnSync(path.join(system32, 'icacls.exe'), [file, '/save', saved]).status).toBe(0);
+        const sddl = readFileSync(saved).toString('utf16le');
+        const dacl = /D:([A-Z]*)((?:\([^)]*\))*)/.exec(sddl);
+        expect(dacl?.[1]).toContain('P');
+        expect(dacl?.[2]).toBe(`(A;;FA;;;${sidOf()})`);
       }
 
       it('in an ordinary temporary directory', async () => {

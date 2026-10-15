@@ -93,42 +93,65 @@ export function resolveDiscoveryDir(
 /** A Windows system tool by absolute path, so that a same-named tool earlier on PATH (Git Bash) is not used. */
 const system32 = (tool: string) => path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', tool);
 
-let currentUser: { name: string; sid: string } | undefined;
+let currentSid: string | undefined;
 
-/** The account name and SID of the user this process runs as (Windows). */
-function user(): { name: string; sid: string } {
-  if (currentUser !== undefined) return currentUser;
+/** The SID of the user this process runs as (Windows). Only the SID is read, never a display name. */
+function userSid(): string {
+  if (currentSid !== undefined) return currentSid;
   const result = spawnSync(system32('whoami.exe'), ['/user', '/fo', 'csv', '/nh'], {
     encoding: 'utf8',
     windowsHide: true,
   });
-  const match = /^"([^"]+)","(S-1-[0-9-]+)"\s*$/.exec(result.stdout.trim());
-  if (result.status !== 0 || match?.[1] === undefined || match[2] === undefined) {
-    throw new Error('cannot determine the SID of the current user');
-  }
-  currentUser = { name: match[1], sid: match[2] };
-  return currentUser;
+  const sid = /,"(S-1-[0-9-]+)"\s*$/.exec(result.stdout.trim())?.[1];
+  if (result.status !== 0 || sid === undefined) throw new Error('cannot determine the SID of the current user');
+  currentSid = sid;
+  return sid;
 }
+
+/** The SDDL aliases icacls prints for well-known SIDs, which `/remove:g` needs as `*S-1-...`. */
+const WELL_KNOWN_SIDS: Readonly<Record<string, string>> = {
+  WD: 'S-1-1-0',
+  SY: 'S-1-5-18',
+  LS: 'S-1-5-19',
+  NS: 'S-1-5-20',
+  BA: 'S-1-5-32-544',
+  BU: 'S-1-5-32-545',
+  BG: 'S-1-5-32-546',
+  PU: 'S-1-5-32-547',
+  AU: 'S-1-5-11',
+  IU: 'S-1-5-4',
+  OW: 'S-1-3-4',
+  CO: 'S-1-3-0',
+};
 
 /**
  * Removes every access entry except the current user's from a file whose inheritance is already cut.
  * When the directory has nothing to inherit, a new file gets the default DACL of the process token,
  * with explicit entries for SYSTEM and Administrators besides the user; `/inheritance:r` only drops
- * inherited entries, so the others are read back from icacls and removed one by one.
+ * inherited entries. The entries are read back as SDDL, which names every trustee by SID, and removed
+ * by SID: display names come out of icacls in the console code page and cannot be fed back safely.
  */
 function removeOtherEntries(file: string, own: string): void {
   const icacls = system32('icacls.exe');
-  const listing = spawnSync(icacls, [file], { encoding: 'utf8', windowsHide: true });
-  if (listing.status !== 0) throw new Error(`icacls failed to read the access rights of ${file}`);
-  const others = new Set<string>();
-  for (const line of listing.stdout.split(/\r?\n/)) {
-    // "<file>  NAME:(F)" for the first entry, "      NAME:(F)" for the following ones.
-    const name = /^(.+?):\(/.exec(line.startsWith(file) ? line.slice(file.length).trim() : line.trim())?.[1];
-    if (name !== undefined && name.toLowerCase() !== own.toLowerCase()) others.add(name);
-  }
-  for (const name of others) {
-    const removed = spawnSync(icacls, [file, '/remove:g', name], { windowsHide: true });
-    if (removed.status !== 0) throw new Error(`icacls failed to remove ${name} from ${file}`);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'opentune-mcp-acl-'));
+  try {
+    const saved = path.join(dir, 'acl.txt');
+    const read = spawnSync(icacls, [file, '/save', saved], { windowsHide: true });
+    if (read.status !== 0) throw new Error(`icacls failed to read the access rights of ${file}`);
+    const sddl = fs.readFileSync(saved).toString('utf16le');
+    const others = new Set<string>();
+    for (const match of sddl.matchAll(/\((?:[AD]);[^;()]*;[^;()]*;[^;()]*;[^;()]*;([^;()]+)\)/g)) {
+      const trustee = match[1] ?? '';
+      const sid = trustee.startsWith('S-1-') ? trustee : WELL_KNOWN_SIDS[trustee];
+      if (sid === undefined) throw new Error(`unrecognised trustee ${trustee} in the access rights of ${file}`);
+      if (sid.toLowerCase() !== own.toLowerCase()) others.add(sid);
+    }
+    for (const sid of others) {
+      const removed = spawnSync(icacls, [file, '/remove:g', `*${sid}`], { windowsHide: true });
+      if (removed.status !== 0) throw new Error(`icacls failed to remove ${sid} from ${file}`);
+    }
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 }
 
@@ -160,15 +183,17 @@ export function writeDiscoveryFile(dir: string, pid: number, content: unknown): 
       // A deliberate deviation from section 5.2 rule 3, which has the access rights set when the
       // file is created so that it never exists with others. Node cannot pass a security
       // descriptor to CreateFileW, so the mock creates the file empty and replaces its inherited
-      // rights with one entry for the current user (dropping the default entries too) before it writes anything. Until then the file
-      // holds no secret, and it lies in a directory the test chose; the real server has no such
-      // window. If restricting the rights fails, the empty file is deleted and nothing is written.
+      // rights with one entry for the current user (dropping the default entries too) before it
+      // writes anything. Until then the file holds no secret, and it lies in a directory the test
+      // chose; the real server has no such window. If restricting the rights fails, the empty file
+      // is deleted and nothing is written.
       fd = fs.openSync(temp, 'wx');
-      const acl = spawnSync(system32('icacls.exe'), [temp, '/inheritance:r', '/grant:r', `*${user().sid}:(F)`], {
+      const sid = userSid();
+      const acl = spawnSync(system32('icacls.exe'), [temp, '/inheritance:r', '/grant:r', `*${sid}:(F)`], {
         windowsHide: true,
       });
       if (acl.status !== 0) throw new Error(`icacls failed to restrict ${temp} to the current user`);
-      removeOtherEntries(temp, user().name);
+      removeOtherEntries(temp, sid);
     } else {
       checkPosixDir(dir);
       const { O_CREAT, O_EXCL, O_WRONLY, O_NOFOLLOW } = fs.constants;
