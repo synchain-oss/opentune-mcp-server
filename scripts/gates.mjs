@@ -451,8 +451,10 @@ async function contractVectors() {
   // rest may be skipped.
   const summaryFile = path.join(ROOT, '.cache', 'contract', 'summary.json');
   await fs.rm(summaryFile, { force: true });
+  // OTCP_TARGET_EXE cleared: the vectors against a started build are the next row's, and must
+  // neither run twice nor turn this row red.
   const status = npmStreaming(['run', '--silent', 'test:contract'], {
-    env: { ...process.env, OTCP_CONTRACT_SUMMARY: summaryFile },
+    env: { ...process.env, OTCP_CONTRACT_SUMMARY: summaryFile, OTCP_TARGET_EXE: '' },
   });
   const summary = JSON.parse(await fs.readFile(summaryFile, 'utf8').catch(() => 'null'));
   if (summary === null)
@@ -466,6 +468,33 @@ async function contractVectors() {
     `${summary.skip} SKIP${skips ? ` (${skips})` : ''}`;
   const ok = status === 0 && summary.fail === 0 && summary.required.pass === summary.required.total;
   return { result: ok ? 'PASS' : 'FAIL', note };
+}
+
+async function contractVectorsExe() {
+  // The same vectors against a started OpenTune build, only when OTCP_TARGET_EXE names one. CI
+  // never sets it, so this row is a SKIP there.
+  if (!process.env.OTCP_TARGET_EXE) throw new Skip('OTCP_TARGET_EXE is not set');
+  const summaryFile = path.join(ROOT, '.cache', 'contract', 'summary-exe.json');
+  await fs.rm(summaryFile, { force: true });
+  // Only the exe vectors run; the pattern has no space, so it survives the shell on Windows.
+  const status = npmStreaming(['run', '--silent', 'test:contract', '--', '-t', 'against.the.exe'], {
+    env: { ...process.env, OTCP_CONTRACT_SUMMARY_EXE: summaryFile, OTCP_CONTRACT_SUMMARY: '' },
+  });
+  const summary = JSON.parse(await fs.readFile(summaryFile, 'utf8').catch(() => 'null'));
+  if (summary === null)
+    return { result: 'FAIL', note: `npm run test:contract exited with ${status} and wrote no summary` };
+  const skips = Object.entries(summary.skipReasons)
+    .map(([reason, n]) => `${reason}: ${n}`)
+    .join('; ');
+  // How the started instances ended; the problems among them already failed their vectors.
+  const i = summary.instances;
+  const note =
+    `${summary.total} vectors: ${summary.pass} PASS, ${summary.fail} FAIL` +
+    `${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ${summary.skip} SKIP${skips ? ` (${skips})` : ''}; ` +
+    `instances: ${i.verified} stopped normally, ${i.forced} ended by force (clean-up not verified), ` +
+    `${i.exitedEarly} ended by themselves, ${i.leftDiscoveryFile} left their discovery file, ` +
+    `${i.notEnded} not confirmed as started by this run and not ended`;
+  return { result: status === 0 && summary.fail === 0 ? 'PASS' : 'FAIL', note };
 }
 
 function notYet(reason) {
@@ -534,6 +563,7 @@ async function main() {
     ['README en/zh-CN heading outline', readmeParity],
     ['no pull_request_target', pullRequestTarget],
     ['contract vectors (mock)', contractVectors],
+    ['contract vectors (exe)', contractVectorsExe],
     ['tools/list size gate', () => sizeGate(ROOT, BUNDLE)],
     ['token canary', notYet('not yet: no OTCP client or MCP tool output to check for the token')],
     ['output budget', notYet('not yet: no read tools, and the mock has no project content to read')],
