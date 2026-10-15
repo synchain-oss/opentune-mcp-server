@@ -461,8 +461,7 @@ async function contractVectors() {
     .map(([reason, n]) => `${reason}: ${n}`)
     .join('; ');
   const note =
-    `${summary.total} vectors: ${summary.pass} PASS (capabilities the mock reports: ${summary.required.pass} of ` +
-    `${summary.required.total}), ${summary.fail} FAIL${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ` +
+    `${summary.total} vectors: ${summary.pass} PASS, ${summary.fail} FAIL${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ` +
     `${summary.skip} SKIP${skips ? ` (${skips})` : ''}`;
   const ok = status === 0 && summary.fail === 0 && summary.required.pass === summary.required.total;
   return { result: ok ? 'PASS' : 'FAIL', note };

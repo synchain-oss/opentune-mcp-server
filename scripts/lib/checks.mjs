@@ -571,9 +571,10 @@ export function commitCheckScope({
     // and dev legitimately carries Dependabot and contributors' squash commits, so it keeps the
     // relaxed rules. This relies on the premise that feature/** only receives commits through
     // merged pull requests and never through direct pushes; the repository ruleset that blocks
-    // direct pushes to feature/** and the local pre-push guard enforce it. Known boundary: a new
-    // feature/* branch is compared with origin/<default branch>, so commits that another feature
-    // trunk has not yet merged into dev (for example a contributor's squash commit) are included.
+    // direct pushes to feature/** is what guarantees it. The maintainer's pre-push hook is only
+    // an aid and is not part of this repository. Known boundary: a new feature/* branch is
+    // compared with origin/<default branch>, so commits that another feature trunk has not yet
+    // merged into dev (for example a contributor's squash commit) are included.
     const feature = typeof refName === 'string' && refName.startsWith('feature/');
     const creates = !before || /^0+$/.test(before);
     const strict = feature && (creates || !beforeAvailable);
@@ -857,8 +858,11 @@ export async function addedInHistory(range, { git, headPaths, blobHead }) {
   for (const record of git(['log', '--diff-filter=A', '--name-only', '-z', '--format=%x01%H', range])
     .split('\x01')
     .slice(1)) {
-    const commit = record.slice(0, 40);
-    for (const name of record.slice(40).split('\0')) {
+    // The commit ID is hex of any length (40 for SHA-1, 64 for SHA-256), so it is not sliced by a fixed width.
+    const header = /^([0-9a-f]+)([\s\S]*)$/.exec(record);
+    if (!header) throw new Error(`malformed log record in ${JSON.stringify(range)}: ${JSON.stringify(record)}`);
+    const [, commit, names] = header;
+    for (const name of names.split('\0')) {
       const path = name.replace(/^\n+|\n+$/g, '');
       if (path) addedBy.set(path, [...(addedBy.get(path) ?? []), commit]);
     }
@@ -874,7 +878,9 @@ export async function addedInHistory(range, { git, headPaths, blobHead }) {
     // Every listed path must have an adding commit; a silent skip here would let a recording through.
     const commits = addedBy.get(path);
     if (!commits?.length)
-      throw new Error(`${path} is listed as added in ${range}, but no commit in it is recorded as adding it`);
+      throw new Error(
+        `${JSON.stringify(path)} is listed as added in ${range}, but no commit in it is recorded as adding it`,
+      );
     const inHead = present.has(path) ? entry('HEAD', path) : null;
     for (const commit of commits) {
       const added = entry(commit, path);

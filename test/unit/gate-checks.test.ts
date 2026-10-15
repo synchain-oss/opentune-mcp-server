@@ -1177,6 +1177,30 @@ describe('addedInHistory: audio added by one commit and removed by the next', ()
   });
 });
 
+describe('addedInHistory: commit IDs of any hex length', () => {
+  it('splits a 64-hex (SHA-256) commit ID from its path list', async () => {
+    const sha256 = 'a'.repeat(64);
+    const blob = 'b'.repeat(40);
+    const git = (args: string[]): string => {
+      if (args.includes('--format=')) return 'take64.dat\0';
+      if (args.includes('--format=%x01%H')) return `\x01${sha256}\ntake64.dat\0`;
+      if (args[0] === 'ls-tree') return `100644 blob ${blob}\ttake64.dat\0`;
+      throw new Error(`unexpected git call: ${args.join(' ')}`);
+    };
+    const specs: string[] = [];
+    const found = await addedInHistory('origin/feature/v1..HEAD', {
+      git,
+      headPaths: [],
+      blobHead: (spec) => {
+        specs.push(spec);
+        return Promise.resolve(new Uint8Array([1]));
+      },
+    });
+    expect(specs).toEqual([`${sha256}:take64.dat`]);
+    expect(found).toEqual([{ path: 'take64.dat', head: new Uint8Array([1]) }]);
+  });
+});
+
 describe('gates.mjs --no-skip', () => {
   // "output budget" is a placeholder check that reports SKIP until its tool exists, so it gives a
   // deterministic SKIP row without running any real gate. "no pull_request_target" is a file scan
