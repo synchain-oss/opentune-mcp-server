@@ -20,7 +20,15 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const vitest = path.join(ROOT, 'node_modules', 'vitest', 'vitest.mjs');
 const result = spawnSync(
   process.execPath,
-  [vitest, 'run', '--project', 'unit', 'test/unit/catalog.test.ts', 'test/unit/render-golden.test.ts'],
+  [
+    vitest,
+    'run',
+    '--project',
+    'unit',
+    'test/unit/catalog.test.ts',
+    'test/unit/render-golden.test.ts',
+    'test/unit/edit-tools-golden.test.ts',
+  ],
   {
     cwd: ROOT,
     stdio: 'inherit',

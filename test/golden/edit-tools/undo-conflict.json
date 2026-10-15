@@ -1,0 +1,21 @@
+{
+  "description": "The named step is not on top: UNDO_CONFLICT, ask the user.",
+  "tool": "opentune_undo",
+  "input": {
+    "undo_id": "u:01234567:9999"
+  },
+  "result": {
+    "error": {
+      "kind": "UNDO_CONFLICT",
+      "reason": "top_mismatch",
+      "detail": "the entry on top of the undo history is not the expected one",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "user",
+        "message": "The undo history is not as expected. Ask the user how to proceed; do not force it."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-undo_conflict"
+    }
+  }
+}

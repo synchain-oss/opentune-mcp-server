@@ -1,0 +1,115 @@
+{
+  "description": "A preview of snapNotes: nothing applied.",
+  "tool": "opentune_autotune_range",
+  "input": {
+    "clip": "p:01234567:0:1",
+    "mode": "snapNotes",
+    "scale": "clip",
+    "dry_run": true,
+    "expected_revision": "<clip_revision of the clip>"
+  },
+  "result": {
+    "summary": "opentune_autotune_range: dry run, nothing was changed; would change 1 note.",
+    "applied": false,
+    "noOp": false,
+    "dryRun": true,
+    "changes": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 5,
+            "atRevision": "r20"
+          }
+        },
+        "label": "#5 A4 3.50-4.50s",
+        "fields": {
+          "targetMidi": {
+            "before": 69.3,
+            "after": 69,
+            "unit": "midi"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r20",
+          "gridRevision": "g6",
+          "keyRevision": "k17"
+        }
+      ],
+      "placements": []
+    },
+    "undo": null,
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "mode": "snapNotes",
+    "keyUsed": {
+      "root": 2,
+      "scale": "dorian"
+    },
+    "paramsUsed": null,
+    "noteCount": {
+      "before": 6,
+      "after": 6
+    },
+    "omittedCount": {
+      "changes": 0,
+      "created": 0,
+      "removed": 0
+    },
+    "uiEffects": [],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "note",
+          "label": "#5 A4 3.50-4.50s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 5,
+              "atRevision": "r20"
+            }
+          },
+          "fields": [
+            {
+              "field": "targetMidi",
+              "before": 69.3,
+              "after": 69,
+              "unit": "midi"
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [],
+    "clip_revision": "cr1.WyJyMjAiLCJnNiIsImsxNyIsImgxMSJd"
+  }
+}
