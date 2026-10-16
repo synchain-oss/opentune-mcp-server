@@ -106,7 +106,7 @@ export function smokeSetupFromEnv(env: NodeJS.ProcessEnv = process.env): SmokeSe
 // results
 
 /** Thrown inside a step to end it with a result other than PASS or FAIL. */
-class StepSkip extends Error {
+export class StepSkip extends Error {
   constructor(
     readonly result: 'SKIP' | 'FLAKY-SKIP',
     note: string,
@@ -116,7 +116,7 @@ class StepSkip extends Error {
 }
 
 /** Never lets a long hex run (a token or proof, should an instance echo one) reach a report. */
-const clean = (text: string) => text.replace(/[0-9a-fA-F]{32,}/g, '[redacted]').slice(0, 400);
+export const clean = (text: string) => text.replace(/[0-9a-fA-F]{32,}/g, '[redacted]').slice(0, 400);
 
 /** Whether the error is BUSY with the reason modal_open: a dialog is open in the instance. */
 export const isModalBusy = (error: unknown): boolean =>
@@ -194,18 +194,18 @@ const KEY_INPUT_SCALES: readonly string[] = [
   'pentatonicMinor',
 ];
 
-const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
+export const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-function member(value: unknown, name: string, what: string): unknown {
+export function member(value: unknown, name: string, what: string): unknown {
   if (!isObject(value) || !(name in value)) throw new Error(`${what} has no ${name}`);
   return value[name];
 }
-function text(value: unknown, name: string, what: string): string {
+export function text(value: unknown, name: string, what: string): string {
   const v = member(value, name, what);
   if (typeof v !== 'string') throw new Error(`${what}.${name} is not a string`);
   return v;
 }
-function num(value: unknown, name: string, what: string): number {
+export function num(value: unknown, name: string, what: string): number {
   const v = member(value, name, what);
   if (typeof v !== 'number') throw new Error(`${what}.${name} is not a number`);
   return v;
@@ -222,7 +222,7 @@ function revisionOf(read: Json, contentId: string): string {
 }
 
 /** Follows a job to its end; returns its result, or throws the error it failed with. */
-async function waitJob(session: OtcpSession, jobId: string, what: string, timeoutMs: number): Promise<unknown> {
+export async function waitJob(session: OtcpSession, jobId: string, what: string, timeoutMs: number): Promise<unknown> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     const left = deadline - Date.now();
@@ -243,7 +243,7 @@ async function waitJob(session: OtcpSession, jobId: string, what: string, timeou
 }
 
 /** Starts a job-backed method and follows the job it hands over. */
-async function runJob(
+export async function runJob(
   session: OtcpSession,
   method: string,
   params: Json,
