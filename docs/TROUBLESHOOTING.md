@@ -250,21 +250,39 @@ the folder of the configured executable.
 
 ### Doctor OT_VERSION_UNSUPPORTED
 
-Planned check, not implemented yet: whether the installed OpenTune version is supported.
+The version of the official OpenTune installation (read from its uninstall entry; Windows only) must be 1.7.9 or
+later. Older: update OpenTune from the official release page. `warn` with "Not checked" means no installation was
+found or the check does not apply on this system; `warn` with "Cannot tell" means the installation does not report a
+version.
 
 ### Doctor OT_MODELS_MISSING
 
-Planned check, not implemented yet: whether the models OpenTune needs are installed.
+The official installation needs these files, none of them empty: `fcpe.onnx`, and `GAME\bd2dur.onnx`,
+`GAME\dur2bd.onnx`, `GAME\encoder.onnx`, `GAME\estimator.onnx`, `GAME\segmenter.onnx`. OpenTune 1.8 and later keeps
+them in `%ProgramData%\OpenTune\Models`; 1.7.x keeps them in the `models` folder of its install folder. The check only
+looks at existence and size, never at the content. When it fails, the message names the folder it looked in and the
+files that are missing: run the official installer again (or repair the installation) so that it restores the models.
+When the installed version is unknown, both folders are tried and the result is a warning.
 
 ### Doctor OT_SIDECAR_INCOMPLETE
 
-Planned check, not implemented yet: whether the files that must sit next to the executable are complete.
+A test build comes as a zip with a `SHA256SUMS` file (lines of `<sha256>  <relative path>`) next to the executable.
+`fail` means a file it lists is missing or its hash differs (the message names it), or the list cannot be read.
+Delete the folder and unpack the whole zip again into an empty folder; do not copy single files over an older build.
+`warn` ("Cannot verify") means there is no `SHA256SUMS`, which is normal for an executable you built yourself, and
+the folder cannot be checked.
 
 ### Doctor OT_MODELS_SHADOWED
 
-Planned check, not implemented yet: whether a models folder next to the executable hides the installed models.
+A `models` folder next to the executable is found before the installed models. A test build does not ship one, so
+rename or delete it unless you put it there on purpose; the message says whether it holds all the required model
+files.
 
 ### Doctor OT_D3D12_NOT_COPIED
 
-Planned check, not implemented yet: whether the Direct3D 12 runtime files were copied next to the executable; without
-them OpenTune runs inference on the CPU.
+A test build lists the Direct3D 12 runtime in `opentune-control.json` (`d3d12`) without bundling it. Without the file
+OpenTune runs inference on the CPU, so this is a warning. Run the commands the check prints in PowerShell, which copy
+`D3D12Core.dll` from the official installation to the `D3D12` folder next to the executable and print its SHA-256 hash
+to compare with `opentune-control.json`. If the copied file has another hash (`fail`), delete the `D3D12` folder (back
+to CPU) and copy it again from the official installation. `D3D12SDKLayers.dll` is the debug layer: do not copy it, and
+delete it if it is there.
