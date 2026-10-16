@@ -3,8 +3,8 @@
 
 // The files a release attaches and its notes. Four packages of one version, each with a .sha256
 // file: the npm tarball, the MCPB package for Claude Desktop, the Claude Code plugin zip (the
-// marketplace entry downloads it from the latest release) and the skills zip for claude.ai and
-// Claude Desktop. .github/workflows/release.yml runs this for tag pushes and dry runs alike;
+// marketplace entry downloads it from the latest release) and the skills zip that Claude Desktop
+// users upload in Claude's settings. .github/workflows/release.yml runs this for tag pushes and dry runs alike;
 // nothing here talks to GitHub.
 //
 // Usage: node scripts/release-assets.mjs build --out <dir>   needs `npm run build`, and the npm
@@ -107,13 +107,16 @@ export function releaseNotes(version, digests) {
       'Claude Code plugin: the MCP server and its skills. Claude Code downloads it through the marketplace.',
     ),
     row(names.mcpb, 'MCPB package for Claude Desktop: the MCP server.'),
-    row(names.skills, 'The instruction-only skills, one upload-ready zip per skill, for claude.ai and Claude Desktop.'),
+    row(
+      names.skills,
+      "The instruction-only skills, one zip per skill to upload in Claude's settings (for Claude Desktop).",
+    ),
     row(names.npm, `The npm package \`@synchain/opentune-mcp\` ${version}, for other MCP clients.`),
     '',
     '### Install',
     '',
     `- **Claude Code:** \`claude plugin marketplace add ${REPOSITORY}\`, then \`claude plugin install opentune@${MARKETPLACE_NAME}\`. The plugin needs Node.js 22 or later.`,
-    `- **Claude Desktop:** open \`${names.mcpb}\` for the tools. For the workflow guidance, extract \`${names.skills}\` and upload each zip in it as a skill in the Claude settings; claude.ai works the same way.`,
+    `- **Claude Desktop:** open \`${names.mcpb}\` for the tools. For the workflow guidance, extract \`${names.skills}\` and upload each zip in it as a skill in Claude's settings.`,
     `- **Other MCP clients:** \`npx -y @synchain/opentune-mcp@${version}\`.`,
     '',
     'Check a download with `sha256sum -c <file>.sha256`, or compare `Get-FileHash <file>` on Windows with the table. Changes are listed in CHANGELOG.md.',

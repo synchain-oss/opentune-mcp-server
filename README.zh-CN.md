@@ -46,7 +46,7 @@ OpenTune 在全新数据目录下首次启动时,会弹出一次「首次引导�
 
 **Claude Desktop(首推):MCPB 包。** 从 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases) 页面下载 `opentune-mcp-<version>.mcpb` 与对应的 `.sha256` 文件,核对校验和,打开 `.mcpb` 文件(或拖进 设置 > 扩展)并选择安装。在扩展设置里把「OpenTune executable」设为测试版的 `OpenTune.exe`。详见 [docs/install.md](docs/install.md)。进阶:用 `opentune-mcp doctor --client claude-desktop` 手动注册 npm 包。
 
-**Claude Desktop 与 claude.ai:skills。** Claude Desktop 的聊天不会运行 Claude Code 插件里的 MCP 服务,所以它的工具来自上面的 MCPB 包。工作流程指引另行提供:从同一个 Release 解压 `opentune-skills-<version>.zip`,把里面的每个 zip 分别作为 skill 上传到 Claude 的设置里(claude.ai 同样如此)。这些 skill 只是说明,实际操作要经 MCP 工具完成。
+**Claude Desktop:skills。** Claude Desktop 的聊天不会运行 Claude Code 插件里的 MCP 服务,所以它的工具来自上面的 MCPB 包。工作流程指引另行提供:从同一个 Release 解压 `opentune-skills-<version>.zip`,把里面的每个 zip 分别作为 skill 上传到 Claude 的设置里。这些 skill 只是说明,实际操作要经 MCP 工具完成,所以在装了 MCPB 包的地方才有用;浏览器里的 claude.ai 没有本机工具。
 
 **Claude Code(首推):插件。** 插件包含 MCP 服务和指导修音流程的 skill,需要 `PATH` 上有 Node.js 22 或更新版本。在终端里运行下面两条命令一次(PowerShell 里写法相同)。`--config` 把「OpenTune executable」选项设为测试版的 `OpenTune.exe`;不写的话,可以之后在 `/config` 里设置,或者只使用你自己启动的 OpenTune。
 

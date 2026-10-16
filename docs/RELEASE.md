@@ -5,12 +5,12 @@ packages built from that tag by `.github/workflows/release.yml`.
 
 ## The four packages
 
-| Package                              | File on the release                   | Who uses it                                              | Version taken from                            |
-| ------------------------------------ | ------------------------------------- | -------------------------------------------------------- | --------------------------------------------- |
-| npm package `@synchain/opentune-mcp` | `synchain-opentune-mcp-<version>.tgz` | other MCP clients (`npx -y @synchain/opentune-mcp`)      | `package.json`                                |
-| MCPB package                         | `opentune-mcp-<version>.mcpb`         | Claude Desktop                                           | `mcpb/manifest.json`                          |
-| Claude Code plugin `opentune`        | `opentune-plugin.zip`                 | Claude Code, through the `synchain-opentune` marketplace | `plugins/opentune/.claude-plugin/plugin.json` |
-| Skills zip                           | `opentune-skills-<version>.zip`       | claude.ai and Claude Desktop, uploaded by the user       | `package.json`                                |
+| Package                              | File on the release                   | Who uses it                                               | Version taken from                            |
+| ------------------------------------ | ------------------------------------- | --------------------------------------------------------- | --------------------------------------------- |
+| npm package `@synchain/opentune-mcp` | `synchain-opentune-mcp-<version>.tgz` | other MCP clients (`npx -y @synchain/opentune-mcp`)       | `package.json`                                |
+| MCPB package                         | `opentune-mcp-<version>.mcpb`         | Claude Desktop                                            | `mcpb/manifest.json`                          |
+| Claude Code plugin `opentune`        | `opentune-plugin.zip`                 | Claude Code, through the `synchain-opentune` marketplace  | `plugins/opentune/.claude-plugin/plugin.json` |
+| Skills zip                           | `opentune-skills-<version>.zip`       | Claude Desktop, uploaded by the user in Claude's settings | `package.json`                                |
 
 Every file comes with a `.sha256` file, and the release notes list the same digests.
 
