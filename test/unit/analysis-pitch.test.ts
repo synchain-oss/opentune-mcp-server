@@ -215,6 +215,11 @@ describe('summarize', () => {
       meanStabilityCents: null,
       overThresholdCount: 0,
       overThresholdRatio: null,
+      correctedMeanAbsDeviationCents: null,
+      correctedMeanSignedDeviationCents: null,
+      correctedMeanStabilityCents: null,
+      correctedOverThresholdCount: null,
+      correctedOverThresholdRatio: null,
       worstNotes: [],
     });
     const mixed = summarize([
@@ -226,6 +231,57 @@ describe('summarize', () => {
       ),
     ]);
     expect(mixed).toMatchObject({ noteCount: 2, measuredNoteCount: 1, meanAbsDeviationCents: 10 });
+  });
+});
+
+describe('corrected pitch', () => {
+  const frames = curve(1, () => 60.3);
+
+  it('measures the corrected curve against the same targets, next to the detected one', () => {
+    const [stat] = measureNotes(
+      [note(0, 0, 1, 60)],
+      frames,
+      25,
+      curve(1, () => 60.1),
+    );
+    expect(stat).toMatchObject({
+      medianDeviationCents: 30,
+      overThreshold: true,
+      correctedMedianDeviationCents: 10,
+      correctedStabilityCents: 0,
+      correctedOverThreshold: false,
+    });
+  });
+
+  it('leaves the corrected measures null without a corrected curve, and sums them only when every note has them', () => {
+    const alone = measureNotes([note(0, 0, 1, 60)], frames, 25);
+    expect(alone[0]).toMatchObject({
+      correctedMedianDeviationCents: null,
+      correctedStabilityCents: null,
+      correctedOverThreshold: null,
+    });
+    expect(summarize(alone).correctedOverThresholdCount).toBeNull();
+    expect(groupPhrases(alone)[0]).toMatchObject({
+      correctedMeanAbsDeviationCents: null,
+      correctedOverThresholdCount: null,
+    });
+  });
+
+  it('counts a note with no voiced corrected frame as not off, and summarizes the others', () => {
+    const stats = measureNotes(
+      [note(0, 0, 0.5, 60), note(1, 0.5, 1, 60)],
+      frames,
+      25,
+      curve(1, (t) => (t < 0.5 ? null : 61)),
+    );
+    expect(stats[0]).toMatchObject({ correctedMedianDeviationCents: null, correctedOverThreshold: false });
+    expect(stats[1]).toMatchObject({ correctedMedianDeviationCents: 100, correctedOverThreshold: true });
+    expect(summarize(stats)).toMatchObject({
+      correctedMeanAbsDeviationCents: 100,
+      correctedMeanSignedDeviationCents: 100,
+      correctedOverThresholdCount: 1,
+      correctedOverThresholdRatio: 1,
+    });
   });
 });
 

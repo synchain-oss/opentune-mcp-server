@@ -46,10 +46,10 @@ The first time OpenTune starts with a fresh data folder it shows a one-time welc
 
 **Claude Desktop (recommended): the MCPB package.** Download `opentune-mcp-<version>.mcpb` and its `.sha256` file from the [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases) page, check the checksum, open the `.mcpb` file (or drag it into Settings > Extensions) and choose Install. In the extension settings, set "OpenTune executable" to the test build's `OpenTune.exe`. Details: [docs/install.md](docs/install.md). Advanced: register the npm package by hand with `opentune-mcp doctor --client claude-desktop`.
 
-**Claude Code:** run this once in a terminal (add `--scope user` to use the server in every project):
+**Claude Code:** run this once in a terminal. `--scope user` makes the server available in every project (leave it out to register it for the current project only). On Windows the command says `claude.cmd` because PowerShell would otherwise run `claude.ps1`, which swallows the `--` and fails with `missing required argument` (see [Troubleshooting](docs/TROUBLESHOOTING.md#claude-code-mcp-add-fails-in-powershell)); on macOS and Linux write `claude`.
 
 ```text
-claude mcp add --env OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\user\Apps\OpenTune\OpenTune.exe opentune -- cmd /c npx -y @synchain/opentune-mcp
+claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\user\Apps\OpenTune\OpenTune.exe -- cmd /c npx -y @synchain/opentune-mcp
 ```
 
 **Cursor:** put this in `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (one project):

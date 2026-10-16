@@ -95,14 +95,25 @@ export function formatClientConfig(client: ClientName, deps: ClientConfigDeps): 
   const lines: string[] = [];
 
   if (client === 'claude-code') {
-    const envFlags = Object.entries(entry.env).map(([k, v]) => `--env ${k}=${quote(v)}`);
+    // The name comes first: --env/-e take any number of values, so a name after them would be read as one.
+    // On Windows, claude.cmd is named explicitly: in PowerShell, claude resolves to the npm-generated
+    // claude.ps1, and PowerShell drops the lone -- before the program sees it.
+    const envFlags = Object.entries(entry.env).map(([k, v]) => `-e ${k}=${quote(v)}`);
+    const program = deps.platform === 'win32' ? 'claude.cmd' : 'claude';
     lines.push(
       'Claude Code: run this once in a terminal.',
       '',
-      `  claude mcp add ${envFlags.join(' ')} ${SERVER_KEY} -- ${[entry.command, ...entry.args].join(' ')}`,
+      `  ${program} mcp add ${SERVER_KEY} --scope user ${envFlags.join(' ')} -- ${[entry.command, ...entry.args].join(' ')}`,
       '',
-      'Add --scope user to use the server in every project (the default is the current project only).',
+      '--scope user makes the server available in every project; leave it out to register it for the current project only.',
     );
+    if (deps.platform === 'win32') {
+      lines.push(
+        '',
+        'The command says claude.cmd on purpose: in PowerShell, claude runs claude.ps1, which swallows the -- and',
+        'fails with "missing required argument". It works the same in cmd.',
+      );
+    }
   } else if (client === 'cursor') {
     lines.push(
       'Cursor: put this in ~/.cursor/mcp.json (all projects) or .cursor/mcp.json (one project).',

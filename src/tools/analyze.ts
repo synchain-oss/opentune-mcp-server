@@ -3,8 +3,8 @@
 
 // opentune_analyze_pitch: how far the detected pitch of a clip's notes is from their target pitch.
 // The notes come from OpenTune (content.getNotes; content.segmentNotes when the clip has no stored
-// notes yet), the detected pitch from content.getPitchCurve; the statistics are computed here
-// (src/analysis/pitch.ts). Three levels of detail: summary (small, the default), phrases and notes
+// notes yet), the detected pitch (before) and the corrected pitch (after the edits) from one
+// content.getPitchCurve read; the statistics are computed here (src/analysis/pitch.ts). Three levels of detail: summary (small, the default), phrases and notes
 // (both paged). One result stays within OUTPUT_BUDGET characters: a page that would be larger
 // gets fewer entries, never cut ones, and next_cursor continues exactly where the page ends.
 
@@ -152,7 +152,10 @@ async function readNotes(session: OtcpSession, base: Json, range: Json | null, l
   return { notes, first: first ?? {}, complete };
 }
 
-/** The detected pitch of a span, all pages up to the read limit joined into one frame array. */
+/**
+ * The detected and the corrected pitch of a span, all pages up to the read limit joined into one frame
+ * array each. `corrected` is null when the instance sent no usable corrected curve.
+ */
 async function readCurve(
   session: OtcpSession,
   contentId: string,
@@ -161,6 +164,8 @@ async function readCurve(
 ) {
   const { startContentSec, endContentSec } = span;
   const midi: (number | null)[] = [];
+  const correctedMidi: (number | null)[] = [];
+  let correctedPresent = true;
   let first: Json | null = null;
   let cursor: string | undefined;
   let complete = false;
@@ -180,6 +185,11 @@ async function readCurve(
     for (const value of Array.isArray(result.originalMidi) ? result.originalMidi : []) {
       midi.push(fin(value) ? value : null);
     }
+    if (Array.isArray(result.correctedMidi)) {
+      for (const value of result.correctedMidi) correctedMidi.push(fin(value) ? value : null);
+    } else {
+      correctedPresent = false;
+    }
     if (typeof result.nextCursor !== 'string') {
       complete = true;
       break;
@@ -192,7 +202,10 @@ async function readCurve(
     frameSec: fin(head.hopSec) && fin(head.stepFrame) ? head.hopSec * head.stepFrame : 0,
     midi,
   };
-  return { frames, first: head, complete };
+  // Both arrays describe the same frames: a corrected curve of another length cannot be paired with them.
+  const usable = correctedPresent && correctedMidi.length === midi.length;
+  const corrected: PitchFrames | null = usable ? { ...frames, midi: correctedMidi } : null;
+  return { frames, corrected, first: head, complete };
 }
 
 const noteEntry = (stat: NoteStat): Json => ({
@@ -206,6 +219,9 @@ const noteEntry = (stat: NoteStat): Json => ({
   releaseDeviationCents: stat.releaseDeviationCents,
   voicedFrameCount: stat.voicedFrameCount,
   overThreshold: stat.overThreshold,
+  correctedMedianDeviationCents: stat.correctedMedianDeviationCents,
+  correctedStabilityCents: stat.correctedStabilityCents,
+  correctedOverThreshold: stat.correctedOverThreshold,
 });
 
 const phraseEntry = (phrase: PhraseStat): Json => ({ ...phrase });
@@ -242,6 +258,21 @@ const changedDuringRead = (): Outcome => ({
     nextStep: { actor: 'agent', tool: 'opentune_analyze_pitch', message: 'Call opentune_analyze_pitch again.' },
   }),
 });
+
+const HYBRID_WARNING =
+  'hybrid mode is on: corrections smaller than 75 cents are rendered by DSP pitch shifting, so what you hear may ' +
+  'change less than the corrected data suggests';
+
+/** The hybrid-mode preference; 'unavailable' when the instance does not report it. */
+async function readHybridMode(session: OtcpSession): Promise<boolean | 'unavailable'> {
+  try {
+    const prefs = await session.call('prefs.get', {}, READ_TIMEOUT_MS);
+    const processing = isObject(prefs.processing) ? prefs.processing : {};
+    return typeof processing.hybridMode === 'boolean' ? processing.hybridMode : 'unavailable';
+  } catch {
+    return 'unavailable';
+  }
+}
 
 /** `limits` lets tests reach the read limits with small content; the tool always uses READ_LIMITS. */
 export async function analyzePitch(
@@ -323,6 +354,7 @@ export async function analyzePitch(
     }
 
     let frames: PitchFrames | null = null;
+    let correctedFrames: PitchFrames | null = null;
     if (spans.length > 0) {
       const curve = await readCurve(
         session,
@@ -338,11 +370,17 @@ export async function analyzePitch(
       if (!curve.complete) warnings.push('the pitch curve was cut at the read limit; later notes are not measured');
       seenRevisions.push(contentTokens(curve.first, contentId)?.revision);
       frames = curve.frames;
+      correctedFrames = curve.corrected;
     }
     // Notes, segments and curve must describe one state of the clip: every revision reported must agree.
     const reported = seenRevisions.filter((r) => r !== undefined);
     if (reported.some((r) => r !== reported[0])) return changedDuringRead();
-    const stats: NoteStat[] = frames !== null && f0State === 'ready' ? measureNotes(spans, frames, threshold) : [];
+    const stats: NoteStat[] =
+      frames !== null && f0State === 'ready' ? measureNotes(spans, frames, threshold, correctedFrames) : [];
+    if (stats.length > 0 && correctedFrames === null) reasons.corrected_statistics = 'corrected_curve_unavailable';
+    const hybrid = stats.length > 0 && correctedFrames !== null ? await readHybridMode(session) : null;
+    if (hybrid === 'unavailable') reasons.hybrid_mode = 'unavailable';
+    if (hybrid === true) warnings.push(HYBRID_WARNING);
 
     const ready = f0State === null || f0State === 'ready';
     if (!ready) reasons.statistics = `pitch_analysis_${String(f0State)}`;
@@ -388,6 +426,7 @@ export async function analyzePitch(
     }
 
     const flagged = stats.flatMap((s) => (s.overThreshold && s.index !== null ? [s.index] : []));
+    const flaggedAfter = stats.flatMap((s) => (s.correctedOverThreshold === true && s.index !== null ? [s.index] : []));
     const head = (page: string): Body => ({
       summary: page,
       contentId,
@@ -395,6 +434,7 @@ export async function analyzePitch(
       clip_revision: revision,
       tuningHz,
       f0State,
+      hybrid_mode: typeof hybrid === 'boolean' ? hybrid : null,
       note_source: source,
       threshold_cents: threshold,
       range,
@@ -427,17 +467,23 @@ export async function analyzePitch(
       };
     }
 
-    const unit = 'cents; positive = detected pitch above the target';
+    const unit =
+      'cents; positive = above the target; the plain fields are before (detected pitch), the corrected* fields after (corrected pitch)';
     if (detail === 'summary') {
       const worst = overall.worstNotes.map(noteEntry);
       const shownFlagged = flagged.slice(0, MAX_FLAGGED_LISTED);
+      const shownFlaggedAfter = flaggedAfter.slice(0, MAX_FLAGGED_LISTED);
       return {
         ok: true,
         body: {
           ...head(
             `Analyzed ${String(overall.measuredNoteCount)} of ${String(overall.noteCount)} notes in ${String(phrases.length)} phrases: ` +
               `mean absolute deviation ${nullable(overall.meanAbsDeviationCents, 'cents')}, ` +
-              `${String(overall.overThresholdCount)} beyond ${String(threshold)} cents (${unit}).` +
+              `${String(overall.overThresholdCount)} beyond ${String(threshold)} cents` +
+              (overall.correctedOverThresholdCount === null
+                ? ''
+                : ` before, ${String(overall.correctedOverThresholdCount)} after the corrections`) +
+              ` (${unit}).` +
               segmentsNote(overall.overThresholdCount > 0),
           ),
           overall,
@@ -446,6 +492,8 @@ export async function analyzePitch(
           worst_notes: worst,
           flagged_note_indexes: shownFlagged,
           ...(flagged.length > shownFlagged.length ? { flagged_note_indexes_truncated: true } : {}),
+          corrected_flagged_note_indexes: correctedFrames === null ? null : shownFlaggedAfter,
+          ...(flaggedAfter.length > shownFlaggedAfter.length ? { corrected_flagged_note_indexes_truncated: true } : {}),
           ...tail,
         },
       };
@@ -491,12 +539,12 @@ export const analyzePitchTool = defineTool({
   name: 'opentune_analyze_pitch',
   title: 'Analyze OpenTune pitch',
   description:
-    'OpenTune (audio vocal pitch editor): measures how far the detected pitch of a clip is from its notes, in ' +
-    'cents (detected minus target, positive = sharp). Per note: median deviation, stability (standard deviation), ' +
-    'onset and release deviation; notes beyond threshold_cents (default 25) are flagged; notes are grouped into ' +
-    'phrases at silences over 0.4 s. detail summary (default, small) gives totals, worst notes, flagged note ' +
-    "indexes (each note's index as opentune_get_notes reports it) and clip_revision; phrases and notes are paged. " +
-    'from and to are seconds of the source audio. Read-only.',
+    'OpenTune (audio vocal pitch editor): measures the pitch of a clip against its notes, in cents (positive = ' +
+    'sharp). Plain fields are before the corrections (detected minus target); corrected* fields are after them ' +
+    '(corrected minus target). Per note: median deviation, stability, onset, release; notes beyond ' +
+    'threshold_cents (default 25) are flagged, before and after. Phrases split at silences over 0.4 s. detail ' +
+    'summary (default): totals, worst notes, flagged note indexes (as in opentune_get_notes), ' +
+    'clip_revision; phrases and notes are paged. from and to: seconds of the source audio. Read-only.',
   inputSchema: z.strictObject({
     clip: z
       .string()
@@ -539,6 +587,6 @@ export const analyzePitchTool = defineTool({
   }),
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   capabilities: ['read.v1'],
-  otcpMethods: ['content.getNotes', 'content.getPitchCurve', 'content.segmentNotes', 'project.get'],
+  otcpMethods: ['content.getNotes', 'content.getPitchCurve', 'content.segmentNotes', 'prefs.get', 'project.get'],
   run: (args, ctx) => analyzePitch(ctx, args),
 });

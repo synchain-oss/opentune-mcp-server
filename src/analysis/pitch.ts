@@ -8,7 +8,9 @@
 //
 // Pitch values are MIDI numbers at the content's tuningHz (OTCP reports them that way), so a
 // difference of two of them in cents does not depend on tuningHz. Every deviation is
-// detected minus target: positive means the singer is sharp of the target.
+// detected minus target: positive means the singer is sharp of the target. The same measures are
+// taken a second time on the corrected pitch (what OpenTune renders after the edits), so a caller can
+// compare "before" (detected - target) with "after" (corrected - target).
 
 /** Cents in one semitone. */
 const CENTS_PER_SEMITONE = 100;
@@ -55,6 +57,10 @@ export interface NoteStat {
   readonly onsetDeviationCents: number | null;
   readonly releaseDeviationCents: number | null;
   readonly overThreshold: boolean;
+  /** The "after" measures, over the corrected pitch; all null when no corrected pitch was available. */
+  readonly correctedMedianDeviationCents: number | null;
+  readonly correctedStabilityCents: number | null;
+  readonly correctedOverThreshold: boolean | null;
 }
 
 export interface PhraseStat {
@@ -69,6 +75,8 @@ export interface PhraseStat {
   readonly overThresholdCount: number;
   /** The note of the phrase with the largest absolute deviation. */
   readonly worstNoteIndex: number | null;
+  readonly correctedMeanAbsDeviationCents: number | null;
+  readonly correctedOverThresholdCount: number | null;
 }
 
 export interface OverallStat {
@@ -80,6 +88,12 @@ export interface OverallStat {
   readonly meanStabilityCents: number | null;
   readonly overThresholdCount: number;
   readonly overThresholdRatio: number | null;
+  /** The same over the corrected pitch; null when no corrected pitch was available. */
+  readonly correctedMeanAbsDeviationCents: number | null;
+  readonly correctedMeanSignedDeviationCents: number | null;
+  readonly correctedMeanStabilityCents: number | null;
+  readonly correctedOverThresholdCount: number | null;
+  readonly correctedOverThresholdRatio: number | null;
   readonly worstNotes: readonly NoteStat[];
 }
 
@@ -121,8 +135,16 @@ function noteFrames(note: NoteSpan, frames: PitchFrames): { timeSec: number; cen
   return out;
 }
 
-/** Measures every note against the curve. The result keeps the order of `notes`. */
-export function measureNotes(notes: readonly NoteSpan[], frames: PitchFrames, thresholdCents: number): NoteStat[] {
+/**
+ * Measures every note against the detected curve and, when given, against the corrected curve. The
+ * result keeps the order of `notes`. The corrected measures are null without a corrected curve.
+ */
+export function measureNotes(
+  notes: readonly NoteSpan[],
+  frames: PitchFrames,
+  thresholdCents: number,
+  corrected: PitchFrames | null = null,
+): NoteStat[] {
   return notes.map((note) => {
     const points = noteFrames(note, frames);
     const all = points.map((p) => p.cents);
@@ -133,6 +155,9 @@ export function measureNotes(notes: readonly NoteSpan[], frames: PitchFrames, th
     const stability = standardDeviation(all);
     const onsetCents = median(onset);
     const releaseCents = median(release);
+    const after = corrected === null ? null : noteFrames(note, corrected).map((p) => p.cents);
+    const afterCentre = after === null ? null : median(after);
+    const afterStability = after === null ? null : standardDeviation(after);
     return {
       index: note.index,
       startContentSec: note.startContentSec,
@@ -144,11 +169,33 @@ export function measureNotes(notes: readonly NoteSpan[], frames: PitchFrames, th
       onsetDeviationCents: onsetCents === null ? null : round(onsetCents),
       releaseDeviationCents: releaseCents === null ? null : round(releaseCents),
       overThreshold: centre !== null && Math.abs(centre) > thresholdCents,
+      correctedMedianDeviationCents: afterCentre === null ? null : round(afterCentre),
+      correctedStabilityCents: afterStability === null ? null : round(afterStability),
+      correctedOverThreshold:
+        corrected === null ? null : afterCentre !== null && Math.abs(afterCentre) > thresholdCents,
     };
   });
 }
 
 const absDeviation = (stat: NoteStat): number => Math.abs(stat.medianDeviationCents ?? 0);
+const absCorrected = (stat: NoteStat): number => Math.abs(stat.correctedMedianDeviationCents ?? 0);
+
+/** The corrected measures of a group of notes; all null when the notes carry none. */
+function correctedAggregate(stats: readonly NoteStat[]) {
+  const available = stats.length > 0 && stats.every((s) => s.correctedOverThreshold !== null);
+  const measured = stats.filter((s) => s.correctedMedianDeviationCents !== null);
+  const abs = available ? mean(measured.map(absCorrected)) : null;
+  const signed = available ? mean(measured.map((s) => s.correctedMedianDeviationCents ?? 0)) : null;
+  const steady = available ? mean(measured.map((s) => s.correctedStabilityCents ?? 0)) : null;
+  const over = available ? measured.filter((s) => s.correctedOverThreshold === true).length : null;
+  return {
+    meanAbs: abs === null ? null : round(abs),
+    meanSigned: signed === null ? null : round(signed),
+    meanStability: steady === null ? null : round(steady),
+    over,
+    overRatio: over === null || measured.length === 0 ? null : round(over / measured.length, 4),
+  };
+}
 
 /** Groups notes into phrases: a gap of more than PHRASE_GAP_SEC between two notes starts a new one. */
 export function groupPhrases(stats: readonly NoteStat[]): PhraseStat[] {
@@ -163,6 +210,7 @@ export function groupPhrases(stats: readonly NoteStat[]): PhraseStat[] {
   return groups.map((group, phrase) => {
     const measured = group.filter((s) => s.medianDeviationCents !== null);
     const mad = mean(measured.map(absDeviation));
+    const after = correctedAggregate(group);
     const worst = measured.reduce<NoteStat | null>(
       (best, s) => (best === null || absDeviation(s) > absDeviation(best) ? s : best),
       null,
@@ -177,6 +225,8 @@ export function groupPhrases(stats: readonly NoteStat[]): PhraseStat[] {
       meanAbsDeviationCents: mad === null ? null : round(mad),
       overThresholdCount: group.filter((s) => s.overThreshold).length,
       worstNoteIndex: worst?.index ?? null,
+      correctedMeanAbsDeviationCents: after.meanAbs,
+      correctedOverThresholdCount: after.over,
     };
   });
 }
@@ -187,6 +237,7 @@ export function summarize(stats: readonly NoteStat[]): OverallStat {
   const signed = mean(measured.map((s) => s.medianDeviationCents ?? 0));
   const steady = mean(measured.map((s) => s.stabilityCents ?? 0));
   const over = measured.filter((s) => s.overThreshold).length;
+  const after = correctedAggregate(stats);
   return {
     noteCount: stats.length,
     measuredNoteCount: measured.length,
@@ -195,6 +246,11 @@ export function summarize(stats: readonly NoteStat[]): OverallStat {
     meanStabilityCents: steady === null ? null : round(steady),
     overThresholdCount: over,
     overThresholdRatio: measured.length === 0 ? null : round(over / measured.length, 4),
+    correctedMeanAbsDeviationCents: after.meanAbs,
+    correctedMeanSignedDeviationCents: after.meanSigned,
+    correctedMeanStabilityCents: after.meanStability,
+    correctedOverThresholdCount: after.over,
+    correctedOverThresholdRatio: after.overRatio,
     worstNotes: [...measured].sort((a, b) => absDeviation(b) - absDeviation(a)).slice(0, WORST_NOTE_COUNT),
   };
 }

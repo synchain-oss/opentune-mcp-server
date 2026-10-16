@@ -1,8 +1,8 @@
 Claude Code: run this once in a terminal.
 
-  claude mcp add --env OPENTUNE_MCP_OPENTUNE_PATH="<absolute path of the OpenTune executable>" opentune -- npx -y @synchain/opentune-mcp
+  claude mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH="<absolute path of the OpenTune executable>" -- npx -y @synchain/opentune-mcp
 
-Add --scope user to use the server in every project (the default is the current project only).
+--scope user makes the server available in every project; leave it out to register it for the current project only.
 
 Replace <absolute path of the OpenTune executable> with the real path (OPENTUNE_MCP_OPENTUNE_PATH is not set in this shell), or
 leave the setting out to use only an OpenTune you have already started.

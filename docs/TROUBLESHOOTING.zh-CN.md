@@ -206,6 +206,13 @@ OpenTune 宣告运行中实例的目录必须可读。在带控制接口的 Open
 
 测试版在 `opentune-control.json`(`d3d12`)里列出了 Direct3D 12 运行库,但没有自带它。没有这个文件时 OpenTune 在 CPU 上做推理,所以这是警告,复制是可选的。在一台有 NVIDIA 显卡的机器上实测:不复制时音高分析(F0)回落到 CPU。请在 PowerShell 里运行该检查打印出的命令,它们把 `D3D12Core.dll` 从官方安装复制到可执行文件旁的 `D3D12` 文件夹,并打印其 SHA-256 哈希,用来与 `opentune-control.json` 对比;请原样使用打印出的命令,因为它们会对含特殊字符的路径做转义。如果复制出的文件哈希不同(`fail`),请删除 `D3D12` 文件夹(回到 CPU),再从官方安装重新复制。`D3D12SDKLayers.dll` 是调试层:不要复制它,如果它在那里就删掉。「Cannot tell」表示 `opentune-control.json` 的 `d3d12` 条目没有列出文件,或哈希不是 64 个十六进制字符,所以什么也检查不了:请重新解压测试版。
 
+## Claude Code mcp add fails in PowerShell
+
+`claude mcp add` 报 `missing required argument 'commandOrUrl'`(或 `'name'`)。有两个原因:
+
+- 在 PowerShell 里,`claude` 会解析为 npm 生成的 `claude.ps1`,PowerShell 会在程序看到之前吞掉单独的 `--`,于是要注册的命令就丢了。改用 `claude.cmd mcp add …`,`opentune-mcp doctor --client claude-code` 在 Windows 上打印的就是这种写法。在 cmd 以及 macOS、Linux 上,`claude` 可以直接用。
+- `-e`(`--env`)可以接任意多个值,写在它后面的名字会被当成又一个变量。名字(`opentune`)必须放在前面,打印出的命令就是这样写的。
+
 ## First launch dialog
 
 OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次引导(onboarding)对话框。需要有人在 OpenTune 窗口里回答一次。它(或任何其他模态对话框)开着时,所有写操作都会失败,返回 [BUSY](#error-busy),原因 `modal_open`。`opentune_get_settings` 会报告首次引导是否已经显示过。请让用户回答该对话框,然后重试。服务从不自己回答对话框。
