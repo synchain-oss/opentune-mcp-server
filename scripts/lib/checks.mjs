@@ -961,15 +961,30 @@ export function findStdoutConsoleCalls(bundleText) {
 }
 
 /**
- * Bundle shape: dist/ holds exactly the bundle, the bundle starts with the shebang, every
- * import left in it is a `node:` built-in, and no `require()` was left for esbuild's runtime
- * shim (which throws "Dynamic require of ... is not supported" inside an ES module).
+ * What the packaging scripts may leave in dist/ next to the bundle: the assembled Claude Code
+ * plugin and its zip (npm run plugin:build) and the skills zip (npm run skills:zip). None of it is
+ * published with the npm package, whose contents PACKED_FILES fixes. Anything else in dist/, such
+ * as a chunk or a source map that esbuild was not meant to emit, still fails the bundle shape.
+ */
+export const DIST_PACKAGING_OUTPUTS = Object.freeze([
+  /^plugin\//,
+  /^opentune-plugin\.zip(?:\.sha256)?$/,
+  /^opentune-skills-\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\.zip(?:\.sha256)?$/,
+]);
+
+/**
+ * Bundle shape: dist/ holds exactly the bundle (besides DIST_PACKAGING_OUTPUTS), the bundle starts
+ * with the shebang, every import left in it is a `node:` built-in, and no `require()` was left for
+ * esbuild's runtime shim (which throws "Dynamic require of ... is not supported" inside an ES
+ * module).
  * @param {{ distFiles: string[], bundleText: string, imports: string[] }} input
  * @returns {string[]}
  */
 export function checkBundleShape({ distFiles, bundleText, imports }) {
   const problems = [];
-  const normalized = distFiles.map((f) => f.replace(/\\/g, '/'));
+  const normalized = distFiles
+    .map((f) => f.replace(/\\/g, '/'))
+    .filter((f) => !DIST_PACKAGING_OUTPUTS.some((re) => re.test(f)));
   if (normalized.length !== 1 || normalized[0] !== 'opentune-mcp.mjs') {
     problems.push(`dist/ must contain only opentune-mcp.mjs (found ${JSON.stringify(normalized)})`);
   }

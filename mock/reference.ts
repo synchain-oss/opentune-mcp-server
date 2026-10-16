@@ -101,17 +101,9 @@ export function alignmentDriver(commit: () => Record<string, unknown>): JobDrive
     try {
       return { done: { state: 'succeeded', result: commit() } };
     } catch (error) {
-      // A check that the work repeats failed. The jobErrors of these methods are CANCELLED and INTERNAL only,
-      // so the job ends with INTERNAL and the detail names the cause.
-      if (error instanceof MockError) {
-        const cause = error.init.reason === undefined ? error.init.kind : `${error.init.kind}/${error.init.reason}`;
-        return {
-          done: {
-            state: 'failed',
-            error: { kind: 'INTERNAL', detail: `the reference job could not finish (${cause}): ${error.init.detail}` },
-          },
-        };
-      }
+      // A check that the work repeats failed: the job ends with that check's error (NOT_FOUND,
+      // INVALID_ARGUMENT, NOT_READY or, for content.autoTune, BUSY; x-otcp.jobErrors of both methods).
+      if (error instanceof MockError) return { done: { state: 'failed', error: error.init } };
       throw error;
     }
   };

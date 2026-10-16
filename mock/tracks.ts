@@ -9,7 +9,7 @@
 import { checkNotBusy, envelope, type Handler } from './context.js';
 import { refuse } from './errors.js';
 import { TRACK_SLOTS, type HistoryEntry, type TrackRec, type World } from './model.js';
-import { clipLabel, copyPlacement, gainDb } from './placements.js';
+import { clipLabel, copyPlacement, gainDb, leavingContents } from './placements.js';
 import { EMPTY_DIFF } from './writes.js';
 import { GAIN_LINEAR_MAX } from './arrangement.js';
 
@@ -343,13 +343,16 @@ const remove: Handler = (context) => {
   }
   const doomed = all.filter((p) => p.trackId === trackId);
   // The settings of the tracks behind the deleted one move down a slot; trackIdMap and the moved clips'
-  // `changes` describe that shift, so it is not listed again here. The contract vectors list only the
-  // clips in `removed`, also when a content leaves the project with them.
-  const removed = doomed.map((p) => ({
-    entity: 'placement',
-    ref: { placementId: p.id },
-    label: clipLabel(p.serial, p.trackId),
-  }));
+  // `changes` describe that shift, so it is not listed again here. `removed` lists the clips and, after
+  // them, the contents that leave the project with them (section 14.4 rule 6).
+  const removed = [
+    ...doomed.map((p) => ({
+      entity: 'placement',
+      ref: { placementId: p.id },
+      label: clipLabel(p.serial, p.trackId),
+    })),
+    ...leavingContents(world, doomed),
+  ];
   const dangling = all
     .filter((p) => p.trackId !== trackId && p.reference !== null && doomed.includes(p.reference))
     .map((p) => ({ placementId: p.id, referencePlacementId: p.reference?.id ?? '' }));

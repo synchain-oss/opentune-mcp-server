@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "opentune": {
+      "command": "node",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/servers/opentune-mcp.mjs"],
+      "env": {
+        "OPENTUNE_MCP_OPENTUNE_PATH": "${user_config.opentune_path}"
+      }
+    }
+  }
+}

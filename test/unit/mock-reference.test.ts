@@ -131,27 +131,30 @@ describe('content.analyzeReference', () => {
         'unknown_handle',
       ],
     ];
-    it.each(changes)('ends the job with INTERNAL and stores nothing when %s', async (_name, change, reason) => {
-      const clock = new ManualClock();
-      const session = await sessions.open({ clock });
-      const ids = session.mock.given({
-        files: [{ bind: 'other', kind: 'project', durationSec: 3 }],
-        clips: [
-          clip({ bind: 'ref', startTimelineSec: 0 }),
-          clip({ bind: 'clip', startTimelineSec: 0, referenceClip: 'ref' }),
-        ],
-      });
-      const started = await session.ok('content.analyzeReference', { placementId: ids['clip.placementId'] });
-      const jobId = String(field(started, 'job', 'jobId'));
-      await change(session, ids);
-      clock.advance(5000);
-      const { job } = (await session.ok('job.get', { jobId })) as {
-        job: { state: string; error: { data: Record<string, unknown> } | null };
-      };
-      expect(job.state).toBe('failed');
-      expect(job.error?.data).toMatchObject({ kind: 'INTERNAL' });
-      expect(String(job.error?.data.detail)).toContain(reason);
-    });
+    it.each(changes)(
+      'ends the job with the error of the check and stores nothing when %s',
+      async (_name, change, reason) => {
+        const clock = new ManualClock();
+        const session = await sessions.open({ clock });
+        const ids = session.mock.given({
+          files: [{ bind: 'other', kind: 'project', durationSec: 3 }],
+          clips: [
+            clip({ bind: 'ref', startTimelineSec: 0 }),
+            clip({ bind: 'clip', startTimelineSec: 0, referenceClip: 'ref' }),
+          ],
+        });
+        const started = await session.ok('content.analyzeReference', { placementId: ids['clip.placementId'] });
+        const jobId = String(field(started, 'job', 'jobId'));
+        await change(session, ids);
+        clock.advance(5000);
+        const { job } = (await session.ok('job.get', { jobId })) as {
+          job: { state: string; error: { data: Record<string, unknown> } | null };
+        };
+        expect(job.state).toBe('failed');
+        const kind = reason === 'reference_not_bound' ? 'INVALID_ARGUMENT' : 'NOT_FOUND';
+        expect(job.error?.data).toMatchObject({ kind, reason, executed: false });
+      },
+    );
   });
 
   it('needs a binding and finished analyses of both clips', async () => {
@@ -284,8 +287,34 @@ describe('content.autoTune in mode reference', () => {
     });
     const failed = await result(doomed);
     expect(failed.state).toBe('failed');
-    // The jobErrors of the method are CANCELLED and INTERNAL: the cause is in the detail.
-    expect(failed.error?.data).toMatchObject({ kind: 'INTERNAL' });
-    expect(String(failed.error?.data.detail)).toContain('reference_not_bound');
+    // The job ends with the error of the check it repeats (x-otcp.jobErrors).
+    expect(failed.error?.data).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'reference_not_bound' });
+  });
+
+  it('fails the job with BUSY(modal_open) when a modal dialog opens after the call was accepted', async () => {
+    const clock = new ManualClock();
+    const { session, ids } = await setup(clock);
+    const { ok } = session;
+    const revision = (
+      (await ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
+        contents: { revision: string }[];
+      }
+    ).contents[0]?.revision;
+    const started = await ok('content.autoTune', {
+      contentId: ids['clip.contentId'],
+      mode: 'reference',
+      placementId: ids['clip.placementId'],
+      expectedRevision: revision,
+    });
+    const before = targets(session, 1);
+    session.mock.setBusy({ modalOpen: true });
+    clock.advance(1000);
+    const job = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })).job as {
+      state: string;
+      error: { data: Record<string, unknown> } | null;
+    };
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ kind: 'BUSY', reason: 'modal_open' });
+    expect(targets(session, 1)).toEqual(before);
   });
 });

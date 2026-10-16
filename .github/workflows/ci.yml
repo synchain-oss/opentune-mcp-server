@@ -8,9 +8,12 @@ name: CI
 # 两档：
 # - 完整档：PR → dev / prod；push → dev、feature/**；手动触发（workflow_dispatch，在所选分支上）。
 #   checks（ubuntu × Node 22/24 + windows × Node 24；覆盖率门槛在 ubuntu / Node 24 上强制）、
-#   protocol（ubuntu + windows）、package、audit、compliance、docs。
+#   protocol（ubuntu + windows）、package、plugin（Claude Code 插件组装与 claude plugin validate、
+#   skills zip、各 skill 自带的 Python 测试）、audit、compliance、docs。release.yml 经 workflow_call
+#   调用本 workflow，跑的也是完整档。
 # - 轻量档：PR → feature/**（子 PR）。单条 ubuntu job：lint、format、typecheck、单测 + 覆盖率、隐私、
-#   gitleaks、禁止新增音频文件、提交署名 / sign-off / 身份、PR 标题与正文署名、pull_request_target 零命中。
+#   gitleaks、禁止新增音频文件、提交署名 / sign-off / 身份、PR 标题与正文署名、pull_request_target 零命中、
+#   skills zip 的校验（只读文件，几秒钟）。
 #   gitleaks 在轻量档也跑：子 PR 一推上来密钥就已在远端，不能等到合入 dev 才发现。
 #   完整套件在本地 gates 与 PR → dev 上跑。
 # 两档都产生同名聚合检查 mcp-gate（dev / prod 唯一必需的 CI 检查）：按档核对每个 job，该跑的必须
@@ -29,6 +32,8 @@ on:
   # 提交身份按 PR 的严格规则核对（不放宽外部作者与 Dependabot），否则同一 SHA 上放宽档的
   # mcp-gate 会盖掉 PR 上严格档的结果。
   workflow_dispatch:
+  # release.yml 在出包之前调用：事件沿用调用方的（push tag 或 workflow_dispatch），所以是完整档。
+  workflow_call:
 
 permissions:
   contents: read
@@ -55,7 +60,7 @@ defaults:
 # `ci-checks.mjs scope` 给出真实的 base。
 jobs:
   light:
-    name: light (lint, typecheck, unit tests, privacy, audio, gitleaks, attribution)
+    name: light (lint, typecheck, unit tests, privacy, audio, gitleaks, attribution, skills zip)
     if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'feature/')
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -81,7 +86,7 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: node scripts/ci-checks.mjs scope >> "$GITHUB_OUTPUT"
-      - name: Gates (lint, format, typecheck, unit tests + coverage, gitleaks, privacy, audio, attribution, pull_request_target)
+      - name: Gates (lint, format, typecheck, unit tests + coverage, gitleaks, privacy, audio, attribution, pull_request_target, skills zip)
         env:
           BASE: ${{ steps.scope.outputs.base }}
           ALLOW_EXTERNAL_AUTHORS: ${{ steps.scope.outputs.allow_external_authors }}
@@ -91,7 +96,7 @@ jobs:
           if [ "$ALLOW_EXTERNAL_AUTHORS" = true ]; then args+=(--allow-external-authors); fi
           if [ "$ALLOW_DEPENDABOT" = true ]; then args+=(--allow-dependabot); fi
           node scripts/gates.mjs "${args[@]}" \
-            --only "lint (eslint),format:check,typecheck,unit tests,gitleaks,privacy,no new audio files,attribution,no pull_request_target" \
+            --only "lint (eslint),format:check,typecheck,unit tests,gitleaks,privacy,no new audio files,attribution,no pull_request_target,skills zip" \
             --no-skip \
             | tee -a "$GITHUB_STEP_SUMMARY"
       # PR 标题与正文是不可信文本：只经 env: 传入，由署名检查的正本从 stdin 读。
@@ -228,6 +233,57 @@ jobs:
           SMOKE_BUNDLE: ${{ steps.install.outputs.bundle }}
         run: npm run test:stdio
 
+  plugin:
+    name: plugin (Claude Code plugin, skills zip, skill tests)
+    if: github.event_name != 'pull_request' || !startsWith(github.base_ref, 'feature/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - run: npm ci --ignore-scripts
+      # claude plugin validate 用 scripts/claude-cli 锁定的 Claude Code 版本：gates 按锁文件把它装进
+      # .cache/tools/claude-code（npm ci --ignore-scripts，只在 runner 上），配置目录指向 .cache 里的空目录。
+      # --no-skip：CLI 装不上、或固定清单里的 skill 不在仓库时，这里必须红，不能当作跳过。
+      - name: Gates (build, Claude Code plugin, skills zip)
+        run: |
+          node scripts/gates.mjs --base HEAD --no-skip --only "build (esbuild),Claude Code plugin,skills zip" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+      # 每个带 requirements-test.txt 的 skill（文件里须列出 pytest）：必须同时有 requirements-test.lock，
+      # 在各自的 venv 里只按锁文件装（--require-hashes --no-deps --only-binary=:all:，与 reuse 的安装一致），
+      # 再在该 skill 的源码目录里跑 python -m pytest。一个都没有时如实写进汇总，不算失败。
+      - name: Skill tests (Python)
+        run: |
+          shopt -s nullglob
+          reqs=(plugins/opentune/skills/*/requirements-test.txt)
+          if [ "${#reqs[@]}" -eq 0 ]; then
+            echo "skills-python: found no skill with a requirements-test.txt; nothing to run" \
+              | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          for req in "${reqs[@]}"; do
+            dir=$(dirname "$req")
+            name=$(basename "$dir")
+            lock="$dir/requirements-test.lock"
+            if [ ! -f "$lock" ]; then
+              echo "::error::$name has a requirements-test.txt but no requirements-test.lock; generate it with: (cd $dir && pip-compile --generate-hashes --allow-unsafe --output-file requirements-test.lock requirements-test.txt), see docs/RELEASE.md"
+              exit 1
+            fi
+            venv="$RUNNER_TEMP/skill-venv-$name"
+            python -m venv "$venv"
+            "$venv/bin/python" -m pip install --disable-pip-version-check --no-input --require-hashes --no-deps --only-binary=:all: -r "$lock"
+            (cd "$dir" && "$venv/bin/python" -m pytest)
+            echo "skills-python: $name PASS" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
   audit:
     name: audit
     if: github.event_name != 'pull_request' || !startsWith(github.base_ref, 'feature/')
@@ -332,7 +388,7 @@ jobs:
   # 红了也能合并；always() 让依赖失败、取消时它照样运行并给出失败。
   mcp-gate:
     name: mcp-gate
-    needs: [light, checks, protocol, package, audit, compliance, docs]
+    needs: [light, checks, protocol, package, plugin, audit, compliance, docs]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -344,9 +400,9 @@ jobs:
         run: |
           if [ "$TIER" = light ]; then
             required=(light)
-            not_run=(checks protocol package audit compliance docs)
+            not_run=(checks protocol package plugin audit compliance docs)
           else
-            required=(checks protocol package audit compliance docs)
+            required=(checks protocol package plugin audit compliance docs)
             not_run=(light)
           fi
           result() { jq -r --arg job "$1" '.[$job].result // "missing"' <<< "$NEEDS"; }

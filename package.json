@@ -58,6 +58,9 @@
     "catalog:update": "node scripts/update-catalog.mjs",
     "mcpb:pack": "node scripts/mcpb.mjs pack",
     "mcpb:validate": "node scripts/mcpb.mjs validate",
+    "plugin:build": "node scripts/plugin.mjs build",
+    "plugin:validate": "node scripts/plugin.mjs validate",
+    "skills:zip": "node scripts/skills-zip.mjs",
     "gates": "node scripts/gates.mjs"
   },
   "devDependencies": {
