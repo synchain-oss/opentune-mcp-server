@@ -1,0 +1,5 @@
+# SPDX-License-Identifier: MIT
+# Test-only dependencies: no torch, no model weights. Ranges, so that CI can use any current Python.
+pytest>=8
+numpy>=1.26
+pypinyin>=0.50

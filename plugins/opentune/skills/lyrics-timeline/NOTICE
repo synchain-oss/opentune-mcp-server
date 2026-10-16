@@ -1,0 +1,47 @@
+Lyrics timeline skill: third-party models and software
+
+This skill's own code is MIT licensed (see the repository LICENSE). It ships no model weights and
+no third-party code. When the user agrees, scripts/setup.py downloads the models below and installs
+the Python packages below into a private virtual environment under the plugin data folder. They are
+not redistributed with the plugin; each stays under its own licence.
+
+Models (downloaded on request, Apache-2.0 code and weights)
+  Qwen3-ASR-0.6B and Qwen3-ASR-1.7B   Apache-2.0   https://huggingface.co/Qwen
+  Qwen3-ForcedAligner-0.6B            Apache-2.0   https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B
+  Each repo is pinned to one fixed revision (a Hugging Face commit and a ModelScope revision), and
+  every file is checked against the size and sha256 in scripts/model_manifest.json before it is
+  kept. A file that is not listed there is not downloaded. The Python packages below are pinned to
+  exact versions but pip does not check hashes for them (hash-pinned lock files are future work).
+
+Python packages installed by scripts/setup.py (pinned in requirements.in)
+  qwen-asr 0.0.6        Apache-2.0   (installed with --no-deps, see below)
+  torch                 BSD-3-Clause
+  transformers          Apache-2.0   (pinned by qwen-asr)
+  accelerate            Apache-2.0   (pinned by qwen-asr)
+  librosa               ISC          (required by qwen-asr)
+  nagisa                MIT          (imported by qwen-asr at module level)
+  numpy                 BSD-3-Clause
+  scipy                 BSD-3-Clause
+  soundfile             BSD-3-Clause (its wheels bundle libsndfile, LGPL-2.1)
+  pypinyin              MIT
+  plus the packages these pull in (numba, scikit-learn, huggingface_hub and so on), each under
+  its own licence.
+
+Packages that qwen-asr declares but this skill does not install
+  qwen-asr 0.0.6 lists soynlp (GPL-3.0), gradio, flask, pytz, sox and qwen-omni-utils as
+  requirements. The wheel source was checked: soynlp is imported only inside the Korean branch of
+  the aligner's encode_timestamp (qwen_asr/inference/qwen3_forced_aligner.py, line 243), gradio only
+  by the demo command (qwen_asr/cli/demo.py, line 27), flask only by the streaming demo command
+  (qwen_asr/cli/demo_streaming.py, line 34), and pytz, sox and qwen-omni-utils are not imported at
+  all. This skill uses Chinese and English only. So scripts/setup.py installs qwen-asr with
+  --no-deps and the explicit list above, which leaves out soynlp, gradio, flask, pytz, sox and
+  qwen-omni-utils. nagisa is kept: qwen-asr imports it at module level (line 21 of the same
+  aligner file). Consequence: asking the aligner for Korean would fail with a missing soynlp, and
+  the qwen-asr demo commands do not work; neither is used here.
+
+Excluded on purpose (licence)
+  MMS models and ctc-forced-aligner defaults (CC-BY-NC-4.0), SOFA / HubertFA / SingAlign weights
+  (non-commercial), whisper-timestamped (AGPL), SongPrep (academic use only), SongFormer and its
+  MuQ dependency (non-commercial), TEN VAD (extra terms; this skill uses an energy and pitch gate).
+
+Test-only dependencies (requirements-test.txt): pytest (MIT), numpy, pypinyin.

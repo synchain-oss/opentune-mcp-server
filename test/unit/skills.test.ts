@@ -69,7 +69,10 @@ describe.each(SKILL_DIRS)('skill %s', (name) => {
     const description = readSkill(name).fields.get('description') ?? '';
     expect(description.length).toBeGreaterThan(0);
     expect(description.length).toBeLessThanOrEqual(200);
-    expect(/claude|anthropic/i.test(readSkill(name).text)).toBe(false);
+    expect(/claude|anthropic/i.test(description)).toBe(false);
+    // The whole text of a pure-instruction skill (which is also uploaded to Claude Desktop) is vendor-neutral. A
+    // skill that runs scripts in the plugin has to name the plugin's own variables (CLAUDE_SKILL_DIR and so on).
+    if (PURE_SKILLS.includes(name)) expect(/claude|anthropic/i.test(readSkill(name).text)).toBe(false);
   });
 
   it('is at most 250 lines', () => {

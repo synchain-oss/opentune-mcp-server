@@ -78,11 +78,16 @@ Claude Code settings.
 ## Tests of the skills (Python)
 
 A skill that ships Python may carry its own tests: `tests/`, `conftest.py`, `pytest.ini`, `requirements-test.txt` and
-`requirements-test.lock`. None of these go into the plugin zip. CI (job `plugin`, step "Skill tests (Python)") installs
-the dependencies from the lock file only, with
-`pip install --require-hashes --no-deps --only-binary=:all: -r requirements-test.lock`, and then runs `python -m pytest`
-in the skill's source directory. A skill with a `requirements-test.txt` and no `requirements-test.lock` fails the step.
-Generate the lock from the skill's directory, with the Python version CI uses (3.12):
+`requirements-test.lock`. None of these go into the plugin zip. CI (job `plugin`, step "Skill tests (Python, via
+gates)") installs the dependencies of every such skill into one venv from the lock files only, with
+`pip install --require-hashes --no-deps --only-binary=:all: -r requirements-test.lock`, puts the venv first on `PATH`
+and runs `node scripts/gates.mjs --base HEAD --no-skip --only "skill tests"`. The pytest command (`python -I -m pytest`
+in each skill's directory) therefore lives only in `scripts/gates.mjs`; locally, `npm run gates` runs it the same way
+and reports each skill on its own (a skill whose dependencies are missing is a SKIP for that skill only, and with
+`--no-skip` that is a failure). A skill with a `requirements-test.txt` and no `requirements-test.lock` fails the CI
+step. Generate the lock from the skill's directory; the hashes cover every file of each pinned version, so a lock made
+with the oldest Python the skill supports (3.10, which also pulls in `exceptiongroup` and `tomli`) installs on CI's
+3.12 and on Windows:
 
 ```bash
 pip install pip-tools
