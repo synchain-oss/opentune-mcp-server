@@ -58,6 +58,13 @@ export interface SmokeReport {
   readonly instance: { readonly protocol: string; readonly appVersion: string } | null;
   /** The audio the scenario generated and what came back; null before it exists. */
   readonly audio: Readonly<Record<string, number | string | boolean>> | null;
+  /**
+   * The name of the data folder of this launch, relative to OTCP_TARGET_DATA_DIR, for finding the
+   * instance's logs there; null when that variable was not set (the folder was temporary and is gone).
+   */
+  readonly dataDir: string | null;
+  /** What the instance said about being busy after a step got BUSY (modal_open); null if that never happened. */
+  readonly busyDiagnostics: string | null;
 }
 
 export interface SmokeConfig {
@@ -74,7 +81,7 @@ const DEFAULT_STEP_TIMEOUT_MS = 180_000;
 const JOB_POLL_MS = 5000;
 const REQUIRED_CAPABILITIES = ['session.v1', 'jobs.v1', 'read.v1', 'import.v1', 'edit.v1', 'export.v1'] as const;
 
-/** Reads OTCP_TARGET_EXE (and its two siblings), OTCP_E2E_REPORT and OTCP_E2E_STEP_TIMEOUT_MS. */
+/** Reads OTCP_TARGET_EXE (and its three siblings),OTCP_E2E_REPORT and OTCP_E2E_STEP_TIMEOUT_MS. */
 export function smokeSetupFromEnv(env: NodeJS.ProcessEnv = process.env): SmokeSetup {
   const exe = exeConfigFromEnv(env);
   if ('skip' in exe) return { skip: exe.skip };
@@ -111,6 +118,10 @@ class StepSkip extends Error {
 /** Never lets a long hex run (a token or proof, should an instance echo one) reach a report. */
 const clean = (text: string) => text.replace(/[0-9a-fA-F]{32,}/g, '[redacted]').slice(0, 400);
 
+/** Whether the error is BUSY with the reason modal_open: a dialog is open in the instance. */
+export const isModalBusy = (error: unknown): boolean =>
+  error instanceof OtcpError && error.data.kind === 'BUSY' && error.data.reason === 'modal_open';
+
 /** The result and the note for an error that ended a step. */
 export function classify(error: unknown): { result: StepResult; note: string } {
   if (error instanceof StepSkip) return { result: error.result, note: error.message };
@@ -120,6 +131,12 @@ export function classify(error: unknown): { result: StepResult; note: string } {
       return {
         result: 'FLAKY-SKIP',
         note: clean(`the inference backend could not be initialised on this machine: ${detail}`),
+      };
+    }
+    if (isModalBusy(error)) {
+      return {
+        result: 'FAIL',
+        note: clean(`the instance has a modal dialog open (BUSY modal_open), so it refused the call: ${detail}`),
       };
     }
     return { result: 'FAIL', note: clean(`${error.message}: ${detail}`) };
@@ -149,6 +166,7 @@ export function formatTable(report: SmokeReport): string {
     ...rows,
     '',
     `${report.result} (${counts}) in ${(report.totalMs / 1000).toFixed(1)} s`,
+    ...(report.dataDir === null ? [] : [`data folder (under OTCP_TARGET_DATA_DIR): ${report.dataDir}`]),
   ].join('\n');
 }
 
@@ -316,7 +334,38 @@ function makeTone(): Tone {
 
 export interface SmokeHooks {
   /** For tests: replaces the target that starts the executable. */
-  readonly target?: Pick<ExeTarget, 'open' | 'takeProblems'>;
+  readonly target?: Pick<ExeTarget, 'open' | 'takeProblems'> & Partial<Pick<ExeTarget, 'labelNext' | 'takeDataDirs'>>;
+}
+
+/**
+ * What ui.getState says about the window (busy conditions, open dialogs, the first-run overlay),
+ * as one line for the report. Called only after a BUSY modal_open, and only when the instance
+ * reports ui.bridge; never throws. Dialog titles are untrusted data and are cut short.
+ */
+async function busyDiagnostics(session: OtcpSession | undefined): Promise<string> {
+  if (session === undefined) return 'no session to ask for the window state';
+  if (!session.hello.capabilities.includes('ui.bridge')) {
+    return 'the instance does not report ui.bridge, so ui.getState was not called';
+  }
+  try {
+    const state = await session.call('ui.getState', {}, 15_000);
+    const busy = isObject(state.busy) ? state.busy : {};
+    const onboarding = isObject(state.onboarding) ? state.onboarding : {};
+    const dialogs = Array.isArray(state.dialogs) ? (state.dialogs as unknown[]) : [];
+    const listed = dialogs
+      .map((d) =>
+        isObject(d)
+          ? `${String(d.kind)} "${String(d.title).slice(0, 60)}" closeCommits=${String(d.closeCommits)}`
+          : '?',
+      )
+      .join('; ');
+    return clean(
+      `ui.getState: busy ${JSON.stringify(busy)}; onboarding ${JSON.stringify(onboarding)}; ` +
+        `${String(dialogs.length)} dialog(s)${listed === '' ? '' : ` [${listed}]`}`,
+    );
+  } catch (error) {
+    return clean(`ui.getState failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Promise<SmokeReport> {
@@ -332,6 +381,8 @@ export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Pro
   let tone: Tone | undefined;
   let audio: Record<string, number | string | boolean> | null = null;
   const timeoutMs = config.stepTimeoutMs;
+  let diagnostics: string | null = null;
+  target.labelNext?.('smoke');
 
   /** Runs a step unless an earlier one stopped the scenario; `always` steps (clean-up) run anyway. */
   const step = async (name: string, body: () => Promise<string>, always = false) => {
@@ -344,7 +395,14 @@ export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Pro
       const note = await body();
       steps.push({ name, result: 'PASS', ms: performance.now() - at, note });
     } catch (error) {
-      const { result, note } = classify(error);
+      const classified = classify(error);
+      const { result } = classified;
+      let { note } = classified;
+      if (isModalBusy(error)) {
+        // One extra read-only call, to see what the window looks like; not part of the scenario.
+        diagnostics = await busyDiagnostics(session);
+        note = `${note}; ${diagnostics}`;
+      }
       steps.push({ name, result, ms: performance.now() - at, note });
       halted ??= `${name} ended with ${result}`;
     }
@@ -523,11 +581,14 @@ export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Pro
       await instance.close();
       const problems = target.takeProblems();
       if (problems.length > 0) throw new Error(problems.join('; '));
-      return 'stopped, data folder removed';
+      return target.takeDataDirs === undefined || config.exe.dataDirParent === undefined
+        ? 'stopped, data folder removed'
+        : 'stopped, data folder kept (see dataDir of the report)';
     },
     true,
   );
   await files?.cleanup();
+  const dataDir = target.takeDataDirs?.()[0] ?? null;
 
   const ms = performance.now() - started;
   return {
@@ -538,5 +599,7 @@ export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Pro
     steps: steps.map((s) => ({ ...s, ms: Math.round(s.ms) })),
     instance: hello === undefined ? null : { protocol: hello.protocol, appVersion: hello.appVersion },
     audio,
+    dataDir,
+    busyDiagnostics: diagnostics,
   };
 }

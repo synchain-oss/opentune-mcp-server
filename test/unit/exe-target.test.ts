@@ -5,7 +5,7 @@
 // Node binary: normal start and stop, a launcher that hands over to another process, and each way
 // the start-up and the end can go wrong.
 
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -232,6 +232,113 @@ describe('exe target', () => {
     expect(() => exeTarget({ exe: FAKE.replace('fake-opentune.mjs', 'missing.exe') })).toThrow('regular file');
     expect(() => exeTarget({ exe: fileURLToPath(new URL('.', import.meta.url)) })).toThrow('regular file');
   });
+});
+
+describe('OTCP_TARGET_DATA_DIR (kept data folders)', () => {
+  const parents: string[] = [];
+  async function parentDir(): Promise<string> {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ot-exe-keep-'));
+    parents.push(dir);
+    return dir;
+  }
+  afterEach(async () => {
+    for (const dir of parents.splice(0)) await rm(dir, { recursive: true, force: true });
+  });
+  const keeping = (parent: string, extra: string[] = []) =>
+    exeTarget({ exe: process.execPath, args: [FAKE, '--mode=ok', ...extra], timeoutMs: 10_000, dataDirParent: parent });
+
+  it(
+    'keeps one folder per launch under the given folder, with its logs, and removes only the discovery files',
+    async () => {
+      const parent = await parentDir();
+      const target = keeping(parent);
+      target.labelNext('import/start-path-not-absolute');
+      const first = await target.open();
+      await first.close();
+      target.labelNext('import/start-path-not-absolute');
+      const second = await target.open();
+      await second.close();
+      const names = target.takeDataDirs();
+      expect(names).toHaveLength(2);
+      expect(names[0]).not.toBe(names[1]);
+      for (const name of names) {
+        expect(name).toMatch(/^import-start-path-not-absolute-[A-Za-z0-9]{6}$/);
+        expect(readFileSync(path.join(parent, name, 'logs', 'opentune.log'), 'utf8')).toBe('started\n');
+        expect(existsSync(path.join(parent, name, 'control', 'instances'))).toBe(false);
+      }
+      expect(readdirSync(parent).sort()).toEqual([...names].sort());
+      expect(target.takeDataDirs()).toEqual([]);
+      expect(target.takeProblems()).toEqual([]);
+    },
+    SLOW,
+  );
+
+  it(
+    'keeps the folder of a launch that failed, too',
+    async () => {
+      const parent = await parentDir();
+      const target = exeTarget({
+        exe: process.execPath,
+        args: [FAKE, '--mode=bad-nonce'],
+        timeoutMs: 10_000,
+        dataDirParent: parent,
+      });
+      target.labelNext('smoke');
+      await expect(target.open()).rejects.toThrow('launch nonce');
+      expect(readdirSync(parent)).toHaveLength(1);
+      expect(target.takeDataDirs()).toEqual(readdirSync(parent));
+    },
+    SLOW,
+  );
+
+  it(
+    'still deletes a temporary folder when the variable is not set',
+    async () => {
+      const parent = await parentDir();
+      const dirFile = path.join(parent, 'data-dir.txt');
+      const target = fake('ok', 10_000, [`--dirfile=${dirFile}`]);
+      const instance = await target.open();
+      const dataDir = readFileSync(dirFile, 'utf8');
+      expect(path.dirname(dataDir)).toBe(os.tmpdir());
+      expect(existsSync(dataDir)).toBe(true);
+      await instance.close();
+      expect(existsSync(dataDir)).toBe(false);
+      expect(target.takeDataDirs()).toEqual([]);
+    },
+    SLOW,
+  );
+
+  it('is a configuration error, not a skip, when the folder is relative or does not exist', async () => {
+    const parent = await parentDir();
+    const env = { OTCP_TARGET_EXE: FAKE };
+    expect(exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_DIR: parent })).toEqual({
+      options: { exe: FAKE, dataDirParent: parent },
+    });
+    expect(exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_DIR: '' })).toEqual({ options: { exe: FAKE } });
+    expect(() => exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_DIR: 'relative/dir' })).toThrow('absolute path');
+    expect(() => exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_DIR: path.join(parent, 'missing') })).toThrow(
+      'existing directory',
+    );
+    // A file is not a directory.
+    expect(() => exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_DIR: FAKE })).toThrow('existing directory');
+    expect(() => exeTarget({ exe: process.execPath, dataDirParent: 'relative' })).toThrow('absolute path');
+    // Without the executable the checks are skipped, as before.
+    expect(exeConfigFromEnv({ OTCP_TARGET_DATA_DIR: 'relative' })).toEqual({ skip: 'OTCP_TARGET_EXE is not set' });
+  });
+
+  it(
+    'runExeVector reports the folder of the launch, named after the vector',
+    async () => {
+      const parent = await parentDir();
+      const target = keeping(parent);
+      const vector = skippedVector();
+      const outcome = await runExeVector(vector, target);
+      expect(outcome.dataDir).toBeDefined();
+      expect(existsSync(path.join(parent, outcome.dataDir ?? ''))).toBe(true);
+      expect(outcome.dataDir?.startsWith(vector.id.replace(/[^A-Za-z0-9._-]+/g, '-'))).toBe(true);
+    },
+    SLOW,
+  );
 });
 
 describe('runExeVector', () => {

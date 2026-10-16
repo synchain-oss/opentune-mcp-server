@@ -15,6 +15,11 @@ import { exeConfigFromEnv, exeTarget, type ExeTarget } from './exe-target.js';
 import { runVector, type Outcome } from './runner.js';
 import { loadVectors, type Vector } from './vectors.js';
 
+/** An outcome, with the data folder of the launch (relative to OTCP_TARGET_DATA_DIR) when it was kept. */
+export interface ExeOutcome extends Outcome {
+  readonly dataDir?: string;
+}
+
 /**
  * Runs one vector against the exe target. What the target found wrong with the instance while
  * ending it (left its discovery file, ended by itself, could not be ended) makes the vector FAIL,
@@ -22,13 +27,20 @@ import { loadVectors, type Vector } from './vectors.js';
  */
 export async function runExeVector(
   vector: Vector,
-  target: Pick<ExeTarget, 'name' | 'open' | 'takeProblems'>,
-): Promise<Outcome> {
-  const outcome = await runVector(vector, target);
+  target: Pick<ExeTarget, 'name' | 'open' | 'takeProblems'> & Partial<Pick<ExeTarget, 'labelNext' | 'takeDataDirs'>>,
+): Promise<ExeOutcome> {
+  target.labelNext?.(vector.id);
+  let outcome = await runVector(vector, target);
+  const dataDir = target.takeDataDirs?.()[0];
+  // A modal dialog open from the start refuses every write; say so where the FAIL is read.
+  if (outcome.result === 'FAIL' && outcome.note.includes('modal_open')) {
+    outcome = { ...outcome, note: `${outcome.note} (the instance has a modal dialog open)` };
+  }
+  const kept = dataDir === undefined ? {} : { dataDir };
   const problems = target.takeProblems();
-  if (problems.length === 0) return outcome;
+  if (problems.length === 0) return { ...outcome, ...kept };
   const itself = outcome.note === '' ? outcome.result : `${outcome.result}: ${outcome.note}`;
-  return { id: outcome.id, result: 'FAIL', note: `${problems.join('; ')} (the vector itself: ${itself})` };
+  return { id: outcome.id, result: 'FAIL', note: `${problems.join('; ')} (the vector itself: ${itself})`, ...kept };
 }
 
 export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
@@ -49,10 +61,10 @@ export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
       });
       return;
     }
-    const outcomes: Outcome[] = [];
+    const outcomes: ExeOutcome[] = [];
 
     it.for(loadVectors())('$id', async (entry, ctx) => {
-      const outcome: Outcome =
+      const outcome: ExeOutcome =
         entry.problems.length > 0
           ? { id: entry.id, result: 'FAIL', note: `invalid vector: ${entry.problems.join('; ')}` }
           : await runExeVector(entry.vector, target);
@@ -64,9 +76,9 @@ export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
     afterAll(() => {
       const cell = (s: string) => s.replaceAll('|', '\\|').replaceAll('\n', ' ');
       const table = [
-        '| Vector | Result | Notes |',
-        '| --- | --- | --- |',
-        ...outcomes.map((o) => `| ${o.id} | ${o.result} | ${cell(o.note)} |`),
+        '| Vector | Result | Notes | Data folder |',
+        '| --- | --- | --- | --- |',
+        ...outcomes.map((o) => `| ${o.id} | ${o.result} | ${cell(o.note)} | ${o.dataDir ?? ''} |`),
       ];
       const { verified, forced, exitedEarly, leftDiscoveryFile, notEnded } = target.stats;
       process.stderr.write(
@@ -90,6 +102,8 @@ export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
           skip: count('SKIP'),
           skipReasons,
           failed: outcomes.filter((o) => o.result === 'FAIL').map((o) => o.id),
+          // Relative to OTCP_TARGET_DATA_DIR; empty unless that was set.
+          dataDirs: Object.fromEntries(outcomes.flatMap((o) => (o.dataDir === undefined ? [] : [[o.id, o.dataDir]]))),
           instances: { verified, forced, exitedEarly, leftDiscoveryFile, notEnded },
         };
         writeFileSync(file, `${JSON.stringify(summary, null, 2)}\n`);

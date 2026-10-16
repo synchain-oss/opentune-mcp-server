@@ -5,7 +5,8 @@
 // its own, and runs the vectors against it. Configuration comes only from the environment (see
 // test/contract/README.md); nothing about the machine it runs on is kept in the repository.
 //
-// Per vector: a fresh temporary OPENTUNE_DATA_DIR, the process started with `shell: false`, the
+// Per vector: a fresh temporary OPENTUNE_DATA_DIR (or, with OTCP_TARGET_DATA_DIR, a fresh sub-folder
+// of that folder, which is kept so its logs can be read), the process started with `shell: false`, the
 // ready file and launch nonce of PROTOCOL.md section 5.5 and the options table, the discovery file
 // read back from <data dir>/control/instances and checked against both.
 //
@@ -39,6 +40,12 @@ export interface ExeTargetOptions {
   readonly timeoutMs?: number;
   /** Whether a pid runs and when it started; asks the operating system unless given. */
   readonly probe?: (pid: number) => Promise<ProcessInfo>;
+  /**
+   * Absolute path of an existing folder. When given, each launch gets a new sub-folder of it as its
+   * data folder, and that sub-folder is kept after the instance ended (only the discovery files,
+   * which hold a token, are removed from it); otherwise a temporary folder that is deleted.
+   */
+  readonly dataDirParent?: string;
 }
 
 export type ExeConfig = { readonly skip: string } | { readonly options: ExeTargetOptions };
@@ -59,6 +66,10 @@ export interface ExeCleanupStats {
 
 export type ExeTarget = ContractTarget & {
   readonly stats: ExeCleanupStats;
+  /** Names the data folder of the next launch (only used with `dataDirParent`); consumed by that launch. */
+  labelNext(label: string): void;
+  /** The names (relative to `dataDirParent`) of the kept data folders launched since the last call. */
+  takeDataDirs(): string[];
   /** What the close() calls since the last call found wrong with the instance; each makes its vector FAIL. */
   takeProblems(): string[];
 };
@@ -72,7 +83,7 @@ const START_TOLERANCE_MS = 2000;
 const PROBE_ATTEMPTS = 3;
 const READY_FILE_REF = 'schemas/discovery-file.schema.json#/$defs/readyFileKnownMembers';
 
-/** Reads OTCP_TARGET_EXE, OTCP_TARGET_ARGS and OTCP_TARGET_TIMEOUT_MS. Throws on a bad value. */
+/** Reads OTCP_TARGET_EXE, OTCP_TARGET_ARGS, OTCP_TARGET_TIMEOUT_MS and OTCP_TARGET_DATA_DIR. Throws on a bad value. */
 export function exeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ExeConfig {
   const exe = env.OTCP_TARGET_EXE;
   if (exe === undefined || exe === '') return { skip: 'OTCP_TARGET_EXE is not set' };
@@ -98,7 +109,36 @@ export function exeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ExeConfi
       throw new Error('OTCP_TARGET_TIMEOUT_MS must be a positive integer');
     }
   }
-  return { options: { exe, ...(args && { args }), ...(timeoutMs && { timeoutMs }) } };
+  let dataDirParent: string | undefined;
+  const rawDataDir = env.OTCP_TARGET_DATA_DIR;
+  if (rawDataDir !== undefined && rawDataDir !== '') {
+    checkDataDirParent(rawDataDir);
+    dataDirParent = rawDataDir;
+  }
+  return {
+    options: { exe, ...(args && { args }), ...(timeoutMs && { timeoutMs }), ...(dataDirParent && { dataDirParent }) },
+  };
+}
+
+/** The folder for kept data folders must be an absolute path to an existing directory. */
+function checkDataDirParent(dir: string): void {
+  if (!path.isAbsolute(dir)) throw new Error('OTCP_TARGET_DATA_DIR must be an absolute path');
+  let isDir = false;
+  try {
+    isDir = statSync(dir).isDirectory();
+  } catch {
+    // reported below
+  }
+  if (!isDir) throw new Error('OTCP_TARGET_DATA_DIR is not an existing directory');
+}
+
+/** A folder-name prefix from a label (a vector id has slashes): safe characters only, and not long. */
+function folderPrefix(label: string): string {
+  const safe = label
+    .replace(/[^A-Za-z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60);
+  return `${safe === '' ? 'run' : safe}-`;
 }
 
 /** The executable must be an absolute path to an existing regular file. */
@@ -219,6 +259,7 @@ async function ownHello(discovery: Record<string, unknown>, timeoutMs: number): 
 
 export function exeTarget(options: ExeTargetOptions): ExeTarget {
   checkExe(options.exe);
+  if (options.dataDirParent !== undefined) checkDataDirParent(options.dataDirParent);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   // A probe of its own per question, so no start time is remembered across a reuse of the pid.
   const probeOnce = options.probe ?? ((pid: number) => systemProbe().probe(pid));
@@ -233,6 +274,8 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
   };
   const stats: ExeCleanupStats = { verified: 0, forced: 0, exitedEarly: 0, leftDiscoveryFile: 0, notEnded: 0 };
   let problems: string[] = [];
+  let nextLabel: string | undefined;
+  let dataDirs: string[] = [];
 
   const notEndedNote = (pid: number, reason: string) =>
     `pid ${String(pid)}, named by the ready file, could not be confirmed as started by this target (${reason}); ` +
@@ -293,8 +336,25 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       problems = [];
       return taken;
     },
+    labelNext(label) {
+      nextLabel = label;
+    },
+    takeDataDirs() {
+      const taken = dataDirs;
+      dataDirs = [];
+      return taken;
+    },
     async open() {
-      const dataDir = await mkdtemp(path.join(os.tmpdir(), 'ot-exe-'));
+      const keep = options.dataDirParent !== undefined;
+      let dataDir: string;
+      if (options.dataDirParent === undefined) {
+        dataDir = await mkdtemp(path.join(os.tmpdir(), 'ot-exe-'));
+      } else {
+        // A folder of its own per launch (the random tail keeps two launches of one label apart).
+        dataDir = await mkdtemp(path.join(options.dataDirParent, folderPrefix(nextLabel ?? 'run')));
+        dataDirs.push(path.basename(dataDir));
+      }
+      nextLabel = undefined;
       const instancesDir = path.join(dataDir, 'control', 'instances');
       const readyFile = path.join(dataDir, 'ready.json');
       const nonce = randomBytes(24).toString('base64url');
@@ -352,10 +412,17 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       };
       const removeDataDir = async (): Promise<string | undefined> => {
         try {
-          await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+          if (keep) {
+            // Logs and preferences stay; the discovery files hold a token of an instance that is gone.
+            await rm(instancesDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+          } else {
+            await rm(dataDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+          }
           return undefined;
         } catch {
-          return 'the temporary data folder could not be removed';
+          return keep
+            ? 'the discovery files in the kept data folder could not be removed'
+            : 'the temporary data folder could not be removed';
         }
       };
       const fail = async (problem: string): Promise<never> => {
@@ -393,7 +460,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
           },
         );
       } catch (error) {
-        await rm(dataDir, { recursive: true, force: true });
+        await removeDataDir();
         throw error;
       }
       const started = child;

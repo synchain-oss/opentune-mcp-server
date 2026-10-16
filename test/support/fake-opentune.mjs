@@ -13,7 +13,9 @@
 // with canned results, enough to walk the protocol; no audio is analysed. `smoke-dry` lists the
 // content in dryContents, `smoke-backend` fails the import with an unavailable inference backend,
 // `smoke-no-export` does not report export.v1, `smoke-auto-job` hands AUTO to a job,
-// `smoke-open-scale` reports a scale AUTO's closed list does not have. Every reply of these modes
+// `smoke-open-scale` reports a scale AUTO's closed list does not have, `smoke-busy` refuses the
+// import with BUSY modal_open and answers ui.getState (with ui.bridge reported), `smoke-busy-nobridge`
+// does the same without reporting ui.bridge. Every reply of these modes
 // has the shape the specification gives its result (the unit tests validate them).
 //
 // Every copy that keeps running ends by itself once its OPENTUNE_DATA_DIR is gone, so a test that
@@ -31,6 +33,7 @@ const mode = option('mode') ?? 'ok';
 const readyFile = option('control-api-ready-file');
 const nonce = option('control-api-launch-nonce');
 const marker = option('marker');
+const dirFile = option('dirfile');
 const dataDir = process.env.OPENTUNE_DATA_DIR;
 
 const smoke = mode.startsWith('smoke');
@@ -66,9 +69,9 @@ if (mode in LAUNCHED) {
 }
 
 const smokeCapabilities = () =>
-  ['session.v1', 'jobs.v1', 'read.v1', 'import.v1', 'edit.v1', 'export.v1'].filter(
-    (c) => !(mode === 'smoke-no-export' && c === 'export.v1'),
-  );
+  ['session.v1', 'jobs.v1', 'read.v1', 'import.v1', 'edit.v1', 'export.v1']
+    .filter((c) => !(mode === 'smoke-no-export' && c === 'export.v1'))
+    .concat(mode === 'smoke-busy' ? ['ui.bridge'] : []);
 
 const CONTENT_ID = 'c:0123abcd:0:1';
 const jobs = new Map();
@@ -149,6 +152,7 @@ function smokeReply(request) {
   const { id, method, params } = request;
   const result = (value) => ({ jsonrpc: '2.0', id, result: value });
   if (method === 'import.start') {
+    if (mode.startsWith('smoke-busy')) return failure(id, 'BUSY', 'modal_open');
     if (mode === 'smoke-backend') return failure(id, 'MODEL_UNAVAILABLE', 'backend_unavailable');
     const jobId = `j:0123abcd:${String(jobs.size + 1)}`;
     importedSource = params.items[0].path;
@@ -159,6 +163,21 @@ function smokeReply(request) {
     const jobId = `j:0123abcd:${String(jobs.size + 1)}`;
     jobs.set(jobId, { kind: 'export', polls: 0, target: params.path });
     return result(envelope('r2', { jobId, kind: 'export', state: 'queued' }));
+  }
+  if (method === 'ui.getState' && mode === 'smoke-busy') {
+    return result({
+      busy: {
+        pointerDown: false,
+        modalOpen: true,
+        importInProgress: false,
+        exportInProgress: false,
+        projectOperation: false,
+      },
+      dialogs: [{ kind: 'message', title: 'Welcome', closeCommits: false, trackId: null }],
+      onboarding: { shown: false, showing: true },
+      ui: {},
+      uiScale: { root: 0, scale: 'major' },
+    });
   }
   if (method === 'job.get') {
     const job = jobs.get(params.jobId);
@@ -302,6 +321,11 @@ function serve() {
   server.listen({ host: '127.0.0.1', port: 0 }, () => {
     const dir = path.join(dataDir, 'control', 'instances');
     fs.mkdirSync(dir, { recursive: true });
+    // For a test: where this instance's data folder is.
+    if (dirFile !== undefined) fs.writeFileSync(dirFile, dataDir);
+    // A log a test can look for in a kept data folder.
+    fs.mkdirSync(path.join(dataDir, 'logs'), { recursive: true });
+    fs.writeFileSync(path.join(dataDir, 'logs', 'opentune.log'), 'started\n');
     const discoveryPid = mode === 'pid-mismatch' ? process.pid + 1 : process.pid;
     const startedAt = Math.round(performance.timeOrigin);
     const discovery = {
