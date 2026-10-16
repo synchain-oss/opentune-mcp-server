@@ -162,7 +162,9 @@ export async function openAudio(ctx: ToolContext, args: OpenAudioArgs): Promise<
   }
   const raw = args.items ?? [args.path ?? ''];
   if (args.new_track === true && args.track !== undefined) {
-    return invalid('track and new_track exclude each other: name a track or ask for a new one');
+    return invalid(
+      'track and new_track exclude each other: name a track, or let new_track use the first track without clips',
+    );
   }
   const layout: Layout = args.layout ?? (raw.length === 1 ? 'single' : 'sequential');
   if (layout === 'single' && raw.length > 1) {

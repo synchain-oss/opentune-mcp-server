@@ -1,12 +1,14 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
 // SPDX-License-Identifier: MIT
 
-// opentune_analyze_pitch: how far the detected pitch of a clip's notes is from their target pitch.
+// opentune_analyze_pitch: how far the detected pitch and the corrected pitch (after the edits)
+// of a clip's notes are from their target pitch.
 // The notes come from OpenTune (content.getNotes; content.segmentNotes when the clip has no stored
 // notes yet), the detected pitch (before) and the corrected pitch (after the edits) from one
-// content.getPitchCurve read; the statistics are computed here (src/analysis/pitch.ts). Three levels of detail:
-// summary (small, the default), phrases and notes (both paged). One result stays within OUTPUT_BUDGET characters: a page that would be larger
-// gets fewer entries, never cut ones, and next_cursor continues exactly where the page ends.
+// content.getPitchCurve read; the statistics are computed here (src/analysis/pitch.ts). Three
+// levels of detail: summary (small, the default), phrases and notes (both paged). One result stays
+// within OUTPUT_BUDGET characters: a page that would be larger gets fewer entries, never cut ones,
+// and next_cursor continues exactly where the page ends.
 
 import { createHash } from 'node:crypto';
 
