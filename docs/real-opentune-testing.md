@@ -307,8 +307,23 @@ The tolerances are fixed in `test/e2e/effects.ts`, each with the measurements it
   audio (gaps of 0.355 s) the reach is the one note after the edited note; it was synthesised again
   after the `shiftCents` edit (-28.3 dB) and not after the `setTargetPitch` edit.
 
+  The same comparison is also made over the two ends of such a note alone (max(80 ms, 20 %) at each
+  end, the stretches the inside check leaves out), against a wider limit of -12 dB: attack and
+  release are short and hold the onset, so a phase offset smears them more (measured: -28.1 dB at the ends
+  against -28.3 dB for the inside of the same note, on the one re-synthesised note the generated
+  audio gives; the limit is 16 dB above that and is to be tightened or loosened by a run on voices). A lost or changed attack or release fails here
+  while the inside still passes.
+
 - After a time-grid move, which renders the whole clip again, the notes away from the moved handle
-  at most 1e-3 (-60 dBFS) from the baseline (measured: up to 1.1e-4, -79 dBFS).
+  at most 1e-3 (-60 dBFS) from the baseline (measured: up to 1.1e-4, -79 dBFS) with the generated
+  audio. With external audio the same notes were re-synthesised in another phase (differences of up to
+  0.26 of full scale, same pitch), so there each is either bit-identical or the same sound in another
+  phase, by the two residual limits above, and its pitch must lie within the 15 cents of the pitch
+  tolerance of the baseline.
+- A value that `changes` reports (`targetMidi`, `offsetCents`) is compared with the intended one to the
+  precision of the field, not exactly: 1e-3 semitones (0.1 cent) for `targetMidi` and 0.1 cent for
+  `offsetCents`. OpenTune reported an intended 64.9746 as 64.9745; the difference of 0.01 cent is
+  far below anything the audio checks resolve. The comparison with the state read back stays exact.
 
 ### External audio: `OTCP_E2E_EFFECTS_AUDIO`
 
@@ -318,6 +333,16 @@ edits are then chosen from the notes OpenTune finds (the two longest voiced note
 shorter notes are not measured), and the checks that need to know the pitch in advance are skipped:
 the AUTO checks and the comparison of the estimator with the known pitch. The report says the audio
 is `external`, with its length and sample rate only, never its name or path. The file is only read.
+
+Real voices carry vibrato and glides, where the estimator and OpenTune's detected pitch differ by
+more than 15 cents. For external audio `export before any edit` therefore holds only the notes with a
+steady pitch to the detected pitch: those whose voiced frames have a standard deviation of at most
+20 cents around their median (the generated tones measure 0 to 2 cents; a steady sung note wobbles by
+roughly 10 to 15 cents, vibrato of +-50 cents is near 35). Up to 5 % of the steady notes (rounded
+down) may still lie beyond 15 cents, since a wrong export would be wrong for most notes and not for a
+few; the check is skipped when fewer than three notes are steady. The report lists the notes left out
+and why (`unsteadyPitch`, `tooFewVoicedFrames`) under the check. For the generated audio the limit is
+unchanged: every note.
 
 ### The report
 

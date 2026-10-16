@@ -161,12 +161,64 @@ export const PHRASE_GAP_SEC = 0.3;
  * Measured: -25.1 to -40.3 dB on re-synthesised notes, against +2.2 to +3.0 dB on a note moved by 100
  * cents and -0.3 dB on one moved by 10 cents. -20 dB lies 5 dB above the worst re-synthesised note and
  * 20 dB below a 10 cents move; a stale, moved or silent note fails, and so does one that is louder or
- * quieter by more than about 1 dB.
+ * quieter by more than about 1 dB. Two real vocal recordings (6.6 minutes in all) measured -22.2 dB at
+ * worst and -69.5 dB, so voices pass too, with 2.2 dB to spare at the worst note.
  */
 export const RESYNTH_MAX_RESIDUAL_DB = -20;
 
 /** The windows of the aligned comparison. */
 const RESYNTH_WINDOW_SEC = 0.1;
+
+/**
+ * The same comparison over the two ends of a re-synthesised note only (EDGE_TRIM_SEC or
+ * EDGE_TRIM_FRACTION of it, whichever is longer, at each end), which the check of the inside leaves
+ * out: attack and release are where a renderer's block boundaries and cross-fades act. Wider than
+ * RESYNTH_MAX_RESIDUAL_DB because those stretches are short, hold the onset transient and are
+ * smeared by a phase offset more than a steady inside. Measured on the one note of the generated
+ * audio that is rendered again (after the shiftCents edit): -28.1 dB at the ends, -28.3 dB inside; a
+ * note moved by 10 cents leaves about 0 dB. -12 dB is 16 dB above the measurement and 12 below a real
+ * move. Applied to generated audio only.
+ *
+ * For external audio (real voices) this value is NOT a criterion: the edge residuals are written to the
+ * report (`edgeResidualDb`) and no problem is raised from them. Two real vocal recordings of 6.6
+ * minutes together gave worst edge residuals of -16.4 dB and -69.3 dB (the remaining notes of the
+ * first at about -70 dB). The worst is only 4.4 dB below -12 dB, too little margin to fail a run on
+ * with so few voices measured; set a limit for voices once more of them have been measured. The
+ * inside residual (RESYNTH_MAX_RESIDUAL_DB) stays a criterion for them: the same two recordings
+ * measured -22.2 dB (worst) and -69.5 dB, against its -20 dB.
+ */
+export const RESYNTH_EDGE_MAX_RESIDUAL_DB = -12;
+
+/**
+ * Audio of the caller's own (OTCP_E2E_EFFECTS_AUDIO) has notes with vibrato and glides, where the
+ * estimator and OpenTune's detected pitch legitimately differ by more than PITCH_TOLERANCE_CENTS.
+ * Its unedited export is therefore checked against the detected pitch only for notes whose own pitch
+ * is steady: the frames of a note IN THE SOURCE AUDIO stay within STEADY_NOTE_MAX_SPREAD_CENTS
+ * (standard deviation) of its median (never the export's own frames: a damaged export would then
+ * excuse itself as unsteady). The export is compared by its median pitch per note. The harmonic tones measured 0.0 to 2.1 cents, so their notes are all steady; a steady
+ * sung note wobbles by roughly 10 to 15 cents, vibrato of +-50 cents has a deviation near 35. 20
+ * keeps the first and drops the second. Notes left out are counted in the report with the reason.
+ */
+export const STEADY_NOTE_MAX_SPREAD_CENTS = 20;
+
+/**
+ * Of the steady notes of external audio, this share may still lie beyond PITCH_TOLERANCE_CENTS of
+ * the detected pitch (octave-adjacent confusions or a note that merges two pitches): an export that
+ * is wrong would be wrong for most notes, not for a few. Harmonic tones allow none.
+ */
+export const EXTERNAL_MAX_OFF_FRACTION = 0.05;
+
+/** External audio needs at least this many steady notes for the check to say anything. */
+const EXTERNAL_MIN_STEADY_NOTES = 3;
+
+/**
+ * How well a value reported in `changes` must agree with the intended one, per field: the value of
+ * a note field is reported rounded to the precision OpenTune keeps, which can differ from the value
+ * the scenario computes and wrote (an intended 64.9746 came back as 64.9745). targetMidi is in
+ * semitones, 1e-3 of one is 0.1 cent, far below what any pitch check resolves; offsetCents is in
+ * cents with the same 0.1 cent.
+ */
+export const REPORTED_FIELD_EPSILON: Readonly<Record<string, number>> = { targetMidi: 1e-3, offsetCents: 0.1 };
 
 /**
  * The same for notes away from a moved time-grid handle. A grid change renders the clip again, and
@@ -355,6 +407,9 @@ export interface EffectsReport {
     readonly resynthPreRollMs: number;
     readonly phraseGapMs: number;
     readonly resynthMaxResidualDb: number;
+    readonly resynthEdgeMaxResidualDb: number;
+    readonly steadyNoteMaxSpreadCents: number;
+    readonly externalMaxOffFraction: number;
     readonly minVoicedFrames: number;
     readonly estimatorErrorCents: number;
     readonly shiftEstimatorErrorMs: number;
@@ -734,13 +789,22 @@ export function noteDelta(baseline: DecodedWav, wet: DecodedWav, span: Span, exp
   };
 }
 
-/** The median pitch of a note in one file against a known frequency, in cents; null when too few frames are voiced. */
-function pitchAgainst(wav: DecodedWav, span: Span, hz: number): { cents: number | null; frames: number } {
+/**
+ * The median pitch of a note in one file against a known frequency, in cents; null when too few
+ * frames are voiced. spreadCents is the standard deviation of the voiced frames around that median
+ * (null with it): how steady the note is, which tells a plain note from one with vibrato or a glide.
+ */
+function pitchAgainst(
+  wav: DecodedWav,
+  span: Span,
+  hz: number,
+): { cents: number | null; frames: number; spreadCents: number | null } {
   const voiced = noteFrames(wav, span).filter((v): v is number => v !== null);
-  return {
-    cents: voiced.length >= MIN_VOICED_FRAMES ? round(median(voiced.map((v) => centsBetween(hz, v)))) : null,
-    frames: voiced.length,
-  };
+  if (voiced.length < MIN_VOICED_FRAMES) return { cents: null, frames: voiced.length, spreadCents: null };
+  const cents = voiced.map((v) => centsBetween(hz, v));
+  const mid = median(cents);
+  const spread = Math.sqrt(cents.reduce((sum, c) => sum + (c - mid) ** 2, 0) / cents.length);
+  return { cents: round(mid), frames: voiced.length, spreadCents: round(spread, 1) };
 }
 
 export interface SampleComparison {
@@ -881,6 +945,25 @@ function insideOf(span: { readonly startSec: number; readonly endSec: number }) 
   return { startSec: span.startSec + trim, endSec: span.endSec - trim };
 }
 
+/**
+ * The aligned residual (see alignedResidualDb) over the two ends of a note, which insideOf leaves
+ * out, taken separately and the worse of the two returned; null when neither end has energy.
+ */
+export function edgeResidualOf(
+  a: DecodedWav,
+  b: DecodedWav,
+  span: { readonly startSec: number; readonly endSec: number },
+  maxLagSamples: number,
+): number | null {
+  const trim = Math.max(EDGE_TRIM_SEC, EDGE_TRIM_FRACTION * (span.endSec - span.startSec));
+  const ends = [
+    { startSec: span.startSec, endSec: span.startSec + trim },
+    { startSec: span.endSec - trim, endSec: span.endSec },
+  ];
+  const values = ends.map((end) => alignedResidualDb(a, b, end, maxLagSamples)).filter((v): v is number => v !== null);
+  return values.length === 0 ? null : Math.max(...values);
+}
+
 /** The largest absolute sample of a file (all channels). */
 function peakOf(wav: DecodedWav): number {
   let peak = 0;
@@ -959,6 +1042,8 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   let hello: HelloInfo | undefined;
   let files: ToneFiles | undefined;
   let tone: Tone | undefined;
+  /** External audio as decoded from the caller's file: what the unedited export is judged against. */
+  let externalSource: DecodedWav | undefined;
   let audio: Record<string, number | string | boolean> | null = null;
   let backend = null as EffectsReport['backend'];
   let noiseFloor: Record<string, unknown> | null = null;
@@ -1302,8 +1387,10 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         const identical =
           compareSamples(base, wet, [{ startSec: s.startSec - 0.05, endSec: s.endSec + 0.05 }]).bitIdentical === 1;
         // One period of the note's pitch is as far as a phase offset can move it.
-        const residualDb = identical ? null : alignedResidualDb(base, wet, insideOf(s), base.sampleRateHz / s.hz);
-        return { index: s.index, bitIdentical: identical, alignedResidualDb: residualDb };
+        const lag = base.sampleRateHz / s.hz;
+        const residualDb = identical ? null : alignedResidualDb(base, wet, insideOf(s), lag);
+        const edgeResidualDb = identical ? null : edgeResidualOf(base, wet, s, lag);
+        return { index: s.index, bitIdentical: identical, alignedResidualDb: residualDb, edgeResidualDb };
       });
     for (const r of reach) {
       if (r.bitIdentical) continue;
@@ -1311,6 +1398,13 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         problems.push(
           `note ${String(r.index)}, after the edit, was rendered again but is not the same sound: ` +
             `${String(r.alignedResidualDb)} dB left after aligning its phase (allowed ${String(RESYNTH_MAX_RESIDUAL_DB)})`,
+        );
+      } else if (tone !== undefined && r.edgeResidualDb !== null && r.edgeResidualDb > RESYNTH_EDGE_MAX_RESIDUAL_DB) {
+        // Generated audio only; for external audio the value is in the report (see
+        // RESYNTH_EDGE_MAX_RESIDUAL_DB).
+        problems.push(
+          `note ${String(r.index)}, after the edit, was rendered again but its attack or release is not the same sound: ` +
+            `${String(r.edgeResidualDb)} dB left after aligning its phase (allowed ${String(RESYNTH_EDGE_MAX_RESIDUAL_DB)})`,
         );
       }
     }
@@ -1350,6 +1444,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     workDir = files.dir;
     source = config.audioPath;
     const wav = decodeWav(await readFile(source));
+    externalSource = wav;
     audio = {
       source: 'external',
       seconds: round(wav.mono.length / wav.sampleRateHz, 3),
@@ -1436,10 +1531,62 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       const { wav, dry } = await exportClip('unedited');
       const listed = dry.some((d) => isObject(d) && d.contentId === contentId);
       const pitches = spans.map((span) => ({ index: span.index, ...pitchAgainst(wav, span, span.hz) }));
-      checks['export before any edit'] = { dryListed: listed, notes: pitches };
-      const off = pitches.filter((p) => p.cents === null || Math.abs(p.cents) > PITCH_TOLERANCE_CENTS);
-      if (off.length > 0) {
-        throw new Error(`notes ${off.map((p) => String(p.index)).join(', ')} are not at the detected pitch`);
+      const isOff = (p: { cents: number | null }) => p.cents === null || Math.abs(p.cents) > PITCH_TOLERANCE_CENTS;
+      if (tone !== undefined) {
+        checks['export before any edit'] = { dryListed: listed, notes: pitches };
+        const off = pitches.filter(isOff);
+        if (off.length > 0) {
+          throw new Error(`notes ${off.map((p) => String(p.index)).join(', ')} are not at the detected pitch`);
+        }
+      } else {
+        // External audio: only notes whose own pitch is steady are held to the detected pitch. How
+        // steady a note is is read from the SOURCE, never from the export under test: an export whose
+        // pitch is wrong or erratic would otherwise call itself unsteady and be left out of the check
+        // (a SKIP) instead of failing it. The export contributes only its median pitch per note.
+        if (externalSource === undefined) throw new Error('the external audio was not decoded');
+        const source = externalSource;
+        const sourceSpread = new Map(
+          spans.map((span) => [span.index, pitchAgainst(source, span, span.hz).spreadCents]),
+        );
+        const spreadOf = (index: number) => sourceSpread.get(index) ?? null;
+        const steady = pitches.filter((p) => {
+          const spread = spreadOf(p.index);
+          return spread !== null && spread <= STEADY_NOTE_MAX_SPREAD_CENTS;
+        });
+        const unsteady = pitches.filter((p) => {
+          const spread = spreadOf(p.index);
+          return spread !== null && spread > STEADY_NOTE_MAX_SPREAD_CENTS;
+        });
+        const unmeasured = pitches.filter((p) => spreadOf(p.index) === null);
+        const off = steady.filter(isOff);
+        const allowed = Math.floor(EXTERNAL_MAX_OFF_FRACTION * steady.length);
+        checks['export before any edit'] = {
+          dryListed: listed,
+          notes: pitches,
+          external: {
+            steadyNotes: steady.length,
+            leftOut: {
+              unsteadyPitch: unsteady.map((p) => p.index),
+              tooFewVoicedFrames: unmeasured.map((p) => p.index),
+            },
+            maxSpreadCents: STEADY_NOTE_MAX_SPREAD_CENTS,
+            beyondTolerance: off.map((p) => p.index),
+            allowedBeyondTolerance: allowed,
+          },
+        };
+        if (steady.length < EXTERNAL_MIN_STEADY_NOTES) {
+          throw new StepSkip(
+            'SKIP',
+            `external audio: only ${String(steady.length)} of ${String(pitches.length)} notes have a steady pitch ` +
+              `(${String(unsteady.length)} with vibrato or glides, ${String(unmeasured.length)} too short)`,
+          );
+        }
+        if (off.length > allowed) {
+          throw new Error(
+            `notes ${off.map((p) => String(p.index)).join(', ')} are not at the detected pitch ` +
+              `(${String(off.length)} of ${String(steady.length)} steady notes, ${String(allowed)} allowed)`,
+          );
+        }
       }
       return listed ? 'exported uncorrected and listed in dryContents' : 'exported, not listed as dry';
     },
@@ -1562,7 +1709,10 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       : undefined;
     const fields = isObject(change) ? change.fields : undefined;
     const value = isObject(fields) && isObject(fields[field]) ? fields[field].after : undefined;
-    return same(value, want)
+    // The value in `changes` is held to the precision of the field, not to READBACK_EPSILON: see
+    // REPORTED_FIELD_EPSILON. The consistency against the state read back stays exact.
+    const epsilon = REPORTED_FIELD_EPSILON[field] ?? READBACK_EPSILON;
+    return typeof value === 'number' && Math.abs(value - want) <= epsilon
       ? []
       : [`changes does not report note ${String(index)} ${field} ${String(want)} (it says ${JSON.stringify(value)})`];
   };
@@ -1927,7 +2077,43 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
           }
         }
         const stillSamples = compareSamples(base, wet, unedited(still));
-        if (stillSamples.maxAbsDiff > UNEDITED_MAX_ABS_DIFF_TIMING) {
+        // Generated audio: sample by sample, as measured. External audio: a grid change renders the
+        // whole stretch again, and notes of real voices came back in another phase (differences of
+        // 0.17 to 0.26 of full scale) with the same pitch, so each note away from the handle is
+        // either bit-identical or the same sound in another phase (RESYNTH_MAX_RESIDUAL_DB), and its
+        // pitch has not moved (PITCH_TOLERANCE_CENTS).
+        let stillNotes: Record<string, unknown>[] | undefined;
+        if (tone === undefined) {
+          stillNotes = still.map((sp) => {
+            const identical =
+              compareSamples(base, wet, [{ startSec: sp.startSec - 0.05, endSec: sp.endSec + 0.05 }]).bitIdentical ===
+              1;
+            const lag = base.sampleRateHz / sp.hz;
+            const residualDb = identical ? null : alignedResidualDb(base, wet, insideOf(sp), lag);
+            const edgeDb = identical ? null : edgeResidualOf(base, wet, sp, lag);
+            const pitch = noteDelta(base, wet, sp, 0);
+            if (!identical && (residualDb === null || residualDb > RESYNTH_MAX_RESIDUAL_DB)) {
+              problems.push(
+                `note ${String(sp.index)}, away from the moved handle, is not the same sound: ` +
+                  `${String(residualDb)} dB left after aligning its phase (allowed ${String(RESYNTH_MAX_RESIDUAL_DB)})`,
+              );
+            }
+            // The attack and release (edgeDb) are only reported here: see RESYNTH_EDGE_MAX_RESIDUAL_DB.
+            if (pitch.medianCents !== null && Math.abs(pitch.medianCents) > PITCH_TOLERANCE_CENTS) {
+              problems.push(
+                `note ${String(sp.index)}, away from the moved handle, changed pitch by ${String(pitch.medianCents)} cents ` +
+                  `(allowed ${String(PITCH_TOLERANCE_CENTS)})`,
+              );
+            }
+            return {
+              index: sp.index,
+              bitIdentical: identical,
+              alignedResidualDb: residualDb,
+              edgeResidualDb: edgeDb,
+              pitchCents: pitch.medianCents,
+            };
+          });
+        } else if (stillSamples.maxAbsDiff > UNEDITED_MAX_ABS_DIFF_TIMING) {
           problems.push(
             `notes away from the moved handle differ from the baseline by up to ${stillSamples.maxAbsDiff.toExponential(2)}`,
           );
@@ -1943,6 +2129,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
           correlation: round(shift.peak, 4),
           notesAway: stillShifts,
           unedited: stillSamples,
+          ...(stillNotes === undefined ? {} : { uneditedNotes: stillNotes }),
           consistency: problems.slice(),
         });
         return {
@@ -2054,6 +2241,9 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       resynthPreRollMs: RESYNTH_PRE_ROLL_SEC * 1000,
       phraseGapMs: PHRASE_GAP_SEC * 1000,
       resynthMaxResidualDb: RESYNTH_MAX_RESIDUAL_DB,
+      resynthEdgeMaxResidualDb: RESYNTH_EDGE_MAX_RESIDUAL_DB,
+      steadyNoteMaxSpreadCents: STEADY_NOTE_MAX_SPREAD_CENTS,
+      externalMaxOffFraction: EXTERNAL_MAX_OFF_FRACTION,
       minVoicedFrames: MIN_VOICED_FRAMES,
       estimatorErrorCents: ESTIMATOR_ERROR_CENTS,
       shiftEstimatorErrorMs: SHIFT_ERROR_SEC * 1000,

@@ -20,12 +20,14 @@ import {
   HYBRID_MODE_NOTICE,
   PHRASE_GAP_SEC,
   PITCH_TOLERANCE_CENTS,
+  RESYNTH_EDGE_MAX_RESIDUAL_DB,
   RESYNTH_MAX_RESIDUAL_DB,
   RESYNTH_PRE_ROLL_SEC,
   alignedResidualDb,
   awayWindow,
   compareSamples,
   consistencyOf,
+  edgeResidualOf,
   effectsSetupFromEnv,
   noteDelta,
   resynthesisReach,
@@ -112,7 +114,7 @@ describe('effects scenario against the stand-in', () => {
       // re-synthesis, and bit-identical here. The notes before the edit and after note 2 are away from it.
       expect(target.unedited).toEqual({
         away: { spans: 3, bitIdentical: 3, maxAbsDiff: 0, maxAbsDiffDbfs: null, notes: [0, 3, 4] },
-        reach: [{ index: 2, bitIdentical: true, alignedResidualDb: null }],
+        reach: [{ index: 2, bitIdentical: true, alignedResidualDb: null, edgeResidualDb: null }],
       });
       // Hybrid mode off, as every export of the check said; nothing to note at the top of the report.
       expect(report).toMatchObject({ hybridMode: false, notices: [], dataTemplateFrom: null });
@@ -391,6 +393,113 @@ describe('effects scenario against the stand-in', () => {
     },
     SLOW,
   );
+
+  // External audio: which notes of the unedited export are compared is decided on the source, and the
+  // export contributes its median pitch only.
+  const WOBBLE = { rateHz: 5.5, depthCents: 50 };
+  const steadyNote = (midi: number) => ({ midi, durationSec: 0.9, gapSec: 0.4 });
+  const externalRun = async (
+    mode: string,
+    notes: Parameters<typeof generateTone>[0]['notes'],
+  ): Promise<EffectsReport> => {
+    const files = await writeToneFiles(generateTone({ seed: 5, notes, leadSec: 0.6 }), 'external-take');
+    try {
+      return await runEffects(config(mode, { audioPath: files.wavPath, timingLengthsSec: [] }));
+    } finally {
+      await files.cleanup();
+    }
+  };
+  const FIVE = [55, 58, 60, 62, 64].map(steadyNote);
+  const exportCheck = (report: EffectsReport) =>
+    report.checks['export before any edit'] as {
+      external: {
+        steadyNotes: number;
+        leftOut: { unsteadyPitch: number[]; tooFewVoicedFrames: number[] };
+        beyondTolerance: number[];
+        allowedBeyondTolerance: number;
+      };
+    };
+
+  it(
+    'leaves a note with a +-50 cent vibrato in the source out of the unedited export check, and passes the rest',
+    async () => {
+      const notes = FIVE.map((n, i) => (i === 2 ? { ...n, vibrato: WOBBLE } : n));
+      const report = await externalRun('effects', notes);
+      expect(results(report)['export before any edit']).toBe('PASS');
+      const { external } = exportCheck(report);
+      expect(external.leftOut.unsteadyPitch).toEqual([2]);
+      expect(external.leftOut.tooFewVoicedFrames).toEqual([]);
+      expect(external.steadyNotes).toBe(4);
+      expect(external.beyondTolerance).toEqual([]);
+      // The notes away from the moved handle are reported with their phase-aligned residual and pitch.
+      const timing = report.checks['shiftTiming +30 ms'] as { uneditedNotes?: Record<string, unknown>[] };
+      expect(results(report)['shiftTiming +30 ms']).toBe('PASS');
+      expect(timing.uneditedNotes?.length).toBeGreaterThan(0);
+      for (const n of timing.uneditedNotes ?? []) {
+        expect(n).toHaveProperty('bitIdentical');
+        expect(n).toHaveProperty('edgeResidualDb');
+        expect(typeof n.pitchCents).toBe('number');
+        expect(Math.abs(n.pitchCents as number)).toBeLessThanOrEqual(PITCH_TOLERANCE_CENTS);
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    'fails the unedited export of external audio that is off, however it is off, instead of skipping it',
+    async () => {
+      // Every note 30 cents sharp.
+      const offset = await externalRun('effects-export-offset', FIVE);
+      expect(results(offset)['export before any edit']).toBe('FAIL');
+      expect(noteOf(offset, 'export before any edit')).toBe(
+        'notes 0, 1, 2, 3, 4 are not at the detected pitch (5 of 5 steady notes, 0 allowed)',
+      );
+      // Every note bent over 180 cents: its own pitch is not steady, which must not take it out of the check.
+      const glide = await externalRun('effects-export-glide', FIVE);
+      expect(results(glide)['export before any edit']).toBe('FAIL');
+      expect(exportCheck(glide).external.steadyNotes).toBe(5);
+      expect(exportCheck(glide).external.leftOut.unsteadyPitch).toEqual([]);
+      // One of five steady notes (20 %) beyond the tolerance: more than the 5 % allowed.
+      const one = await externalRun('effects-export-one-off', FIVE);
+      expect(results(one)['export before any edit']).toBe('FAIL');
+      expect(noteOf(one, 'export before any edit')).toBe(
+        'notes 1 are not at the detected pitch (1 of 5 steady notes, 0 allowed)',
+      );
+      expect(exportCheck(one).external.beyondTolerance).toEqual([1]);
+      // The checks that follow still run on the same instance.
+      expect(results(one)['setTargetPitch +100 cents']).toBe('PASS');
+    },
+    SLOW,
+  );
+
+  it(
+    'skips the unedited export check of external audio with fewer than 3 steady notes in the source',
+    async () => {
+      const notes = [55, 58, 60, 62].map((m, i) => (i < 2 ? { ...steadyNote(m), vibrato: WOBBLE } : steadyNote(m)));
+      const report = await externalRun('effects', notes);
+      expect(results(report)['export before any edit']).toBe('SKIP');
+      expect(noteOf(report, 'export before any edit')).toBe(
+        'external audio: only 2 of 4 notes have a steady pitch (2 with vibrato or glides, 0 too short)',
+      );
+      expect(exportCheck(report).external.steadyNotes).toBe(2);
+    },
+    SLOW,
+  );
+
+  it(
+    'reports the attack and release residual of re-synthesised notes of external audio',
+    async () => {
+      const lengths = [0.6, 1.1, 0.6, 1.0, 0.6];
+      const notes = FIVE.map((n, i) => ({ ...n, durationSec: lengths[i] ?? 0.6 }));
+      const report = await externalRun('effects-resynth', notes);
+      expect(report.steps.filter((s) => s.result === 'FAIL')).toEqual([]);
+      const shift = report.checks['shiftCents +100 cents'] as {
+        unedited: { reach: { bitIdentical: boolean; edgeResidualDb: number | null }[] };
+      };
+      expect(shift.unedited.reach.some((r) => !r.bitIdentical && typeof r.edgeResidualDb === 'number')).toBe(true);
+    },
+    SLOW,
+  );
 });
 
 describe('effects measurements', () => {
@@ -467,6 +576,30 @@ describe('effects measurements', () => {
     // Nothing to compare against: no energy, or a span shorter than two shifts.
     expect(alignedResidualDb(shifted(a, 0, 0), a, inside, period)).toBeNull();
     expect(alignedResidualDb(a, a, { startSec: 0.5, endSec: 0.5 + period / a.sampleRateHz }, period)).toBeNull();
+  });
+
+  it('judges the attack and release of a re-synthesised note apart from its inside', () => {
+    const a = tone(0);
+    const note = { startSec: 0.2, endSec: 1.2 };
+    const period = a.sampleRateHz / 261.63;
+    const rate = a.sampleRateHz;
+    const edit = (wav: typeof a, from: number, to: number, gain: number, by = 0) => {
+      const mono = Float64Array.from(wav.mono);
+      for (let i = Math.round(from * rate); i < Math.round(to * rate); i++) mono[i] = gain * (wav.mono[i - by] ?? 0);
+      return { ...wav, channels: [mono], mono };
+    };
+    // The same samples, and the same sound in another phase: nothing left at the ends.
+    expect(edgeResidualOf(a, a, note, period)).toBe(-200);
+    const phase = edit(a, 0, 3, 1, Math.round(period / 3));
+    expect(edgeResidualOf(a, phase, note, period)).toBeLessThan(RESYNTH_EDGE_MAX_RESIDUAL_DB - 20);
+    // Only the first 0.1 s of the note is dropped (a lost attack): the inside is still the same sound,
+    // and the edge check is the one that sees it. Same for a lost release.
+    const noAttack = edit(a, 0.2, 0.3, 0);
+    expect(alignedResidualDb(a, noAttack, { startSec: 0.4, endSec: 1.0 }, period)).toBe(-200);
+    expect(edgeResidualOf(a, noAttack, note, period)).toBeGreaterThan(RESYNTH_EDGE_MAX_RESIDUAL_DB);
+    expect(edgeResidualOf(a, edit(a, 1.1, 1.2, 0), note, period)).toBeGreaterThan(RESYNTH_EDGE_MAX_RESIDUAL_DB);
+    // Nothing to compare against at either end.
+    expect(edgeResidualOf(edit(a, 0, 3, 0), a, note, period)).toBeNull();
   });
 
   it('finds the notes within the reach of an edit, and the part of the others that is compared', () => {

@@ -25,6 +25,8 @@ export interface ToneNote {
   readonly durationSec: number;
   /** Silence after the note; 0.1 s unless given. */
   readonly gapSec?: number;
+  /** Vibrato of this note alone; replaces the vibrato of the spec for it. */
+  readonly vibrato?: ToneVibrato;
 }
 
 export interface ToneVibrato {
@@ -217,8 +219,9 @@ export function generateTone(spec: ToneSpec): Tone {
     for (let n = 0; n < count; n++) {
       const t = n / rate;
       let f0 = truth.hz;
-      if (spec.vibrato) {
-        f0 *= 2 ** ((spec.vibrato.depthCents * Math.sin(2 * Math.PI * spec.vibrato.rateHz * t)) / 1200);
+      const vibrato = spec.notes[truth.index]?.vibrato ?? spec.vibrato;
+      if (vibrato) {
+        f0 *= 2 ** ((vibrato.depthCents * Math.sin(2 * Math.PI * vibrato.rateHz * t)) / 1200);
       }
       phase += (2 * Math.PI * f0) / rate;
       let value = 0;
