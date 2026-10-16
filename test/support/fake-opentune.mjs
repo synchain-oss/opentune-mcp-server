@@ -12,7 +12,9 @@
 // The `smoke*` modes also answer the calls of the end-to-end smoke scenario (import, AUTO, export)
 // with canned results, enough to walk the protocol; no audio is analysed. `smoke-dry` lists the
 // content in dryContents, `smoke-backend` fails the import with an unavailable inference backend,
-// `smoke-no-export` does not report export.v1.
+// `smoke-no-export` does not report export.v1, `smoke-auto-job` hands AUTO to a job,
+// `smoke-open-scale` reports a scale AUTO's closed list does not have. Every reply of these modes
+// has the shape the specification gives its result (the unit tests validate them).
 //
 // Every copy that keeps running ends by itself once its OPENTUNE_DATA_DIR is gone, so a test that
 // fails cannot leave one behind; with `--marker=<file>` it first writes how it ended to that file.
@@ -86,13 +88,17 @@ const envelope = (revision, job = null) => ({
   idMap: [],
   revisionDiff: { arrangement: null, trackState: null, contents: [] },
   tokens: tokens(revision),
-  undo: null,
+  undo:
+    job === null
+      ? { undoable: true, undoId: 'u:0123abcd:1', description: 'canned', innerActions: ['canned'], steps: 1 }
+      : null,
   dirty: { before: false, after: true },
   ui: null,
   sideEffects: {},
   warnings: [],
   job,
 });
+const noProgress = { fraction: null, phase: null, itemsDone: null, itemsTotal: null };
 const failure = (id, kind, reason) => ({
   jsonrpc: '2.0',
   id,
@@ -130,6 +136,15 @@ function exportWav(seconds) {
   return wav;
 }
 
+const autoResult = (params) => ({
+  ...envelope('r2'),
+  mode: params.mode,
+  keyUsed: params.key,
+  paramsUsed: null,
+  noteCount: { before: 0, after: 8 },
+  omittedCount: { changes: 0, created: 0, removed: 0 },
+});
+
 function smokeReply(request) {
   const { id, method, params } = request;
   const result = (value) => ({ jsonrpc: '2.0', id, result: value });
@@ -152,14 +167,33 @@ function smokeReply(request) {
     const base = { jobId: params.jobId, kind: job.kind, cancellable: false, createdAtMs: 0, updatedAtMs: 0 };
     if (job.polls < 2) {
       return result({
-        job: { ...base, state: 'running', finishedAtMs: null, progress: null, result: null, error: null },
+        job: { ...base, state: 'running', finishedAtMs: null, progress: noProgress, result: null, error: null },
       });
     }
     let jobResult;
-    if (job.kind === 'import') {
+    if (job.kind === 'referenceAnalysis') {
+      jobResult = autoResult(job.params);
+    } else if (job.kind === 'import') {
       jobResult = {
         ...envelope('r1'),
-        items: [{ path: job.source, imported: true, contentId: CONTENT_ID, f0State: 'ready', error: null }],
+        items: [
+          {
+            path: job.source,
+            imported: true,
+            placementId: 'p:0123abcd:0:1',
+            contentId: CONTENT_ID,
+            trackId: 1,
+            startTimelineSec: 0,
+            durationSec: 9.9,
+            channelCount: 1,
+            originalSampleRateHz: 44100,
+            resampled: false,
+            f0State: 'ready',
+            notesGenerated: true,
+            notesGeneratedBy: 'request',
+            error: null,
+          },
+        ],
         counts: { requested: 1, imported: 1, failed: 0 },
       };
     } else {
@@ -178,26 +212,52 @@ function smokeReply(request) {
       };
     }
     return result({
-      job: { ...base, state: 'succeeded', finishedAtMs: 1, progress: null, result: jobResult, error: null },
+      job: { ...base, state: 'succeeded', finishedAtMs: 1, progress: noProgress, result: jobResult, error: null },
     });
   }
   if (method === 'content.getDetails') {
     return result({
-      contentId: CONTENT_ID,
-      analysis: { f0State: 'ready', failure: null, hopSec: 0.01 },
-      key: { root: 0, scale: 'major', origin: 'automatic', confidence: 0.9 },
       asOf: { arrangementRevision: 'a1', contents: tokens('r1').contents },
+      derived: [],
+      contentId: CONTENT_ID,
+      viaPlacementId: 'p:0123abcd:0:1',
+      placementIds: ['p:0123abcd:0:1'],
+      durationSec: 9.9,
+      key: {
+        root: mode === 'smoke-open-scale' ? 2 : 0,
+        scale: mode === 'smoke-open-scale' ? 'lydian' : 'major',
+        origin: 'automatic',
+        confidence: 0.9,
+      },
+      pitchShift: { semitones: 0, cents: 0 },
+      analysis: { f0State: 'ready', failure: null, hopSec: 0.01 },
+      render: { current: true, publishedRevision: 'r1', desiredRevision: 'r1' },
+      timeGrid: { seeded: true, identity: true, handles: [] },
+      reference: { referencePlacementId: null, alignmentReady: false },
+      autoModes: {
+        editingScheme: 'openDyne',
+        uiButtonRuns: 'regenerate',
+        available: ['regenerate', 'snapNotes', 'notesOnly'],
+      },
     });
   }
   if (method === 'content.autoTune') {
-    return result({
-      ...envelope('r2'),
-      mode: params.mode,
-      keyUsed: params.key,
-      paramsUsed: null,
-      noteCount: 8,
-      omittedCount: 0,
-    });
+    if (mode === 'smoke-open-scale' && params.key?.scale !== 'chromatic') {
+      return failure(id, 'INVALID_ARGUMENT', 'bad_params');
+    }
+    if (mode === 'smoke-auto-job') {
+      const jobId = `j:0123abcd:${String(jobs.size + 1)}`;
+      jobs.set(jobId, { kind: 'referenceAnalysis', polls: 0, params });
+      return result({
+        ...envelope('r2', { jobId, kind: 'referenceAnalysis', state: 'queued' }),
+        mode: params.mode,
+        keyUsed: params.key,
+        paramsUsed: null,
+        noteCount: null,
+        omittedCount: { changes: 0, created: 0, removed: 0 },
+      });
+    }
+    return result(autoResult(params));
   }
   return failure(id, 'UNSUPPORTED', 'capability_missing');
 }

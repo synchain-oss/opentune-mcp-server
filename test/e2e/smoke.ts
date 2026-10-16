@@ -22,7 +22,7 @@
 
 import { createHash } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { readFile, stat } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -163,6 +163,18 @@ export function writeReport(file: string, report: SmokeReport): void {
 
 // ---------------------------------------------------------------------------------------------
 // helpers on untyped results
+
+/** The scales `keyInput.scale` takes (common.schema.json); the key of a content may name others. */
+const KEY_INPUT_SCALES: readonly string[] = [
+  'major',
+  'minor',
+  'chromatic',
+  'harmonicMinor',
+  'dorian',
+  'mixolydian',
+  'pentatonicMajor',
+  'pentatonicMinor',
+];
 
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 
@@ -399,6 +411,7 @@ export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Pro
       const state = text(member(details, 'analysis', 'content details'), 'f0State', 'analysis');
       if (state === 'ready') break;
       if (state === 'failed') throw new Error('the pitch analysis failed');
+      if (state === 'notRequested') throw new Error('the instance did not start a pitch analysis (notRequested)');
       if (Date.now() >= deadline) throw new Error(`the pitch analysis was not ready within ${String(timeoutMs)} ms`);
       await sleep(500);
     }
@@ -411,19 +424,33 @@ export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Pro
     for (;;) {
       const details = await session.call('content.getDetails', { contentId }, 30_000);
       const key = member(details, 'key', 'content details');
-      // The content's own key when the analysis found one, else the chromatic scale: every semitone.
-      const keyInput = isObject(key)
-        ? { root: num(key, 'root', 'key'), scale: text(key, 'scale', 'key') }
-        : { root: 0, scale: 'chromatic' };
+      // The content's own key when the analysis found one and AUTO's closed scale list has its
+      // scale (the key reports an open scale name); else the chromatic scale from C: every semitone.
+      let keyNote = '';
+      let keyInput: { root: number; scale: string } = { root: 0, scale: 'chromatic' };
+      if (isObject(key)) {
+        const scale = text(key, 'scale', 'key');
+        if (KEY_INPUT_SCALES.includes(scale)) keyInput = { root: num(key, 'root', 'key'), scale };
+        else keyNote = ` (the instance reports the scale ${scale}, which AUTO does not take: chromatic used)`;
+      }
       try {
-        const result = await session.call(
+        let result: unknown = await session.call(
           'content.autoTune',
           { contentId, mode: 'regenerate', key: keyInput, expectedRevision: revisionOf(details, contentId) },
           120_000,
         );
+        // The work may be handed to a job; the job's result then carries the counts.
+        const handed = member(result, 'job', 'the AUTO result');
+        if (isObject(handed)) {
+          result = await waitJob(session, text(handed, 'jobId', 'the AUTO job'), 'AUTO', timeoutMs);
+        }
         if (member(result, 'applied', 'the AUTO result') !== true)
           throw new Error('AUTO changed nothing (applied false)');
-        return `${String(num(result, 'noteCount', 'the AUTO result'))} notes in ${keyInput.scale}`;
+        const counts = member(result, 'noteCount', 'the AUTO result');
+        const notes = isObject(counts)
+          ? `${String(num(counts, 'after', 'noteCount'))} notes (before ${String(num(counts, 'before', 'noteCount'))})`
+          : 'notes not counted';
+        return `${notes} in ${keyInput.scale}${keyNote}`;
       } catch (error) {
         // The notes of a freshly imported clip may still be generated: retry while the instance says so.
         if (error instanceof OtcpError && error.data.kind === 'NOT_READY' && error.data.retryable) {
@@ -453,7 +480,7 @@ export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Pro
     if (tone === undefined) throw new Error('no source audio');
     const written = text(exportResult, 'path', 'the export result');
     const bytes = await readFile(written);
-    if ((await stat(written)).size === 0) throw new Error('the exported file is empty');
+    if (bytes.length === 0) throw new Error('the exported file is empty');
     const wav = readWav(bytes);
     const reportedRate = num(exportResult, 'sampleRateHz', 'the export result');
     const reportedChannels = num(exportResult, 'channelCount', 'the export result');

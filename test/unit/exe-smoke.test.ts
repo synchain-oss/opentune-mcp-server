@@ -8,13 +8,17 @@
 // and runs the scenario with it.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { afterAll, describe, expect, it } from 'vitest';
 
+import { exeTarget } from '../contract/exe-target.js';
+import { OtcpSession, type Json } from '../../src/otcp/client.js';
+import { parseDiscoveryFile } from '../../src/discovery/file.js';
+import { otcpSpec } from '../support/otcp-spec.js';
 import { OtcpError } from '../../src/errors/tool-error.js';
 import {
   classify,
@@ -148,6 +152,96 @@ describe('smoke scenario against the stand-in', () => {
       expect(report.steps.find((s) => s.name === 'launch')?.result).toBe('FAIL');
       expect(report.steps.find((s) => s.name === 'hello')?.result).toBe('SKIP');
       expect(report.instance).toBeNull();
+    },
+    SLOW,
+  );
+});
+
+/**
+ * Walks the scenario's calls against the stand-in and checks every reply against the schema of the
+ * method: `result` for a call, `jobResult` for the result of the job it started.
+ */
+async function walk(mode: string): Promise<string[]> {
+  const spec = otcpSpec();
+  const problems: string[] = [];
+  const check = (what: string, ref: string, value: unknown) => {
+    for (const p of spec.validate(`methods/${ref}`, value)) problems.push(`${what}: ${p}`);
+  };
+  const target = exeTarget(config(mode).exe);
+  const instance = await target.open();
+  const dir = await tmp();
+  try {
+    const entry = parseDiscoveryFile(
+      `${String(instance.discovery.pid)}.json`,
+      Buffer.from(JSON.stringify(instance.discovery), 'utf8'),
+    );
+    if (!entry.ok) throw new Error(entry.problem);
+    const session = await OtcpSession.open(entry.entry, 15_000);
+    const follow = async (jobId: string, jobResultRef: string): Promise<Json> => {
+      for (;;) {
+        const reply = await session.call('job.get', { jobId, waitMs: 0 }, 5000);
+        check('job.get', 'job.get.schema.json#/$defs/result', reply);
+        const job = reply.job as Json;
+        if (job.state === 'succeeded') {
+          check(`${jobResultRef} jobResult`, `${jobResultRef}.schema.json#/$defs/jobResult`, job.result);
+          return job.result as Json;
+        }
+      }
+    };
+    const source = path.join(dir, 'in.wav');
+    await writeFile(source, wavFile({ seconds: 1, rate: 8000 }));
+    const exportPath = path.join(dir, 'out.wav');
+    const imp = await session.call('import.start', { items: [{ path: source }] }, 5000);
+    check('import.start', 'import.start.schema.json#/$defs/result', imp);
+    await follow((imp.job as Json).jobId as string, 'import.start');
+    const details = await session.call('content.getDetails', { contentId: 'c:0123abcd:0:1' }, 5000);
+    check('content.getDetails', 'content.getDetails.schema.json#/$defs/result', details);
+    const tune = await session.call(
+      'content.autoTune',
+      { contentId: 'c:0123abcd:0:1', mode: 'regenerate', key: { root: 0, scale: 'chromatic' }, expectedRevision: 'r1' },
+      5000,
+    );
+    check('content.autoTune', 'content.autoTune.schema.json#/$defs/result', tune);
+    if (tune.job !== null) await follow((tune.job as Json).jobId as string, 'content.autoTune');
+    const exp = await session.call('export.start', { kind: 'master', path: exportPath, ifExists: 'error' }, 5000);
+    check('export.start', 'export.start.schema.json#/$defs/result', exp);
+    await follow((exp.job as Json).jobId as string, 'export.start');
+    session.close();
+  } finally {
+    await instance.close();
+  }
+  return problems;
+}
+
+describe('the stand-in follows the specification', () => {
+  for (const mode of ['smoke', 'smoke-dry', 'smoke-auto-job', 'smoke-open-scale']) {
+    it(
+      `every reply of ${mode} is valid against its result or jobResult schema`,
+      async () => {
+        expect(await walk(mode)).toEqual([]);
+      },
+      SLOW,
+    );
+  }
+
+  it('the check catches a reply that is not valid (noteCount as a number, no pitchShift)', () => {
+    const spec = otcpSpec();
+    const bad = { mode: 'regenerate', noteCount: 8, omittedCount: 0 };
+    expect(spec.validate('methods/content.autoTune.schema.json#/$defs/result', bad)).not.toEqual([]);
+    expect(
+      spec.validate('methods/content.getDetails.schema.json#/$defs/result', { contentId: 'c:0123abcd:0:1' }),
+    ).not.toEqual([]);
+  });
+
+  it(
+    'AUTO passes when the work is handed to a job, and with a scale AUTO does not take',
+    async () => {
+      const job = await runSmoke(config('smoke-auto-job'));
+      expect(job.result).toBe('PASS');
+      expect(job.steps.find((s) => s.name === 'AUTO (regenerate)')?.note).toContain('8 notes (before 0)');
+      const open = await runSmoke(config('smoke-open-scale'));
+      expect(open.result).toBe('PASS');
+      expect(open.steps.find((s) => s.name === 'AUTO (regenerate)')?.note).toContain('lydian');
     },
     SLOW,
   );
