@@ -38,6 +38,7 @@ Third release candidate of protocol major 1. It records what implementing the me
 - `content.editNotes` and `content.autoTune`: `setTargetPitch` and `snapToScale` set the base pitch with `offsetCents` 0, while mode `snapNotes`, like OpenTune's own snap, keeps the base pitch, sets `offsetCents` and snaps from the base pitch alone; `clipKey` on a content without a key gives `INVALID_ARGUMENT(content_key_unset)`.
 - `content.editTimeGrid`: seeding a grid that already has handles still hands the work to a job, whose result is a no-op; the methods of `timing.v1` do not depend on OpenTune's experimental features, which its UI requires for the time tool.
 - `export.start`: the new reasons and the unavailable volume in the description.
+- `content.autoTune`: the order in which the reference job repeats its checks is not part of the contract.
 - vectors/README.md: `extraCapabilities`, like `capability`, is decided before `given`; a runner that cannot create a `noAccess` directory, which on Windows needs an access control list, skips the vector with that reason. `track/duplicate-target-occupied`: how OpenTune reaches a hidden track that holds clips.
 
 ## [1.0.0-rc.2] - unreleased

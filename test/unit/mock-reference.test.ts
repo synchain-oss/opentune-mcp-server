@@ -290,4 +290,31 @@ describe('content.autoTune in mode reference', () => {
     // The job ends with the error of the check it repeats (x-otcp.jobErrors).
     expect(failed.error?.data).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'reference_not_bound' });
   });
+
+  it('fails the job with BUSY(modal_open) when a modal dialog opens after the call was accepted', async () => {
+    const clock = new ManualClock();
+    const { session, ids } = await setup(clock);
+    const { ok } = session;
+    const revision = (
+      (await ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
+        contents: { revision: string }[];
+      }
+    ).contents[0]?.revision;
+    const started = await ok('content.autoTune', {
+      contentId: ids['clip.contentId'],
+      mode: 'reference',
+      placementId: ids['clip.placementId'],
+      expectedRevision: revision,
+    });
+    const before = targets(session, 1);
+    session.mock.setBusy({ modalOpen: true });
+    clock.advance(1000);
+    const job = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })).job as {
+      state: string;
+      error: { data: Record<string, unknown> } | null;
+    };
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ kind: 'BUSY', reason: 'modal_open' });
+    expect(targets(session, 1)).toEqual(before);
+  });
 });
