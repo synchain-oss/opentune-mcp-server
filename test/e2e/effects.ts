@@ -8,9 +8,10 @@
 // Three kinds of check:
 //
 // - Report consistency. After every write, the `after` value of each change equals the value read
-//   back at once, and the tokens of the result equal those of a fresh read. After edit.undo, the
-//   notes, the pitch shift and the time-grid handles read back equal the snapshot taken before the
-//   write.
+//   back at once, and the tokens of the result equal those of a fresh read. Only the fields the
+//   scenario reads back are compared; any other field is listed (unreadFields), not a problem, since
+//   fields are only ever added. After edit.undo, the notes, the pitch shift and the time-grid
+//   handles read back equal the snapshot taken before the write.
 // - Differential effects. The clip is exported before the edit (the baseline) and after it; the same
 //   F0 estimator (test/support/f0-estimator.ts) reads both files. For every edited note only frames
 //   voiced in both files count, and max(80 ms, 20 % of the note) is left out at both ends; the median
@@ -25,7 +26,10 @@
 // capability the scenario needs is not reported, or the audio given cannot answer the check) and
 // FLAKY-SKIP (only an inference backend that cannot be initialised). A failed set-up step stops the
 // scenario; a failed check does not stop the checks after it, because each check puts the clip back
-// as it was (edit.undo) and verifies that it did. The instance is started and ended by the exe target
+// as it was (edit.undo) and verifies that it did, also when it fails half-way. The undo of a write
+// that took effect is recorded before anything else is read from its result; a write that took
+// effect without a usable undoId cannot be taken back, and like an undo that does not restore the
+// clip it stops the checks after it. The instance is started and ended by the exe target
 // (test/contract/exe-target.ts), exactly as in the smoke scenario.
 //
 // The audio is generated (test/support/harmonic-tone.ts): five notes with silence between them, one
@@ -402,13 +406,27 @@ async function readState(session: OtcpSession, contentId: string): Promise<ClipS
 const same = (a: unknown, b: unknown) =>
   typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) <= READBACK_EPSILON : a === b;
 
+/** Report consistency of a write result against the state read right after it. */
+export interface Consistency {
+  /** Where the result and the state read back disagree. */
+  readonly problems: string[];
+  /**
+   * The fields of `changes` the scenario does not read back, as `entity.field`, sorted, each once.
+   * They are not compared and are not a problem: fields are only ever added to the specification,
+   * and a client accepts the ones it does not know.
+   */
+  readonly unreadFields: string[];
+}
+
 /**
  * Report consistency of a write result against the state read right after it: the tokens, and every
- * change the scenario can read back (notes, pitch shift, time-grid handles, the clip's tokens).
- * Returns the problems.
+ * field of a change the scenario reads back (the note fields of NOTE_FIELDS, the pitch shift, a
+ * time-grid handle, the clip's tokens). Other fields, and the fields of other entities, are listed in
+ * unreadFields.
  */
-export function consistencyProblems(result: Json, after: ClipState, contentId: string): string[] {
+export function consistencyOf(result: Json, after: ClipState, contentId: string): Consistency {
   const problems: string[] = [];
+  const unread = new Set<string>();
   const tokens = member(result, 'tokens', 'the result');
   if (member(tokens, 'arrangementRevision', 'tokens') !== after.tokens.arrangementRevision) {
     problems.push('tokens.arrangementRevision is not the one read afterwards');
@@ -426,45 +444,58 @@ export function consistencyProblems(result: Json, after: ClipState, contentId: s
     }
   }
   const changes = member(result, 'changes', 'the result');
-  if (!Array.isArray(changes)) return [...problems, 'changes is not an array'];
+  if (!Array.isArray(changes)) return { problems: [...problems, 'changes is not an array'], unreadFields: [] };
   for (const change of changes as unknown[]) {
     const entity = text(change, 'entity', 'a change');
     const ref = member(change, 'ref', 'a change');
     const fields = member(change, 'fields', 'a change');
     if (!isObject(fields)) continue;
-    const check = (what: string, name: string, readBack: unknown) => {
-      const field = fields[name];
-      if (!isObject(field)) return;
-      if (!same(field.after, readBack)) {
-        problems.push(
-          `${what} ${name}: the result says ${JSON.stringify(field.after)}, read back ${JSON.stringify(readBack)}`,
-        );
-      }
-    };
+    // What the scenario read back for this change, by field name; null when the entity it refers to
+    // is not there afterwards (already a problem).
+    let what = entity;
+    let readBack: Readonly<Record<string, unknown>> | null = {};
     if (entity === 'note') {
       const note = member(ref, 'note', 'a note reference');
       const index = num(note, 'index', 'a note reference');
+      what = `note ${String(index)}`;
       if (member(note, 'atRevision', 'a note reference') !== after.notesRevision) {
         problems.push(`note ${String(index)} is referenced at another revision than the one read afterwards`);
       }
       const read = after.notes.find((n) => n.index === index);
       if (read === undefined) problems.push(`note ${String(index)} of the changes is not there afterwards`);
-      else
-        for (const name of Object.keys(fields)) check(`note ${String(index)}`, name, (read as unknown as Json)[name]);
+      readBack = read === undefined ? null : Object.fromEntries(NOTE_FIELDS.map((name) => [name, read[name]]));
     } else if (entity === 'pitchShift') {
-      check('pitch shift', 'semitones', after.pitchShift.semitones);
-      check('pitch shift', 'cents', after.pitchShift.cents);
+      what = 'pitch shift';
+      readBack = after.pitchShift;
     } else if (entity === 'timeHandle') {
       const handleId = text(ref, 'handleId', 'a handle reference');
+      what = `handle ${handleId}`;
       const handle = after.handles.find((h) => h.handleId === handleId);
       if (handle === undefined) problems.push(`handle ${handleId} of the changes is not there afterwards`);
-      else check(`handle ${handleId}`, 'outputSec', handle.outputSec);
+      readBack = handle === undefined ? null : { contentSec: handle.contentSec, outputSec: handle.outputSec };
     } else if (entity === 'content') {
-      for (const name of ['revision', 'gridRevision', 'keyRevision'] as const)
-        check('the clip', name, after.tokens[name]);
+      what = 'the clip';
+      readBack = {
+        revision: after.tokens.revision,
+        gridRevision: after.tokens.gridRevision,
+        keyRevision: after.tokens.keyRevision,
+      };
+    }
+    if (readBack === null) continue;
+    for (const [name, field] of Object.entries(fields)) {
+      if (!Object.hasOwn(readBack, name)) {
+        unread.add(`${entity}.${name}`);
+        continue;
+      }
+      if (!isObject(field)) continue;
+      if (!same(field.after, readBack[name])) {
+        problems.push(
+          `${what} ${name}: the result says ${JSON.stringify(field.after)}, read back ${JSON.stringify(readBack[name])}`,
+        );
+      }
     }
   }
-  return problems;
+  return { problems, unreadFields: [...unread].sort() };
 }
 
 /** Differences between two snapshots of the clip, for the check after edit.undo. Tokens are not compared. */
@@ -808,31 +839,89 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     return wav;
   };
 
-  /** A write, then the state read back at once and the consistency of the two. */
-  const write = async (method: string, params: Json) => {
+  interface CheckFrame {
+    /** The clip as it was before the check wrote anything. */
+    readonly before: ClipState;
+    /** The undoId of every write the check made, oldest first; restored newest first. */
+    readonly undoIds: string[];
+    /** The fields its results reported that the scenario does not read back (Consistency.unreadFields). */
+    readonly unread: Set<string>;
+    /** The measurements, written to checks[name]. */
+    readonly report: Record<string, unknown>;
+  }
+
+  /** The undoId of a write result; throws with the reason when it carries none. */
+  const undoIdOf = (result: Json): string => {
+    const undo = result.undo;
+    if (!isObject(undo)) throw new Error('its result has no undo block');
+    if (undo.undoable !== true) {
+      const reason = typeof undo.reason === 'string' ? ` (${undo.reason})` : '';
+      throw new Error(`its result says it cannot be undone${reason}`);
+    }
+    if (typeof undo.undoId !== 'string' || undo.undoId === '') throw new Error('its undo block has no undoId');
+    return undo.undoId;
+  };
+
+  /**
+   * The first thing done with every write result: whether the write took effect (applied, and not a
+   * dry run; a result that does not say counts as taking effect). Inside a check the undoId of a
+   * write that took effect goes into the frame at once, before anything else is read from the result,
+   * so that a failure further on can still take the write back. A write that took effect without a
+   * usable undoId cannot be taken back, and the checks after this one would run on a changed clip:
+   * Unrestored, which stops them.
+   */
+  const tookEffect = (method: string, result: Json, frame: CheckFrame | null): boolean => {
+    if (result.applied === false || result.dryRun === true) return false;
+    if (frame !== null) {
+      let undoId: string;
+      try {
+        undoId = undoIdOf(result);
+      } catch (error) {
+        throw new Unrestored(
+          `${method} took effect, but ${error instanceof Error ? error.message : String(error)}: ` +
+            'the check cannot take it back, and the checks after it would run on a changed clip',
+        );
+      }
+      frame.undoIds.push(undoId);
+    }
+    if (result.applied !== true) throw new Error(`the ${method} result does not say whether it was applied`);
+    return true;
+  };
+
+  /**
+   * A write, then the state read back at once and the consistency of the two. Inside a check, give
+   * its frame: the undo is recorded first (tookEffect), and the unread fields go into the frame.
+   */
+  const write = async (method: string, params: Json, frame: CheckFrame | null) => {
     const result = await need().call(method, params, 60_000);
-    if (member(result, 'applied', `the ${method} result`) !== true)
-      throw new Error(`${method} changed nothing (applied false)`);
+    if (!tookEffect(method, result, frame)) {
+      throw new Error(`${method} changed nothing (applied ${String(result.applied)}, dryRun ${String(result.dryRun)})`);
+    }
     const after = await readState(need(), contentId);
-    return { result, after, problems: consistencyProblems(result, after, contentId) };
+    const { problems, unreadFields } = consistencyOf(result, after, contentId);
+    for (const field of unreadFields) frame?.unread.add(field);
+    return { result, after, problems, unreadFields };
   };
 
   /**
    * Takes back the writes of a check with edit.undo, newest first, and verifies the clip is as it
-   * was. Returns the problems; throws Unrestored when the clip could not be put back.
+   * was (also when there is nothing to take back). Returns the problems; throws Unrestored when the
+   * clip could not be put back.
    */
-  const restore = async (undoIds: readonly string[], before: ClipState): Promise<string[]> => {
+  const restore = async (frame: CheckFrame): Promise<string[]> => {
     const problems: string[] = [];
     try {
-      for (const undoId of [...undoIds].reverse()) {
+      for (const undoId of [...frame.undoIds].reverse()) {
         const result = await need().call('edit.undo', { expectedUndoId: undoId }, 60_000);
         const after = await readState(need(), contentId);
-        problems.push(...consistencyProblems(result, after, contentId).map((p) => `undo: ${p}`));
+        const consistency = consistencyOf(result, after, contentId);
+        problems.push(...consistency.problems.map((p) => `undo: ${p}`));
+        for (const field of consistency.unreadFields) frame.unread.add(field);
       }
       const now = await readState(need(), contentId);
-      const left = snapshotProblems(before, now);
+      const left = snapshotProblems(frame.before, now);
       if (left.length > 0) throw new Unrestored(`after edit.undo the clip is not as it was: ${left.join('; ')}`);
-      if (undoIds.length > 0) await settle();
+      if (frame.undoIds.length > 0) await settle();
     } catch (error) {
       if (error instanceof Unrestored) throw error;
       throw new Unrestored(
@@ -845,46 +934,55 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     return problems;
   };
 
-  const undoIdOf = (result: Json): string => {
-    const undo = member(result, 'undo', 'the result');
-    if (!isObject(undo) || undo.undoable !== true)
-      throw new Error('the write is not undoable, so the check cannot put it back');
-    return text(undo, 'undoId', 'undo');
-  };
-
-  interface CheckFrame {
-    /** The clip as it was before the check wrote anything. */
-    readonly before: ClipState;
-    /** The undoId of every write the check made, oldest first; restored newest first. */
-    readonly undoIds: string[];
-    /** The measurements, written to checks[name]. */
-    readonly report: Record<string, unknown>;
-  }
+  /** The unread fields of a check, for its report; nothing when there are none. */
+  const unreadReport = (frame: CheckFrame) =>
+    frame.unread.size === 0 ? {} : { unreadFields: [...frame.unread].sort() };
 
   /**
    * The frame of a check that writes: snapshot, the check's own work, then edit.undo of its writes
-   * and the comparison with the snapshot, also when the work failed half-way. The check returns its
-   * note and its problems; any problem, including one of the undo, fails it.
+   * and the comparison with the snapshot, also when the work failed half-way (a write may have taken
+   * effect before the failure; its undo was recorded first). The check returns its note and its
+   * problems; any problem, including one of the undo, fails it.
    */
   const guardedCheck = async (
     name: string,
     work: (frame: CheckFrame) => Promise<{ note: string; problems: readonly string[] }>,
   ): Promise<string> => {
-    const frame: CheckFrame = { before: await readState(need(), contentId), undoIds: [], report: {} };
+    const frame: CheckFrame = {
+      before: await readState(need(), contentId),
+      undoIds: [],
+      unread: new Set(),
+      report: {},
+    };
     let restored = false;
     try {
       const { note, problems } = await work(frame);
       checks[name] = frame.report;
       restored = true;
-      const undo = await restore(frame.undoIds, frame.before);
-      frame.report.undo = undo;
+      const undo = await restore(frame);
+      Object.assign(frame.report, { undo }, unreadReport(frame));
       const all = [...problems, ...undo];
       if (all.length > 0) throw new Error(all.join('; '));
-      return note;
+      return frame.unread.size === 0
+        ? note
+        : `${note}; ${String(frame.unread.size)} reported field(s) not compared, as the scenario does not read them`;
     } catch (error) {
-      checks[name] = { ...frame.report, error: scrub(error instanceof Error ? error.message : String(error)) };
-      if (!restored && frame.undoIds.length > 0) await restore(frame.undoIds, frame.before);
-      throw error;
+      let thrown = error;
+      // Unrestored from the work: what it could not take back is already known.
+      if (!restored && !(error instanceof Unrestored)) {
+        try {
+          await restore(frame);
+        } catch (failure) {
+          const why = failure instanceof Error ? failure.message : String(failure);
+          thrown = new Unrestored(`${classify(error).note}; ${why}`, { cause: error });
+        }
+      }
+      checks[name] = {
+        ...frame.report,
+        ...unreadReport(frame),
+        error: scrub(thrown instanceof Error ? thrown.message : String(thrown)),
+      };
+      throw thrown;
     }
   };
 
@@ -1093,11 +1191,16 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   let fixed: ClipState | undefined;
   await step('fixed note parameters', async () => {
     if (afterImport === undefined) throw new Error('no notes');
-    const { result, after, problems } = await write('content.editNotes', {
-      contentId,
-      expectedRevision: afterImport.notesRevision,
-      ops: [{ op: 'setParams', select: { all: true }, ...FIXED_PARAMS }],
-    });
+    // A set-up step: these parameters stay for every check, so the write is not taken back.
+    const { result, after, problems, unreadFields } = await write(
+      'content.editNotes',
+      {
+        contentId,
+        expectedRevision: afterImport.notesRevision,
+        ops: [{ op: 'setParams', select: { all: true }, ...FIXED_PARAMS }],
+      },
+      null,
+    );
     const wrong = after.notes.filter(
       (n) =>
         !same(n.retuneSpeed, FIXED_PARAMS.retuneSpeed) ||
@@ -1110,9 +1213,14 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     checks['fixed note parameters'] = {
       consistency: problems,
       undoable: isObject(result.undo) && result.undo.undoable === true,
+      ...(unreadFields.length === 0 ? {} : { unreadFields }),
     };
     if (problems.length > 0) throw new Error(problems.join('; '));
-    return `retuneSpeed ${String(FIXED_PARAMS.retuneSpeed)}, vibratoDepth ${String(FIXED_PARAMS.vibratoDepth)}, pitchDriftScale ${String(FIXED_PARAMS.pitchDriftScale)} on every note; render settled`;
+    const unread =
+      unreadFields.length === 0
+        ? ''
+        : `; ${String(unreadFields.length)} reported field(s) not compared, as the scenario does not read them`;
+    return `retuneSpeed ${String(FIXED_PARAMS.retuneSpeed)}, vibratoDepth ${String(FIXED_PARAMS.vibratoDepth)}, pitchDriftScale ${String(FIXED_PARAMS.pitchDriftScale)} on every note; render settled${unread}`;
   });
 
   await step('baseline and noise floor', async () => {
@@ -1162,11 +1270,11 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     expectChange: (result: Json, before: ClipState, after: ClipState) => string[],
   ) => {
     if (fixed === undefined || baseline === undefined) throw new Error('no baseline');
-    return guardedCheck(name, async ({ before, undoIds, report }) => {
+    return guardedCheck(name, async (frame) => {
+      const { before, report } = frame;
       const { method, params } = makeParams(before);
       const at = performance.now();
-      const { result, after, problems: consistency } = await write(method, params);
-      undoIds.push(undoIdOf(result));
+      const { result, after, problems: consistency } = await write(method, params, frame);
       const problems = [...consistency, ...expectChange(result, before, after)];
       await settle();
       const writeToSettleMs = Math.round(performance.now() - at);
@@ -1348,13 +1456,17 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       const base = baseline;
       const s = need();
       const indices = [...picks.race];
-      return guardedCheck('race: +100 cents, export, -100 cents', async ({ before, undoIds, report }) => {
-        const up = await write('content.editNotes', {
-          contentId,
-          expectedRevision: before.notesRevision,
-          ops: [{ op: 'shiftCents', select: { indices }, deltaCents: EDIT_CENTS }],
-        });
-        undoIds.push(undoIdOf(up.result));
+      return guardedCheck('race: +100 cents, export, -100 cents', async (frame) => {
+        const { before, report } = frame;
+        const up = await write(
+          'content.editNotes',
+          {
+            contentId,
+            expectedRevision: before.notesRevision,
+            ops: [{ op: 'shiftCents', select: { indices }, deltaCents: EDIT_CENTS }],
+          },
+          frame,
+        );
         const file = path.join(workDir, `effects-${String(++exportCount)}-race.wav`);
         const started = await s.call(
           'export.start',
@@ -1363,10 +1475,12 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         );
         const job = member(started, 'job', 'export.start result');
         if (!isObject(job)) throw new Error('export.start handed over no job');
-        // At once, without waiting for anything: the second version.
-        let second: 'applied' | 'busy' = 'busy';
+        // At once, without waiting for anything: the second version. Its undo is recorded first, as
+        // for every write; its report is checked once the export job has ended.
+        let second: 'applied' | 'busy' | 'notApplied' = 'busy';
+        let down: Json | undefined;
         try {
-          const down = await s.call(
+          const reply = await s.call(
             'content.editNotes',
             {
               contentId,
@@ -1375,15 +1489,21 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
             },
             60_000,
           );
-          if (down.applied === true) {
+          second = 'notApplied';
+          if (tookEffect('content.editNotes', reply, frame)) {
             second = 'applied';
-            undoIds.push(undoIdOf(down));
+            down = reply;
           }
         } catch (error) {
           if (!(error instanceof OtcpError && error.data.kind === 'BUSY' && error.data.reason === 'export_in_progress'))
             throw error;
         }
-        report.secondEdit = second === 'applied' ? 'applied' : 'refused: BUSY(export_in_progress)';
+        report.secondEdit =
+          second === 'applied'
+            ? 'applied'
+            : second === 'busy'
+              ? 'refused: BUSY(export_in_progress)'
+              : 'not applied (applied false)';
         let outcome: string;
         let result: unknown;
         try {
@@ -1395,6 +1515,15 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
             error.data.reason === 'changed_during_export';
           if (!conflict) throw error;
         }
+        // Report consistency of both writes: the first was read back at once, the second now (the
+        // export job is over, so reading cannot change the race).
+        const problems = up.problems.map((p) => `first edit: ${p}`);
+        if (down !== undefined) {
+          const consistency = consistencyOf(down, await readState(s, contentId), contentId);
+          problems.push(...consistency.problems.map((p) => `second edit: ${p}`));
+          for (const field of consistency.unreadFields) frame.unread.add(field);
+        }
+        report.consistency = problems.slice();
         if (result === undefined) {
           if (second !== 'applied') {
             throw new Error('REVISION_CONFLICT(changed_during_export) although nothing changed during the export');
@@ -1439,7 +1568,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
           outcome = `export holds the ${va === 'up' ? '+100' : '-100'} cents version in full`;
         }
         report.outcome = outcome;
-        return { note: `second edit ${String(report.secondEdit)}; ${outcome}`, problems: up.problems };
+        return { note: `second edit ${String(report.secondEdit)}; ${outcome}`, problems };
       });
     },
     { check: true },
@@ -1465,7 +1594,8 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       const unedited = (list: readonly Span[]) =>
         list.map((sp) => ({ startSec: sp.startSec - 0.05, endSec: sp.endSec + 0.05 }));
       const seededSamples = compareSamples(base, seededWav, unedited(spans));
-      return guardedCheck('shiftTiming +30 ms', async ({ before, undoIds, report }) => {
+      return guardedCheck('shiftTiming +30 ms', async (frame) => {
+        const { before, report } = frame;
         report.seedUnchanged = seededSamples;
         if (seededSamples.maxAbsDiff > UNEDITED_MAX_ABS_DIFF_TIMING) {
           throw new Error(
@@ -1483,13 +1613,16 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         const previous = sorted[k - 1]?.contentSec ?? 0;
         const next = sorted[k + 1]?.contentSec ?? Infinity;
         const half = Math.min(0.05, Math.min(at.contentSec - previous, next - at.contentSec) / 3);
-        const { result, after, problems } = await write('content.shiftTiming', {
-          contentId,
-          expectedGridRevision: before.tokens.gridRevision,
-          range: { startContentSec: round(at.contentSec - half, 6), endContentSec: round(at.contentSec + half, 6) },
-          deltaSec: TIMING_SHIFT_SEC,
-        });
-        undoIds.push(undoIdOf(result));
+        const { after, problems } = await write(
+          'content.shiftTiming',
+          {
+            contentId,
+            expectedGridRevision: before.tokens.gridRevision,
+            range: { startContentSec: round(at.contentSec - half, 6), endContentSec: round(at.contentSec + half, 6) },
+            deltaSec: TIMING_SHIFT_SEC,
+          },
+          frame,
+        );
         const moved = after.handles.find((h) => h.handleId === at.handleId);
         if (moved === undefined || !same(round(moved.outputSec - at.outputSec, 6), TIMING_SHIFT_SEC)) {
           problems.push(`handle ${at.handleId} moved to ${String(moved?.outputSec)} from ${String(at.outputSec)}`);

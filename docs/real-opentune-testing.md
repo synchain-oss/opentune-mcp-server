@@ -213,9 +213,12 @@ export of the same clip, analysed with the same F0 estimator (`test/support/f0-e
 TypeScript). For every note only the frames voiced in both files count, and max(80 ms, 20 % of the
 note) is left out at both ends; the median of the per-frame differences is the measured change. After
 every write the scenario reads the clip back: each `after` value in `changes` must equal the value
-read, and the tokens of the result must equal those of the fresh read. Each check then takes its
-write back with `edit.undo` and verifies that the notes, the pitch shift and the time-grid handles
-read back equal the snapshot taken before the write.
+read, and the tokens of the result must equal those of the fresh read. Only the fields the scenario
+reads back are compared (the note fields it parses, the pitch shift, a time-grid handle's
+`contentSec` and `outputSec`, the clip's tokens); any other field is listed in `unreadFields` of the
+check and counted in the step note, not treated as a problem, since fields are only ever added to the
+specification. Each check then takes its write back with `edit.undo` and verifies that the notes, the
+pitch shift and the time-grid handles read back equal the snapshot taken before the write.
 
 | Step                                    | What must hold                                                                                                                                                                                                                                                                                                                                                               |
 | --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -233,9 +236,14 @@ read back equal the snapshot taken before the write.
 | `shiftTiming +30 ms`                    | Seeds the time grid (which must not change the sound) and moves the handle at a note start by +30 ms: the audio at the handle plays 30 ms later (cross-correlation of the amplitude envelopes, `test/support/time-shift.ts`), and the notes away from the moved handle stay where they were.                                                                                 |
 | `timing <n> s`                          | Times only: a generated clip of n seconds on a track of its own; import to F0 ready, AUTO (the mode the AUTO button runs) to a settled render, export.                                                                                                                                                                                                                       |
 
-No export of a check may be silent or list the clip in `dryContents`. A failed set-up step stops the
-scenario; a failed check does not stop the checks after it, since each check has put the clip back as
-it was. Only a check that could not put the clip back stops the rest. The results are those of the
+No export of a check may be silent or list the clip in `dryContents`. In the race, a second write
+that is applied is checked against the clip read back once the export job has ended, like every
+other write. A failed set-up step stops the scenario; a failed check does not stop the checks after
+it, since each check has put the clip back as it was, also when it failed half-way: the `undoId` of a
+write that took effect is recorded before anything else is read from its result, and the clip is
+compared with the snapshot whether or not there was anything to take back. Only a check that could
+not put the clip back stops the rest, and so does a write that took effect without a usable `undoId`
+in its result, since nothing could take it back. The results are those of the
 smoke scenario (`PASS`, `FAIL`, `SKIP`, `FLAKY-SKIP`). The scenario also needs `history.v1` (for
 `edit.undo`); `shiftTiming +30 ms` is skipped without `timing.v1`. An export before any edit can wait
 up to the 120 s export limit, so a run takes a few minutes.
@@ -269,14 +277,14 @@ The step table goes to stderr. The JSON report (`OTCP_E2E_EFFECTS_REPORT`, else 
 `OTCP_E2E_REPORT`) has the members of the smoke report, with `schema` `opentune-mcp-e2e-effects/1`,
 and these:
 
-| Member       | Holds                                                                                                                                                                                                                                                          |
-| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `backend`    | The inference backend `session.info` reports, and every `processing.backend` the exports reported (they can differ: an analysis session can fall back to the CPU).                                                                                             |
-| `audio`      | `source` (`generated` or `external`), length and sample rate.                                                                                                                                                                                                  |
-| `tolerances` | The tolerances above and the error bounds of the two estimators.                                                                                                                                                                                               |
-| `noiseFloor` | `repeatExport` (two exports of the unchanged clip: bit-identical or not, the change per note), and for generated audio `estimatorOnSource` and `renderedAgainstSource` (cents from the known pitch).                                                           |
-| `checks`     | Per step: the expected and the measured median change and the frame count of every note, the sample comparison of the notes that were not edited (`bitIdentical`, `maxAbsDiff`, `maxAbsDiffDbfs`), the measured shift, the race outcome, consistency problems. |
-| `timings`    | `launchToReadyMs`, `importToF0ReadyMs`, `fixedParamsToSettleMs`, `autoToSettleMs` per AUTO mode, the time of every export, and per timing clip `importToF0ReadyMs`, `autoToSettleMs` and `exportMs`.                                                           |
+| Member       | Holds                                                                                                                                                                                                                                                                                                                                                             |
+| ------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `backend`    | The inference backend `session.info` reports, and every `processing.backend` the exports reported (they can differ: an analysis session can fall back to the CPU).                                                                                                                                                                                                |
+| `audio`      | `source` (`generated` or `external`), length and sample rate.                                                                                                                                                                                                                                                                                                     |
+| `tolerances` | The tolerances above and the error bounds of the two estimators.                                                                                                                                                                                                                                                                                                  |
+| `noiseFloor` | `repeatExport` (two exports of the unchanged clip: bit-identical or not, the change per note), and for generated audio `estimatorOnSource` and `renderedAgainstSource` (cents from the known pitch).                                                                                                                                                              |
+| `checks`     | Per step: the expected and the measured median change and the frame count of every note, the sample comparison of the notes that were not edited (`bitIdentical`, `maxAbsDiff`, `maxAbsDiffDbfs`), the measured shift, the race outcome, consistency problems, and `unreadFields` (`entity.field`) when a result reported fields the scenario does not read back. |
+| `timings`    | `launchToReadyMs`, `importToF0ReadyMs`, `fixedParamsToSettleMs`, `autoToSettleMs` per AUTO mode, the time of every export, and per timing clip `importToF0ReadyMs`, `autoToSettleMs` and `exportMs`.                                                                                                                                                              |
 
 Like the smoke report it holds no absolute path and no token. Timeouts for clients are not derived
 here; the timings are recorded for that.

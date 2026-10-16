@@ -18,6 +18,14 @@
 // answers edit.undo without restoring anything. `effects-backend` fails the import with an
 // unavailable inference backend. `effects-no-timing` does not report timing.v1, `effects-no-history`
 // not history.v1.
+//
+// Modes about the report of a write; each one applies the setTargetPitch edit as it should and gets
+// only its result wrong: `effects-undo-missing` says the edit cannot be undone, `effects-undo-garbled`
+// gives an undoId that is not a string, `effects-tokens-missing` leaves out the tokens, and
+// `effects-reply-lost` answers with an error. `effects-down-misreport` lets writes through during an
+// export, exports the notes as they are when it ends, and reports a wrong `offsetCents` for a write
+// made during the export. `effects-extra-fields` reports a field in every note change that the
+// specification does not have (yet).
 
 import fs from 'node:fs';
 
@@ -133,7 +141,7 @@ export function createEffects(mode) {
   let undoSeq = 0;
   let exportLock = null;
   const next = (prefix) => `${prefix}${(++counter).toString(16).padStart(8, '0')}`;
-  const writesDuringExport = mode === 'effects-mixed' || mode === 'effects-conflict';
+  const writesDuringExport = ['effects-mixed', 'effects-conflict', 'effects-down-misreport'].includes(mode);
 
   const ok = (id, result) => ({ jsonrpc: '2.0', id, result });
   const fail = (id, kind, reason, detail = 'fake') => ({
@@ -442,7 +450,22 @@ export function createEffects(mode) {
       const changes = c.notes
         .map((n, i) => noteChange(c, i, notesBefore[i], n))
         .filter((ch) => Object.keys(ch.fields).length > 0);
-      return ok(id, { ...envelope(c, { changes, undo: pushUndo(c, 'edit notes', before) }), omittedChangeCount: 0 });
+      const undo = pushUndo(c, 'edit notes', before);
+      const result = { ...envelope(c, { changes, undo }), omittedChangeCount: 0 };
+      if (params.ops.some((op) => op.op === 'setTargetPitch')) {
+        // The edit has taken effect (and is in the history); only its result is wrong.
+        if (mode === 'effects-undo-missing') result.undo = { undoable: false, reason: 'ui_parity', revert: null };
+        if (mode === 'effects-undo-garbled') result.undo = { ...undo, undoId: 42 };
+        if (mode === 'effects-tokens-missing') delete result.tokens;
+        if (mode === 'effects-reply-lost') return fail(id, 'INTERNAL', 'fake_reply_lost');
+      }
+      if (mode === 'effects-down-misreport' && exportLock !== null) {
+        for (const ch of changes) if (ch.fields.offsetCents) ch.fields.offsetCents.after += 1;
+      }
+      if (mode === 'effects-extra-fields') {
+        for (const ch of changes) ch.fields.futureField = { before: 0, after: 1, unit: null };
+      }
+      return ok(id, result);
     }
     if (method === 'content.setPitchShift') {
       const before = snapshot(c);

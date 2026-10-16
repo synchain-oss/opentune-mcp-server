@@ -19,7 +19,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   PITCH_TOLERANCE_CENTS,
   compareSamples,
-  consistencyProblems,
+  consistencyOf,
   effectsSetupFromEnv,
   noteDelta,
   runEffects,
@@ -184,6 +184,97 @@ describe('effects scenario against the stand-in', () => {
   );
 
   it(
+    'stops the checks when a write took effect but its result gives no undoId to take it back with',
+    async () => {
+      for (const [mode, why] of [
+        ['effects-undo-missing', 'its result says it cannot be undone (ui_parity)'],
+        ['effects-undo-garbled', 'its undo block has no undoId'],
+      ] as const) {
+        const report = await runEffects(config(mode, { timingLengthsSec: [] }));
+        const r = results(report);
+        expect(r['setTargetPitch +100 cents'], mode).toBe('FAIL');
+        expect(noteOf(report, 'setTargetPitch +100 cents')).toBe(
+          `content.editNotes took effect, but ${why}: the check cannot take it back, and the checks after it would run on a changed clip`,
+        );
+        // Not run on a clip that still holds the edit (which would fail them for the wrong reason).
+        expect(r['shiftCents +100 cents'], mode).toBe('SKIP');
+        expect(noteOf(report, 'race: +100 cents, export, -100 cents')).toBe(
+          'not run: setTargetPitch +100 cents ended with FAIL',
+        );
+        expect(r.shutdown).toBe('PASS');
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    'takes a write back when its result cannot be read after it took effect, and goes on',
+    async () => {
+      const report = await runEffects(config('effects-tokens-missing', { timingLengthsSec: [] }));
+      const r = results(report);
+      expect(r['setTargetPitch +100 cents']).toBe('FAIL');
+      expect(noteOf(report, 'setTargetPitch +100 cents')).toBe('the result has no tokens');
+      expect(report.checks['setTargetPitch +100 cents']).toMatchObject({ error: 'the result has no tokens' });
+      // The undo was recorded before the result was read, so the clip is back as it was.
+      expect(r['shiftCents +100 cents']).toBe('PASS');
+      expect(r['race: +100 cents, export, -100 cents']).toBe('PASS');
+      expect(r['shiftTiming +30 ms']).toBe('PASS');
+    },
+    SLOW,
+  );
+
+  it(
+    'stops the checks when a write fails after it took effect and left the clip changed',
+    async () => {
+      const report = await runEffects(config('effects-reply-lost', { timingLengthsSec: [] }));
+      const r = results(report);
+      expect(r['setTargetPitch +100 cents']).toBe('FAIL');
+      expect(noteOf(report, 'setTargetPitch +100 cents')).toMatch(
+        /^INTERNAL\(fake_reply_lost\): fake; after edit\.undo the clip is not as it was: note 1 targetMidi: /,
+      );
+      expect(r['shiftCents +100 cents']).toBe('SKIP');
+      expect(r.shutdown).toBe('PASS');
+    },
+    SLOW,
+  );
+
+  it(
+    'checks the report of the second write of the race when it is applied',
+    async () => {
+      const report = await runEffects(config('effects-down-misreport', { timingLengthsSec: [] }));
+      const name = 'race: +100 cents, export, -100 cents';
+      expect(results(report)[name]).toBe('FAIL');
+      expect(noteOf(report, name)).toBe(
+        'second edit: note 0 offsetCents: the result says -99, read back -100; ' +
+          'second edit: note 4 offsetCents: the result says -99, read back -100',
+      );
+      expect(report.checks[name]).toMatchObject({ secondEdit: 'applied' });
+      expect(String((report.checks[name] as { outcome?: string }).outcome)).toContain('-100 cents version in full');
+      expect(results(report)['shiftTiming +30 ms']).toBe('PASS');
+    },
+    SLOW,
+  );
+
+  it(
+    'counts the reported fields it does not read back instead of failing on them',
+    async () => {
+      const report = await runEffects(config('effects-extra-fields', { timingLengthsSec: [] }));
+      expect(report.result).toBe('PASS');
+      expect(noteOf(report, 'setTargetPitch +100 cents')).toMatch(
+        /; 1 reported field\(s\) not compared, as the scenario does not read them$/,
+      );
+      expect(noteOf(report, 'fixed note parameters')).toContain('1 reported field(s) not compared');
+      expect(report.checks['setTargetPitch +100 cents']).toMatchObject({ unreadFields: ['note.futureField'] });
+      expect(report.checks['race: +100 cents, export, -100 cents']).toMatchObject({
+        unreadFields: ['note.futureField'],
+      });
+      // Results that report no such field have none in the report.
+      expect(report.checks['setPitchShift +2 semitones']).not.toHaveProperty('unreadFields');
+    },
+    SLOW,
+  );
+
+  it(
     'is a FLAKY-SKIP when the backend cannot start, and SKIPs without history.v1 or the timing check without timing.v1',
     async () => {
       const backend = await runEffects(config('effects-backend', { timingLengthsSec: [] }));
@@ -341,9 +432,11 @@ describe('effects measurements', () => {
     ...overrides,
   });
 
+  const problemsOf = (r: Record<string, unknown>) => consistencyOf(r, state, 'c:1').problems;
+
   it('finds every disagreement between a result and the state read back', () => {
-    expect(consistencyProblems(result(), state, 'c:1')).toEqual([]);
-    const wrong = consistencyProblems(
+    expect(consistencyOf(result(), state, 'c:1')).toEqual({ problems: [], unreadFields: ['key.root'] });
+    const wrong = problemsOf(
       result({
         tokens: {
           arrangementRevision: 'a0',
@@ -360,8 +453,6 @@ describe('effects measurements', () => {
           { entity: 'pitchShift', ref: { contentId: 'c:1' }, fields: { semitones: { before: 0, after: 2 } } },
         ],
       }),
-      state,
-      'c:1',
     );
     expect(wrong).toEqual([
       'tokens.arrangementRevision is not the one read afterwards',
@@ -372,10 +463,68 @@ describe('effects measurements', () => {
       'handle 9 of the changes is not there afterwards',
       'pitch shift semitones: the result says 2, read back 0',
     ]);
-    expect(consistencyProblems(result({ tokens: { arrangementRevision: 'a1', contents: [] } }), state, 'c:1')).toEqual([
+    expect(problemsOf(result({ tokens: { arrangementRevision: 'a1', contents: [] } }))).toEqual([
       'tokens has no entry for the clip',
     ]);
-    expect(consistencyProblems(result({ changes: null }), state, 'c:1')).toEqual(['changes is not an array']);
+    expect(consistencyOf(result({ changes: null }), state, 'c:1')).toEqual({
+      problems: ['changes is not an array'],
+      unreadFields: [],
+    });
+  });
+
+  it('compares only the fields it reads back, and lists the others without calling them a problem', () => {
+    const extra = consistencyOf(
+      result({
+        changes: [
+          {
+            entity: 'note',
+            ref: { contentId: 'c:1', note: { index: 0, atRevision: 'r2' } },
+            // label is a note field the scenario does not parse; futureField one a later minor may add.
+            fields: {
+              targetMidi: { before: 60, after: 61 },
+              label: { before: null, after: 'verse' },
+              futureField: { before: 0, after: 1 },
+            },
+          },
+          {
+            entity: 'pitchShift',
+            ref: { contentId: 'c:1' },
+            fields: { cents: { before: 5, after: 0 }, formant: { before: 0, after: 1 } },
+          },
+          {
+            entity: 'timeHandle',
+            ref: { contentId: 'c:1', handleId: '2' },
+            fields: { contentSec: { before: 0.1, after: 0.2 }, outputSec: { before: 0.2, after: 0.23 } },
+          },
+          { entity: 'note', ref: { contentId: 'c:1', note: { index: 0, atRevision: 'r2' } }, fields: { label: {} } },
+        ],
+      }),
+      state,
+      'c:1',
+    );
+    expect(extra).toEqual({ problems: [], unreadFields: ['note.futureField', 'note.label', 'pitchShift.formant'] });
+    // A field it does read is still compared next to an unread one.
+    expect(
+      problemsOf(
+        result({
+          changes: [
+            {
+              entity: 'note',
+              ref: { contentId: 'c:1', note: { index: 0, atRevision: 'r2' } },
+              fields: { futureField: { after: 1 }, offsetCents: { before: 0, after: 100 } },
+            },
+            {
+              entity: 'timeHandle',
+              ref: { contentId: 'c:1', handleId: '2' },
+              fields: { contentSec: { before: 0.2, after: 0.25 } },
+            },
+          ],
+        }),
+      ),
+    ).toEqual([
+      'note 0 offsetCents: the result says 100, read back 0',
+      'handle 2 contentSec: the result says 0.25, read back 0.2',
+    ]);
   });
 
   it('finds every difference between the snapshot before a write and the state after the undo', () => {
