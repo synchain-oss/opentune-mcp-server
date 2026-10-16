@@ -8,9 +8,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startMock } from '../../mock/server.js';
+import { getClipDetails } from '../../src/tools/clip-details.js';
 import { getNotes, OUTPUT_BUDGET } from '../../src/tools/notes.js';
 import { getProject } from '../../src/tools/project.js';
 import { render, type Outcome } from '../../src/tools/registry.js';
+import { getSettings } from '../../src/tools/settings.js';
 import { tempDir, testContext } from '../support/context.js';
 import { clip, need } from '../support/mock-client.js';
 
@@ -101,6 +103,22 @@ describe('output budget', () => {
     expect(outcome.body.placements as unknown[]).toHaveLength(24);
     const sizes = resultSizes(outcome);
     expect(Math.max(sizes.text, sizes.structured)).toBeLessThanOrEqual(OUTPUT_BUDGET);
+  });
+
+  it('keeps the details of a clip of 800 notes and the settings with a long log within the budget', async () => {
+    const { mock, ctx } = await setup();
+    const ids = mock.given({ clips: [clip({ durationSec: 900, notes: notes(800) })] });
+    for (let i = 0; i < 400; i += 1) mock.logLine(`${String(i)} ${'z'.repeat(2000)}`);
+    const details = await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') });
+    const settings = await getSettings(ctx, {
+      sections: ['processing', 'audio_device', 'recent', 'export_caps', 'log'],
+      log_lines: 500,
+    });
+    for (const outcome of [details, settings]) {
+      if (!outcome.ok) throw new Error(outcome.error.detail);
+      const sizes = resultSizes(outcome);
+      expect(Math.max(sizes.text, sizes.structured)).toBeLessThanOrEqual(OUTPUT_BUDGET);
+    }
   });
 
   it('measures the result as the client receives it, so an oversized result would be caught', () => {

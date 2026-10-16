@@ -89,6 +89,14 @@
     {
       "name": "opentune_edit_timing",
       "description": "OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job), shift (handles in a start..end range, output or content clock, by delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed (CLAMPED). Handle ids come from time_grid_handles of the last result of this tool (seed gives them too)."
+    },
+    {
+      "name": "opentune_get_clip_details",
+      "description": "OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), the reference binding, and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only."
+    },
+    {
+      "name": "opentune_get_settings",
+      "description": "OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only."
     }
   ],
   "tools_generated": false,

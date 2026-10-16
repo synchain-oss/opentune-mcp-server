@@ -1594,5 +1594,99 @@
       },
       "additionalProperties": {}
     }
+  },
+  {
+    "name": "opentune_get_clip_details",
+    "title": "Get OpenTune clip details",
+    "description": "OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), the reference binding, and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "clip": {
+          "type": "string",
+          "pattern": "^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
+          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...). Render, reference and the AUTO mode are taken through the placement; a content id uses its first placement."
+        },
+        "sections": {
+          "description": "Parts to return. Default: all of them.",
+          "minItems": 1,
+          "maxItems": 7,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "key",
+              "pitch_shift",
+              "analysis",
+              "render",
+              "time_grid",
+              "reference",
+              "auto_modes"
+            ]
+          }
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "clip"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
+    "name": "opentune_get_settings",
+    "title": "Get OpenTune settings",
+    "description": "OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "sections": {
+          "description": "Parts to return. Default: processing, audio_device, recent, export_caps. log must be asked for.",
+          "minItems": 1,
+          "maxItems": 5,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "enum": [
+              "processing",
+              "audio_device",
+              "recent",
+              "export_caps",
+              "log"
+            ]
+          }
+        },
+        "log_lines": {
+          "description": "Lines of the log to return, newest last, for the log section. Default 100, at most 500.",
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 500
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
   }
 ]

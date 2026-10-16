@@ -2,7 +2,7 @@
 
 # Tool reference
 
-OpenTune MCP Server (by Synchain) offers 15 tools. Every tool returns its result both as
+OpenTune MCP Server (by Synchain) offers 17 tools. Every tool returns its result both as
 `structuredContent` and as the same JSON in a text block. Errors have the shape
 `{kind, reason, detail, retryable, executed, nextStep, url}`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -257,4 +257,32 @@ OTCP capabilities: `timing.v1`, `jobs.v1`, `read.v1`. OTCP methods: `content.shi
 | `expected_revision` | string | no | clip_revision of the clip. Required for shift and move; not needed for seed. |
 | `ops` | array | yes | Operations in order. seed must be alone. |
 | `wait_seconds` | number, 0 to 30 | no | Seed only (refused with shift or move). How long seed waits for its job, 0 to 30. Default 10; then the job id is returned. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_get_clip_details`
+
+**Get OpenTune clip details**: read-only, not destructive, idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), the reference binding, and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only.
+
+OTCP capabilities: `read.v1`. OTCP methods: `content.getDetails`, `project.get`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `clip` | string, matching `^[pc]:[0-9a-f]{8}:(0\|[1-9][0-9]*):(0\|[1-9][0-9]*)$` | yes | Clip placement id (p:...) from opentune_get_project, or a content id (c:...). Render, reference and the AUTO mode are taken through the placement; a content id uses its first placement. |
+| `sections` | array | no | Parts to return. Default: all of them. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_get_settings`
+
+**Get OpenTune settings**: read-only, not destructive, idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only.
+
+OTCP capabilities: `session.v1`, `read.v1`, `audio.device`. OTCP methods: `session.info`, `prefs.get`, `audio.get`, `app.getLog`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `sections` | array | no | Parts to return. Default: processing, audio_device, recent, export_caps. log must be asked for. |
+| `log_lines` | integer, 1 to 500 | no | Lines of the log to return, newest last, for the log section. Default 100, at most 500. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
