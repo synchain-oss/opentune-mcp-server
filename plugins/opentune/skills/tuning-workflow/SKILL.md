@@ -1,6 +1,6 @@
 ---
 name: tuning-workflow
-description: Use when the user wants to tune a vocal in OpenTune through the opentune_* tools: import, set the key, auto-tune or edit notes, check before and after, export, undo, DAW hand-off.
+description: 'Use when the user wants to tune a vocal in OpenTune through the opentune_* tools: import, set the key, auto-tune or edit notes, check before and after, export, undo, DAW hand-off.'
 license: MIT
 ---
 

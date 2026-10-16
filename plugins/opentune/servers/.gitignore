@@ -1,0 +1,4 @@
+# The MCP server bundle is copied here only in the assembled plugin (npm run plugin:build, from
+# dist/opentune-mcp.mjs); it is never committed. See docs/adr/0002-plugin-distribution.md.
+*
+!.gitignore

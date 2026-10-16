@@ -1,6 +1,6 @@
 ---
 name: check-results
-description: Use after tuning in OpenTune to verify the result: compare before and after pitch with opentune_analyze_pitch, check an exported file, undo what went too far, and report briefly.
+description: 'Use after tuning in OpenTune to verify the result: compare before and after pitch with opentune_analyze_pitch, check an exported file, undo what went too far, and report briefly.'
 license: MIT
 ---
 
