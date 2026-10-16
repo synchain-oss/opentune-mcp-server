@@ -20,6 +20,8 @@ export interface Outcome {
   readonly id: string;
   readonly result: 'PASS' | 'FAIL' | 'SKIP';
   readonly note: string;
+  /** Set when the instance itself sent an error with data.reason modal_open (not when a vector merely expects one). */
+  readonly receivedModalOpen?: true;
 }
 
 export interface RunOptions {
@@ -50,6 +52,16 @@ const newerThan = (a: string, b: string) => {
 const isRequestId = (id: unknown): id is string | number => typeof id === 'string' || typeof id === 'number';
 const idKey = (id: string | number) => `${typeof id}:${String(id)}`;
 
+/** Whether an expected line is an error response with data.reason modal_open. */
+function expectsModalOpen(expected: unknown): boolean {
+  return (
+    isObject(expected) &&
+    isObject(expected.error) &&
+    isObject(expected.error.data) &&
+    expected.error.data.reason === 'modal_open'
+  );
+}
+
 /** State of one vector run: bindings, connections, and the requests sent on each connection. */
 class Run {
   readonly connections = new Map<string, RunnerConnection>();
@@ -58,6 +70,8 @@ class Run {
   /** The method that started each job seen so far, by jobId. */
   readonly #jobStartedBy = new Map<string, string>();
   #stepEnd = performance.now();
+  /** Whether a line the instance sent was an error whose data.reason is modal_open. */
+  receivedModalOpen = false;
 
   constructor(
     readonly instance: TargetInstance,
@@ -137,6 +151,10 @@ class Run {
       throw new VectorFailure(
         `${name}: the server sent a line that is not JSON: ${redact(text, this.bindings).slice(0, 200)}`,
       );
+    }
+    if (isObject(actual) && isObject(actual.error) && isObject(actual.error.data)) {
+      // A step that itself expects modal_open does not count: the vector asked for it.
+      if (actual.error.data.reason === 'modal_open' && !expectsModalOpen(expected)) this.receivedModalOpen = true;
     }
     const problems = match(expected, actual, this.bindings);
     if (isObject(expected) && typeof expected.id === 'number') {
@@ -402,7 +420,10 @@ export async function runVector(
     await runSteps(vector, run);
     return outcome('PASS', vector.type === 'scenario' ? `${String(vector.steps?.length ?? 0)} steps` : '');
   } catch (error) {
-    if (error instanceof VectorFailure) return outcome('FAIL', error.message);
+    if (error instanceof VectorFailure) {
+      const failed = outcome('FAIL', error.message);
+      return run?.receivedModalOpen === true ? { ...failed, receivedModalOpen: true } : failed;
+    }
     if (error instanceof InvalidVector) return outcome('FAIL', `invalid vector: ${error.message}`);
     return outcome('FAIL', `runner error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
   } finally {

@@ -23,6 +23,7 @@ never writes the ready file, and the target reports that after its timeout.
 | `OTCP_TARGET_ARGS`        | Optional. JSON array of strings, the arguments to start it with. Default `["--control-api"]`. |
 | `OTCP_TARGET_TIMEOUT_MS`  | Optional. How long to wait for the ready file, the hello and the exit. Default 30000.    |
 | `OTCP_TARGET_DATA_DIR`    | Optional. Absolute path of an existing folder; each launch then gets a kept sub-folder of it as data folder (see `docs/real-opentune-testing.md`). |
+| `OTCP_TARGET_DATA_TEMPLATE` | Optional. Absolute path of an existing folder; its contents are copied into the data folder of every launch before it starts. |
 
 ```bash
 OTCP_TARGET_EXE=/path/to/OpenTune npm run test:contract -- -t "against the exe"

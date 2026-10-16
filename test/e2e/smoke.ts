@@ -81,7 +81,7 @@ const DEFAULT_STEP_TIMEOUT_MS = 180_000;
 const JOB_POLL_MS = 5000;
 const REQUIRED_CAPABILITIES = ['session.v1', 'jobs.v1', 'read.v1', 'import.v1', 'edit.v1', 'export.v1'] as const;
 
-/** Reads OTCP_TARGET_EXE (and its three siblings),OTCP_E2E_REPORT and OTCP_E2E_STEP_TIMEOUT_MS. */
+/** Reads OTCP_TARGET_EXE (and its siblings), OTCP_E2E_REPORT and OTCP_E2E_STEP_TIMEOUT_MS. */
 export function smokeSetupFromEnv(env: NodeJS.ProcessEnv = process.env): SmokeSetup {
   const exe = exeConfigFromEnv(env);
   if ('skip' in exe) return { skip: exe.skip };
@@ -338,6 +338,18 @@ export interface SmokeHooks {
 }
 
 /**
+ * A dialog title is untrusted data and may hold a file path: a path under a user folder is folded
+ * to <home>, then the title is cut short.
+ */
+export function safeTitle(title: unknown): string {
+  return String(title)
+    .replace(/[A-Za-z]:[\\/]+Users[\\/]+[^\\/]+/gi, '<home>')
+    .replace(/\/mnt\/[a-z]\/Users\/[^/\s]+/gi, '<home>')
+    .replace(/(^|[^A-Za-z0-9])\/(?:Users|home)\/[^/\s]+/g, '$1<home>')
+    .slice(0, 60);
+}
+
+/**
  * What ui.getState says about the window (busy conditions, open dialogs, the first-run overlay),
  * as one line for the report. Called only after a BUSY modal_open, and only when the instance
  * reports ui.bridge; never throws. Dialog titles are untrusted data and are cut short.
@@ -354,9 +366,7 @@ async function busyDiagnostics(session: OtcpSession | undefined): Promise<string
     const dialogs = Array.isArray(state.dialogs) ? (state.dialogs as unknown[]) : [];
     const listed = dialogs
       .map((d) =>
-        isObject(d)
-          ? `${String(d.kind)} "${String(d.title).slice(0, 60)}" closeCommits=${String(d.closeCommits)}`
-          : '?',
+        isObject(d) ? `${String(d.kind)} "${safeTitle(d.title)}" closeCommits=${String(d.closeCommits)}` : '?',
       )
       .join('; ');
     return clean(

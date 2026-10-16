@@ -20,7 +20,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -46,6 +46,13 @@ export interface ExeTargetOptions {
    * which hold a token, are removed from it); otherwise a temporary folder that is deleted.
    */
   readonly dataDirParent?: string;
+  /**
+   * Absolute path of an existing folder. When given, the contents of this folder are copied into the
+   * data folder of every launch before the process starts (with or without `dataDirParent`), so a
+   * test starts from a known state. Only regular files and sub-folders are copied; symbolic links
+   * are not followed.
+   */
+  readonly dataTemplate?: string;
 }
 
 export type ExeConfig = { readonly skip: string } | { readonly options: ExeTargetOptions };
@@ -62,6 +69,8 @@ export interface ExeCleanupStats {
   leftDiscoveryFile: number;
   /** Named by the ready file but not confirmed as started by this target, so left running. */
   notEnded: number;
+  /** Launches whose template held the ready file or the discovery folder, which were not copied. */
+  templateSkipped: number;
 }
 
 export type ExeTarget = ContractTarget & {
@@ -81,9 +90,12 @@ const HELLO_ID = 'otcp-exe-hello';
 /** How far two readings of one process's start time may differ (PROTOCOL.md section 5.4 rule 2). */
 const START_TOLERANCE_MS = 2000;
 const PROBE_ATTEMPTS = 3;
+/** The ready file's name in the data folder, and the discovery folder below it: paths this runner itself uses. */
+const READY_FILE_NAME = 'ready.json';
+const DISCOVERY_DIR_PARTS = ['control', 'instances'] as const;
 const READY_FILE_REF = 'schemas/discovery-file.schema.json#/$defs/readyFileKnownMembers';
 
-/** Reads OTCP_TARGET_EXE, OTCP_TARGET_ARGS, OTCP_TARGET_TIMEOUT_MS and OTCP_TARGET_DATA_DIR. Throws on a bad value. */
+/** Reads OTCP_TARGET_EXE, OTCP_TARGET_ARGS, OTCP_TARGET_TIMEOUT_MS, OTCP_TARGET_DATA_DIR and OTCP_TARGET_DATA_TEMPLATE. Throws on a bad value. */
 export function exeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ExeConfig {
   const exe = env.OTCP_TARGET_EXE;
   if (exe === undefined || exe === '') return { skip: 'OTCP_TARGET_EXE is not set' };
@@ -115,9 +127,61 @@ export function exeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ExeConfi
     checkDataDirParent(rawDataDir);
     dataDirParent = rawDataDir;
   }
+  let dataTemplate: string | undefined;
+  const rawTemplate = env.OTCP_TARGET_DATA_TEMPLATE;
+  if (rawTemplate !== undefined && rawTemplate !== '') {
+    checkDataTemplate(rawTemplate);
+    dataTemplate = rawTemplate;
+  }
   return {
-    options: { exe, ...(args && { args }), ...(timeoutMs && { timeoutMs }), ...(dataDirParent && { dataDirParent }) },
+    options: {
+      exe,
+      ...(args && { args }),
+      ...(timeoutMs && { timeoutMs }),
+      ...(dataDirParent && { dataDirParent }),
+      ...(dataTemplate && { dataTemplate }),
+    },
   };
+}
+
+/** The template folder must be an absolute path to an existing directory. */
+function checkDataTemplate(dir: string): void {
+  if (!path.isAbsolute(dir)) throw new Error('OTCP_TARGET_DATA_TEMPLATE must be an absolute path');
+  let isDir = false;
+  try {
+    isDir = statSync(dir).isDirectory();
+  } catch {
+    // reported below
+  }
+  if (!isDir) throw new Error('OTCP_TARGET_DATA_TEMPLATE is not an existing directory');
+}
+
+/**
+ * Copies the contents of `from` into `to`: regular files and sub-folders only, links are skipped.
+ * The paths this runner uses itself (the ready file at the top, the discovery folder) are not
+ * copied: a stale one would be taken for the new instance's. Returns whether any was skipped.
+ */
+async function copyTemplate(from: string, to: string, rel: readonly string[] = []): Promise<boolean> {
+  let skipped = false;
+  for (const entry of await readdir(from, { withFileTypes: true })) {
+    const here = [...rel, entry.name];
+    const own =
+      (here.length === 1 && entry.name === READY_FILE_NAME) ||
+      (here.length === DISCOVERY_DIR_PARTS.length && here.every((part, i) => part === DISCOVERY_DIR_PARTS[i]));
+    if (own) {
+      skipped = true;
+      continue;
+    }
+    const source = path.join(from, entry.name);
+    const target = path.join(to, entry.name);
+    if (entry.isDirectory()) {
+      await mkdir(target, { recursive: true });
+      if (await copyTemplate(source, target, here)) skipped = true;
+    } else if (entry.isFile()) {
+      await copyFile(source, target);
+    }
+  }
+  return skipped;
 }
 
 /** The folder for kept data folders must be an absolute path to an existing directory. */
@@ -260,6 +324,7 @@ async function ownHello(discovery: Record<string, unknown>, timeoutMs: number): 
 export function exeTarget(options: ExeTargetOptions): ExeTarget {
   checkExe(options.exe);
   if (options.dataDirParent !== undefined) checkDataDirParent(options.dataDirParent);
+  if (options.dataTemplate !== undefined) checkDataTemplate(options.dataTemplate);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   // A probe of its own per question, so no start time is remembered across a reuse of the pid.
   const probeOnce = options.probe ?? ((pid: number) => systemProbe().probe(pid));
@@ -272,7 +337,14 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
     }
     return info;
   };
-  const stats: ExeCleanupStats = { verified: 0, forced: 0, exitedEarly: 0, leftDiscoveryFile: 0, notEnded: 0 };
+  const stats: ExeCleanupStats = {
+    verified: 0,
+    forced: 0,
+    exitedEarly: 0,
+    leftDiscoveryFile: 0,
+    notEnded: 0,
+    templateSkipped: 0,
+  };
   let problems: string[] = [];
   let nextLabel: string | undefined;
   let dataDirs: string[] = [];
@@ -355,8 +427,8 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
         dataDirs.push(path.basename(dataDir));
       }
       nextLabel = undefined;
-      const instancesDir = path.join(dataDir, 'control', 'instances');
-      const readyFile = path.join(dataDir, 'ready.json');
+      const instancesDir = path.join(dataDir, ...DISCOVERY_DIR_PARTS);
+      const readyFile = path.join(dataDir, READY_FILE_NAME);
       const nonce = randomBytes(24).toString('base64url');
       let secrets: string[] = [nonce];
       let child: ChildProcess | undefined;
@@ -445,6 +517,9 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       try {
         // Never a real OpenTune folder, whatever the temporary directory is.
         resolveDiscoveryDir(instancesDir);
+        if (options.dataTemplate !== undefined && (await copyTemplate(options.dataTemplate, dataDir))) {
+          stats.templateSkipped++;
+        }
         child = spawn(
           options.exe,
           [

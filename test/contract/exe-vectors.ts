@@ -33,7 +33,7 @@ export async function runExeVector(
   let outcome = await runVector(vector, target);
   const dataDir = target.takeDataDirs?.()[0];
   // A modal dialog open from the start refuses every write; say so where the FAIL is read.
-  if (outcome.result === 'FAIL' && outcome.note.includes('modal_open')) {
+  if (outcome.result === 'FAIL' && outcome.receivedModalOpen === true) {
     outcome = { ...outcome, note: `${outcome.note} (the instance has a modal dialog open)` };
   }
   const kept = dataDir === undefined ? {} : { dataDir };
@@ -80,14 +80,17 @@ export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
         '| --- | --- | --- | --- |',
         ...outcomes.map((o) => `| ${o.id} | ${o.result} | ${cell(o.note)} | ${o.dataDir ?? ''} |`),
       ];
-      const { verified, forced, exitedEarly, leftDiscoveryFile, notEnded } = target.stats;
+      const { verified, forced, exitedEarly, leftDiscoveryFile, notEnded, templateSkipped } = target.stats;
       process.stderr.write(
         `\nContract vectors (exe target):\n${table.join('\n')}\n` +
           `Instances: ${String(verified)} exited normally with their discovery file removed, ` +
           `${String(forced)} ended by force (clean-up on exit not verified), ` +
           `${String(exitedEarly)} ended by themselves during a vector, ` +
           `${String(leftDiscoveryFile)} left their discovery file behind, ` +
-          `${String(notEnded)} could not be confirmed as started by this run and were not ended\n`,
+          `${String(notEnded)} could not be confirmed as started by this run and were not ended\n` +
+          (templateSkipped > 0
+            ? `Data template: its ready file and discovery folder were not copied, in ${String(templateSkipped)} launches (the runner uses them itself)\n`
+            : ''),
       );
       const count = (result: Outcome['result']) => outcomes.filter((o) => o.result === result).length;
       const skipReasons: Record<string, number> = {};
@@ -105,6 +108,7 @@ export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
           // Relative to OTCP_TARGET_DATA_DIR; empty unless that was set.
           dataDirs: Object.fromEntries(outcomes.flatMap((o) => (o.dataDir === undefined ? [] : [[o.id, o.dataDir]]))),
           instances: { verified, forced, exitedEarly, leftDiscoveryFile, notEnded },
+          templateSkipped,
         };
         writeFileSync(file, `${JSON.stringify(summary, null, 2)}\n`);
       }

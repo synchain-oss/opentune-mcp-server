@@ -34,6 +34,7 @@ const readyFile = option('control-api-ready-file');
 const nonce = option('control-api-launch-nonce');
 const marker = option('marker');
 const dirFile = option('dirfile');
+const snapshotFile = option('snapshot');
 const dataDir = process.env.OPENTUNE_DATA_DIR;
 
 const smoke = mode.startsWith('smoke');
@@ -323,6 +324,21 @@ function serve() {
     fs.mkdirSync(dir, { recursive: true });
     // For a test: where this instance's data folder is.
     if (dirFile !== undefined) fs.writeFileSync(dirFile, dataDir);
+    // For a test: what the data folder held at the start (relative path to content), without what this
+    // process writes itself.
+    if (snapshotFile !== undefined) {
+      const held = {};
+      const walk = (rel) => {
+        for (const entry of fs.readdirSync(path.join(dataDir, rel), { withFileTypes: true })) {
+          const next = path.join(rel, entry.name);
+          if (entry.isDirectory()) walk(next);
+          else if (next !== 'ready.json')
+            held[next.split(path.sep).join('/')] = fs.readFileSync(path.join(dataDir, next), 'utf8');
+        }
+      };
+      walk('');
+      fs.writeFileSync(snapshotFile, JSON.stringify(held));
+    }
     // A log a test can look for in a kept data folder.
     fs.mkdirSync(path.join(dataDir, 'logs'), { recursive: true });
     fs.writeFileSync(path.join(dataDir, 'logs', 'opentune.log'), 'started\n');
