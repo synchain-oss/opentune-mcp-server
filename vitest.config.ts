@@ -51,6 +51,12 @@ export default defineConfig({
         extends: true,
         test: { name: 'contract', include: ['test/contract/**/*.test.ts'], testTimeout: 60_000 },
       },
+      {
+        // The scenario against a started OpenTune; skipped as a whole unless OTCP_TARGET_EXE is set.
+        // A first start can load models and analyse audio, so the time limit is generous.
+        extends: true,
+        test: { name: 'e2e', include: ['test/e2e/**/*.test.ts'], testTimeout: 1_800_000, hookTimeout: 120_000 },
+      },
     ],
     coverage: {
       provider: 'v8',
