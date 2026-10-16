@@ -20,7 +20,7 @@ OpenTune MCP Server 是由 [Synchain](https://www.synchain.ca) 主导的开源�
 | 环境 | 状态 |
 | --- | --- |
 | Windows x64,配合 [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) 的非官方 OpenTune 测试版(带控制接口) | 支持。 |
-| 官方 OpenTune 发布版(没有控制接口) | 不能用:`opentune_get_status` 报告 `NO_API_BUILD`。 |
+| 官方 OpenTune 发布版(没有控制接口) | 不能用:`opentune_get_status` 报告 `NO_API_BUILD`。配置指向测试版、但实际开着的是官方 OpenTune 时,报告 `RUNNING_WITHOUT_API`。 |
 | macOS | 暂无。 |
 | Linux | 不支持:OpenTune 本身没有 Linux 版。 |
 | WSL | 服务必须用 Windows 上的 Node.js 运行,见 [WSL](#wsl)。 |
@@ -152,7 +152,7 @@ opentune-mcp  (本仓库,Node.js,MIT)
 
 ## 参与贡献
 
-欢迎提 issue 与 pull request,中英文均可。请见 [CONTRIBUTING.md](CONTRIBUTING.md)(中文)与[行为准则](CODE_OF_CONDUCT.zh-CN.md)。每个提交都必须签署(`git commit -s`,DCO)。项目处于预发布阶段,开始较大的改动前请先开 issue。关于 [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) 中控制接口及其测试版的问题,也在本仓库跟踪。
+欢迎提 issue 与 pull request,中英文均可。请见 [CONTRIBUTING.md](CONTRIBUTING.md)(中文)与行为准则([中文版](CODE_OF_CONDUCT.zh-CN.md),以[英文版](CODE_OF_CONDUCT.md)为准)。每个提交都必须签署(`git commit -s`,DCO)。项目处于预发布阶段,开始较大的改动前请先开 issue。关于 [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) 中控制接口及其测试版的问题,也在本仓库跟踪。
 
 ## 安全
 

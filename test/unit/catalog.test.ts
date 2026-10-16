@@ -161,17 +161,31 @@ describe('tool catalog', () => {
   });
 });
 
-/** GitHub's heading anchors: lower case, punctuation other than - and _ removed, spaces to dashes. */
+/**
+ * GitHub's heading anchors: lower case, punctuation other than - and _ removed (letters and digits of any
+ * script stay, so Chinese headings keep their text), spaces to dashes.
+ */
 function anchors(markdown: string): Set<string> {
   return new Set(
     [...markdown.matchAll(/^#{1,6} (.+)$/gm)].map((m) =>
       (m[1] ?? '')
         .toLowerCase()
-        .replace(/[^a-z0-9 _-]/g, '')
+        .replace(/[^\p{L}\p{N}\p{M} _-]/gu, '')
         .replaceAll(' ', '-'),
     ),
   );
 }
+
+describe('the anchor rule', () => {
+  it('keeps Chinese text, drops punctuation, turns spaces into dashes and lower-cases', () => {
+    const made = anchors('## 首次启动\n## Error `BUSY` (modal_open)\n### 与 DAW 配合使用\n# Troubleshooting(排障)\n');
+    expect([...made]).toEqual(['首次启动', 'error-busy-modal_open', '与-daw-配合使用', 'troubleshooting排障']);
+  });
+
+  it('does not collapse different Chinese headings into one anchor', () => {
+    expect(anchors('## 状态\n## 安装\n').size).toBe(2);
+  });
+});
 
 describe('docs/TROUBLESHOOTING.md', () => {
   const present = anchors(read('docs/TROUBLESHOOTING.md'));
@@ -190,12 +204,12 @@ describe('docs/TROUBLESHOOTING.zh-CN.md', () => {
   const zh = anchors(read('docs/TROUBLESHOOTING.zh-CN.md'));
 
   it('has every anchor of the English page, so that a url in an error result works in both', () => {
-    expect([...en].filter((a) => !zh.has(a))).toEqual([]);
+    expect([...en].filter((a) => a !== 'troubleshooting' && !zh.has(a))).toEqual([]);
   });
 
   it('has no anchor the English page lacks', () => {
     // The title line of the Chinese page carries a gloss and is the only allowed difference.
-    expect([...zh].filter((a) => !en.has(a) && a !== 'troubleshooting')).toEqual([]);
+    expect([...zh].filter((a) => !en.has(a) && a !== 'troubleshooting排障')).toEqual([]);
   });
 });
 
@@ -213,14 +227,32 @@ describe('docs links to TROUBLESHOOTING and COMPATIBILITY sections', () => {
     'docs/COMPATIBILITY.md',
   ];
 
-  it.each(sources)('%s: every link into a section of those pages names an existing heading', (source) => {
-    const missing: string[] = [];
-    const link = /\]\((?:docs\/)?((?:TROUBLESHOOTING(?:\.zh-CN)?|COMPATIBILITY)\.md)#([^)]+)\)/g;
-    for (const [, name = '', anchor = ''] of read(source).matchAll(link)) {
-      const file = `docs/${name}`;
-      if (!targets[file]?.has(anchor)) missing.push(`${file}#${anchor}`);
-    }
+  /** The links of `markdown` that point into a heading: [file or '' for the same page, anchor]. */
+  function sectionLinks(markdown: string, own: string): string[] {
+    const link = /\]\((?:docs\/)?((?:TROUBLESHOOTING(?:\.zh-CN)?|COMPATIBILITY)\.md)?#([^)\s]+)\)/g;
+    return [...markdown.matchAll(link)].map(
+      ([, name, anchor = '']) => `${name === undefined ? own : `docs/${name}`}#${decodeURIComponent(anchor)}`,
+    );
+  }
+
+  it.each(sources)('%s: every link into a section names an existing heading', (source) => {
+    const own = source;
+    const pages = { ...targets, [own]: targets[own] ?? anchors(read(own)) };
+    const missing = sectionLinks(read(source), own).filter((l) => {
+      const [file = '', anchor = ''] = l.split('#');
+      return !pages[file]?.has(anchor);
+    });
     expect(missing).toEqual([]);
+  });
+
+  it('finds links to the same page and reports a broken one', () => {
+    const links = sectionLinks(
+      'See [a](#wsl), [b](docs/COMPATIBILITY.md#x) and [c](TROUBLESHOOTING.md#y).',
+      'README.md',
+    );
+    expect(links).toEqual(['README.md#wsl', 'docs/COMPATIBILITY.md#x', 'docs/TROUBLESHOOTING.md#y']);
+    expect(anchors('## WSL\n').has('wsl')).toBe(true);
+    expect(anchors('## WSL\n').has('wsl-2')).toBe(false);
   });
 });
 

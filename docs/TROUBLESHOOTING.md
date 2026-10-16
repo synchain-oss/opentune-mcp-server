@@ -308,8 +308,9 @@ OpenTune's preference "Hybrid Mode: Small corrections use DSP, large corrections
 "混合模式:小修用dsp,大修用声码器") is on by default. The part of a correction smaller than 75 cents is applied by DSP pitch
 shifting instead of the vocoder. That is OpenTune's own design, in its window as well as through this server, and on
 real voices such a small correction can be barely audible. If small corrections must be clearly audible, switch the
-preference off in OpenTune's preferences. `opentune_get_settings` (section `processing`, member `hybridMode`) and the
-`processing.hybridMode` of an export result report the setting as it was; do not assume it.
+preference off in OpenTune's preferences. The setting is reported as it was, in three places: `export.processing.hybridMode` in the result of
+`opentune_export_audio`; `job.result.processing.hybridMode` in `opentune_get_job` when the export job has not finished
+within the call; and the preference itself in the `processing` section of `opentune_get_settings`. Do not assume it.
 
 ## Slow process discovery
 

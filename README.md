@@ -20,7 +20,7 @@ OpenTune MCP Server is an open-source project led by [Synchain](https://www.sync
 | Setup | Status |
 | --- | --- |
 | Windows x64, with the unofficial test build of OpenTune from [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) (it has the control API) | Supported. |
-| Official OpenTune release (it has no control API) | Does not work: `opentune_get_status` reports `NO_API_BUILD`. |
+| Official OpenTune release (it has no control API) | Does not work: `opentune_get_status` reports `NO_API_BUILD`. If the configuration points at the test build but an official OpenTune is the one running, it reports `RUNNING_WITHOUT_API`. |
 | macOS | Not yet. |
 | Linux | Not supported: OpenTune itself has no Linux build. |
 | WSL | The server must run with Windows Node.js; see [WSL](#wsl). |

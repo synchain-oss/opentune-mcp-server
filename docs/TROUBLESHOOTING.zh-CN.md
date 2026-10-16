@@ -212,7 +212,7 @@ OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次�
 
 ## Hybrid mode
 
-OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 "Hybrid Mode: Small corrections use DSP, large corrections use vocoder")默认开启。修正量中小于 75 音分的部分走 DSP 移调,而不是声码器。这是 OpenTune 自身的设计,在它的窗口里和通过本服务都一样;在真实人声上,这种小修正可能几乎听不出来。如果需要小修正也明显可听,请在 OpenTune 的首选项里关闭该项。`opentune_get_settings`(`processing` 小节的 `hybridMode` 成员)与导出结果里的 `processing.hybridMode` 会如实报告当时的设置,不要想当然。
+OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 "Hybrid Mode: Small corrections use DSP, large corrections use vocoder")默认开启。修正量中小于 75 音分的部分走 DSP 移调,而不是声码器。这是 OpenTune 自身的设计,在它的窗口里和通过本服务都一样;在真实人声上,这种小修正可能几乎听不出来。如果需要小修正也明显可听,请在 OpenTune 的首选项里关闭该项。当时的设置会如实报告,位置有三处:`opentune_export_audio` 结果里的 `export.processing.hybridMode`;导出作业在调用内没跑完时,`opentune_get_job` 里的 `job.result.processing.hybridMode`;首选项本身在 `opentune_get_settings` 的 `processing` 小节。不要想当然。
 
 ## Slow process discovery
 

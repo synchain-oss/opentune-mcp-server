@@ -36,8 +36,8 @@ What this means for a client:
 - `opentune_open_audio` and `opentune_export_audio` wait for at most `wait_seconds` (at most 30) and then return the id
   of a job that is still running. Follow it with `opentune_get_job` and its `wait_seconds` in a loop; do not rely on one
   call, and do not start the same import or export again while its job runs.
-- A long clip needs minutes from AUTO to a stable render. A render that has not settled yet is not an error: read the
-  status again and wait.
+- A render that has not settled yet is not an error: read the status again and wait. On a machine without a GPU
+  (CPU only), audio longer than the 240 s measured above may take longer than the table shows; that was not measured.
 - After `opentune_launch`, allow about 30 seconds for OpenTune to announce itself (the tool waits that long itself).
   On Windows, finding an instance can take a few seconds more once (see
   [Slow process discovery](TROUBLESHOOTING.md#slow-process-discovery)).
