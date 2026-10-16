@@ -286,3 +286,5 @@ OpenTune runs inference on the CPU, so this is a warning. Run the commands the c
 to compare with `opentune-control.json`. If the copied file has another hash (`fail`), delete the `D3D12` folder (back
 to CPU) and copy it again from the official installation. `D3D12SDKLayers.dll` is the debug layer: do not copy it, and
 delete it if it is there.
+"Cannot tell" means the `d3d12` entry of `opentune-control.json` lists no files or has a hash that is not 64
+hexadecimal characters, so nothing could be checked: unpack the test build again.

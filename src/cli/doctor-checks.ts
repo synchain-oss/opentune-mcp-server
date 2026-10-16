@@ -188,10 +188,12 @@ interface D3d12Entry {
 }
 
 const SAFE_NAME = /^[^\\/:*?"<>|\0]+$/;
+/** A PowerShell single-quoted string literal: the only character to escape inside it is the quote itself. */
+const psQuote = (s: string): string => `'${s.replaceAll("'", "''")}'`;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** The d3d12 member of opentune-control.json: 'none' when absent, 'invalid' when malformed, null when unreadable. */
-function parseD3d12(bytes: Buffer): D3d12Entry | 'none' | 'invalid' | null {
+function parseD3d12(bytes: Buffer): D3d12Entry | 'none' | 'invalid' | 'bad-hash' | 'no-files' | null {
   let value: unknown;
   try {
     value = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes));
@@ -217,9 +219,10 @@ function parseD3d12(bytes: Buffer): D3d12Entry | 'none' | 'invalid' | null {
     if (!isObject(f) || typeof f.name !== 'string' || !SAFE_NAME.test(f.name) || typeof f.sha256 !== 'string') {
       return 'invalid';
     }
+    if (!/^[0-9a-fA-F]{64}$/.test(f.sha256)) return 'bad-hash';
     files.push({ name: f.name, sha256: f.sha256.toLowerCase() });
   }
-  return { bundled: false, directory: d.directory, files };
+  return files.length === 0 ? 'no-files' : { bundled: false, directory: d.directory, files };
 }
 
 /** The parts of a relative path from a checksum list, or null when it could leave the folder. */
@@ -251,7 +254,10 @@ export async function sidecarCheck(exeDir: string | null, deps: SidecarDeps): Pr
   }
   const entries: { hash: string; rel: string; parts: string[] }[] = [];
   const bad: string[] = [];
-  for (const line of bytes.toString('utf8').split(/\r?\n/)) {
+  for (const line of bytes
+    .toString('utf8')
+    .replace(/^\uFEFF/, '')
+    .split(/\r?\n/)) {
     if (line.trim() === '') continue;
     const m = /^([0-9A-Fa-f]{64}) [ *](.+)$/.exec(line);
     const parts = m ? safeRelative((m[2] ?? '').trim()) : null;
@@ -288,7 +294,7 @@ export async function shadowedCheck(exeDir: string | null, deps: SidecarDeps): P
   const dir = p.join(exeDir, 'models');
   const info = await deps.fs.stat(dir);
   if (info === null) {
-    return { status: 'pass', message: 'No models folder next to the executable; the installed models are used.' };
+    return { status: 'pass', message: 'No models folder next to the executable.' };
   }
   if (!info.isDirectory) {
     return { status: 'warn', message: `${dir} exists but is not a folder; OpenTune may not look at it.` };
@@ -316,6 +322,18 @@ export async function d3d12Check(exeDir: string | null, deps: D3d12Deps): Promis
   const d = bytes === null || bytes.length > MAX_MANIFEST_BYTES ? null : parseD3d12(bytes);
   if (d === null) return { status: 'warn', message: `Cannot tell: ${CONTROL_MANIFEST} cannot be read.` };
   if (d === 'none') return { status: 'pass', message: `${CONTROL_MANIFEST} has no d3d12 entry; nothing to copy.` };
+  if (d === 'bad-hash') {
+    return {
+      status: 'warn',
+      message: `Cannot tell: a hash in the d3d12 entry of ${CONTROL_MANIFEST} is not 64 hexadecimal characters.`,
+    };
+  }
+  if (d === 'no-files') {
+    return {
+      status: 'warn',
+      message: `Cannot tell: the d3d12 entry of ${CONTROL_MANIFEST} lists no files, so there is nothing to check.`,
+    };
+  }
   if (d === 'invalid') {
     return { status: 'warn', message: `Cannot tell: the d3d12 entry of ${CONTROL_MANIFEST} is not valid.` };
   }
@@ -343,10 +361,10 @@ export async function d3d12Check(exeDir: string | null, deps: D3d12Deps): Promis
   if (missing.length > 0) {
     notes.push(
       `Not copied: ${listed(missing)}. Without it OpenTune runs on the CPU. To copy it, run in PowerShell:`,
-      `New-Item -ItemType Directory -Force -Path '${folder}' | Out-Null`,
+      `New-Item -ItemType Directory -Force -Path ${psQuote(folder)} | Out-Null`,
       ...missing.flatMap((n) => [
-        `Copy-Item -LiteralPath '${p.join(official, d.directory, n)}' -Destination '${p.join(folder, n)}'`,
-        `(Get-FileHash -Algorithm SHA256 -LiteralPath '${p.join(folder, n)}').Hash`,
+        `Copy-Item -LiteralPath ${psQuote(p.join(official, d.directory, n))} -Destination ${psQuote(p.join(folder, n))}`,
+        `(Get-FileHash -Algorithm SHA256 -LiteralPath ${psQuote(p.join(folder, n))}).Hash`,
       ]),
       `then compare the printed hash with the entry in ${CONTROL_MANIFEST}.`,
     );

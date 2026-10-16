@@ -169,6 +169,15 @@ describe('side-car check', () => {
     });
   });
 
+  it('ignores a UTF-8 byte order mark at the start of the list', async () => {
+    const files = { [win.join(exeDir, 'a.bin')]: 'a' };
+    const result = await sidecarCheck(
+      exeDir,
+      deps({ ...files, [win.join(exeDir, 'SHA256SUMS')]: `\uFEFF${sha('a')}  a.bin\r\n` }),
+    );
+    expect(result.status).toBe('pass');
+  });
+
   it('rejects unusable lines, paths that leave the folder, and an empty list', async () => {
     const hash = sha('x');
     for (const line of [
@@ -262,6 +271,47 @@ describe('Direct3D 12 check', () => {
   it('uses a placeholder for the official folder when there is no installation', async () => {
     const result = await run(manifestAt(manifest(entry)), null);
     expect(result.message).toContain("'<official OpenTune folder>\\D3D12\\D3D12Core.dll'");
+  });
+
+  it('quotes paths with an apostrophe, spaces or Chinese characters for PowerShell', async () => {
+    const odd = "D:\\Bob's tools\\声音 工具";
+    const officialOdd = "C:\\Program Files\\Open'Tune";
+    const result = await d3d12Check(odd, {
+      platform: 'win32',
+      fs: memoryFs({ [win.join(odd, 'opentune-control.json')]: manifest(entry) }),
+      officialDir: officialOdd,
+    });
+    expect(result.message.split('\n').slice(1, 4)).toEqual([
+      "New-Item -ItemType Directory -Force -Path 'D:\\Bob''s tools\\声音 工具\\D3D12' | Out-Null",
+      "Copy-Item -LiteralPath 'C:\\Program Files\\Open''Tune\\D3D12\\D3D12Core.dll' -Destination 'D:\\Bob''s tools\\声音 工具\\D3D12\\D3D12Core.dll'",
+      "(Get-FileHash -Algorithm SHA256 -LiteralPath 'D:\\Bob''s tools\\声音 工具\\D3D12\\D3D12Core.dll').Hash",
+    ]);
+  });
+
+  it('keeps an injected quote inside the string literal', async () => {
+    const hostile = { ...entry, directory: "x'; Remove-Item -Recurse ~; '" };
+    const result = await run(manifestAt(manifest(hostile)));
+    expect(result.message).toContain("-Path 'C:\\Tools\\OpenTune-test\\x''; Remove-Item -Recurse ~; ''' | Out-Null");
+  });
+
+  it('cannot tell when a manifest hash is not 64 hexadecimal characters, and accepts upper case', async () => {
+    const copied = { [win.join(exeDir, 'D3D12', 'D3D12Core.dll')]: 'core' };
+    for (const bad of ['', sha('core').slice(0, 63), `${sha('core').slice(0, 63)}g`, 'x']) {
+      const broken = { ...entry, files: [{ name: 'D3D12Core.dll', sha256: bad }] };
+      const result = await run({ ...manifestAt(manifest(broken)), ...copied });
+      expect(result.status, bad).toBe('warn');
+      expect(result.message, bad).toMatch(/^Cannot tell: .*not 64 hexadecimal/);
+    }
+    const upper = { ...entry, files: [{ name: 'D3D12Core.dll', sha256: sha('core').toUpperCase() }] };
+    expect((await run({ ...manifestAt(manifest(upper)), ...copied })).status).toBe('pass');
+  });
+
+  it('cannot tell when the manifest lists no files', async () => {
+    const result = await run(manifestAt(manifest({ bundled: false, directory: 'D3D12', files: [] })));
+    expect(result).toMatchObject({
+      status: 'warn',
+      message: expect.stringMatching(/^Cannot tell: .*lists no files/) as unknown,
+    });
   });
 
   it('fails when the copied file has another hash', async () => {
