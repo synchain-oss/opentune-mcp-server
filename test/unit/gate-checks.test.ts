@@ -162,6 +162,23 @@ describe('checkBundleShape', () => {
     expect(checkBundleShape({ ...good, distFiles: ['opentune-mcp.mjs', 'opentune-mcp.mjs.map'] })).toHaveLength(1);
   });
 
+  it('accepts the plugin and skills packages next to the bundle, and nothing that only resembles them', () => {
+    const packaging = [
+      'plugin/.claude-plugin/plugin.json',
+      'plugin/servers/opentune-mcp.mjs',
+      'opentune-plugin.zip',
+      'opentune-plugin.zip.sha256',
+      'opentune-skills-0.1.0.zip',
+      'opentune-skills-0.1.0-rc.1.zip.sha256',
+    ];
+    expect(checkBundleShape({ ...good, distFiles: ['opentune-mcp.mjs', ...packaging] })).toEqual([]);
+    for (const stray of ['chunk-1.mjs', 'plugin.mjs', 'opentune-plugin.zip.map', 'opentune-skills-x.zip']) {
+      expect(checkBundleShape({ ...good, distFiles: ['opentune-mcp.mjs', ...packaging, stray] }), stray).toHaveLength(
+        1,
+      );
+    }
+  });
+
   it('rejects a missing shebang', () => {
     expect(checkBundleShape({ ...good, bundleText: 'import process from "node:process";\n' })).toHaveLength(1);
   });

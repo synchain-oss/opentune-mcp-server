@@ -39,6 +39,15 @@ import { checkNotices } from './gen-notices.mjs';
 import { fetchTool } from './fetch-tool.mjs';
 import { McpbToolUnavailable, packMcpb, validateMcpb } from './mcpb.mjs';
 import {
+  ClaudeCliUnavailable,
+  PLUGIN_ZIP,
+  SERVER_PATH,
+  assemblePlugin,
+  buildPlugin,
+  validatePlugin,
+} from './plugin.mjs';
+import { SKILLS_DIR, UPLOAD_SKILLS, buildSkillsZip, presentSkills } from './skills-zip.mjs';
+import {
   ALLOWED_EMAILS,
   AUDIO_FIXTURE_DIR,
   AUDIO_SNIFF_BYTES,
@@ -238,7 +247,10 @@ async function bundleShape() {
     ],
   });
   const problems = checkBundleShape({ distFiles, bundleText, imports: [...imports] });
-  return verdict(problems, `dist/ = ${BUNDLE} only; shebang; imports: ${[...imports].sort().join(', ') || 'none'}`);
+  return verdict(
+    problems,
+    `dist/ = ${BUNDLE} only (besides the plugin and skills packages); shebang; imports: ${[...imports].sort().join(', ') || 'none'}`,
+  );
 }
 
 async function bundleStdoutHygiene() {
@@ -270,6 +282,49 @@ async function mcpbPackage() {
   return {
     result: 'PASS',
     note: `${first.name} (${first.files.join(', ')}) packed twice with identical sha256 ${first.sha256}; mcpb validate and info pass`,
+  };
+}
+
+async function claudePlugin() {
+  // Assembled twice in memory (the two zips must be byte-identical), then once on disk under
+  // .cache, so dist/ keeps only what the build wrote. The pinned Claude Code CLI then validates
+  // the assembled plugin and the marketplace file with --strict, where a warning fails too.
+  const first = await assemblePlugin(ROOT);
+  const second = await assemblePlugin(ROOT);
+  if (first.sha256 !== second.sha256)
+    return { result: 'FAIL', note: `two assemblies differ: ${first.sha256} vs ${second.sha256}` };
+  const built = await buildPlugin(ROOT, path.join(ROOT, '.cache', 'plugin'));
+  let validated;
+  try {
+    validated = await validatePlugin(ROOT, built.dir);
+  } catch (error) {
+    if (error instanceof ClaudeCliUnavailable) throw new Skip(error.message);
+    return { result: 'FAIL', note: error instanceof Error ? error.message : String(error) };
+  }
+  const skills = [...new Set(built.files.filter((f) => f.startsWith('skills/')).map((f) => f.split('/')[1]))];
+  return {
+    result: 'PASS',
+    note:
+      `${PLUGIN_ZIP} ${built.version}: ${built.files.length} files, bundle in ${SERVER_PATH}, skills: ` +
+      `${skills.join(', ') || 'none yet'}; assembled twice with identical sha256 ${built.sha256}; ` +
+      `claude plugin validate --strict (Claude Code ${validated.version}, ${validated.source}) passes on the plugin ` +
+      'and on .claude-plugin/marketplace.json',
+  };
+}
+
+async function skillsZip() {
+  const present = await presentSkills(ROOT);
+  if (present.length === 0) throw new Skip(`none of ${UPLOAD_SKILLS.join(', ')} is in ${SKILLS_DIR} yet`);
+  const first = await buildSkillsZip(ROOT);
+  const second = await buildSkillsZip(ROOT);
+  if (first.sha256 !== second.sha256)
+    return { result: 'FAIL', note: `two builds differ: ${first.sha256} vs ${second.sha256}` };
+  return {
+    result: 'PASS',
+    note:
+      `${first.name}: ${first.skills.map((s) => `${s.name} (${s.files} files)`).join(', ')}; frontmatter fields, ` +
+      'name and description limits, no reserved words, Markdown and text files only; built twice with identical ' +
+      `sha256 ${first.sha256}`,
   };
 }
 
@@ -554,6 +609,8 @@ async function main() {
     ['unit tests + coverage (vitest)', npmScriptStep('test:unit', 'unit project passed; coverage thresholds met')],
     ['build (esbuild)', npmScriptStep('build', `${BUNDLE} built`)],
     ['MCPB package (deterministic, mcpb validate)', mcpbPackage],
+    ['Claude Code plugin (deterministic, claude plugin validate)', claudePlugin],
+    ['skills zip (frontmatter, text only, deterministic)', skillsZip],
     ['bundle shape', bundleShape],
     ['bundle stdout hygiene', bundleStdoutHygiene],
     ['npm pack --dry-run', packList],

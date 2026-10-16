@@ -46,7 +46,18 @@ The first time OpenTune starts with a fresh data folder it shows a one-time welc
 
 **Claude Desktop (recommended): the MCPB package.** Download `opentune-mcp-<version>.mcpb` and its `.sha256` file from the [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases) page, check the checksum, open the `.mcpb` file (or drag it into Settings > Extensions) and choose Install. In the extension settings, set "OpenTune executable" to the test build's `OpenTune.exe`. Details: [docs/install.md](docs/install.md). Advanced: register the npm package by hand with `opentune-mcp doctor --client claude-desktop`.
 
-**Claude Code:** run this once in a terminal. `--scope user` makes the server available in every project (leave it out to register it for the current project only). On Windows the command says `claude.cmd` because PowerShell would otherwise run `claude.ps1`, which swallows the `--` and fails with `missing required argument` (see [Troubleshooting](docs/TROUBLESHOOTING.md#claude-code-mcp-add-fails-in-powershell)); on macOS and Linux write `claude`.
+**Claude Desktop and claude.ai: the skills.** Claude Desktop's chat does not run the MCP server inside a Claude Code plugin, so it gets the tools from the MCPB package above. The workflow guidance comes separately: extract `opentune-skills-<version>.zip` from the same release and upload each zip in it as a skill in the Claude settings (claude.ai works the same way). These skills are instructions only; they act through the MCP tools.
+
+**Claude Code (recommended): the plugin.** The plugin holds the MCP server and the skills that guide the editing workflow, and needs Node.js 22 or later on `PATH`. Run these two commands once in a terminal (they work the same in PowerShell). `--config` sets the "OpenTune executable" option to the test build's `OpenTune.exe`; leave it out to set it later in `/config`, or to use only an OpenTune that you start yourself.
+
+```text
+claude plugin marketplace add synchain-oss/opentune-mcp-server
+claude plugin install opentune@synchain-opentune --config opentune_path=C:\Users\user\Apps\OpenTune\OpenTune.exe
+```
+
+The marketplace hands out the plugin of the latest release, which carries the same version as the npm and MCPB packages of that release. Updates are not installed by themselves: run `claude plugin update opentune@synchain-opentune`, or turn on auto-update for the `synchain-opentune` marketplace in `/plugin`. In a session the tools are named `mcp__plugin_opentune_opentune__<tool>`.
+
+**Claude Code without the plugin:** run this once in a terminal. `--scope user` makes the server available in every project (leave it out to register it for the current project only). On Windows the command says `claude.cmd` because PowerShell would otherwise run `claude.ps1`, which swallows the `--` and fails with `missing required argument` (see [Troubleshooting](docs/TROUBLESHOOTING.md#claude-code-mcp-add-fails-in-powershell)); on macOS and Linux write `claude`.
 
 ```text
 claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\user\Apps\OpenTune\OpenTune.exe -- cmd /c npx -y @synchain/opentune-mcp

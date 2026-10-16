@@ -72,16 +72,39 @@ const linesOf = (step: string) => step.split('\n').map((line) => line.trim());
 describe('every workflow', () => {
   it('exists (sanity check of the file list)', () => {
     expect(WORKFLOWS.map((w) => w.name)).toEqual(
-      expect.arrayContaining(['branch-gate.yml', 'ci.yml', 'claude-review.yml', 'pr-agent.yml', 'review-dispatch.yml']),
+      expect.arrayContaining([
+        'branch-gate.yml',
+        'ci.yml',
+        'claude-review.yml',
+        'pr-agent.yml',
+        'release.yml',
+        'review-dispatch.yml',
+      ]),
     );
   });
+
+  // A job may also call a workflow of this repository (`uses: ./.github/workflows/<file>`), which
+  // runs the code of the same commit and so needs no pin; it must name an existing workflow.
+  const LOCAL_WORKFLOW = /^ {4}uses: \.\/\.github\/workflows\/([\w.-]+\.ya?ml)$/;
 
   it.each(WORKFLOWS)('$name pins every action to a full commit SHA with its version in a comment', ({ text }) => {
     const uses = text.split('\n').filter((line) => /^\s*(?:-\s+)?uses:/.test(line));
     expect(uses.length).toBeGreaterThan(0);
     for (const line of uses) {
-      expect(line).toMatch(/^\s*(?:-\s+)?uses: [\w.-]+\/[\w.-]+(?:\/[\w./-]+)?@[0-9a-f]{40} # v\d+(?:\.\d+)*$/);
+      const local = LOCAL_WORKFLOW.exec(line);
+      if (local) expect(WORKFLOWS.map((w) => w.name)).toContain(local[1]);
+      else expect(line).toMatch(/^\s*(?:-\s+)?uses: [\w.-]+\/[\w.-]+(?:\/[\w./-]+)?@[0-9a-f]{40} # v\d+(?:\.\d+)*$/);
     }
+  });
+
+  it('accepts a local workflow call only in the job-level form', () => {
+    expect(LOCAL_WORKFLOW.test('    uses: ./.github/workflows/ci.yml')).toBe(true);
+    for (const line of [
+      '      - uses: ./.github/workflows/ci.yml',
+      '    uses: ./.github/workflows/ci.yml@main',
+      '    uses: ./scripts/ci.yml',
+    ])
+      expect(LOCAL_WORKFLOW.test(line), line).toBe(false);
   });
 
   it.each(WORKFLOWS)('$name defaults to read-only contents permission at the top level', ({ text }) => {
@@ -158,6 +181,12 @@ describe('ci.yml', () => {
     }
   });
 
+  it('validates the Claude Code plugin in the full tier with --no-skip, and the skills zip in both tiers', () => {
+    expect(onlyLists.get('plugin')).toContain('Claude Code plugin');
+    expect(jobs.get('plugin')).toMatch(/--no-skip --only "build \(esbuild\),Claude Code plugin"/);
+    for (const id of ['light', 'plugin']) expect(onlyLists.get(id), id).toContain('skills zip');
+  });
+
   it('runs the light tier with --no-skip, and its name lists gitleaks', () => {
     const light = jobs.get('light') ?? '';
     expect(light).toMatch(/^ {4}name: light \(.*\bgitleaks\b.*\)$/m);
@@ -171,6 +200,36 @@ describe('ci.yml', () => {
       "  group: ci-${{ github.event.pull_request.number || format('{0}@{1}', github.ref, github.sha) }}",
       "  cancel-in-progress: ${{ github.event_name == 'pull_request' }}",
     ]);
+  });
+});
+
+describe('release.yml', () => {
+  const text = read('.github/workflows/release.yml');
+  const jobs = jobsOf(text);
+
+  it('runs the full CI through workflow_call before it builds anything', () => {
+    expect(jobs.get('gate')).toMatch(/^ {4}uses: \.\/\.github\/workflows\/ci\.yml$/m);
+    expect(blockUnder(read('.github/workflows/ci.yml'), /^on:\s*$/)).toContain('  workflow_call:');
+    expect(jobs.get('build')).toMatch(/^ {4}needs: gate$/m);
+    expect(jobs.get('draft')).toMatch(/^ {4}needs: build$/m);
+  });
+
+  it('gives write access only to the draft job, which runs for tag pushes only and builds nothing', () => {
+    for (const [id, body] of jobs) {
+      expect(body, id).not.toMatch(/id-token/);
+      if (id !== 'draft') expect(body, id).not.toMatch(/: write$/m);
+    }
+    const draft = jobs.get('draft') ?? '';
+    expect(draft).toMatch(/^ {4}if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)$/m);
+    expect(blockUnder(draft, /^ {4}permissions:\s*$/)).toEqual(['      contents: write']);
+    expect(draft).not.toMatch(/actions\/checkout@|npm (?:ci|install|run)/);
+    expect(draft).toMatch(/gh release create "\$TAG" .*--draft/);
+  });
+
+  it('builds the four packages and checks the generated notes for AI attribution', () => {
+    const build = jobs.get('build') ?? '';
+    expect(build).toMatch(/node scripts\/release-assets\.mjs build --out "\$ASSETS"/);
+    expect(build).toMatch(/node scripts\/check-attribution\.mjs "\$RELEASE\/notes\.md"/);
   });
 });
 
