@@ -110,8 +110,8 @@ describe('tool catalog', () => {
   it('describes the size of each tool against the limit that applies to it', () => {
     const tool = (name: string, size: number) => ({ name, pad: 'x'.repeat(size) });
     const note = describeCatalogSize([tool('a', 1000), tool('opentune_edit_notes', 8000)]);
-    expect(note).toMatch(/^2 tools, d+ of 47104 bytes; closest to its limit: opentune_edit_notes d+ of 9216$/);
-    expect(describeCatalogSize([tool('a', 3000), tool('opentune_edit_notes', 2000)])).toMatch(/: a d+ of 4096$/);
+    expect(note).toMatch(/^2 tools, \d+ of 47104 bytes; closest to its limit: opentune_edit_notes \d+ of 9216$/);
+    expect(describeCatalogSize([tool('a', 3000), tool('opentune_edit_notes', 2000)])).toMatch(/: a \d+ of 4096$/);
     expect(describeCatalogSize([])).toBe('0 tools, 2 of 47104 bytes');
   });
 
