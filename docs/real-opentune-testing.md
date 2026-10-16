@@ -285,9 +285,10 @@ The tolerances are fixed in `test/e2e/effects.ts`, each with the measurements it
   (`test/unit/time-shift.test.ts`).
 - Notes that were not edited, after a note or pitch edit: by zone, as measured with hybrid mode off
   (where the vocoder renders every corrected note). An edit makes OpenTune synthesise a stretch again,
-  from at most 78 ms before the edited note to the end of its render block, and the next block too
-  when that one begins within about 0.16 s after the edited note ends (blocks are split in silences;
-  every gap of 0.355 s and more was a split). A note in that stretch is synthesised again as a whole:
+  from shortly before the edited note (69 to 78 ms before it where the note before runs into it,
+  inside the silence where there is one) to the end of its render block, and the next block too when
+  that one begins within about 0.16 s after the edited note ends (blocks are split in silences; every
+  gap of 0.355 s and more was a split). A note in that stretch is synthesised again as a whole:
   same pitch (0 cents) and level (0.0 dB), another phase, so its samples differ by about its own size.
   Nothing outside the stretch changed by a single sample, and taking the edit back gave a
   bit-identical export again. Hence:

@@ -300,19 +300,7 @@ describe('effects scenario against the stand-in', () => {
     SLOW,
   );
 
-  it(
-    'says at the top of the report when hybrid mode was on, and judges the checks as usual',
-    async () => {
-      const report = await runEffects(config('effects-hybrid', { timingLengthsSec: [] }));
-      expect(report).toMatchObject({ result: 'PASS', hybridMode: true, notices: [HYBRID_MODE_NOTICE] });
-      expect(Object.keys(report).slice(0, 4)).toEqual(['schema', 'result', 'counts', 'notices']);
-      expect(noteOf(report, 'hello')).toContain('hybrid mode on');
-      expect(report.checks['shiftCents +100 cents']).toMatchObject({
-        processing: [{ export: 'shiftCents +100 cents', hybridMode: true, backend: 'fake' }],
-      });
-    },
-    SLOW,
-  );
+  // Hybrid mode on (the notice at the top of the report) is run through the real test file below.
 
   it(
     'accepts a note after an edit that is rendered again in another phase, and nothing further away',
@@ -816,12 +804,18 @@ describe('the effects scenario as a test file', () => {
       // The notice comes before the table.
       expect(output).toContain(`NOTE: ${HYBRID_MODE_NOTICE}\n| step | result | time | note |`);
       const written = JSON.parse(await readFile(path.join(dir, 'effects.json'), 'utf8')) as EffectsReport;
+      // Hybrid mode on is said at the top of the report, and the checks are judged as usual.
       expect(written).toMatchObject({
         schema: 'opentune-mcp-e2e-effects/1',
         result: 'PASS',
         notices: [HYBRID_MODE_NOTICE],
         hybridMode: true,
         dataTemplateFrom: 'OTCP_E2E_EFFECTS_DATA_TEMPLATE',
+      });
+      expect(Object.keys(written).slice(0, 4)).toEqual(['schema', 'result', 'counts', 'notices']);
+      expect(written.steps.find((s) => s.name === 'hello')?.note).toContain('hybrid mode on');
+      expect(written.checks['shiftCents +100 cents']).toMatchObject({
+        processing: [{ export: 'shiftCents +100 cents', hybridMode: true, backend: 'fake' }],
       });
     },
     SLOW,

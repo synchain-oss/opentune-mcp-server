@@ -123,11 +123,12 @@ export const UNEDITED_MAX_ABS_DIFF_NOTES = 0;
  * without gaps moved by +100 cents on its own (shiftCents, and setTargetPitch for two of them), and
  * one note also by -100 and by +10 cents:
  *
- * - The renderer synthesises the edited stretch again from at most 78 ms before the edited note (69
- *   to 78 ms inside a phrase without gaps; in the silence before a note that has one) to the end of
- *   its render block, and also the next block when that one begins within about 0.16 s after the
- *   edited note ends. Blocks are split in silences: each gap of 0.355 s and more was a split, a phrase
- *   without gaps was one block. Taking the edit back gave a bit-identical export again.
+ * - The renderer synthesises the edited stretch again from shortly before the edited note to the end
+ *   of its render block, and also the next block when that one begins within about 0.16 s after the
+ *   edited note ends. Inside a phrase without gaps the stretch began 69 to 78 ms before the edited
+ *   note, so in the note before it; after a silence it began in that silence (0.19 s before the note,
+ *   0.17 s after the note before it). Blocks are split in silences: each gap of 0.355 s and more was a
+ *   split, a phrase without gaps was one block. Taking the edit back gave a bit-identical export again.
  * - A note in that stretch is synthesised again as a whole, not only near the edit: the same pitch
  *   (median 0 cents) and the same level (0.0 dB), but in another phase, so its samples differ by about
  *   its own size (peak differences of -3.1 to -9.8 dBFS on notes that peak at -8 to -9.6 dBFS). A
@@ -141,7 +142,10 @@ export const UNEDITED_MAX_ABS_DIFF_NOTES = 0;
  * note's); every other note must be bit-identical (UNEDITED_MAX_ABS_DIFF_NOTES).
  */
 
-/** Before an edited note, this much is not compared: re-synthesis started up to 78 ms before it. */
+/**
+ * Before an edited note, this much is not compared: where a note runs into the edited one, the
+ * re-synthesis started up to 78 ms before it.
+ */
 export const RESYNTH_PRE_ROLL_SEC = 0.1;
 
 /**
