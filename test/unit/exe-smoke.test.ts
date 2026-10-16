@@ -8,6 +8,7 @@
 // and runs the scenario with it.
 
 import { spawnSync } from 'node:child_process';
+import { existsSync, readdirSync } from 'node:fs';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,6 +24,7 @@ import { OtcpError } from '../../src/errors/tool-error.js';
 import {
   classify,
   formatTable,
+  isModalBusy,
   readWav,
   runSmoke,
   smokeSetupFromEnv,
@@ -245,6 +247,67 @@ describe('the stand-in follows the specification', () => {
     },
     SLOW,
   );
+});
+
+describe('data folder and diagnostics', () => {
+  it(
+    'keeps the data folder under OTCP_TARGET_DATA_DIR and names it in the report; none without it',
+    async () => {
+      const parent = await tmp();
+      const kept = await runSmoke({ ...config('smoke'), exe: { ...config('smoke').exe, dataDirParent: parent } });
+      expect(kept.result).toBe('PASS');
+      expect(kept.dataDir).toMatch(/^smoke-[A-Za-z0-9]{6}$/);
+      expect(readdirSync(parent)).toEqual([kept.dataDir]);
+      expect(existsSync(path.join(parent, kept.dataDir ?? '', 'logs', 'opentune.log'))).toBe(true);
+      expect(kept.steps.at(-1)?.note).toContain('kept');
+      expect(formatTable(kept)).toContain(`data folder (under OTCP_TARGET_DATA_DIR): ${kept.dataDir ?? ''}`);
+      expect(JSON.stringify(kept)).not.toContain(parent);
+      expect(kept.busyDiagnostics).toBeNull();
+
+      const temporary = await runSmoke(config('smoke'));
+      expect(temporary.dataDir).toBeNull();
+      expect(temporary.steps.at(-1)?.note).toBe('stopped, data folder removed');
+      expect(formatTable(temporary)).not.toContain('data folder (under');
+    },
+    SLOW,
+  );
+
+  it(
+    'says in the note that a modal dialog is open, and records what ui.getState reports',
+    async () => {
+      const report = await runSmoke(config('smoke-busy'));
+      expect(report.result).toBe('FAIL');
+      const step = report.steps.find((s) => s.name === 'import and analysis');
+      expect(step?.result).toBe('FAIL');
+      expect(step?.note).toContain('the instance has a modal dialog open (BUSY modal_open)');
+      expect(step?.note).toContain('"modalOpen":true');
+      expect(step?.note).toContain('"showing":true');
+      expect(step?.note).toContain('message "Welcome"');
+      expect(report.busyDiagnostics).toContain('ui.getState: busy');
+      expect(report.steps.at(-1)).toMatchObject({ name: 'shutdown', result: 'PASS' });
+    },
+    SLOW,
+  );
+
+  it(
+    'does not call a method the instance did not report: without ui.bridge only the note is written',
+    async () => {
+      const report = await runSmoke(config('smoke-busy-nobridge'));
+      const step = report.steps.find((s) => s.name === 'import and analysis');
+      expect(step?.note).toContain('modal dialog open');
+      expect(report.busyDiagnostics).toBe('the instance does not report ui.bridge, so ui.getState was not called');
+    },
+    SLOW,
+  );
+
+  it('classifies BUSY modal_open apart from other errors', () => {
+    const busy = (reason: string) =>
+      new OtcpError({ kind: 'BUSY', reason, detail: 'x', retryable: true, executed: false });
+    expect(isModalBusy(busy('modal_open'))).toBe(true);
+    expect(isModalBusy(busy('pointer_down'))).toBe(false);
+    expect(classify(busy('modal_open')).note).toContain('modal dialog open');
+    expect(classify(busy('pointer_down')).note).not.toContain('modal dialog');
+  });
 });
 
 describe('smoke helpers', () => {
