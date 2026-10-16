@@ -15,12 +15,12 @@ the MCP instructions). The maintainer approved the changes.
 
 ## Files
 
-| File                                          | Change                                                                                                                                                          |
-| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `test/golden/client-config/claude-code-*.txt` | The command is `claude mcp add opentune --scope user -e K=V -- <command>`; on Windows it starts with `claude.cmd` and a note says why. Explains `--scope user`. |
-| `test/golden/tools-list.json`                 | `opentune_analyze_pitch`: new description (before and after columns).                                                                                           |
-| `test/golden/instructions.txt`                | One sentence added: use `opentune_analyze_pitch` for before and after instead of an external pitch tracker; import an exported file with `opentune_open_audio`. |
-| `docs/reference.md`, `mcpb/manifest.json`     | Regenerated from the above.                                                                                                                                     |
+| File                                          | Change                                                                                                                                                                                                                                              |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `test/golden/client-config/claude-code-*.txt` | The command is `claude mcp add opentune --scope user -e K=V -- <command>`; on Windows it starts with `claude.cmd` and a note says why. Explains `--scope user`.                                                                                     |
+| `test/golden/tools-list.json`                 | `opentune_analyze_pitch`: new description (before and after columns).                                                                                                                                                                               |
+| `test/golden/instructions.txt`                | One sentence added: use `opentune_analyze_pitch` for before and after rather than an external pitch tracker; to check an exported file, ask the user first, because `opentune_open_audio` adds a track to the project and renumbers the later ones. |
+| `docs/reference.md`, `mcpb/manifest.json`     | Regenerated from the above.                                                                                                                                                                                                                         |
 
 ## What changed for `opentune_analyze_pitch`
 
@@ -35,10 +35,11 @@ The input is unchanged. The result gains fields; no existing field changed its m
 - Summary: `corrected_flagged_note_indexes` (and `corrected_flagged_note_indexes_truncated`), `hybrid_mode`.
 - When the instance sends no usable corrected curve, every corrected value is `null` and
   `nullReasons.corrected_statistics` is `corrected_curve_unavailable`.
-- The tool reads `prefs.get` once (`processing.hybridMode`). With hybrid mode on it adds a warning: the part of a
-  correction smaller than 75 cents is rendered by DSP pitch shifting, so what is heard may change less than the
-  corrected data suggests. If the preference cannot be read, `hybrid_mode` is `null` and
-  `nullReasons.hybrid_mode` is `unavailable`.
+- The tool reads `prefs.get` once (`processing.hybridMode`). With hybrid mode on it adds a warning: the corrected
+  data describes the corrected target curve, and OpenTune's hybrid mode may make a small correction sound smaller than
+  that data (the hybrid mode option in OpenTune preferences explains it). The warning names no threshold. If the
+  preference cannot be read, `hybrid_mode` is `null` and `nullReasons.hybrid_mode` is `unavailable`; when there is no
+  corrected data it is not read and the reason is `not_read`.
 - Output budget and paging are unchanged; the summary stays small.
 
 `prefs.get` is added to the tool's `otcpMethods`; it needs the same capability (`read.v1`).

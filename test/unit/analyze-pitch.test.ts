@@ -557,7 +557,10 @@ describe('opentune_analyze_pitch before and after the corrections', () => {
       method === 'content.getPitchCurve' ? change(result) : result,
     );
     const summary = body(await analyzePitch(ctx, { clip: placement }));
-    expect(summary.nullReasons).toMatchObject({ corrected_statistics: 'corrected_curve_unavailable' });
+    expect(summary.nullReasons).toMatchObject({
+      corrected_statistics: 'corrected_curve_unavailable',
+      hybrid_mode: 'not_read',
+    });
     expect(summary.corrected_flagged_note_indexes).toBeNull();
     expect(summary.overall).toMatchObject({ correctedMeanAbsDeviationCents: null, correctedOverThresholdCount: null });
     // The before side is unaffected, and hybrid mode is not read when there is no after to qualify.
@@ -583,7 +586,7 @@ describe('opentune_analyze_pitch before and after the corrections', () => {
     });
     const out = body(await analyzePitch(ctx, { clip: need(ids, 'clip.placementId') }));
     expect(out.hybrid_mode).toBe(true);
-    expect(out.warnings).toEqual([expect.stringContaining('smaller than 75 cents')]);
+    expect(out.warnings).toEqual([expect.stringContaining('hybrid mode may make a small correction sound smaller')]);
     expect(out.nullReasons).toBeUndefined();
   });
 
@@ -593,6 +596,18 @@ describe('opentune_analyze_pitch before and after the corrections', () => {
     const out = body(await analyzePitch(ctx, { clip: need(ids, 'clip.placementId') }));
     expect(out.hybrid_mode).toBe(false);
     expect(out.warnings).toBeUndefined();
+  });
+
+  it('says the preference is unavailable when reading it fails, and still analyzes', async () => {
+    const { ctx, placement } = await setup({}, (method, result) => {
+      if (method === 'prefs.get') throw new Error('prefs.get is not supported');
+      return result;
+    });
+    const out = body(await analyzePitch(ctx, { clip: placement }));
+    expect(out.hybrid_mode).toBeNull();
+    expect(out.nullReasons).toMatchObject({ hybrid_mode: 'unavailable' });
+    expect(out.warnings).toBeUndefined();
+    expect(out.flagged_note_indexes).toEqual([0, 2]);
   });
 
   it('says the preference is unavailable when the instance does not report it, and still analyzes', async () => {

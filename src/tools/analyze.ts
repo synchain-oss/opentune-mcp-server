@@ -4,8 +4,8 @@
 // opentune_analyze_pitch: how far the detected pitch of a clip's notes is from their target pitch.
 // The notes come from OpenTune (content.getNotes; content.segmentNotes when the clip has no stored
 // notes yet), the detected pitch (before) and the corrected pitch (after the edits) from one
-// content.getPitchCurve read; the statistics are computed here (src/analysis/pitch.ts). Three levels of detail: summary (small, the default), phrases and notes
-// (both paged). One result stays within OUTPUT_BUDGET characters: a page that would be larger
+// content.getPitchCurve read; the statistics are computed here (src/analysis/pitch.ts). Three levels of detail:
+// summary (small, the default), phrases and notes (both paged). One result stays within OUTPUT_BUDGET characters: a page that would be larger
 // gets fewer entries, never cut ones, and next_cursor continues exactly where the page ends.
 
 import { createHash } from 'node:crypto';
@@ -260,8 +260,8 @@ const changedDuringRead = (): Outcome => ({
 });
 
 const HYBRID_WARNING =
-  'hybrid mode is on: corrections smaller than 75 cents are rendered by DSP pitch shifting, so what you hear may ' +
-  'change less than the corrected data suggests';
+  "the corrected data describes the corrected target curve; hybrid mode is on, and OpenTune's hybrid mode may make " +
+  'a small correction sound smaller than that data (see the hybrid mode option in OpenTune preferences)';
 
 /** The hybrid-mode preference; 'unavailable' when the instance does not report it. */
 async function readHybridMode(session: OtcpSession): Promise<boolean | 'unavailable'> {
@@ -379,6 +379,7 @@ export async function analyzePitch(
       frames !== null && f0State === 'ready' ? measureNotes(spans, frames, threshold, correctedFrames) : [];
     if (stats.length > 0 && correctedFrames === null) reasons.corrected_statistics = 'corrected_curve_unavailable';
     const hybrid = stats.length > 0 && correctedFrames !== null ? await readHybridMode(session) : null;
+    if (stats.length > 0 && correctedFrames === null) reasons.hybrid_mode = 'not_read';
     if (hybrid === 'unavailable') reasons.hybrid_mode = 'unavailable';
     if (hybrid === true) warnings.push(HYBRID_WARNING);
 
