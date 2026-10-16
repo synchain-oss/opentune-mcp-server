@@ -31,6 +31,13 @@
 // and renders as `effects` does. `effects-resynth`, `effects-resynth-far` and
 // `effects-resynth-detuned` render notes after an edited note again, as a vocoder that re-synthesises
 // a stretch does (see reached() below). Every other mode reports hybrid mode off.
+//
+// Modes about a damaged export: the export of a clip nothing was corrected in (the first export of the
+// scenario, which should be the source as it is) holds the notes at the wrong pitch, as an instance that
+// shifts or bends what it should leave alone would. `effects-export-offset` renders every note 30
+// cents sharp, `effects-export-glide` bends every note from 20 to 200 cents sharp over its length (its
+// own pitch is not steady), and `effects-export-one-off` renders only the second note 100 cents
+// sharp. Later exports render as `effects` does.
 
 import fs from 'node:fs';
 
@@ -154,6 +161,31 @@ function render(content, notes, pitchShift, handles, mode = '') {
       for (let k = 1; k <= HARMONICS; k++) v += Math.sin(2 * Math.PI * k * hz * (t + delaySec)) / k;
       const edge = Math.min(1, t / FADE_SEC, (count / RATE - t) / FADE_SEC);
       out[from + n] = 0.2 * v * Math.max(0, edge);
+    }
+  }
+  return out;
+}
+
+/** The damaged first export of the `effects-export-*` modes: each note from `from` to `to` cents sharp. */
+function damaged(content, mode) {
+  const out = new Float64Array(Math.round(content.durationSec * RATE));
+  for (const [i, note] of content.notes.entries()) {
+    let [from, to] = [0, 0];
+    if (mode === 'effects-export-offset') [from, to] = [30, 30];
+    else if (mode === 'effects-export-glide') [from, to] = [20, 200];
+    else if (i === 1) [from, to] = [100, 100];
+    const hz = TUNING_HZ * 2 ** ((note.detectedMidi - 69) / 12);
+    const first = Math.round(note.startContentSec * RATE);
+    const count = Math.round(note.endContentSec * RATE) - first;
+    let phase = 0;
+    for (let n = 0; n < count && first + n < out.length; n++) {
+      const t = n / RATE;
+      const cents = from + ((to - from) * n) / Math.max(1, count - 1);
+      phase += (2 * Math.PI * hz * 2 ** (cents / 1200)) / RATE;
+      let v = 0;
+      for (let k = 1; k <= HARMONICS; k++) v += Math.sin(k * phase) / k;
+      const edge = Math.min(1, t / FADE_SEC, (count / RATE - t) / FADE_SEC);
+      out[first + n] = 0.2 * v * Math.max(0, edge);
     }
   }
   return out;
@@ -294,7 +326,7 @@ export function createEffects(mode) {
     const dry =
       !c.notes.some((n) => n.corrected) && c.pitchShift.semitones === 0 && c.pitchShift.cents === 0 && identity;
     let samples;
-    if (dry) samples = c.samples;
+    if (dry) samples = mode.startsWith('effects-export-') ? damaged(c, mode) : c.samples;
     else if (mode === 'effects-stale')
       samples = render(
         c,
