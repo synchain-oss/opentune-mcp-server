@@ -19,6 +19,7 @@ import {
   differs,
   fieldChanges,
   gainDb,
+  leavingContents,
   overlapsOther,
   pick,
   stateOf,
@@ -727,7 +728,8 @@ function deleteClips(context: MethodContext, op: Op, params: Readonly<Record<str
     label: clipLabel(p.serial, p.trackId),
     fields: { referencePlacementId: { before: p.reference?.id ?? null, after: null, unit: null } },
   }));
-  const removed = doomed.map(clipItem);
+  // A content that no other clip shows leaves the project with the clips (section 14.4 rule 6).
+  const removed = [...doomed.map(clipItem), ...leavingContents(world, doomed)];
   const dirtyBefore = world.project.dirty;
   if (dryRun) {
     return envelope(world, {

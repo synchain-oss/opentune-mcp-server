@@ -226,10 +226,13 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
       .filter(({ note }) => overlaps(note.startContentSec, note.endContentSec, range));
     // The cursor is bound to the tokens and to how the notes are read: the range as given (a content
     // or a timeline range) and the placement, so a cursor of another read gets the same error as a stale one.
+    // It is also bound to the pitch shift, which moves the pitches of the notes without changing the
+    // revision (section 10 rule 6).
     const tokens = [
       content.revision,
       content.comp.grid,
       content.comp.key,
+      content.comp.pitchShift,
       placement?.id ?? '',
       placement?.geometryHash ?? '',
       JSON.stringify(asked ?? null),
@@ -261,7 +264,14 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
         frames.push(i);
       }
     }
-    const tokens = [content.revision, content.comp.grid, String(step), JSON.stringify(range ?? null)].join('|');
+    // Bound to the pitch shift as well, which moves the corrected pitch without changing the revision.
+    const tokens = [
+      content.revision,
+      content.comp.grid,
+      content.comp.pitchShift,
+      String(step),
+      JSON.stringify(range ?? null),
+    ].join('|');
     const offset = typeof params.cursor === 'string' ? decodeCursor(params.cursor, tokens) : 0;
     const page = frames.slice(offset, offset + limit);
     const round4 = (value: number | null) => (value === null ? null : Math.round(value * 1e4) / 1e4);

@@ -54,6 +54,20 @@ export const clipLabel = (serial: number, trackId: number): string =>
 
 export const gainDb = (linear: number): number | null => (linear === 0 ? null : round6(20 * Math.log10(linear)));
 
+/**
+ * The `removed` entries of contents that leave the project when the clips in `doomed` are removed:
+ * those that no other clip shows (section 14.4 rule 6). Call it before the clips are removed.
+ */
+export function leavingContents(world: World, doomed: readonly PlacementRec[]) {
+  return [...new Set(doomed.map((p) => p.content))]
+    .filter((content) => world.placementsOf(content).every((p) => doomed.includes(p)))
+    .map((content) => ({
+      entity: 'content',
+      ref: { contentId: content.id },
+      label: `Content ${String(content.objectId)}`,
+    }));
+}
+
 const UNITS: Record<keyof PlacementState, string | null> = {
   trackId: null,
   startTimelineSec: 'sec',

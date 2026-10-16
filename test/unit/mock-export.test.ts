@@ -149,14 +149,60 @@ describe('ifExists and the final rename', () => {
     const target = { placementId: ids['clip.placementId'] };
     const one = await finish(session, clock, await start(session, { kind: 'clip', target, path: second }));
     expect(one.result).toMatchObject({ channelCount: 1, startTimelineSec: 2, durationSec: 6 });
-    // A track without clips gives an empty file rather than an error.
-    const empty = await finish(
-      session,
-      clock,
-      await start(session, { kind: 'track', target: { trackId: 3 }, path: path.join(dir, 'empty.wav') }),
-    );
-    expect(empty.result).toMatchObject({ durationSec: 0, dryContents: [] });
-    expect(fs.statSync(path.join(dir, 'empty.wav')).size).toBe(44);
+    // A track without clips has no audio to export: the call fails at once and writes nothing (section 19 rule 1).
+    const empty = await session.fails('export.start', {
+      kind: 'track',
+      target: { trackId: 3 },
+      path: path.join(dir, 'empty.wav'),
+    });
+    expect(empty.data).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'nothing_to_export', executed: false });
+    expect(fs.existsSync(path.join(dir, 'empty.wav'))).toBe(false);
+  });
+
+  it('fails a master export at once when no clip is heard, because of mute or solo (section 19 rule 1)', async () => {
+    const { session } = await open();
+    const ids = session.mock.given({ ...clipGiven, files: [{ bind: 'out', kind: 'absent' }] });
+    // Muted: the only clip is not heard.
+    await session.ok('track.set', { tracks: [{ trackId: 0, muted: true }] });
+    const muted = await session.fails('export.start', { kind: 'master', path: ids.out });
+    expect(muted.data).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'nothing_to_export', executed: false });
+    // Solo on a track without clips excludes the clip on track 0.
+    await session.ok('track.set', {
+      tracks: [
+        { trackId: 0, muted: false },
+        { trackId: 3, solo: true },
+      ],
+    });
+    const excluded = await session.fails('export.start', { kind: 'master', path: ids.out });
+    expect(excluded.data).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'nothing_to_export', executed: false });
+    expect(fs.existsSync(ids.out ?? '')).toBe(false);
+    // Solo on the clip's own track hears it.
+    await session.ok('track.set', {
+      tracks: [
+        { trackId: 3, solo: false },
+        { trackId: 0, solo: true },
+      ],
+    });
+    expect(await start(session, { kind: 'master', path: ids.out })).toBeTypeOf('string');
+  });
+
+  it('ends a waiting export with INVALID_ARGUMENT(nothing_to_export) when all its clips are removed meanwhile', async () => {
+    const { clock, session } = await open();
+    const ids = session.mock.given({
+      clips: [clip({ analysis: 'running', notes: [] })],
+      files: [{ bind: 'out', kind: 'absent' }],
+    });
+    const jobId = await start(session, { kind: 'master', path: ids.out });
+    clock.advance(EXPORT_POLL_MS);
+    expect((await jobOf(session, jobId)).state).toBe('running');
+    // The export lock stops the API from editing; the clip is deleted in the UI.
+    session.mock.removeClip(ids['clip.placementId'] ?? '');
+    const job = await finish(session, clock, jobId);
+    expect(job).toMatchObject({
+      state: 'failed',
+      error: { data: { kind: 'INVALID_ARGUMENT', reason: 'nothing_to_export' } },
+    });
+    expect(filesIn(path.dirname(ids.out ?? ''))).toEqual([]);
   });
 });
 
