@@ -1,0 +1,37 @@
+Lyrics timeline skill: third-party models and software
+
+This skill's own code is MIT licensed (see the repository LICENSE). It ships no model weights and
+no third-party code. When the user agrees, scripts/setup.py downloads the models below and installs
+the Python packages below into a private virtual environment under the plugin data folder. They are
+not redistributed with the plugin; each stays under its own licence.
+
+Models (downloaded on request, Apache-2.0 code and weights)
+  Qwen3-ASR-0.6B and Qwen3-ASR-1.7B   Apache-2.0   https://huggingface.co/Qwen
+  Qwen3-ForcedAligner-0.6B            Apache-2.0   https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B
+
+Python packages installed by scripts/setup.py (pinned in requirements.in)
+  qwen-asr 0.0.6        Apache-2.0
+  torch                 BSD-3-Clause
+  transformers          Apache-2.0   (pinned by qwen-asr)
+  accelerate            Apache-2.0   (pulled in by qwen-asr)
+  qwen-omni-utils       Apache-2.0   (pulled in by qwen-asr)
+  librosa               ISC          (pulled in by qwen-asr)
+  nagisa                MIT          (pulled in by qwen-asr)
+  sox (Python wrapper)  BSD-3-Clause (pulled in by qwen-asr)
+  numpy                 BSD-3-Clause
+  scipy                 BSD-3-Clause
+  soundfile             BSD-3-Clause (its wheels bundle libsndfile, LGPL-2.1)
+  pypinyin              MIT
+
+Packages that qwen-asr pulls in with other licences
+  soynlp is declared as GPL-3.0 on its package page (a Korean tokenizer used by qwen-asr). It is
+  installed only into the user's private virtual environment, is not part of this repository or of
+  the plugin, and none of this skill's code imports it. gradio, flask and pytz are also pulled in by
+  qwen-asr (Apache-2.0, BSD-3-Clause and MIT respectively) and are not used by this skill.
+
+Excluded on purpose (licence)
+  MMS models and ctc-forced-aligner defaults (CC-BY-NC-4.0), SOFA / HubertFA / SingAlign weights
+  (non-commercial), whisper-timestamped (AGPL), SongPrep (academic use only), SongFormer and its
+  MuQ dependency (non-commercial), TEN VAD (extra terms; this skill uses an energy and pitch gate).
+
+Test-only dependencies (requirements-test.txt): pytest (MIT), numpy, pypinyin.

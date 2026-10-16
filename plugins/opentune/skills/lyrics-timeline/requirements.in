@@ -1,0 +1,10 @@
+# SPDX-License-Identifier: MIT
+# Runtime dependencies, installed by scripts/setup.py into the plugin data folder.
+# Exact versions. torch is installed first by setup.py from the CPU or CUDA index; the pin here
+# only has to match. Hash-pinned lock files per platform are future work.
+torch==2.14.1
+qwen-asr==0.0.6
+numpy==2.2.6
+scipy==1.15.3
+soundfile==0.14.0
+pypinyin==0.55.0
