@@ -465,7 +465,7 @@ describe('opentune_get_settings', () => {
   it('keeps hostile log lines and project paths out of the summary, one case each', async () => {
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()] });
-    const hostile = HOSTILE[1]!;
+    const hostile = HOSTILE[1] ?? '';
     mock.logLine(hostile);
     await hookCalls(ctx, (method, result) => {
       if (method === 'prefs.get') result.recentProjects = [{ path: `C:\\Music\\${hostile}.otproj`, exists: true }];
