@@ -282,8 +282,14 @@ describe('data folder and diagnostics', () => {
       const base = config('smoke');
       const report = await runSmoke({ ...base, exe: { ...base.exe, dataDirParent: parent, dataTemplate: tpl } });
       expect(report.result).toBe('PASS');
+      expect(report.templateSkipped).toBe(0);
       const [kept] = readdirSync(parent);
       expect(await readFile(path.join(parent, kept ?? '', 'state.txt'), 'utf8')).toBe('known');
+      // A template that holds a ready file: it is left out of the copy, and the report says so.
+      await writeFile(path.join(tpl, 'ready.json'), '{"pid":1}\n');
+      const skipped = await runSmoke({ ...base, exe: { ...base.exe, dataTemplate: tpl } });
+      expect(skipped.result).toBe('PASS');
+      expect(skipped.templateSkipped).toBe(1);
     },
     SLOW,
   );

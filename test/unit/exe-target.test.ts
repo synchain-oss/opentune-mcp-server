@@ -15,7 +15,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { pidAlive, systemProbe } from '../../src/discovery/process.js';
-import { exeConfigFromEnv, exeTarget } from '../contract/exe-target.js';
+import { exeConfigFromEnv, exeTarget, isRunnerPath } from '../contract/exe-target.js';
 import { runExeVector } from '../contract/exe-vectors.js';
 import { mockTarget } from '../contract/mock-target.js';
 import { PreconditionUnavailable } from '../contract/target.js';
@@ -439,6 +439,24 @@ describe('OTCP_TARGET_DATA_TEMPLATE (a known starting state)', () => {
     },
     SLOW,
   );
+
+  it('matches the ready file and the discovery folder without regard to case on Windows and macOS only', () => {
+    for (const platform of ['win32', 'darwin'] as const) {
+      expect(isRunnerPath(['READY.JSON'], platform)).toBe(true);
+      expect(isRunnerPath(['Control', 'Instances'], platform)).toBe(true);
+    }
+    expect(isRunnerPath(['READY.JSON'], 'linux')).toBe(false);
+    expect(isRunnerPath(['Control', 'Instances'], 'linux')).toBe(false);
+    for (const platform of ['win32', 'darwin', 'linux'] as const) {
+      expect(isRunnerPath(['ready.json'], platform)).toBe(true);
+      expect(isRunnerPath(['control', 'instances'], platform)).toBe(true);
+      // Only at the top of the data folder, and only these two.
+      expect(isRunnerPath(['nested', 'ready.json'], platform)).toBe(false);
+      expect(isRunnerPath(['control'], platform)).toBe(false);
+      expect(isRunnerPath(['control', 'instances', '1.json'], platform)).toBe(false);
+      expect(isRunnerPath(['control', 'keep.txt'], platform)).toBe(false);
+    }
+  });
 
   it(
     'copies nothing when the variable is not set',
