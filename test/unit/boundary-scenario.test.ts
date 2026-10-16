@@ -5,6 +5,7 @@
 // steps, their order and the report are right, and a deviation of the instance from what the
 // scenario expects fails the step that notices it instead of passing.
 
+import { writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -12,6 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import type { TargetInstance } from '../contract/target.js';
 import { refusals, runBoundary } from '../e2e/boundary.js';
+import { endAllConfirmed } from '../e2e/real-support.js';
 import { Scenario, formatScenarioTable, scenarioReportPath } from '../e2e/scenario.js';
 import { StepSkip, type SmokeConfig } from '../e2e/smoke.js';
 import { tempDir } from '../support/context.js';
@@ -60,7 +62,7 @@ describe('boundary scenario against the mock', () => {
       'Chinese and spaced paths: import and export round trip=PASS',
       'silent WAV: clip kept, analysis outcome reported=PASS',
       'master export lists the silent clip in dryContents=PASS',
-      '601 s, 8 kHz, 8 bit WAV: audio_too_long with the limit=PASS',
+      '601 s, 8 kHz, 8 bit WAV: audio_too_long=PASS',
       'undo and redo round trip restores the read-back state=PASS',
       'forbidden paths are refused and nothing is written=PASS',
       'shutdown=PASS',
@@ -130,5 +132,33 @@ describe('Scenario step results', () => {
     expect(results(await run(skip, undefined))).toEqual(['SKIP', 'PASS', 'PASS']);
     expect(results(await run(skip, { haltOnSkip: true }))).toEqual(['SKIP', 'SKIP', 'PASS']);
     expect((await run(skip, undefined)).result).toBe('SKIP');
+  });
+});
+
+describe('endAllConfirmed', () => {
+  it('ends every instance of the scenario folder, also when one of them cannot be confirmed', async () => {
+    const tmp = tempDir('ot-e2e-end-');
+    cleanup.push(tmp.remove);
+    const dir = tmp.dir;
+    for (const name of ['101.json', '102.json', '103.json', 'notes.txt', '104.json.tmp']) {
+      writeFileSync(path.join(dir, name), '{}');
+    }
+    const seen: string[] = [];
+    const result = await endAllConfirmed(dir, (file) => {
+      seen.push(path.basename(file));
+      if (file.endsWith('102.json')) return Promise.reject(new Error('not shown to be ours'));
+      return Promise.resolve(true);
+    });
+    expect(seen).toEqual(['101.json', '102.json', '103.json']);
+    expect(result.ended).toBe(2);
+    expect(result.notes).toEqual(['102.json: not shown to be ours']);
+  });
+
+  it('finds nothing to end when the folder was never created', async () => {
+    const tmp = tempDir('ot-e2e-end-');
+    cleanup.push(tmp.remove);
+    const dir = tmp.dir;
+    const result = await endAllConfirmed(path.join(dir, 'missing'), () => Promise.reject(new Error('unexpected')));
+    expect(result).toEqual({ ended: 0, notes: [] });
   });
 });

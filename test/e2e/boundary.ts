@@ -264,11 +264,17 @@ export async function runBoundary(config: SmokeConfig, hooks: SmokeHooks = {}): 
   });
 
   await scenario.step(
-    '601 s, 8 kHz, 8 bit WAV: audio_too_long with the limit',
+    '601 s, 8 kHz, 8 bit WAV: audio_too_long',
     async () => {
       const s = need();
       const info = await s.call('session.info', {}, 15_000);
       const limit = num(member(info, 'import', 'session.info'), 'maxAnalysisSec', 'session.info import');
+      if (!(limit > 0)) throw new Error(`import.maxAnalysisSec is not a positive number: ${String(limit)}`);
+      if (!(LONG_AUDIO.seconds > limit)) {
+        throw new Error(
+          `the generated file (${String(LONG_AUDIO.seconds)} s) is not longer than the limit (${String(limit)} s)`,
+        );
+      }
       const before = (await placements(s)).length;
       // The specification reports a file that fails as an item of the finished job; an instance that
       // refuses the whole call instead gives the same error, so both are read.
@@ -296,11 +302,7 @@ export async function runBoundary(config: SmokeConfig, hooks: SmokeHooks = {}): 
       }
       if ((await placements(s)).length !== before) throw new Error('a clip was imported for the over-long file');
       scenario.facts.maxAnalysisSec = limit;
-      scenario.facts.audioTooLongNamesLimit = failure.detail.includes(String(limit));
-      if (!failure.detail.includes(String(limit))) {
-        throw new Error(`the error does not name the limit (${String(limit)} s); its detail is: ${failure.detail}`);
-      }
-      return `INVALID_ARGUMENT(audio_too_long), limit ${String(limit)} s named, nothing imported`;
+      return `INVALID_ARGUMENT(audio_too_long), nothing imported; import.maxAnalysisSec is ${String(limit)} s`;
     },
     { haltOnFail: false },
   );

@@ -25,6 +25,9 @@ import { setClipTool } from '../../src/tools/set-clip.js';
 import { discoveryContent, tempDir, testContext, type TestContext } from '../support/context.js';
 import { clip } from '../support/mock-client.js';
 
+/** An absolute path of the running platform: the tool checks the path before it resolves the instance. */
+const absWav = (name: string): string => (process.platform === 'win32' ? `C:\\Music\\${name}` : `/music/${name}`);
+
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
   for (const fn of cleanup.splice(0).reverse()) await fn();
@@ -61,7 +64,7 @@ const WRITES: readonly {
   {
     name: 'opentune_export_audio',
     tool: exportAudioTool,
-    args: { kind: 'master', path: 'C:\\Music\\out.wav' },
+    args: { kind: 'master', path: absWav('out.wav') },
   },
   {
     name: 'opentune_set_clip',
@@ -198,7 +201,7 @@ describe('a write whose outcome is unknown is not sent again', () => {
     {
       tool: exportAudioTool,
       method: 'export.start',
-      args: () => ({ kind: 'master', path: 'C:\\Music\\unknown-outcome.wav' }),
+      args: () => ({ kind: 'master', path: absWav('unknown-outcome.wav') }),
     },
     { tool: undoTool, method: 'edit.undo', args: () => ({ undo_id: 'u:00000000:1' }) },
   ];

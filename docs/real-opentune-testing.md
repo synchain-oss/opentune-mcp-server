@@ -138,7 +138,7 @@ Things to know before running them:
 - They use the same variables as the smoke scenario (`OTCP_TARGET_EXE`, `OTCP_TARGET_TIMEOUT_MS`,
   `OTCP_TARGET_DATA_TEMPLATE`, `OTCP_E2E_STEP_TIMEOUT_MS`, `OTCP_E2E_REPORT`). `instances` and `launch-real`
   take their data and discovery folders from a scratch folder of their own below the system temporary directory
-  (`ot-X03m-*`), which is removed at the end, also after a failure; `OTCP_TARGET_DATA_DIR` applies to `boundary` only.
+  (`ot-e2e-*`), which is removed at the end, also after a failure; `OTCP_TARGET_DATA_DIR` applies to `boundary` only.
 - The MCP bundle is started with an environment that holds only the variables the scenario sets: variables
   `OPENTUNE_MCP_*` and `OPENTUNE_DATA_DIR` of the calling shell never reach it, so no scenario can resolve the
   discovery folder of a real OpenTune.

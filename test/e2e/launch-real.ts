@@ -20,7 +20,7 @@ import { CONTROL_MANIFEST } from '../../src/launch/config.js';
 import { OtcpSession } from '../../src/otcp/client.js';
 import { generateTone } from '../support/harmonic-tone.js';
 import {
-  endConfirmed,
+  endAllConfirmed,
   openTunePids,
   removeDir,
   scratchDir,
@@ -230,13 +230,9 @@ export async function runLaunchReal(config: SmokeConfig): Promise<ScenarioReport
     async () => {
       const notes: string[] = [];
       for (const mcp of servers) await mcp.stop().catch(() => undefined);
-      if (discoveryFile !== '' && existsSync(discoveryFile)) {
-        try {
-          await endConfirmed(discoveryFile);
-        } catch (error) {
-          notes.push(error instanceof Error ? error.message : String(error));
-        }
-      }
+      // Every discovery file in this scenario's own folder, whatever step failed: each is checked
+      // against the start time of its process before that process is ended.
+      if (instancesDir !== '') notes.push(...(await endAllConfirmed(instancesDir)).notes);
       if (root !== '') {
         try {
           await removeDir(root);

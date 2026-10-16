@@ -9,7 +9,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { cp, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -27,7 +27,7 @@ const INITIALIZE = {
 };
 
 /** A new empty folder below the system temporary directory; `ot-` prefixed so that it is easy to tell. */
-export const scratchDir = (label: string): Promise<string> => mkdtemp(path.join(os.tmpdir(), `ot-X03m-${label}-`));
+export const scratchDir = (label: string): Promise<string> => mkdtemp(path.join(os.tmpdir(), `ot-e2e-${label}-`));
 
 export interface ToolOutcome {
   readonly isError: boolean;
@@ -147,6 +147,33 @@ export async function endConfirmed(file: string): Promise<boolean> {
   process.kill(pid, 'SIGKILL');
   if (!(await waitGone(pid))) throw new Error(`pid ${String(pid)} did not end`);
   return true;
+}
+
+/**
+ * Ends every instance that a discovery file of `dir` (a folder of this scenario) describes, each
+ * only after `end` confirmed it to be that process. A failure for one file never skips the others;
+ * the problems come back as notes. A missing folder means nothing was started.
+ */
+export async function endAllConfirmed(
+  dir: string,
+  end: (file: string) => Promise<boolean> = endConfirmed,
+): Promise<{ readonly ended: number; readonly notes: readonly string[] }> {
+  let names: string[];
+  try {
+    names = await readdir(dir);
+  } catch {
+    return { ended: 0, notes: [] };
+  }
+  let ended = 0;
+  const notes: string[] = [];
+  for (const name of names.filter((n) => /^\d+\.json$/.test(n)).sort()) {
+    try {
+      if (await end(path.join(dir, name))) ended += 1;
+    } catch (error) {
+      notes.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { ended, notes };
 }
 
 export interface RealInstance {
