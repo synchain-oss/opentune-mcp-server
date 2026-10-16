@@ -41,10 +41,10 @@ function setup(env: NodeJS.ProcessEnv = {}): DoctorDeps & { discovery: string } 
 const byId = <T extends { id: string }>(checks: readonly T[], id: string) => checks.find((c) => c.id === id);
 
 describe('doctor', () => {
-  it('lists every check id in a stable order, planned ones as not implemented', async () => {
+  it('lists every check id in a stable order, none left as not implemented', async () => {
     const checks = await runDoctor(setup());
     expect(checks.map((c) => c.id)).toEqual(DOCTOR_CHECK_IDS);
-    expect(checks.slice(5).every((c) => c.status === 'not_implemented')).toBe(true);
+    expect(checks.some((c) => c.status === 'not_implemented')).toBe(false);
     for (const c of checks) expect(c.url).toMatch(new RegExp(`#doctor-${c.id.toLowerCase()}$`));
     expect(byId(checks, 'OT_NODE_VERSION')?.status).toBe('pass');
     expect(byId(checks, 'OT_WSL_RUNTIME')?.status).toBe('pass');

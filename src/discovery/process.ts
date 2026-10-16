@@ -70,6 +70,12 @@ export function parseEpochMs(text: string): number | null {
 }
 
 const TOOL_TIMEOUT_MS = 5000;
+/**
+ * Windows PowerShell starts slowly: a cold start on a busy machine (a CI runner running other
+ * processes, a virus scanner reading the assemblies) took more than 5 s several times in a row, so
+ * a start time was reported as unreadable and a running process as unconfirmable.
+ */
+const POWERSHELL_TIMEOUT_MS = 20_000;
 
 /**
  * What running a system tool gave: its standard output, or the exit status it failed with. The
@@ -80,12 +86,17 @@ export type ToolRun =
   { readonly ok: true; readonly output: string } | { readonly ok: false; readonly exitCode: number | null };
 
 /** Runs a system tool by absolute path, without a shell, with a time limit. */
-export function runTool(file: string, args: readonly string[], env?: NodeJS.ProcessEnv): Promise<ToolRun> {
+export function runTool(
+  file: string,
+  args: readonly string[],
+  env?: NodeJS.ProcessEnv,
+  timeoutMs: number = TOOL_TIMEOUT_MS,
+): Promise<ToolRun> {
   return new Promise((resolve) => {
     execFile(
       file,
       args,
-      { timeout: TOOL_TIMEOUT_MS, windowsHide: true, shell: false, encoding: 'utf8', ...(env ? { env } : {}) },
+      { timeout: timeoutMs, windowsHide: true, shell: false, encoding: 'utf8', ...(env ? { env } : {}) },
       (error, stdout) => {
         if (!error) resolve({ ok: true, output: stdout });
         else
@@ -96,8 +107,13 @@ export function runTool(file: string, args: readonly string[], env?: NodeJS.Proc
 }
 
 /** The output of a run that succeeded, else null. */
-const run = async (file: string, args: readonly string[], env?: NodeJS.ProcessEnv): Promise<string | null> => {
-  const result = await runTool(file, args, env);
+const run = async (
+  file: string,
+  args: readonly string[],
+  env?: NodeJS.ProcessEnv,
+  timeoutMs?: number,
+): Promise<string | null> => {
+  const result = await runTool(file, args, env, timeoutMs);
   return result.ok ? result.output : null;
 };
 
@@ -122,12 +138,12 @@ async function startTime(pid: number): Promise<number | null> {
   }
   if (process.platform === 'win32') {
     const command = `[DateTimeOffset]::new((Get-Process -Id ${String(pid)} -ErrorAction Stop).StartTime).ToUnixTimeMilliseconds()`;
-    const out = await run(system32('WindowsPowerShell\\v1.0\\powershell.exe'), [
-      '-NoProfile',
-      '-NonInteractive',
-      '-Command',
-      command,
-    ]);
+    const out = await run(
+      system32('WindowsPowerShell\\v1.0\\powershell.exe'),
+      ['-NoProfile', '-NonInteractive', '-Command', command],
+      undefined,
+      POWERSHELL_TIMEOUT_MS,
+    );
     return out === null ? null : parseEpochMs(out);
   }
   // macOS and other systems: ps prints the start time in seconds; the probe tolerates 2 s.

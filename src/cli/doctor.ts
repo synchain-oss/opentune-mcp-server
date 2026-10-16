@@ -3,7 +3,7 @@
 
 // `opentune-mcp doctor [--json]`: checks the set-up without starting the MCP server and without
 // needing OpenTune to run. Check ids are stable (docs/TROUBLESHOOTING.md has a section for each);
-// checks that are planned but not implemented yet are listed with the status not_implemented.
+// the status not_implemented is kept for a check that is registered before it is written.
 // Output hides the home directory, and secrets of discovery files are only reported as present.
 
 import { readdir } from 'node:fs/promises';
@@ -13,8 +13,18 @@ import { resolveDiscoveryDir } from '../discovery/dir.js';
 import { DISCOVERY_FILE_RE, parseDiscoveryFile, readDiscoveryBytes } from '../discovery/file.js';
 import { troubleshootingUrl } from '../errors/next-step.js';
 import { OPENTUNE_PATH_ENV, checkLaunchConfig, isWsl } from '../launch/config.js';
-import type { InstallDetector } from '../launch/install.js';
+import type { InstallDetector, OfficialInstall } from '../launch/install.js';
 import { SERVER_NAME, VERSION } from '../version.js';
+import {
+  d3d12Check,
+  modelsCheck,
+  shadowedCheck,
+  sidecarCheck,
+  systemDoctorFs,
+  versionCheck,
+  type DoctorFs,
+  type Outcome,
+} from './doctor-checks.js';
 
 export type CheckStatus = 'pass' | 'warn' | 'fail' | 'not_implemented';
 
@@ -25,22 +35,17 @@ export interface CheckResult {
   readonly url: string;
 }
 
-/** Checks that are registered but not implemented yet. */
-const PLANNED = [
-  'OT_VERSION_UNSUPPORTED',
-  'OT_MODELS_MISSING',
-  'OT_SIDECAR_INCOMPLETE',
-  'OT_MODELS_SHADOWED',
-  'OT_D3D12_NOT_COPIED',
-] as const;
-
 export const DOCTOR_CHECK_IDS: readonly string[] = [
   'OT_NODE_VERSION',
   'OT_WSL_RUNTIME',
   'OT_DISCOVERY_DIR',
   'OT_OPENTUNE_PATH',
   'OT_NO_OFFICIAL_INSTALL',
-  ...PLANNED,
+  'OT_VERSION_UNSUPPORTED',
+  'OT_MODELS_MISSING',
+  'OT_SIDECAR_INCOMPLETE',
+  'OT_MODELS_SHADOWED',
+  'OT_D3D12_NOT_COPIED',
 ];
 
 export interface DoctorDeps {
@@ -53,6 +58,8 @@ export interface DoctorDeps {
   readonly osRelease: string | null;
   /** Finds the official OpenTune installation (read-only). */
   readonly officialInstall: InstallDetector;
+  /** File access of the checks on models and on the files next to the executable (the real one when omitted). */
+  readonly fs?: DoctorFs;
 }
 
 const MIN_NODE_MAJOR = 22;
@@ -136,12 +143,11 @@ async function opentunePathCheck(deps: DoctorDeps): Promise<CheckResult> {
   }
 }
 
-async function officialInstallCheck(deps: DoctorDeps): Promise<CheckResult> {
+function officialInstallCheck(deps: DoctorDeps, install: OfficialInstall | null): CheckResult {
   const id = 'OT_NO_OFFICIAL_INSTALL';
   if (deps.platform !== 'win32') {
     return result(id, 'warn', 'Not checked: this check looks for an official OpenTune installation on Windows only.');
   }
-  const install = await deps.officialInstall().catch(() => null);
   if (install === null) {
     return result(
       id,
@@ -178,14 +184,26 @@ export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
         'Running inside WSL, which cannot reach OpenTune on Windows; run this server with Windows Node.js.',
       )
     : result('OT_WSL_RUNTIME', 'pass', 'Not running inside WSL.');
+  const windows = deps.platform === 'win32';
+  const fs = deps.fs ?? systemDoctorFs;
+  // The installation is looked up once; several checks use it.
+  const install = windows ? await deps.officialInstall().catch(() => null) : null;
+  const config = await checkLaunchConfig(deps.env, deps.platform);
+  const exeDir = config.state === 'ok' ? config.dir : null;
+  const sidecar = { platform: deps.platform, fs };
+  const outcome = (id: string, o: Outcome) => result(id, o.status, o.message);
   const checks = [
     node,
     wsl,
     await discoveryCheck(deps),
     await opentunePathCheck(deps),
-    await officialInstallCheck(deps),
+    officialInstallCheck(deps, install),
+    outcome('OT_VERSION_UNSUPPORTED', versionCheck(install, windows)),
+    outcome('OT_MODELS_MISSING', await modelsCheck(install, { env: deps.env, fs }, windows)),
+    outcome('OT_SIDECAR_INCOMPLETE', await sidecarCheck(exeDir, sidecar)),
+    outcome('OT_MODELS_SHADOWED', await shadowedCheck(exeDir, sidecar)),
+    outcome('OT_D3D12_NOT_COPIED', await d3d12Check(exeDir, { ...sidecar, officialDir: install?.dir ?? null })),
   ];
-  for (const id of PLANNED) checks.push(result(id, 'not_implemented', 'This check is not implemented yet.'));
   return checks.map((c) => ({ ...c, message: redactHome(c.message, deps.home, deps.platform) }));
 }
 
