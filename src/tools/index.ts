@@ -3,6 +3,7 @@
 
 import { analyzePitchTool } from './analyze.js';
 import { autotuneTool } from './autotune.js';
+import { getClipDetailsTool } from './clip-details.js';
 import { editNotesTool } from './edit-notes.js';
 import { redoTool, undoTool } from './history.js';
 import { cancelJobTool, getJobTool } from './jobs.js';
@@ -13,6 +14,7 @@ import { openAudioTool } from './open-audio.js';
 import { getProjectTool } from './project.js';
 import type { ToolDefinition } from './registry.js';
 import { setClipTool } from './set-clip.js';
+import { getSettingsTool } from './settings.js';
 import { getStatusTool } from './status.js';
 import { editTimingTool } from './timing.js';
 
@@ -33,4 +35,6 @@ export const TOOLS: readonly ToolDefinition[] = [
   openAudioTool,
   exportAudioTool,
   editTimingTool,
+  getClipDetailsTool,
+  getSettingsTool,
 ];
