@@ -28,19 +28,28 @@ export function checkCatalogSize(tools, limits = CATALOG_LIMITS) {
   const total = bytes(tools);
   if (total > limits.total) problems.push(`tools/list is ${String(total)} bytes, more than ${String(limits.total)}`);
   for (const tool of tools) {
-    const limit = limits.perToolExceptions[tool.name] ?? limits.perTool;
+    const limit = limitOf(tool, limits);
     const size = bytes(tool);
     if (size > limit) problems.push(`${String(tool.name)} is ${String(size)} bytes, more than ${String(limit)}`);
   }
   return problems;
 }
 
-/** One-line description of the sizes, for a PASS note. */
-export function describeCatalogSize(tools) {
-  const largest = [...tools].sort((a, b) => bytes(b) - bytes(a))[0];
+/** The size limit that applies to one tool: its own allowance, or the common per-tool limit. */
+const limitOf = (tool, limits) => limits.perToolExceptions[tool.name] ?? limits.perTool;
+
+/**
+ * One-line description of the sizes, for a PASS note. The largest tool is the one closest to its
+ * own limit (opentune_edit_notes has a bigger allowance than the others), shown against that limit.
+ */
+export function describeCatalogSize(tools, limits = CATALOG_LIMITS) {
+  const share = (tool) => bytes(tool) / limitOf(tool, limits);
+  const tightest = [...tools].sort((a, b) => share(b) - share(a))[0];
   return (
-    `${String(tools.length)} tools, ${String(bytes(tools))} of ${String(CATALOG_LIMITS.total)} bytes` +
-    (largest ? `; largest ${String(largest.name)} ${String(bytes(largest))} of ${String(CATALOG_LIMITS.perTool)}` : '')
+    `${String(tools.length)} tools, ${String(bytes(tools))} of ${String(limits.total)} bytes` +
+    (tightest
+      ? `; closest to its limit: ${String(tightest.name)} ${String(bytes(tightest))} of ${String(limitOf(tightest, limits))}`
+      : '')
   );
 }
 

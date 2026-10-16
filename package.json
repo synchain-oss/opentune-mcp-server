@@ -49,6 +49,9 @@
     "test:unit": "vitest run --coverage --project unit",
     "test:stdio": "vitest run --project stdio",
     "test:contract": "vitest run --project contract",
+    "test:protocol": "vitest run --project protocol",
+    "test:canary": "vitest run --project protocol test/protocol/canary.test.ts",
+    "test:inspector": "vitest run --project protocol test/protocol/inspector.test.ts",
     "test:catalog": "vitest run --project unit test/unit/catalog.test.ts test/unit/render-golden.test.ts test/unit/audio-tools.test.ts",
     "test:budget": "vitest run --project unit test/unit/output-budget.test.ts",
     "catalog:update": "node scripts/update-catalog.mjs",
@@ -58,6 +61,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
+    "@modelcontextprotocol/inspector": "2.11.0",
     "@modelcontextprotocol/server": "2.3.1",
     "@types/node": "22.20.5",
     "@vitest/coverage-v8": "5.0.3",

@@ -510,12 +510,6 @@ async function contractVectorsExe() {
   return { result: status === 0 && summary.fail === 0 ? 'PASS' : 'FAIL', note };
 }
 
-function notYet(reason) {
-  return () => {
-    throw new Skip(reason);
-  };
-}
-
 // ---------------------------------------------------------------------------------------------
 // main
 
@@ -579,7 +573,14 @@ async function main() {
     ['contract vectors (mock)', contractVectors],
     ['contract vectors (exe)', contractVectorsExe],
     ['tools/list size gate', () => sizeGate(ROOT, BUNDLE)],
-    ['token canary', notYet('not yet: no OTCP client or MCP tool output to check for the token')],
+    [
+      'token canary',
+      npmScriptStep(
+        'test:canary',
+        'a random token and server proof, a scripted session over every tool (errors included) plus doctor, --version ' +
+          'and --help: neither value appears on stdout, stderr, in a tool result or an error; a result that carries it is caught',
+      ),
+    ],
     [
       'output budget',
       npmScriptStep(
@@ -595,7 +596,15 @@ async function main() {
           'section for every error kind, status and doctor check',
       ),
     ],
-    ['Inspector CLI --strict', notYet('not yet: no tools to validate')],
+    [
+      'Inspector CLI --strict',
+      npmScriptStep(
+        'test:inspector',
+        'the MCP Inspector CLI lists the tools with --strict (0 schema errors, catalog equals the golden snapshot) and ' +
+          'runs get_status, get_project, get_notes, analyze_pitch, two write dry runs and get_job against the mock, ' +
+          'plus a refused call and an invalid argument',
+      ),
+    ],
     ['reuse lint', reuseLint],
   ];
 
