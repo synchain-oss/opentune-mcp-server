@@ -17,6 +17,7 @@ import {
   UPLOAD_SKILLS,
   buildSkillsZip,
   checkSkill,
+  isPlainScalar,
   parseFrontmatter,
   presentSkills,
   writeSkillsZip,
@@ -62,6 +63,37 @@ describe('parseFrontmatter', () => {
   it('folds a plain scalar that continues on indented lines', () => {
     const fm = parseFrontmatter('---\ndescription: Use when\n  the user asks.\n---\n');
     expect(fm.values.get('description')).toBe('Use when the user asks.');
+  });
+
+  it('accepts a quoted value that a plain one could not hold', () => {
+    const fm = parseFrontmatter('---\ndescription: "Use when: the user asks # now"\n---\n');
+    expect(fm.problems).toEqual([]);
+    expect(fm.values.get('description')).toBe('Use when: the user asks # now');
+  });
+
+  it.each([
+    ['a colon and a space', 'Use the opentune_* tools: import, export'],
+    ['a colon on a continuation line', 'Use the tools\n  for this: and that'],
+    ['a comment marker', 'Use it # for tuning'],
+    ['a trailing colon', 'Steps:'],
+    ['a flow sequence', '[a, b]'],
+    ['an alias', '*ref'],
+  ])('reports a plain value with %s as invalid YAML', (_label, value) => {
+    expect(parseFrontmatter(`---\nname: x\ndescription: ${value}\n---\n`).problems.join('\n')).toContain(
+      'the value of "description" is not valid YAML as written',
+    );
+  });
+
+  it.each([
+    ['Use when the user asks, then check.', true],
+    ['-x and ?y', true],
+    ['https://example.com/a', true],
+    ['a:b', true],
+    ['- item', false],
+    ['@x', false],
+    ['x: y', false],
+  ])('isPlainScalar(%j) is %s', (text, plain) => {
+    expect(isPlainScalar(text)).toBe(plain);
   });
 
   it.each([

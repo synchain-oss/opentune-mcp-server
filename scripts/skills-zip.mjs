@@ -6,8 +6,9 @@
 // gets the tools from the MCPB package instead). Those skills run where there is no local file
 // system, MCP server or Python, so the zip takes a fixed list of skills that consist of
 // instructions only, and checks each one first:
-// - the SKILL.md frontmatter uses only the fields every platform accepts (name, description,
-//   license, compatibility, metadata, allowed-tools); claude.ai rejects unknown ones;
+// - the SKILL.md frontmatter is valid YAML as a strict parser reads it (a plain value with ": "
+//   in it is not), and uses only the fields every platform accepts (name, description, license,
+//   compatibility, metadata, allowed-tools); claude.ai rejects unknown ones;
 // - name is the directory name, at most 64 characters, lowercase words joined by hyphens, with no
 //   reserved word; description is at most 200 characters; neither contains an XML tag;
 // - every file is Markdown or plain text: no scripts, no binaries, no symbolic links.
@@ -47,6 +48,18 @@ export const DEFAULT_OUT = 'dist';
 export class SkillMissing extends Error {}
 
 const BLOCK_SCALAR = /^([|>])([+-]?)$/;
+
+/**
+ * Whether text can stand unquoted as a YAML plain scalar in a block mapping: no ": " or " #"
+ * inside, no ":" at the end, and no indicator character at the start (`-`, `?` and `:` are
+ * fine when a non-space follows). Lenient readers accept more, but a strict YAML parser fails on
+ * the whole frontmatter, so the uploaded skill would have no name or description at all.
+ */
+export function isPlainScalar(text) {
+  if (/: |:$| #/.test(text)) return false;
+  if (/^[-?:](?=\S)/.test(text)) return true;
+  return !/^[-?:,[\]{}#&*!|>'"%@`]/.test(text);
+}
 
 function unquote(raw, problems, key) {
   if (raw.startsWith('"')) {
@@ -113,6 +126,13 @@ export function parseFrontmatter(text) {
       value = rest.some((l) => l.trim() !== '')
         ? [inline, ...body].join(' ').replace(/\s+/g, ' ').trim()
         : unquote(inline, problems, key);
+      const quoted = inline.startsWith('"') || inline.startsWith("'");
+      if (!quoted && value !== null && !isPlainScalar(value))
+        problems.push(
+          `frontmatter: the value of "${key}" is not valid YAML as written (a plain value cannot contain ": " ` +
+            'or " #", end with ":" or start with an indicator character); a strict YAML parser rejects the ' +
+            'frontmatter, so put the value in double quotes',
+        );
     }
     values.set(key, value);
   }
