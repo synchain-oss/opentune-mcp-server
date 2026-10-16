@@ -20,12 +20,14 @@ import {
   HYBRID_MODE_NOTICE,
   PHRASE_GAP_SEC,
   PITCH_TOLERANCE_CENTS,
+  RESYNTH_EDGE_MAX_RESIDUAL_DB,
   RESYNTH_MAX_RESIDUAL_DB,
   RESYNTH_PRE_ROLL_SEC,
   alignedResidualDb,
   awayWindow,
   compareSamples,
   consistencyOf,
+  edgeResidualOf,
   effectsSetupFromEnv,
   noteDelta,
   resynthesisReach,
@@ -112,7 +114,7 @@ describe('effects scenario against the stand-in', () => {
       // re-synthesis, and bit-identical here. The notes before the edit and after note 2 are away from it.
       expect(target.unedited).toEqual({
         away: { spans: 3, bitIdentical: 3, maxAbsDiff: 0, maxAbsDiffDbfs: null, notes: [0, 3, 4] },
-        reach: [{ index: 2, bitIdentical: true, alignedResidualDb: null }],
+        reach: [{ index: 2, bitIdentical: true, alignedResidualDb: null, edgeResidualDb: null }],
       });
       // Hybrid mode off, as every export of the check said; nothing to note at the top of the report.
       expect(report).toMatchObject({ hybridMode: false, notices: [], dataTemplateFrom: null });
@@ -467,6 +469,30 @@ describe('effects measurements', () => {
     // Nothing to compare against: no energy, or a span shorter than two shifts.
     expect(alignedResidualDb(shifted(a, 0, 0), a, inside, period)).toBeNull();
     expect(alignedResidualDb(a, a, { startSec: 0.5, endSec: 0.5 + period / a.sampleRateHz }, period)).toBeNull();
+  });
+
+  it('judges the attack and release of a re-synthesised note apart from its inside', () => {
+    const a = tone(0);
+    const note = { startSec: 0.2, endSec: 1.2 };
+    const period = a.sampleRateHz / 261.63;
+    const rate = a.sampleRateHz;
+    const edit = (wav: typeof a, from: number, to: number, gain: number, by = 0) => {
+      const mono = Float64Array.from(wav.mono);
+      for (let i = Math.round(from * rate); i < Math.round(to * rate); i++) mono[i] = gain * (wav.mono[i - by] ?? 0);
+      return { ...wav, channels: [mono], mono };
+    };
+    // The same samples, and the same sound in another phase: nothing left at the ends.
+    expect(edgeResidualOf(a, a, note, period)).toBe(-200);
+    const phase = edit(a, 0, 3, 1, Math.round(period / 3));
+    expect(edgeResidualOf(a, phase, note, period)).toBeLessThan(RESYNTH_EDGE_MAX_RESIDUAL_DB - 20);
+    // Only the first 0.1 s of the note is dropped (a lost attack): the inside is still the same sound,
+    // and the edge check is the one that sees it. Same for a lost release.
+    const noAttack = edit(a, 0.2, 0.3, 0);
+    expect(alignedResidualDb(a, noAttack, { startSec: 0.4, endSec: 1.0 }, period)).toBe(-200);
+    expect(edgeResidualOf(a, noAttack, note, period)).toBeGreaterThan(RESYNTH_EDGE_MAX_RESIDUAL_DB);
+    expect(edgeResidualOf(a, edit(a, 1.1, 1.2, 0), note, period)).toBeGreaterThan(RESYNTH_EDGE_MAX_RESIDUAL_DB);
+    // Nothing to compare against at either end.
+    expect(edgeResidualOf(edit(a, 0, 3, 0), a, note, period)).toBeNull();
   });
 
   it('finds the notes within the reach of an edit, and the part of the others that is compared', () => {

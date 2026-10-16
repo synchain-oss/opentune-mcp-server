@@ -589,9 +589,16 @@ describe('summaries golden', () => {
     return out;
   }
 
+  // This is the one test that starts nine mocks in a row (one per scenario, so that no state is
+  // shared). On Windows each mock writes its discovery file with an access list cut down to the
+  // current user, which takes at least three icacls.exe runs (restrict, read, read back; one more
+  // per entry that had to go), so the test is bound by process starts, not by code: about 1.1 s on
+  // an idle machine and 5.4 s on a loaded CI runner, against vitest's default of 5 s. 30 s is the
+  // limit the stdio project of this repository already uses, six times the slowest run seen. The
+  // other tests of this file start one mock each (80 to 280 ms) and keep the default.
   it('matches test/golden/audio-tools.json', async () => {
     const text = `${JSON.stringify(await collect(), null, 2)}\n`;
     if (process.env.OPENTUNE_MCP_UPDATE_CATALOG === '1') fs.writeFileSync(GOLDEN, text);
     expect(fs.readFileSync(GOLDEN, 'utf8'), 'out of date; run npm run catalog:update').toBe(text);
-  });
+  }, 30_000);
 });
