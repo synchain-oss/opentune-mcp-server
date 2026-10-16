@@ -21,7 +21,9 @@ function resolveLauncher(): string {
   };
   const relative = typeof bin === 'string' ? bin : bin?.inspector;
   if (relative === undefined) {
-    throw new Error(`@modelcontextprotocol/inspector ${version ?? '?'} declares no "inspector" bin; update test/support/inspector.ts`);
+    throw new Error(
+      `@modelcontextprotocol/inspector ${version ?? '?'} declares no "inspector" bin; update test/support/inspector.ts`,
+    );
   }
   return path.resolve(path.dirname(manifest), relative);
 }
