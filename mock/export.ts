@@ -39,6 +39,8 @@ interface Plan {
   readonly path: string;
   readonly ifExists: IfExists;
   readonly allowDry: boolean;
+  /** The clips the file holds; the job ends with nothing_to_export when all of them are removed while it waits. */
+  readonly placements: readonly PlacementRec[];
   readonly contents: readonly ContentRec[];
   readonly channelCount: number;
   readonly startTimelineSec: number;
@@ -129,7 +131,12 @@ export class ExportService {
       if (trackId >= TRACK_SLOTS) throw refuse('NOT_FOUND', 'unknown_handle', 'no track has this trackId');
       placements = [...this.world.placements.values()].filter((p) => p.trackId === trackId);
     } else {
-      placements = [...this.world.placements.values()];
+      // A master mix holds the clips that are heard: the audibility rule of track.set (muted, solo).
+      const anySolo = this.world.tracks.some((t) => t.solo);
+      placements = [...this.world.placements.values()].filter((p) => {
+        const track = this.world.tracks[p.trackId];
+        return track !== undefined && !track.muted && (track.solo || !anySolo);
+      });
     }
     placements.sort((a, b) => a.serial - b.serial);
     const contents = [...new Set(placements.map((p) => p.content))];
@@ -139,6 +146,7 @@ export class ExportService {
       path: String(params.path),
       ifExists: (params.ifExists as IfExists | undefined) ?? 'error',
       allowDry: params.allowDry === true,
+      placements,
       contents,
       channelCount: kind === 'master' ? 2 : 1,
       startTimelineSec: kind === 'clip' && first !== undefined ? first.startTimelineSec : 0,
@@ -180,6 +188,10 @@ export class ExportService {
       }
     }
     checkNotBusy(context);
+    // Rule 1: an export that would hold no audio fails at once, and no job starts.
+    if (plan.contents.length === 0) {
+      throw refuse('INVALID_ARGUMENT', 'nothing_to_export', 'the export holds no clip that is heard');
+    }
     if (this.#isLoadedMedia(plan.path)) {
       throw refuse('INVALID_ARGUMENT', 'target_is_loaded_media', 'the target is a source or media file of the project');
     }
@@ -245,6 +257,14 @@ export class ExportService {
 
     const waitStep = (): JobStep => {
       startedAt ??= clock.now();
+      // Section 19 rule 1, last clause: the clips the file was planned from are all removed.
+      if (!plan.placements.some((p) => this.world.placements.get(p.serial) === p)) {
+        return finish(
+          failed(
+            refuse('INVALID_ARGUMENT', 'nothing_to_export', 'every clip of the export was removed while it waited'),
+          ),
+        );
+      }
       const verdicts = plan.contents.map((c) => ({ content: c, verdict: this.#judge(c, plan, retried) }));
       const failure = verdicts.find((v) => typeof v.verdict === 'object' && 'fail' in v.verdict);
       if (failure !== undefined && typeof failure.verdict === 'object' && 'fail' in failure.verdict) {

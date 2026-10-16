@@ -69,6 +69,8 @@ export const WARNING_TEXT = table<string>({
     'The new clips share their contents with the clips they were copied from; an edit of one shows in the other.',
   UNDO_HISTORY_POSSIBLY_STALE:
     'Deleting a track made entries of the undo or redo history possibly stale; they may address tracks that have moved.',
+  IMPORT_COMMIT_REPEATED:
+    'OpenTune refused a clip id that the project already used, so the import committed the clip again; it was imported.',
 });
 
 /** Side-effect names of PROTOCOL.md section 14.6. */

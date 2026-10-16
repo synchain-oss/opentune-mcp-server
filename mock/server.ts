@@ -154,6 +154,8 @@ export interface OtcpMock {
   setAnalysis(contentId: string, analysis: Analysis): void;
   /** Appends a line to the log that app.getLog reads. */
   logLine(text: string): void;
+  /** Removes a clip as the UI would, which the export lock does not stop (PROTOCOL.md section 19 rule 1). */
+  removeClip(placementId: string): void;
   /** The next `times` attempts to render a content fail, so that an export of it fails (PROTOCOL.md section 19 rule 6). */
   failRender(contentId: string, times?: number): void;
   /** The pitch analysis of the next `count` imported clips fails. */
@@ -699,6 +701,10 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     setAnalysis(contentId, analysis) {
       world.setAnalysis(world.content(contentId), analysis);
+    },
+    removeClip(placementId) {
+      world.removePlacement(world.placement(placementId));
+      world.touchArrangement();
     },
     failRender(contentId, times = 2) {
       exporter.failRender(world.content(contentId), times);

@@ -19,8 +19,6 @@ const SKILL_DIRS = readdirSync(SKILLS_DIR, { withFileTypes: true })
 // Skills that are instructions only. A skill that ships scripts (such as lyrics-timeline) is not listed here.
 const PURE_SKILLS = ['tuning-workflow', 'check-results'];
 const ALLOWED_FIELDS = new Set(['name', 'description', 'license', 'compatibility', 'metadata', 'allowed-tools']);
-// Delete this exception once opentune_estimate_key is registered.
-const NOT_YET_REGISTERED = new Set(['opentune_estimate_key']);
 const SCRIPT_EXTENSIONS = /\.(sh|bash|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl)$/i;
 
 // A double-quoted value is read without its quotes (\" and \\ are the escapes), so the length check counts the text.
@@ -55,13 +53,6 @@ function files(dir: string): string[] {
   );
 }
 
-describe('not yet registered tools', () => {
-  it.each(Array.from(NOT_YET_REGISTERED))('%s is really not registered', (tool) => {
-    const registered = new Set(TOOLS.map((t) => t.name));
-    expect(registered.has(tool), `${tool} is registered now: drop the exception`).toBe(false);
-  });
-});
-
 describe.each(SKILL_DIRS)('skill %s', (name) => {
   it('exists and starts with frontmatter', () => {
     expect(existsSync(path.join(SKILLS_DIR, name, 'SKILL.md'))).toBe(true);
@@ -90,7 +81,7 @@ describe.each(SKILL_DIRS)('skill %s', (name) => {
     const used = new Set(readSkill(name).text.match(/opentune_[a-z0-9_]+/g) ?? []);
     expect(used.size).toBeGreaterThan(0);
     for (const tool of used) {
-      expect(registered.has(tool) || NOT_YET_REGISTERED.has(tool), `unknown tool ${tool}`).toBe(true);
+      expect(registered.has(tool), `unknown tool ${tool}`).toBe(true);
     }
   });
 });
