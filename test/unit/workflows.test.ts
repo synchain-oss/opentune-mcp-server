@@ -225,7 +225,19 @@ describe('release.yml', () => {
     expect(draft).toMatch(/^ {4}if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/v'\)$/m);
     expect(blockUnder(draft, /^ {4}permissions:\s*$/)).toEqual(['      contents: write']);
     expect(draft).not.toMatch(/actions\/checkout@|npm (?:ci|install|run)/);
-    expect(draft).toMatch(/gh release create "\$TAG" .*--draft/);
+    expect(draft).toMatch(/gh release create "\$TAG" .*"\$\{flags\[@\]\}"/);
+    expect(draft).toMatch(/flags=\(--draft --verify-tag\)/);
+  });
+
+  it('marks a tag with a hyphen as a pre-release, and refuses to create a second release for a tag', () => {
+    const draft = jobs.get('draft') ?? '';
+    expect(draft).toMatch(/if \[\[ "\$TAG" == \*-\* \]\]; then flags\+=\(--prerelease\); fi/);
+    const view = draft.indexOf('gh release view "$TAG"');
+    expect(view).toBeGreaterThan(-1);
+    expect(view).toBeLessThan(draft.indexOf('gh release create'));
+    expect(draft).toMatch(
+      /gh release view "\$TAG" .*\n\s+echo "::error::a release for \$TAG already exists.*\n\s+exit 1/,
+    );
   });
 
   it('builds the four packages and checks the generated notes for AI attribution', () => {

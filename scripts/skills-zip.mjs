@@ -50,13 +50,13 @@ export class SkillMissing extends Error {}
 const BLOCK_SCALAR = /^([|>])([+-]?)$/;
 
 /**
- * Whether text can stand unquoted as a YAML plain scalar in a block mapping: no ": " or " #"
+ * Whether text can stand unquoted as a YAML plain scalar in a block mapping: no ": " or " #" (space or tab before "#")
  * inside, no ":" at the end, and no indicator character at the start (`-`, `?` and `:` are
  * fine when a non-space follows). Lenient readers accept more, but a strict YAML parser fails on
  * the whole frontmatter, so the uploaded skill would have no name or description at all.
  */
 export function isPlainScalar(text) {
-  if (/: |:$| #/.test(text)) return false;
+  if (/: |:$|[ \t]#/.test(text)) return false;
   if (/^[-?:](?=\S)/.test(text)) return true;
   return !/^[-?:,[\]{}#&*!|>'"%@`]/.test(text);
 }
@@ -127,6 +127,8 @@ export function parseFrontmatter(text) {
         ? [inline, ...body].join(' ').replace(/\s+/g, ' ').trim()
         : unquote(inline, problems, key);
       const quoted = inline.startsWith('"') || inline.startsWith("'");
+      if (quoted && rest.some((l) => l.trim() !== ''))
+        problems.push(`frontmatter: the quoted value of "${key}" continues on the next line; write it on one line`);
       if (!quoted && value !== null && !isPlainScalar(value))
         problems.push(
           `frontmatter: the value of "${key}" is not valid YAML as written (a plain value cannot contain ": " ` +

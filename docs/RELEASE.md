@@ -44,6 +44,17 @@ Every file comes with a `.sha256` file, and the release notes list the same dige
 5. The maintainer reviews the draft and publishes it. Only then does the marketplace serve the new plugin. Publishing
    the npm package is a separate, approved step and not part of `release.yml` yet.
 
+### Pre-releases, patches on an older line, and re-runs
+
+- A tag whose version has a hyphen (`v1.2.0-rc.1`) gets a draft that is also marked **pre-release**. A pre-release
+  never becomes "latest", so the marketplace keeps serving the last full release. Do not clear the pre-release mark
+  when publishing it.
+- When you publish a patch on an older line (for example `v1.0.5` after `v1.1.0` exists), **untick "Set as the latest
+  release"** in the publish dialog. Otherwise `releases/latest/download/opentune-plugin.zip` moves back to the older
+  version and the marketplace rolls back.
+- The draft job refuses to run when a release for the tag already exists (`gh release view`), so a re-run or a second
+  push of the tag cannot leave two drafts. Delete the old draft first if the new run should replace it.
+
 ## Building the packages locally
 
 All of these write under `dist/`, which git ignores:
@@ -63,3 +74,19 @@ for one session without installing it, run `claude --plugin-dir dist/plugin` (or
 `PATH` when it reports exactly that version, otherwise a copy installed under `.cache/tools/claude-code` from the
 lockfile. Either way it runs with its own empty configuration directory under `.cache/`, so it does not touch your
 Claude Code settings.
+
+## Tests of the skills (Python)
+
+A skill that ships Python may carry its own tests: `tests/`, `conftest.py`, `pytest.ini`, `requirements-test.txt` and
+`requirements-test.lock`. None of these go into the plugin zip. CI (job `plugin`, step "Skill tests (Python)") installs
+the dependencies from the lock file only, with
+`pip install --require-hashes --no-deps --only-binary=:all: -r requirements-test.lock`, and then runs `python -m pytest`
+in the skill's source directory. A skill with a `requirements-test.txt` and no `requirements-test.lock` fails the step.
+Generate the lock from the skill's directory, with the Python version CI uses (3.12):
+
+```bash
+pip install pip-tools
+pip-compile --generate-hashes --allow-unsafe --output-file requirements-test.lock requirements-test.txt
+```
+
+Commit both files. The step logs that it found no skill with a `requirements-test.txt` and passes when none has tests.

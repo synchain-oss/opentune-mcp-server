@@ -62,6 +62,14 @@ export const SKIPPED_NAMES = Object.freeze([
   '.venv',
   'node_modules',
 ]);
+/**
+ * Test conventions of a skill that ships Python: they stay in the repository (CI runs them from
+ * the source directory) and never go into the plugin.
+ */
+export function isSkillTestFile(name, isDirectory) {
+  if (isDirectory) return name === 'tests';
+  return /^requirements-test.*.(?:txt|lock)$/.test(name) || name === 'conftest.py' || name === 'pytest.ini';
+}
 export const TOOL_SRC = 'scripts/claude-cli';
 export const TOOL_DIR = '.cache/tools/claude-code';
 export const CONFIG_DIR = '.cache/claude-config';
@@ -198,6 +206,7 @@ export async function pluginSourceFiles(root = ROOT) {
   const walk = async (dir, prefix) => {
     for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
       if (SKIPPED_NAMES.includes(entry.name) || entry.name.endsWith('.pyc')) continue;
+      if (isSkillTestFile(entry.name, entry.isDirectory())) continue;
       const rel = prefix ? `${prefix}/${entry.name}` : entry.name;
       if (entry.isSymbolicLink())
         throw new Error(`${PLUGIN_DIR}/${rel} is a symbolic link; the plugin cannot carry it`);

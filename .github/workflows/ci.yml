@@ -257,23 +257,29 @@ jobs:
         run: |
           node scripts/gates.mjs --base HEAD --no-skip --only "build (esbuild),Claude Code plugin,skills zip" \
             | tee -a "$GITHUB_STEP_SUMMARY"
-      # 每个带 requirements-test.txt 的 skill（文件里须列出 pytest）：在各自的 venv 里装测试依赖，
-      # 在该 skill 的目录里跑 pytest。一个都没有时如实写进汇总，不算失败。
+      # 每个带 requirements-test.txt 的 skill（文件里须列出 pytest）：必须同时有 requirements-test.lock，
+      # 在各自的 venv 里只按锁文件装（--require-hashes --no-deps --only-binary=:all:，与 reuse 的安装一致），
+      # 再在该 skill 的源码目录里跑 python -m pytest。一个都没有时如实写进汇总，不算失败。
       - name: Skill tests (Python)
         run: |
           shopt -s nullglob
           reqs=(plugins/opentune/skills/*/requirements-test.txt)
           if [ "${#reqs[@]}" -eq 0 ]; then
-            echo "skills-python: SKIP (no skill in plugins/opentune/skills has a requirements-test.txt)" \
+            echo "skills-python: found no skill with a requirements-test.txt; nothing to run" \
               | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           for req in "${reqs[@]}"; do
             dir=$(dirname "$req")
             name=$(basename "$dir")
+            lock="$dir/requirements-test.lock"
+            if [ ! -f "$lock" ]; then
+              echo "::error::$name has a requirements-test.txt but no requirements-test.lock; generate it with: (cd $dir && pip-compile --generate-hashes --allow-unsafe --output-file requirements-test.lock requirements-test.txt), see docs/RELEASE.md"
+              exit 1
+            fi
             venv="$RUNNER_TEMP/skill-venv-$name"
             python -m venv "$venv"
-            "$venv/bin/python" -m pip install --disable-pip-version-check --no-input -r "$req"
+            "$venv/bin/python" -m pip install --disable-pip-version-check --no-input --require-hashes --no-deps --only-binary=:all: -r "$lock"
             (cd "$dir" && "$venv/bin/python" -m pytest)
             echo "skills-python: $name PASS" | tee -a "$GITHUB_STEP_SUMMARY"
           done

@@ -136,6 +136,30 @@ describe('plugin assembly', () => {
     expect(built.sha256).toBe(createHash('sha256').update(built.bytes).digest('hex'));
   });
 
+  it('leaves the skill test files out of the plugin and ships the rest of the skill', async () => {
+    tree = await pluginTree({ skills: { 'lyrics-timeline': goodSkill('lyrics-timeline') } });
+    const skill = 'plugins/opentune/skills/lyrics-timeline';
+    for (const rel of [
+      'tests/test_x.py',
+      'requirements-test.txt',
+      'requirements-test.lock',
+      'requirements-test-extra.txt',
+      'conftest.py',
+      'pytest.ini',
+      'scripts/tests/test_nested.py',
+    ])
+      await tree.write(`${skill}/${rel}`, 'x');
+    await tree.write(`${skill}/requirements.txt`, 'runtime dependency');
+    await tree.write(`${skill}/scripts/run.py`, 'print()');
+    const built = await assemblePlugin(tree.root);
+    expect(built.files.filter((f) => f.startsWith('skills/'))).toEqual([
+      'skills/lyrics-timeline/SKILL.md',
+      'skills/lyrics-timeline/reference/notes.md',
+      'skills/lyrics-timeline/requirements.txt',
+      'skills/lyrics-timeline/scripts/run.py',
+    ]);
+  });
+
   it('gives the same bytes twice, and other bytes when a skill changes', async () => {
     tree = await pluginTree({ skills: { 'check-results': goodSkill('check-results') } });
     const a = await assemblePlugin(tree.root);

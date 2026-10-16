@@ -23,6 +23,14 @@ const ALLOWED_FIELDS = new Set(['name', 'description', 'license', 'compatibility
 const NOT_YET_REGISTERED = new Set(['opentune_estimate_key']);
 const SCRIPT_EXTENSIONS = /\.(sh|bash|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl)$/i;
 
+// A double-quoted value is read without its quotes (\" and \\ are the escapes), so the length check counts the text.
+function unquote(skill: string, key: string, value: string): string {
+  if (!value.startsWith('"')) return value;
+  if (value.length < 2 || !value.endsWith('"'))
+    throw new Error(`${skill}: field ${key} has an unterminated quoted value`);
+  return value.slice(1, -1).replace(/\\(["\\])/g, '$1');
+}
+
 function readSkill(name: string): { fields: Map<string, string>; body: string; text: string } {
   const text = readFileSync(path.join(SKILLS_DIR, name, 'SKILL.md'), 'utf8');
   const match = /^---\n([\s\S]*?)\n---\n([\s\S]*)$/.exec(text);
@@ -36,7 +44,7 @@ function readSkill(name: string): { fields: Map<string, string>; body: string; t
     if (/^[>|]/.test(value)) {
       throw new Error(`${name}: field ${field[1] ?? ''} uses a YAML block scalar; write a one-line value`);
     }
-    fields.set(field[1] ?? '', value);
+    fields.set(field[1] ?? '', unquote(name, field[1] ?? '', value));
   }
   return { fields, body: match[2] ?? '', text };
 }

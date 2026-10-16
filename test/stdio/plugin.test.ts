@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { buildPlugin } from '../../scripts/plugin.mjs';
 import { tempDir } from '../support/context.js';
-import { LineClient } from '../support/jsonrpc-lines.js';
+import { LineClient, isJsonRpcMessage } from '../support/jsonrpc-lines.js';
 import { REPO } from '../support/plugin-tree.js';
 
 const cleanup: (() => unknown)[] = [];
@@ -74,6 +74,9 @@ describe('the assembled plugin', () => {
     if (status.state !== 'RUNNING_WITHOUT_API')
       expect(status).toMatchObject({ state: 'NOT_INSTALLED', reason: 'path_not_configured' });
     expect(status.nextStep).toMatchObject({ actor: 'user' });
+    // stdout carries protocol frames only: every line parses as a JSON-RPC message.
+    expect(client.lines.length).toBeGreaterThan(0);
+    for (const line of client.lines) expect(isJsonRpcMessage(JSON.parse(line)), line).toBe(true);
     child.stdin.end();
   });
 });

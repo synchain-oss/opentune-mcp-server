@@ -85,7 +85,23 @@ describe('parseFrontmatter', () => {
   });
 
   it.each([
+    ['a double-quoted value', '"Use when\n  the user asks."'],
+    ['a single-quoted value', "'Use when\n  the user asks.'"],
+  ])('rejects %s that continues on the next line, and says to write it on one line', (_label, value) => {
+    const problems = parseFrontmatter(`---\ndescription: ${value}\n---\n`).problems.join('\n');
+    expect(problems).toContain('the quoted value of "description" continues on the next line');
+    expect(problems).toContain('write it on one line');
+  });
+
+  it('still accepts a quoted value on one line followed by another key', () => {
+    expect(parseFrontmatter('---\ndescription: "Use when: a"\nlicense: MIT\n---\n').problems).toEqual([]);
+  });
+
+  it.each([
     ['Use when the user asks, then check.', true],
+    ['x #y', false],
+    ['x\t#y', false],
+    ['x#y', true],
     ['-x and ?y', true],
     ['https://example.com/a', true],
     ['a:b', true],
