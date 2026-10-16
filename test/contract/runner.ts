@@ -52,6 +52,16 @@ const newerThan = (a: string, b: string) => {
 const isRequestId = (id: unknown): id is string | number => typeof id === 'string' || typeof id === 'number';
 const idKey = (id: string | number) => `${typeof id}:${String(id)}`;
 
+/** Whether an expected line is an error response with data.reason modal_open. */
+function expectsModalOpen(expected: unknown): boolean {
+  return (
+    isObject(expected) &&
+    isObject(expected.error) &&
+    isObject(expected.error.data) &&
+    expected.error.data.reason === 'modal_open'
+  );
+}
+
 /** State of one vector run: bindings, connections, and the requests sent on each connection. */
 class Run {
   readonly connections = new Map<string, RunnerConnection>();
@@ -143,7 +153,8 @@ class Run {
       );
     }
     if (isObject(actual) && isObject(actual.error) && isObject(actual.error.data)) {
-      if (actual.error.data.reason === 'modal_open') this.receivedModalOpen = true;
+      // A step that itself expects modal_open does not count: the vector asked for it.
+      if (actual.error.data.reason === 'modal_open' && !expectsModalOpen(expected)) this.receivedModalOpen = true;
     }
     const problems = match(expected, actual, this.bindings);
     if (isObject(expected) && typeof expected.id === 'number') {

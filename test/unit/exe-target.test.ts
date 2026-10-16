@@ -415,6 +415,32 @@ describe('OTCP_TARGET_DATA_TEMPLATE (a known starting state)', () => {
   );
 
   it(
+    'does not copy the ready file or the discovery folder of the template, and says so in the stats',
+    async () => {
+      const tpl = await template();
+      await writeFile(path.join(tpl, 'ready.json'), '{"pid":1}\n');
+      await mkdir(path.join(tpl, 'control', 'instances'), { recursive: true });
+      await writeFile(path.join(tpl, 'control', 'instances', '1.json'), '{}');
+      await writeFile(path.join(tpl, 'control', 'keep.txt'), 'kept');
+      const snapshot = path.join(await scratch(), 'snapshot.json');
+      const target = withTemplate(snapshot, tpl);
+      const instance = await target.open();
+      expect(held(snapshot)).toEqual({
+        'state.txt': 'known\n',
+        'nested/deeper/inner.txt': 'inner',
+        'control/keep.txt': 'kept',
+      });
+      await instance.close();
+      expect(target.stats.templateSkipped).toBe(1);
+      expect(target.takeProblems()).toEqual([]);
+      // The template itself is left as it was.
+      expect(existsSync(path.join(tpl, 'ready.json'))).toBe(true);
+      expect(existsSync(path.join(tpl, 'control', 'instances', '1.json'))).toBe(true);
+    },
+    SLOW,
+  );
+
+  it(
     'copies nothing when the variable is not set',
     async () => {
       const snapshot = path.join(await scratch(), 'snapshot.json');
@@ -488,6 +514,24 @@ describe('runExeVector and BUSY modal_open', () => {
     const outcome = await runExeVector(vector, { ...mockTarget(), takeProblems: noProblems });
     expect(outcome.result).toBe('FAIL');
     expect(outcome.note).toContain('(the instance has a modal dialog open)');
+  });
+
+  it('does not add it when the step itself expects BUSY modal_open, even if the vector fails for another reason', async () => {
+    const vector: Vector = {
+      ...writeVector('test/modal-expected-and-received', {
+        dialogs: [{ kind: 'trackColour', trackId: 0, colour: '#FF8800' }],
+      }),
+      // The instance does answer BUSY modal_open; the wrong code makes the vector fail anyway.
+      response: {
+        jsonrpc: '2.0',
+        id: 1,
+        error: { code: 1, message: 'BUSY', data: { kind: 'BUSY', reason: 'modal_open' } },
+      },
+    };
+    const outcome = await runExeVector(vector, { ...mockTarget(), takeProblems: noProblems });
+    expect(outcome.result).toBe('FAIL');
+    expect(outcome.receivedModalOpen).toBeUndefined();
+    expect(outcome.note).not.toContain('modal dialog open');
   });
 
   it(

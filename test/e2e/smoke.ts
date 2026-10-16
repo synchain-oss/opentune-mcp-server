@@ -344,7 +344,8 @@ export interface SmokeHooks {
 export function safeTitle(title: unknown): string {
   return String(title)
     .replace(/[A-Za-z]:[\\/]+Users[\\/]+[^\\/]+/gi, '<home>')
-    .replace(/(^|[\s"'([])\/(?:Users|home)\/[^/\s]+/g, '$1<home>')
+    .replace(/\/mnt\/[a-z]\/Users\/[^/\s]+/gi, '<home>')
+    .replace(/(^|[^A-Za-z0-9])\/(?:Users|home)\/[^/\s]+/g, '$1<home>')
     .slice(0, 60);
 }
 

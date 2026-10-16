@@ -322,6 +322,9 @@ describe('data folder and diagnostics', () => {
     expect(safeTitle('Open /Users/username/Music/a.wav')).toBe('Open <home>/Music/a.wav');
     expect(safeTitle('/home/username/.config/x')).toBe('<home>/.config/x');
     expect(safeTitle('[/home/username/x]')).toBe('[<home>/x]');
+    expect(safeTitle('/mnt/c/Users/username/Music/a.wav')).toBe('<home>/Music/a.wav');
+    expect(safeTitle('Open file:///home/username/a.wav')).toBe('Open file://<home>/a.wav');
+    expect(safeTitle('/opt/home/x')).toBe('/opt/home/x');
     expect(safeTitle('Welcome to OpenTune')).toBe('Welcome to OpenTune');
     expect(safeTitle('x'.repeat(100))).toHaveLength(60);
     expect(safeTitle(undefined)).toBe('undefined');
