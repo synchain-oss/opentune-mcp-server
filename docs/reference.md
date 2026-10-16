@@ -2,7 +2,7 @@
 
 # Tool reference
 
-OpenTune MCP Server (by Synchain) offers 17 tools. Every tool returns its result both as
+OpenTune MCP Server (by Synchain) offers 18 tools. Every tool returns its result both as
 `structuredContent` and as the same JSON in a text block. Errors have the shape
 `{kind, reason, detail, retryable, executed, nextStep, url}`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -285,4 +285,19 @@ OTCP capabilities: `session.v1`, `read.v1`, `audio.device`. OTCP methods: `sessi
 | --- | --- | --- | --- |
 | `sections` | array | no | Parts to return. Default: processing, audio_device, recent, export_caps. log must be asked for. |
 | `log_lines` | integer, 1 to 500 | no | Lines of the log to return, newest last, for the log section. Default 100, at most 500. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_estimate_key`
+
+**Estimate the key of a song**: read-only, not destructive, idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch (OpenTune's analysis) and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses), tonic_confidence, tuning offset in cents, local keys over time and keys per section (seconds; the mix and the clip's source audio start together). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only.
+
+OTCP capabilities: `read.v1`. OTCP methods: `content.getDetails`, `content.getNotes`, `content.getPitchCurve`, `content.segmentNotes`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `clip` | string, matching `^[pc]:[0-9a-f]{8}:(0\|[1-9][0-9]*):(0\|[1-9][0-9]*)$` | no | Clip placement id (p:...) from opentune_get_project, or a content id (c:...). |
+| `mix_path` | string | no | Absolute path of a .wav file of the full mix or the backing track. Read only. |
+| `sections` | array | no | Time ranges (seconds, at least 2 s long) that get a key each, for example verse and chorus. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |

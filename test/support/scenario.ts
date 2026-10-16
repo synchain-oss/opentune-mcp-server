@@ -59,6 +59,9 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   await run('opentune_get_settings', { log_lines: 20 });
   await run('opentune_analyze_pitch', { clip: f.placement });
   await run('opentune_analyze_pitch', { clip: f.placement, detail: 'notes', limit: 3 });
+  await run('opentune_estimate_key', { clip: f.placement });
+  await run('opentune_estimate_key', { clip: f.placement, mix_path: f.audioFile });
+  await run('opentune_estimate_key', { mix_path: 'relative/mix.wav' }, 'error');
 
   await run('opentune_get_job', { job_id: f.runningJob });
   await run('opentune_get_job', { job_id: MISSING_JOB }, 'error');
