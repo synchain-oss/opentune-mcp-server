@@ -57,6 +57,20 @@ def parse_notes(data: Any) -> list[Note]:
     return notes
 
 
+def merge_notes(pages: Iterable[list[Note]]) -> list[Note]:
+    """Join the notes of several pages into one sorted list; a note on two pages is kept once."""
+    seen: set[tuple[int | None, float, float]] = set()
+    merged: list[Note] = []
+    for page in pages:
+        for n in page:
+            key = (n.index, n.start, n.end)
+            if key not in seen:
+                seen.add(key)
+                merged.append(n)
+    merged.sort(key=lambda n: (n.start, n.end))
+    return merged
+
+
 def _nearest(sorted_times: list[float], t: float, window: float) -> float | None:
     i = bisect.bisect_left(sorted_times, t)
     best = None

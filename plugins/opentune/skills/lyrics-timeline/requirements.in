@@ -1,9 +1,16 @@
 # SPDX-License-Identifier: MIT
-# Runtime dependencies, installed by scripts/setup.py into the plugin data folder.
-# Exact versions. torch is installed first by setup.py from the CPU or CUDA index; the pin here
-# only has to match. Hash-pinned lock files per platform are future work.
+# Runtime dependencies, installed by scripts/setup.py into the plugin data folder. Exact versions.
+# torch is installed first by setup.py from the CPU or CUDA index; the pin here only has to match.
+# qwen-asr itself is installed afterwards with --no-deps (see QWEN_ASR_PIN in setup.py): its own
+# requirements list soynlp (GPL-3.0), gradio and flask, which the zh / en path never imports. The
+# list below is what qwen-asr 0.0.6 really imports on that path (checked against the wheel source):
+# transformers, accelerate, nagisa (imported at module level by qwen_asr), librosa, soundfile.
+# Hash-pinned lock files per platform are future work.
 torch==2.14.1
-qwen-asr==0.0.6
+transformers==4.57.6
+accelerate==1.12.0
+nagisa==0.2.11
+librosa==0.11.0
 numpy==2.2.6
 scipy==1.15.3
 soundfile==0.14.0

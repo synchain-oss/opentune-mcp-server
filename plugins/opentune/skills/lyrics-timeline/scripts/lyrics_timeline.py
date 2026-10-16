@@ -14,19 +14,31 @@ from lytl import home as lhome  # noqa: E402
 from lytl.audio import TARGET_SR, load_audio, resample  # noqa: E402
 from lytl.pipeline import build_timeline  # noqa: E402
 from lytl.schema import validate_output  # noqa: E402
-from lytl.snap import DEFAULT_SNAP_WINDOW, parse_notes  # noqa: E402
+from lytl.snap import DEFAULT_SNAP_WINDOW, Note, merge_notes, parse_notes  # noqa: E402
 
 
-def _read_lyrics(arg: str | None) -> str | None:
-    if not arg:
-        return None
-    try:
-        if os.path.isfile(arg):
-            with open(arg, encoding="utf-8-sig") as fh:
+def _read_lyrics(file: str | None, text: str | None) -> str | None:
+    """Lyrics from --lyrics-file (a missing file is an error, never text) or --lyrics-text."""
+    if file is not None:
+        try:
+            with open(file, encoding="utf-8-sig") as fh:
                 return fh.read()
-    except OSError:
-        pass
-    return arg
+        except OSError as exc:
+            raise SystemExit(f"error: cannot read --lyrics-file {file!r}: {exc.strerror or exc}") from exc
+    return text or None
+
+
+def _read_notes(paths: list[str] | None) -> list[Note]:
+    """Notes from one or more JSON files (each a page of opentune_get_notes or a merged array)."""
+    if not paths:
+        return []
+    pages = []
+    for path in paths:
+        try:
+            pages.append(parse_notes(_read_json(path)))
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"error: cannot read --notes file {path!r}: {exc}") from exc
+    return merge_notes(pages)
 
 
 def _read_json(path: str) -> object:
@@ -65,8 +77,16 @@ def _qwen_backends(size: str, device: str | None):
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Word-level lyrics timeline for a vocal WAV file.")
     ap.add_argument("audio", help="vocal WAV file")
-    ap.add_argument("--lyrics", help="lyrics text, or a path to a text / LRC file")
-    ap.add_argument("--notes", help="JSON from opentune_get_notes (content clock) for snapping and splitting")
+    lyr = ap.add_mutually_exclusive_group()
+    lyr.add_argument("--lyrics-file", help="path to a text / LRC lyrics file (an error when it cannot be read)")
+    lyr.add_argument("--lyrics-text", help="the lyrics themselves, as text")
+    ap.add_argument(
+        "--notes",
+        nargs="+",
+        metavar="FILE",
+        help="one or more JSON files from opentune_get_notes (content clock), or one file with a merged "
+        "array; used for snapping and splitting",
+    )
     ap.add_argument("--language", choices=["zh", "en", "auto"], default="auto")
     ap.add_argument("--out", help="write the JSON here (default: standard output)")
     ap.add_argument("--backend", choices=["qwen", "fake"], default="qwen")
@@ -78,8 +98,8 @@ def main(argv: list[str] | None = None) -> int:
 
     x, sr = load_audio(args.audio)
     x16 = resample(x, sr, TARGET_SR)
-    notes = parse_notes(_read_json(args.notes)) if args.notes else []
-    lyrics = _read_lyrics(args.lyrics)
+    notes = _read_notes(args.notes)
+    lyrics = _read_lyrics(args.lyrics_file, args.lyrics_text)
     if args.backend == "fake":
         if not args.fake_truth:
             ap.error("--backend fake needs --fake-truth")

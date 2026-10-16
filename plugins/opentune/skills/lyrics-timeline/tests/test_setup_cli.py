@@ -82,8 +82,10 @@ def test_model_choice_and_checksum(tmp_path):
     assert setup_script.file_matches(str(path), good)
     assert not setup_script.file_matches(str(path), {**good, "sha256": "0" * 64})
     assert not setup_script.file_matches(str(path), {**good, "size": 3})
-    git_id = hashlib.sha1(b"blob %d\0" % len(body) + body).hexdigest()  # noqa: S324
-    assert setup_script.file_matches(str(path), {"size": len(body), "git_sha1": git_id})
+    with pytest.raises(RuntimeError, match="no sha256"):  # an entry without a digest is refused, not passed
+        setup_script.file_matches(str(path), {"size": len(body)})
+    with pytest.raises(RuntimeError, match="no sha256"):
+        setup_script.file_matches(str(path), {"size": len(body), "sha256": None, "git_sha1": "ab" * 20})
     assert not setup_script.file_matches(str(tmp_path / "missing"), good)
 
 
@@ -118,11 +120,16 @@ def test_cli_end_to_end_with_the_fake_backend(tmp_path, vocal, truth):
     script.write_text(json.dumps([{"text": t.text, "start": t.start, "end": t.end} for t in truth], ensure_ascii=False), encoding="utf-8")
     lyr = tmp_path / "lyrics.txt"
     lyr.write_text(LYRICS, encoding="utf-8")
-    notes = tmp_path / "notes.json"
-    notes.write_text(json.dumps({"notes": [{"index": 0, "startContentSec": 1.03, "endContentSec": 1.3}]}), encoding="utf-8")
+    notes = tmp_path / "notes.json"  # two pages of opentune_get_notes; the second repeats a note of the first
+    notes.write_text(json.dumps({"notes": [{"index": 0, "startContentSec": 1.03, "endContentSec": 1.3}], "nextCursor": "c1"}), encoding="utf-8")
+    notes2 = tmp_path / "notes2.json"
+    notes2.write_text(
+        json.dumps({"notes": [{"index": 0, "startContentSec": 1.03, "endContentSec": 1.3}, {"index": 1, "startContentSec": 1.43, "endContentSec": 1.7}]}),
+        encoding="utf-8",
+    )
     out = tmp_path / "out.json"
     r = _run(
-        CLI, str(wav), "--lyrics", str(lyr), "--notes", str(notes), "--language", "zh", "--out", str(out),
+        CLI, str(wav), "--lyrics-file", str(lyr), "--notes", str(notes), str(notes2), "--language", "zh", "--out", str(out),
         "--backend", "fake", "--fake-truth", str(script), env=_env(),
     )
     assert r.returncode == 0, r.stderr
@@ -133,6 +140,8 @@ def test_cli_end_to_end_with_the_fake_backend(tmp_path, vocal, truth):
     assert validate_output(doc) == []
     assert doc["audio"]["name"] == "vocal.wav" and len(doc["lines"]) == 8
     assert doc["lines"][0]["tokens"][0]["snap"]["source"] == "note"
+    assert doc["params"]["notes_given"] == 2  # merged from both files, the repeated note counted once
+    assert doc["lines"][0]["tokens"][1]["snap"]["source"] == "note"  # only the second file has this note
 
 
 def test_cli_without_models_explains_how_to_get_them(tmp_path, vocal):
@@ -144,3 +153,157 @@ def test_cli_without_models_explains_how_to_get_them(tmp_path, vocal):
         wf.writeframes((vocal[:SR] * 32767).astype("<i2").tobytes())
     r = _run(CLI, str(wav), env=_env(OPENTUNE_LYRICS_HOME=str(tmp_path / "empty")))
     assert r.returncode != 0 and "setup.py" in r.stderr
+
+
+def _setup_module():
+    sys.path.insert(0, SCRIPTS)
+    import setup as setup_script  # noqa: PLC0415
+
+    return setup_script
+
+
+def test_interrupted_download_removes_the_part_file(tmp_path, monkeypatch):
+    setup_script = _setup_module()
+
+    class Broken:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self, n=-1):
+            if not getattr(self, "sent", False):
+                self.sent = True
+                return b"half"
+            raise OSError("connection reset")
+
+    monkeypatch.setattr(setup_script.urllib.request, "urlopen", lambda *a, **k: Broken())
+    dest = tmp_path / "m" / "w.bin"
+    entry = {"path": "w.bin", "size": 8, "sha256": "0" * 64, "url": "https://example.invalid/w"}
+    with pytest.raises(OSError):
+        setup_script.download_file(entry, str(dest))
+    assert not dest.exists() and not (tmp_path / "m" / "w.bin.part").exists()
+
+
+@pytest.mark.parametrize(
+    "bad", ["../evil", "a/../../evil", "/abs/evil", "C:/evil", "C:evil", "a\\b", "..", "", "a//b", "./x", "x:stream"]
+)
+def test_safe_dest_refuses_paths_that_leave_the_folder(tmp_path, bad):
+    setup_script = _setup_module()
+    with pytest.raises(ValueError, match="unsafe"):
+        setup_script.safe_dest(str(tmp_path / "model"), bad)
+    assert setup_script.safe_dest(str(tmp_path / "model"), "sub/ok.json").endswith(os.path.join("sub", "ok.json"))
+
+
+@pytest.mark.parametrize("bad", ["../evil", "C:/Windows/evil.dll", "/etc/evil", "ok/../../evil"])
+def test_download_repo_refuses_a_listed_path_that_escapes_and_writes_nothing(tmp_path, monkeypatch, bad):
+    setup_script = _setup_module()
+    repo = setup_script.lhome.ALIGNER_REPO
+    good = setup_script.load_manifest()[repo]["files"][0]
+    listing = [
+        {"path": good["path"], "size": good["size"], "url": "https://example.invalid/good"},
+        {"path": bad, "size": 4, "url": "https://example.invalid/evil"},
+    ]
+    monkeypatch.setattr(setup_script, "list_files", lambda r, m: listing)
+    calls: list[str] = []
+    monkeypatch.setattr(setup_script, "download_file", lambda e, d: calls.append(d))
+    with pytest.raises(ValueError, match="unsafe"):
+        setup_script.download_repo(repo, "hf", str(tmp_path / "home"))
+    assert calls == [] and not (tmp_path / "evil").exists() and not (tmp_path / "home").exists()
+
+
+def test_download_repo_verifies_against_the_manifest_not_the_host(tmp_path, monkeypatch):
+    setup_script = _setup_module()
+    repo = setup_script.lhome.ALIGNER_REPO
+    files = setup_script.load_manifest()[repo]["files"]
+    listing = [{"path": f["path"], "size": 1, "sha256": "f" * 64, "url": "https://example.invalid/" + f["path"]} for f in files]
+    listing.append({"path": "extra.bin", "size": 1, "url": "https://example.invalid/extra"})
+    monkeypatch.setattr(setup_script, "list_files", lambda r, m: listing)
+    seen: dict[str, dict] = {}
+    monkeypatch.setattr(setup_script, "download_file", lambda e, d: seen.__setitem__(e["path"], e))
+    setup_script.download_repo(repo, "hf", str(tmp_path / "home"))
+    assert set(seen) == {f["path"] for f in files}  # the unlisted-in-manifest file is never fetched
+    assert all(seen[f["path"]]["sha256"] == f["sha256"] and seen[f["path"]]["size"] == f["size"] for f in files)
+    monkeypatch.setattr(setup_script, "list_files", lambda r, m: listing[:2])
+    with pytest.raises(RuntimeError, match="does not list"):
+        setup_script.download_repo(repo, "hf", str(tmp_path / "home2"))
+
+
+def test_manifest_pins_every_repo_with_sha256_for_every_file():
+    setup_script = _setup_module()
+    manifest = setup_script.load_manifest()
+    wanted = {*setup_script.lhome.ASR_REPOS.values(), setup_script.lhome.ALIGNER_REPO}
+    assert set(manifest) == wanted
+    for repo, entry in manifest.items():
+        assert len(entry["hf_revision"]) == 40 and len(entry["modelscope_revision"]) == 40, repo
+        assert entry["files"], repo
+        for f in entry["files"]:
+            assert len(f["sha256"]) == 64 and int(f["sha256"], 16) >= 0 and f["size"] > 0, (repo, f["path"])
+            setup_script.safe_dest("/tmp/x", f["path"])
+        assert any(f["path"].endswith(".safetensors") for f in entry["files"])
+
+
+def test_listing_urls_use_the_pinned_revision(monkeypatch):
+    setup_script = _setup_module()
+    repo = setup_script.lhome.ALIGNER_REPO
+    pin = setup_script.load_manifest()[repo]
+    monkeypatch.setattr(setup_script, "_get_json", lambda url: [{"type": "file", "path": "config.json", "size": 5}])
+    (entry,) = setup_script.list_files(repo, "hf")
+    assert f"/resolve/{pin['hf_revision']}/" in entry["url"] and "/main/" not in entry["url"]
+    monkeypatch.setattr(
+        setup_script, "_get_json", lambda url: {"Data": {"Files": [{"Type": "blob", "Path": "config.json", "Size": 5}]}}
+    )
+    (entry,) = setup_script.list_files(repo, "modelscope")
+    assert f"Revision={pin['modelscope_revision']}" in entry["url"]
+
+
+def test_qwen_asr_is_installed_without_its_gpl_dependencies(monkeypatch, tmp_path):
+    setup_script = _setup_module()
+    cmds: list[list[str]] = []
+    monkeypatch.setattr(setup_script, "run", lambda cmd: cmds.append(cmd))
+    monkeypatch.setattr(setup_script.os.path, "isfile", lambda p: True)
+    setup_script.install_runtime(str(tmp_path), "cpu")
+    qwen = [c for c in cmds if setup_script.QWEN_ASR_PIN in c]
+    assert qwen and "--no-deps" in qwen[0]
+    reqs = open(setup_script.REQUIREMENTS, encoding="utf-8").read().lower()
+    for banned in ("soynlp", "gradio", "flask", "qwen-asr"):
+        assert banned not in "\n".join(l for l in reqs.splitlines() if not l.startswith("#"))
+
+
+def test_cli_missing_lyrics_file_is_an_error_not_text(tmp_path, vocal):
+    wav = tmp_path / "v.wav"
+    with wave.open(str(wav), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SR)
+        wf.writeframes((vocal[:SR] * 32767).astype("<i2").tobytes())
+    r = _run(CLI, str(wav), "--lyrics-file", str(tmp_path / "nope.txt"), "--backend", "fake", "--fake-truth", "x", env=_env())
+    assert r.returncode != 0 and "--lyrics-file" in r.stderr and "nope.txt" in r.stderr
+
+
+def test_lyrics_text_and_file_are_exclusive_and_read_as_given(tmp_path):
+    sys.path.insert(0, SCRIPTS)
+    import lyrics_timeline as cli  # noqa: PLC0415
+
+    f = tmp_path / "l.txt"
+    f.write_text("\ufeffline one\n", encoding="utf-8")
+    assert cli._read_lyrics(str(f), None) == "line one\n"
+    assert cli._read_lyrics(None, "just text") == "just text"
+    assert cli._read_lyrics(None, None) is None
+    with pytest.raises(SystemExit):
+        cli._read_lyrics(str(tmp_path / "missing.txt"), None)
+
+
+def test_notes_pages_and_merged_array_give_the_same_notes(tmp_path):
+    sys.path.insert(0, SCRIPTS)
+    import lyrics_timeline as cli  # noqa: PLC0415
+
+    n = [{"index": i, "startContentSec": i + 0.5, "endContentSec": i + 0.9} for i in range(5)]
+    p1, p2, merged = tmp_path / "p1.json", tmp_path / "p2.json", tmp_path / "all.json"
+    p1.write_text(json.dumps({"notes": n[:3], "nextCursor": "x"}), encoding="utf-8")
+    p2.write_text(json.dumps({"notes": n[3:]}), encoding="utf-8")
+    merged.write_text(json.dumps(n), encoding="utf-8")
+    from_pages = cli._read_notes([str(p2), str(p1)])  # order of the files does not matter
+    assert [x.start for x in from_pages] == [x.start for x in cli._read_notes([str(merged)])] == [0.5, 1.5, 2.5, 3.5, 4.5]
+    assert cli._read_notes(None) == []

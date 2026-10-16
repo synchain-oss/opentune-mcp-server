@@ -7,7 +7,7 @@ import pytest
 
 from conftest import LYRICS, SONG, build_truth, synth_vocal
 from lytl.backends import FakeAligner, FakeAsr, TruthToken
-from lytl.pipeline import build_timeline
+from lytl.pipeline import APPROX_CONF_CAP, build_timeline
 from lytl.schema import validate_output
 from lytl.snap import Note
 
@@ -95,7 +95,9 @@ def test_unsung_lyric_adlib_and_misheard_are_reported(vocal, truth):
     assert not_sung["text"] == "好" and not_sung["line"] == "l2"
     line2 = doc["lines"][1]
     assert [t["text"] for t in line2["tokens"] if t["i"] is not None] == list("我想起你的模样")
-    assert [t["i"] for t in line2["tokens"] if t["i"] is not None] == list(range(1, 8))  # ad-libs add no index
+    # i is the position in the written line (好 is the 5th character, so it is skipped), the same
+    # position as the not_sung diff; ad-libs have no index.
+    assert [t["i"] for t in line2["tokens"] if t["i"] is not None] == [1, 2, 3, 4, 5, 7, 8]
     assert any(a["text"] == "啊" for a in doc["adlibs"])
 
 
@@ -144,3 +146,40 @@ def test_validator_catches_a_broken_document(vocal, backends):
     assert validate_output(doc)
     del doc["sections"]
     assert any("sections" in e for e in validate_output(doc))
+
+
+class _MismatchAligner(FakeAligner):
+    """Behaves like QwenAligner when the model splits the text differently from our units."""
+
+    def align(self, audio, start, end, units, language):
+        spans = super().align(audio, start, end, units, language)
+        self.last_mismatch = (len(units) - 1, len(units))
+        return spans
+
+
+def test_aligner_span_count_mismatch_warns_and_lowers_confidence(vocal, truth):
+    good = build_timeline(vocal, FakeAsr(truth), FakeAligner(truth), lyrics=LYRICS, language="zh")
+    doc = build_timeline(vocal, FakeAsr(truth), _MismatchAligner(truth), lyrics=LYRICS, language="zh")
+    assert validate_output(doc) == []
+    ws = [w for w in doc["warnings"] if "aligner returned" in w]
+    assert ws and ws[0].startswith("line l1: aligner returned 6 spans for 7 units; times are approximate")
+    assert not [w for w in good["warnings"] if "aligner returned" in w]
+    first = doc["lines"][0]["tokens"]
+    assert all(t["conf"] <= APPROX_CONF_CAP for t in first) and max(t["conf"] for t in good["lines"][0]["tokens"]) > APPROX_CONF_CAP
+    assert doc["lines"][0]["conf"] <= APPROX_CONF_CAP
+
+
+def test_qwen_aligner_resamples_and_reports_the_mismatch():
+    from types import SimpleNamespace
+
+    from lytl.backends import QwenAligner
+    from lytl.normalize import tokenize
+
+    item = lambda a, b: SimpleNamespace(start_time=a, end_time=b)  # noqa: E731
+    al = object.__new__(QwenAligner)
+    units = tokenize("我爱你", "zh")
+    al.model = SimpleNamespace(align=lambda **kw: [[item(0.0, 0.5), item(0.5, 1.0)]])
+    assert len(al.align(None, 10.0, 12.0, units, "zh")) == 3 and al.last_mismatch == (2, 3)
+    al.model = SimpleNamespace(align=lambda **kw: [[item(0.0, 0.3), item(0.3, 0.6), item(0.6, 1.0)]])
+    al.align(None, 10.0, 12.0, units, "zh")
+    assert al.last_mismatch is None

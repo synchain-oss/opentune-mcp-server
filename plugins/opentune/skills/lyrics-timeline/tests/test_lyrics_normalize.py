@@ -4,6 +4,7 @@ from __future__ import annotations
 import pytest
 
 from lytl import normalize as nz
+from conftest import LYRICS
 from lytl.lyrics import parse_lyrics
 
 
@@ -93,3 +94,24 @@ def test_fillers_and_homophone_groups():
     assert nz.is_filler(nz.Unit("啊", "char")) and nz.is_filler(nz.Unit("yeah", "word"))
     assert not nz.is_filler(nz.Unit("爱", "char"))
     assert "得" in nz.homophone_alternatives("的") and nz.homophone_alternatives("爱") == []
+
+
+def test_tag_only_repeat_repeats_the_earlier_block_that_many_times():
+    p = parse_lyrics("[Chorus]\nsing it\n[Verse]\nsome verse\n[Chorus x2]\n")
+    assert [ln.text for ln in p.lines] == ["sing it", "some verse", "sing it", "sing it"]
+    assert p.warnings == []  # an unnumbered bare tag is the usual way to say "again"
+
+
+def test_numbered_tag_without_text_copies_another_block_and_says_so():
+    p = parse_lyrics("[Verse 1]\nfirst words\n[Chorus]\nhook\n[Verse 2]\n")
+    assert [(ln.label, ln.label_number, ln.text) for ln in p.lines][-1] == ("verse", 2, "first words")
+    assert p.warnings == ["lyrics: [Verse 2] has no text; the text of the earlier verse block was assumed"]
+    assert parse_lyrics("[Verse 2]\nown words\n").warnings == []
+
+
+def test_assumed_text_warning_reaches_the_output(vocal, truth):
+    from lytl.backends import FakeAligner, FakeAsr
+    from lytl.pipeline import build_timeline
+
+    doc = build_timeline(vocal, FakeAsr(truth), FakeAligner(truth), lyrics=LYRICS.replace("[Chorus]\n", "[Chorus 2]\n"), language="zh")
+    assert any("[Chorus 2] has no text" in w for w in doc["warnings"])

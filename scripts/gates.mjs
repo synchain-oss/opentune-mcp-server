@@ -466,6 +466,62 @@ function reuseLint() {
     : { result: 'FAIL', note: `reuse lint exited with ${result.status ?? 'a signal'}` };
 }
 
+const SKILLS_DIR = 'plugins/opentune/skills';
+
+/** The first Python 3 on PATH that can import every module in `modules`, or the reason none can. */
+function findPython(modules) {
+  const reasons = [];
+  for (const [command, ...prefix] of [['python3'], ['python'], ['py', '-3']]) {
+    const probe = spawnSync(command, [...prefix, '-I', '-c', `import ${modules.join(', ')}`], {
+      cwd: ROOT,
+      stdio: ['ignore', 'ignore', 'pipe'],
+      encoding: 'utf8',
+    });
+    if (probe.error) continue; // not installed under this name
+    if (probe.status === 0) return { command, prefix };
+    const last = (probe.stderr || '').trim().split('\n').pop();
+    reasons.push(`${command}: ${last}`);
+  }
+  return { reason: reasons.length ? reasons.join('; ') : 'no Python 3 on PATH' };
+}
+
+async function skillPytest() {
+  // The Python skills carry their own tests (no torch, no model weights). They run here when Python
+  // and the test dependencies are importable; otherwise the row is a SKIP that says why.
+  const skillDirs = [];
+  for (const entry of await fs.readdir(path.join(ROOT, SKILLS_DIR), { withFileTypes: true }).catch(() => [])) {
+    const req = path.join(ROOT, SKILLS_DIR, entry.name, 'requirements-test.txt');
+    if (entry.isDirectory() && (await fs.stat(req).catch(() => null))) skillDirs.push(path.dirname(req));
+  }
+  if (skillDirs.length === 0) throw new Skip(`no ${SKILLS_DIR}/*/requirements-test.txt`);
+  const passed = [];
+  for (const dir of skillDirs) {
+    const name = path.basename(dir);
+    const text = await fs.readFile(path.join(dir, 'requirements-test.txt'), 'utf8');
+    const modules = text
+      .split('\n')
+      .map((l) => l.replace(/#.*/, '').trim())
+      .filter(Boolean)
+      .map((l) => l.split(/[<>=!~;[ ]/)[0].replace(/-/g, '_'));
+    const python = findPython(modules);
+    if (python.reason) {
+      throw new Skip(
+        `${name}: cannot import ${modules.join(', ')} (${python.reason}); ` +
+          `pip install -r ${SKILLS_DIR}/${name}/requirements-test.txt`,
+      );
+    }
+    const result = spawnSync(python.command, [...python.prefix, '-I', '-m', 'pytest', '-q'], {
+      cwd: dir,
+      stdio: ['ignore', 2, 2],
+    });
+    if (result.error) throw result.error;
+    if (result.status !== 0)
+      return { result: 'FAIL', note: `${name}: python -I -m pytest exited with ${result.status ?? 'a signal'}` };
+    passed.push(name);
+  }
+  return { result: 'PASS', note: `python -I -m pytest passed in ${passed.join(', ')}` };
+}
+
 async function contractVectors() {
   // The contract project runs every vector in spec/otcp/v1/vectors against the test mock and
   // writes its counts here; the vectors of the capabilities the mock reports must all pass, the
@@ -605,6 +661,7 @@ async function main() {
           'plus a refused call and an invalid argument',
       ),
     ],
+    ['skill tests (python -I -m pytest)', skillPytest],
     ['reuse lint', reuseLint],
   ];
 

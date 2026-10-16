@@ -39,6 +39,9 @@ class AsrBackend(ABC):
 
 class AlignerBackend(ABC):
     name = "aligner"
+    # Set by ``align``: (spans the model returned, units asked for) when the two differed and the
+    # spans were resampled onto the units; None after a call whose counts matched.
+    last_mismatch: tuple[int, int] | None = None
 
     @abstractmethod
     def align(
@@ -173,6 +176,7 @@ class QwenAligner(AlignerBackend):
     def align(
         self, audio: np.ndarray, start: float, end: float, units: Sequence[Unit], language: str
     ) -> list[tuple[float, float]]:
+        self.last_mismatch = None
         if not units:
             return []
         text = units_text(list(units))
@@ -180,6 +184,7 @@ class QwenAligner(AlignerBackend):
         items = list(self.model.align(audio=(audio, 16000), text=text, language=lang)[0])
         spans = [(start + float(it.start_time), start + float(it.end_time)) for it in items]
         if len(spans) != len(units):
+            self.last_mismatch = (len(spans), len(units))
             # The model splits the text by its own rules; resample its spans onto our units.
             spans = _resample_spans(spans, len(units), start, end)
         return spans

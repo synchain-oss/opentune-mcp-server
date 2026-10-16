@@ -49,6 +49,7 @@ class ParsedLyrics:
     lines: list[LyricLine] = field(default_factory=list)
     has_labels: bool = False
     has_blank_lines: bool = False
+    warnings: list[str] = field(default_factory=list)  # assumptions made while parsing, shown to the user
 
 
 def _parse_tag(inner: str) -> tuple[str, int | None, int] | None:
@@ -95,6 +96,7 @@ def parse_lyrics(source: str) -> ParsedLyrics:
     block_repeat = 1
     block = 0
     block_start = 0  # index in parsed.lines where the current block starts
+    block_tag = ""  # the text inside the tag that opened the current block
     seen_blocks: dict[str, list[LyricLine]] = {}
     pending_blank = False
 
@@ -102,8 +104,14 @@ def parse_lyrics(source: str) -> ParsedLyrics:
         nonlocal block_repeat
         added = parsed.lines[block_start:]
         if label is not None and not added and label in seen_blocks:
-            for ln in seen_blocks[label]:  # a bare repeated tag stands for the earlier block
-                parsed.lines.append(_copy(ln, label_number, block))
+            # A bare tag stands for the earlier block of that label, as often as "x2" says.
+            for _ in range(block_repeat):
+                for ln in seen_blocks[label]:
+                    parsed.lines.append(_copy(ln, label_number, block))
+            if label_number is not None:
+                parsed.warnings.append(
+                    f"lyrics: [{block_tag}] has no text; the text of the earlier {label} block was assumed"
+                )
         elif label is not None and added:
             seen_blocks[label] = list(added)
         if block_repeat > 1 and added:
@@ -138,6 +146,7 @@ def parse_lyrics(source: str) -> ParsedLyrics:
                     block += 1
                     block_start = len(parsed.lines)
                     label, label_number, block_repeat = lead
+                    block_tag = line[1:close].strip()
                     parsed.has_labels = True
                     line = line[close + 1 :].strip()
                     pending_blank = False
@@ -146,6 +155,7 @@ def parse_lyrics(source: str) -> ParsedLyrics:
             block += 1
             block_start = len(parsed.lines)
             label, label_number, block_repeat = parsed_tag
+            block_tag = tag.group(1).strip()  # type: ignore[union-attr]
             parsed.has_labels = True
             pending_blank = False
             continue

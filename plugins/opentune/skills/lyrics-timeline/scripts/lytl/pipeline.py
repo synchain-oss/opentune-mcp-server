@@ -38,6 +38,10 @@ from .snap import DEFAULT_SNAP_WINDOW, Note, enforce_order, snap_start, split_by
 
 WINDOW_PAD = 0.25
 LONG_NOTE_SPLIT_MIN = 0.3  # only tokens at least this long get notes[] sub-segments
+# When the aligner returned a different number of spans than we gave it units, its spans were
+# resampled onto the units. Every token of such a line gets conf of at most this value, which is
+# below the 0.5 at which SKILL.md tells the model to ask the user first.
+APPROX_CONF_CAP = 0.4
 
 
 @dataclass
@@ -45,6 +49,7 @@ class Heard:
     unit: Unit
     start: float
     end: float
+    mismatch: tuple[int, int] | None = None  # (spans returned, units given) when the aligner had to be resampled
 
 
 @dataclass
@@ -59,6 +64,7 @@ class _Line:
     spans: list[tuple[float, float]] | None = None
     agree: list[float] | None = None
     kept: list[int] | None = None  # indexes into units that were aligned (others are not sung)
+    mismatch: tuple[int, int] | None = None  # (spans returned, units given) when the aligner had to be resampled
 
 
 def _slice(x: np.ndarray, a: float, b: float) -> np.ndarray:
@@ -89,8 +95,9 @@ def hear(
             continue
         ws, we = chunks[group[0]][0], chunks[group[-1]][1]
         spans = aligner.align(_slice(x, ws, we), ws, we, units, lang)
+        mismatch = getattr(aligner, "last_mismatch", None)
         for u, (a, b) in zip(units, spans):
-            heard.append(Heard(u, float(a), float(b)))
+            heard.append(Heard(u, float(a), float(b), mismatch))
     return heard, lang
 
 
@@ -249,19 +256,25 @@ def build_timeline(
                 sources.append(source)
                 sp[0] = new
             enforce_order(spans)
-            n_char = 0
+            if ln.mismatch:
+                warnings.append(
+                    f"line {rec['id']}: aligner returned {ln.mismatch[0]} spans for {ln.mismatch[1]} units; "
+                    "times are approximate"
+                )
             for k, sp in enumerate(spans):
                 unit = ln.units[ln.kept[k]]
-                n_char += 1
                 vs = voiced_start(sp[0], sp[1], feats)
                 tok: dict[str, Any] = {
-                    "i": n_char,
+                    "i": ln.kept[k] + 1,  # position in the written line, as in the not_sung diff
                     "text": unit.text,
                     "start": _r(sp[0]),
                     "voiced_start": _r(max(vs, sp[0])),
                     "end": _r(sp[1]),
-                    "conf": _confidence(
-                        ln.agree[k], sp[1] - sp[0], voiced_ratio(sp[0], sp[1], feats), shifts[k], snap_window
+                    "conf": min(
+                        _confidence(
+                            ln.agree[k], sp[1] - sp[0], voiced_ratio(sp[0], sp[1], feats), shifts[k], snap_window
+                        ),
+                        APPROX_CONF_CAP if ln.mismatch else 1.0,
                     ),
                     "type": "char" if unit.kind == "char" else "word",
                     "snap": {"source": sources[k], "shift_sec": _r(shifts[k])},
@@ -382,6 +395,7 @@ def _asr_lines(heard: list[Heard], regions: Sequence[tuple[float, float]]) -> li
         ln.spans = [(h.start, h.end) for h in members]
         ln.agree = [1.0] * len(members)
         ln.kept = list(range(len(members)))
+        ln.mismatch = next((h.mismatch for h in members if h.mismatch), None)
         lines.append(ln)
     return lines
 
@@ -397,6 +411,7 @@ def _lyrics_lines(
     warnings: list[str],
 ) -> tuple[list[_Line], list[Run], list[Pair], list[dict[str, Any]], list[dict[str, Any]]]:
     parsed = parse_lyrics(lyrics)
+    warnings.extend(parsed.warnings)
     lines: list[_Line] = []
     for ll in parsed.lines:
         units = tokenize(ll.text, lang)
@@ -505,4 +520,5 @@ def _lyrics_lines(
         a, b = ln.window
         spans = aligner.align(_slice(x, a, b), a, b, [ln.units[k] for k in kept], lang)
         ln.spans = [(float(s), float(e)) for s, e in spans]
+        ln.mismatch = getattr(aligner, "last_mismatch", None)
     return lines, runs, pairs, diffs, adlib_items

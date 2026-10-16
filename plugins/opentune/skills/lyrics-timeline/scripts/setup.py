@@ -27,6 +27,8 @@ from lytl import home as lhome  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIREMENTS = os.path.join(os.path.dirname(HERE), "requirements.in")
+MANIFEST = os.path.join(HERE, "model_manifest.json")
+QWEN_ASR_PIN = "qwen-asr==0.0.6"
 TORCH_PIN = "torch==2.14.1"
 TORCH_INDEX_CPU = "https://download.pytorch.org/whl/cpu"
 TORCH_INDEX_CUDA = "https://download.pytorch.org/whl/cu128"
@@ -106,13 +108,23 @@ def hf_endpoint() -> str:
     return os.environ.get("HF_ENDPOINT", "https://huggingface.co").rstrip("/")
 
 
+def load_manifest() -> dict[str, Any]:
+    """The pinned revisions and the size and sha256 of every model file, committed in this repo."""
+    with open(MANIFEST, encoding="utf-8") as fh:
+        return json.load(fh)["repos"]
+
+
 def list_files(repo: str, mirror: str) -> list[dict[str, Any]]:
-    """Files of a model repo: path, size, expected digest (sha256 when the host gives one)."""
+    """Files of a model repo at the pinned revision: path, size and download URL as the host lists them.
+
+    The host's own digests are not trusted here; ``download_repo`` checks every file against the
+    sha256 in the in-repo manifest.
+    """
+    pin = load_manifest()[repo]
     out: list[dict[str, Any]] = []
     if mirror == "modelscope":
-        data = _get_json(
-            f"https://modelscope.cn/api/v1/models/{repo}/repo/files?Revision=master&Recursive=true"
-        )
+        rev = urllib.parse.quote(pin["modelscope_revision"])
+        data = _get_json(f"https://modelscope.cn/api/v1/models/{repo}/repo/files?Revision={rev}&Recursive=true")
         for f in _ci(_ci(data, "Data") or {}, "Files") or []:
             if str(_ci(f, "Type")).lower() not in ("blob", "file"):
                 continue
@@ -120,13 +132,13 @@ def list_files(repo: str, mirror: str) -> list[dict[str, Any]]:
                 {
                     "path": _ci(f, "Path"),
                     "size": int(_ci(f, "Size") or 0),
-                    "sha256": _ci(f, "Sha256"),
-                    "url": f"https://modelscope.cn/api/v1/models/{repo}/repo?Revision=master&FilePath="
+                    "url": f"https://modelscope.cn/api/v1/models/{repo}/repo?Revision={rev}&FilePath="
                     + urllib.parse.quote(str(_ci(f, "Path"))),
                 }
             )
         return out
-    data = _get_json(f"{hf_endpoint()}/api/models/{repo}/tree/main?recursive=1")
+    sha = pin["hf_revision"]
+    data = _get_json(f"{hf_endpoint()}/api/models/{repo}/tree/{sha}?recursive=1")
     for f in data:
         if f.get("type") != "file":
             continue
@@ -135,53 +147,77 @@ def list_files(repo: str, mirror: str) -> list[dict[str, Any]]:
             {
                 "path": f["path"],
                 "size": int(lfs.get("size") or f.get("size") or 0),
-                "sha256": lfs.get("oid"),
-                "git_sha1": None if lfs else f.get("oid"),
-                "url": f"{hf_endpoint()}/{repo}/resolve/main/{urllib.parse.quote(f['path'])}",
+                "url": f"{hf_endpoint()}/{repo}/resolve/{sha}/{urllib.parse.quote(f['path'])}",
             }
         )
     return out
 
 
+def safe_dest(target: str, rel: object) -> str:
+    """Where a remote file path lands inside ``target``; ValueError when it would leave the folder."""
+    if not isinstance(rel, str) or not rel or "\\" in rel or "\0" in rel or rel.startswith("/"):
+        raise ValueError(f"unsafe remote file path: {rel!r}")
+    parts = rel.split("/")
+    if any(p in ("", ".", "..") or ":" in p for p in parts):  # also drive letters and stream names
+        raise ValueError(f"unsafe remote file path: {rel!r}")
+    root = os.path.realpath(target)
+    dest = os.path.realpath(os.path.join(root, *parts))
+    try:
+        inside = os.path.commonpath([root, dest]) == root and dest != root
+    except ValueError:  # another drive
+        inside = False
+    if not inside:
+        raise ValueError(f"unsafe remote file path: {rel!r}")
+    return dest
+
+
 def file_matches(path: str, entry: dict[str, Any]) -> bool:
-    """True when the file exists with the expected size and digest."""
+    """True when the file exists with the expected size and sha256. An entry without a digest is refused."""
+    sha256 = str(entry.get("sha256") or "").lower()
+    if len(sha256) != 64:
+        raise RuntimeError(f"no sha256 for {entry.get('path')}; refusing to accept an unverified file")
     if not os.path.isfile(path) or os.path.getsize(path) != entry["size"]:
         return False
-    sha256 = entry.get("sha256")
-    if sha256:
-        h = hashlib.sha256()
-        with open(path, "rb") as fh:
-            for block in iter(lambda: fh.read(1 << 20), b""):
-                h.update(block)
-        return h.hexdigest() == str(sha256).lower()
-    git_sha1 = entry.get("git_sha1")
-    if git_sha1:
-        with open(path, "rb") as fh:
-            body = fh.read()
-        return hashlib.sha1(b"blob %d\0" % len(body) + body).hexdigest() == git_sha1  # noqa: S324 - git object id
-    return True
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for block in iter(lambda: fh.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest() == sha256
 
 
 def download_file(entry: dict[str, Any], dest: str) -> None:
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     part = dest + ".part"
-    req = urllib.request.Request(entry["url"], headers=UA)
-    with urllib.request.urlopen(req, timeout=120) as resp, open(part, "wb") as out:  # noqa: S310
-        for block in iter(lambda: resp.read(1 << 20), b""):
-            out.write(block)
-    if not file_matches(part, entry):
-        os.remove(part)
-        raise RuntimeError(f"checksum mismatch for {entry['path']}; the file was discarded")
-    os.replace(part, dest)
+    try:
+        req = urllib.request.Request(entry["url"], headers=UA)
+        with urllib.request.urlopen(req, timeout=120) as resp, open(part, "wb") as out:  # noqa: S310
+            for block in iter(lambda: resp.read(1 << 20), b""):
+                out.write(block)
+        if not file_matches(part, entry):
+            raise RuntimeError(f"checksum mismatch for {entry['path']}; the file was discarded")
+        os.replace(part, dest)
+    finally:
+        if os.path.exists(part):
+            os.remove(part)
 
 
 def download_repo(repo: str, mirror: str, home: str) -> None:
     target = lhome.model_dir(repo, home)
-    entries = list_files(repo, mirror)
-    if not entries:
+    listed = list_files(repo, mirror)
+    if not listed:
         raise RuntimeError(f"no files listed for {repo} on {mirror}")
-    for entry in entries:
-        dest = os.path.join(target, *str(entry["path"]).split("/"))
+    # Check every path first, so that a bad listing writes nothing at all.
+    dests = {str(e["path"]): safe_dest(target, e["path"]) for e in listed}
+    expected = {f["path"]: f for f in load_manifest()[repo]["files"]}
+    missing = sorted(set(expected) - set(dests))
+    if missing:
+        raise RuntimeError(f"{mirror} does not list {', '.join(missing)} for {repo} at the pinned revision")
+    for entry in listed:
+        pinned = expected.get(str(entry["path"]))
+        if pinned is None:
+            continue  # not in the manifest, so not verifiable: never downloaded
+        entry = {**entry, "size": pinned["size"], "sha256": pinned["sha256"]}
+        dest = dests[str(entry["path"])]
         if file_matches(dest, entry):
             print(f"  have {repo}/{entry['path']}")
             continue
@@ -209,6 +245,9 @@ def install_runtime(home: str, variant: str) -> None:
         cmd += ["--index-url", index]
     run(cmd)
     run([py, "-m", "pip", "install", "-r", REQUIREMENTS])
+    # No dependencies: qwen-asr declares soynlp (GPL-3.0), gradio and flask, which the zh / en path
+    # never imports. What it does import is pinned in requirements.in.
+    run([py, "-m", "pip", "install", "--no-deps", QWEN_ASR_PIN])
 
 
 def main(argv: list[str] | None = None) -> int:
