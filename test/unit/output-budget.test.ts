@@ -69,7 +69,9 @@ describe('output budget', () => {
       if (limit !== 1) expect(seen).toEqual(Array.from({ length: 800 }, (_, i) => i));
     }
     expect(OUTPUT_BUDGET).toBe(20_000);
-  });
+    // It pages through all 800 notes at several page sizes: about 0.5 s here, but 5.0 s on the shared
+    // windows runner, which hit the default limit. The limit only has to outlast a slow runner.
+  }, 20_000);
 
   it('says when it reduced the page size, and keeps a page that fits at the size asked for', async () => {
     const { mock, ctx } = await setup();

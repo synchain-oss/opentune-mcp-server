@@ -11,10 +11,10 @@ themselves, in a temporary `OPENTUNE_DATA_DIR`, and stop it afterwards; your pre
 real discovery files are never touched. With `OTCP_TARGET_DATA_DIR` the data folders are kept
 instead, so the logs of the instance can be read afterwards (see below).
 
-| Command                 | What it runs                                                                                           |
-| ----------------------- | ------------------------------------------------------------------------------------------------------ |
-| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`). |
-| `npm run e2e:exe`       | One end-to-end scenario: import, analysis, AUTO, export, with timings.                                 |
+| Command                 | What it runs                                                                                                   |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`).         |
+| `npm run e2e:exe`       | The end-to-end scenario (import, analysis, AUTO, export, with timings) and the three boundary scenarios below. |
 
 ## Prerequisites
 
@@ -114,6 +114,41 @@ Which files make up the state you want is up to the caller; this repository does
 
 A step that fails stops the scenario; the remaining steps are `SKIP` ("not run"), except the
 shutdown, which always runs.
+
+## Boundary scenarios
+
+`npm run e2e:exe` also runs three scenarios for what the happy path never feeds OpenTune. Each has a table
+of its own on stderr and, with `OTCP_E2E_REPORT`, a report file `<scenario>.json` in the folder of that
+variable (the smoke report stays at the path given). The reports have the members of the smoke report
+(`schema`, `result`, `counts`, `startedAt`, `totalMs`, `steps[]` with `name`, `result`, `ms`, `note`) plus
+`scenario`, `facts` (what was observed, for example the analysis limit the instance reported) and
+`manualChecks` (what only a person can check on this machine, each with the reason). Results mean the same as
+for the smoke scenario; a `SKIP` here is a missing capability or a machine that is not free for the scenario, and
+the note says which. They run one after the other, and the two that go through the MCP bundle use the file built
+by the project's global setup (`dist/opentune-mcp.mjs`).
+
+| Scenario (report)  | What it checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `boundary.json`    | One instance, started like the smoke scenario. Audio in a folder and under a file name with Chinese characters and spaces is imported (`project.get` names the same source file) and a master export to such a folder is written and read back. A silent file is imported, its clip stays in the project, the analysis outcome is recorded (`ANALYSIS_FAILED` or an analysis that ends without voiced audio) and a master export lists it in `dryContents`. A 601 s, 8 kHz, 8 bit file (about 4.8 MB, generated) is refused with `INVALID_ARGUMENT(audio_too_long)` and the limit of `session.info` in the detail, and nothing is imported. An edit followed by `edit.undo` and `edit.redo` leaves the read-back state as before the edit and as after it (skipped when the instance reports no `edit.v1` or `history.v1`). Relative, UNC, alternate-data-stream and `.docx` export paths are refused with `INVALID_ARGUMENT` and no file appears in the target folder. |
+| `instances.json`   | Two instances that announce themselves in one discovery folder, driven through the MCP bundle: without `instance_id` a read and a write give `MULTIPLE_INSTANCES` and change neither instance; with it the write works on that instance only; after one instance is ended (only one this scenario started) the next scan removes its discovery file and the other instance keeps working.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `launch-real.json` | `opentune_launch` and `opentune_get_status` through the MCP bundle: an executable without a control manifest (the official installation when found, read-only, else a copy of the test build without its manifest) gives `NO_API_BUILD` and starts no process; two launches at once and one after them give one process and `alreadyRunning`; after the MCP process is killed, OpenTune, its discovery file and the unsaved clip are still there and a new MCP process reports the same `instanceId` as `READY`. The case of an OpenTune running without the control API needs the official GUI and is listed in `manualChecks`.                                                                                                                                                                                                                                                                                                                                        |
+
+Things to know before running them:
+
+- They use the same variables as the smoke scenario (`OTCP_TARGET_EXE`, `OTCP_TARGET_TIMEOUT_MS`,
+  `OTCP_TARGET_DATA_TEMPLATE`, `OTCP_E2E_STEP_TIMEOUT_MS`, `OTCP_E2E_REPORT`). `instances` and `launch-real`
+  take their data and discovery folders from a scratch folder of their own below the system temporary directory
+  (`ot-e2e-*`), which is removed at the end, also after a failure; `OTCP_TARGET_DATA_DIR` applies to `boundary` only.
+- The MCP bundle is started with an environment that holds only the variables the scenario sets: variables
+  `OPENTUNE_MCP_*` and `OPENTUNE_DATA_DIR` of the calling shell never reach it, so no scenario can resolve the
+  discovery folder of a real OpenTune.
+- Only a process the scenario started is ended: an instance it spawned itself, or the one `opentune_launch`
+  started, after its discovery file in the scenario's folder and its start time show it to be that process.
+  `launch-real` stops (`SKIP`, with the reason in the note) before it launches anything when an `OpenTune.exe`
+  that it did not start is running; it never ends that one.
+- Nothing is installed or uninstalled, and the registry is only read (the official installation is looked up with
+  the same read-only query as `opentune-mcp doctor`).
+- A machine that runs several of these checks should take turns: run them one at a time.
 
 ## Results
 

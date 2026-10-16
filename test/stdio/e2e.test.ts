@@ -112,3 +112,48 @@ describe('bundle against the mock', () => {
     for (const secret of secrets) expect(`${out}${doctor.stderr()}`).not.toContain(secret);
   });
 });
+
+describe('bundle when the client goes away', () => {
+  const EXIT_WITHIN_MS = 5000;
+
+  it('exits 0 soon after stdin ends while a long job poll is still waiting for the instance', async () => {
+    const dir = tempDir();
+    cleanup.push(dir.remove);
+    const mock: OtcpMock = await startMock({ discoveryDir: dir.dir });
+    cleanup.push(() => mock.stop());
+    const jobs = mock.given({ jobs: [{ bind: 'slow', kind: 'import', state: 'running', cancellable: true }] });
+
+    const run = spawnBundle([], { OPENTUNE_MCP_DISCOVERY_DIR: dir.dir });
+    const client = new LineClient((line) => run.child.stdin.write(line), run.child.stdout, 20_000);
+    await client.request(1, 'initialize', {
+      protocolVersion: '2025-11-25',
+      capabilities: {},
+      clientInfo: { name: 'e2e', version: '0.0.0' },
+    });
+    client.notify('notifications/initialized');
+    // Open the session first, so that the poll below is on the wire and not still connecting.
+    await client.request(2, 'tools/call', { name: 'opentune_get_status', arguments: {} });
+
+    // The poll waits up to 30 s for a job that never ends; its answer is never read.
+    void client
+      .request(3, 'tools/call', { name: 'opentune_get_job', arguments: { job_id: jobs.slow, wait_seconds: 30 } })
+      .catch(() => undefined);
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    const endedAt = Date.now();
+    run.child.stdin.end();
+    const code = await Promise.race([
+      run.exited,
+      new Promise<'still running'>((resolve) =>
+        setTimeout(() => {
+          resolve('still running');
+        }, EXIT_WITHIN_MS),
+      ),
+    ]);
+    expect(code).toBe(0);
+    expect(Date.now() - endedAt).toBeLessThan(EXIT_WITHIN_MS);
+    // Only protocol frames were written, and nothing complaining on stderr about a dropped client.
+    for (const line of client.lines) expect(isJsonRpcMessage(JSON.parse(line)), line).toBe(true);
+    expect(run.stderr()).not.toMatch(/unhandled|uncaught|ERR_|EPIPE/i);
+  });
+});

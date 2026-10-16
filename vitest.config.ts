@@ -55,7 +55,14 @@ export default defineConfig({
         // The scenario against a started OpenTune; skipped as a whole unless OTCP_TARGET_EXE is set.
         // A first start can load models and analyse audio, so the time limit is generous.
         extends: true,
-        test: { name: 'e2e', include: ['test/e2e/**/*.test.ts'], testTimeout: 1_800_000, hookTimeout: 120_000 },
+        test: {
+          name: 'e2e',
+          include: ['test/e2e/**/*.test.ts'],
+          // The scenarios that go through the MCP bundle run the built file.
+          globalSetup: ['test/stdio/global-setup.ts'],
+          testTimeout: 1_800_000,
+          hookTimeout: 120_000,
+        },
       },
     ],
     coverage: {

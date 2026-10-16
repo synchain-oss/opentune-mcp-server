@@ -397,12 +397,16 @@ describe('smoke helpers', () => {
 /** Runs the real test file of the scenario in a child process, with only the variables given. */
 function runTestFile(env: Record<string, string>) {
   const clean = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('OTCP_')));
-  return spawnSync(process.execPath, [VITEST, 'run', '--project', 'e2e', '--reporter=verbose'], {
-    cwd: ROOT,
-    env: { ...clean, ...env },
-    encoding: 'utf8',
-    timeout: 80_000,
-  });
+  return spawnSync(
+    process.execPath,
+    [VITEST, 'run', '--project', 'e2e', 'test/e2e/exe-smoke.test.ts', '--reporter=verbose'],
+    {
+      cwd: ROOT,
+      env: { ...clean, ...env },
+      encoding: 'utf8',
+      timeout: 80_000,
+    },
+  );
 }
 
 describe('the scenario as a test file', () => {

@@ -62,6 +62,22 @@ describe('normalizePath on Windows', () => {
     expect(ok('C:\\音乐\\人声 01.wav', WIN)).toBe('C:\\音乐\\人声 01.wav');
   });
 
+  it('keeps Chinese names and inner spaces exactly, in every spelling a caller may use', () => {
+    const wanted = 'C:\\Music\\人声 一.wav';
+    expect(ok('C:\\Music\\人声 一.wav', WIN)).toBe(wanted);
+    expect(ok('"C:\\Music\\人声 一.wav"', WIN)).toBe(wanted);
+    expect(ok('C:/Music/人声 一.wav', WIN)).toBe(wanted);
+    expect(ok('file:///C:/Music/%E4%BA%BA%E5%A3%B0%20%E4%B8%80.wav', WIN)).toBe(wanted);
+    expect(ok('/mnt/c/Music/人声 一.wav', WIN)).toBe(wanted);
+    // Spaces inside a segment are part of the name; a Chinese directory with a space is no exception.
+    expect(ok('C:\\音乐 库\\我的 歌\\人声 一.wav', WIN)).toBe('C:\\音乐 库\\我的 歌\\人声 一.wav');
+    // Only an ending space of a segment is refused, whatever script the name is in.
+    expect(reason('C:\\Music\\人声 \\一.wav', WIN)).toBe('path_not_normalized');
+    expect(ok('C:\\Music\\人声 一 .wav', WIN)).toBe('C:\\Music\\人声 一 .wav');
+    // The extension rule looks at the end of the path, not at the script before it.
+    expect(extensionProblem('C:\\Music\\人声 一.wav', ['.wav'])).toBeUndefined();
+  });
+
   it('turns file:// URLs, ~ and /mnt/<drive>/ into drive paths', () => {
     expect(ok('file:///C:/Music/a%20b.wav', WIN)).toBe('C:\\Music\\a b.wav');
     expect(ok('FILE://localhost/C:/Music/a.wav', WIN)).toBe('C:\\Music\\a.wav');
