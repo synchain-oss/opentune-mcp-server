@@ -29,13 +29,13 @@ most 200 handles; `handleCount` gives the number and `handlesTruncated` marks a 
 `log`), `log_lines?` (1 to 500, default 100) and `instance_id?`. It calls `session.info` always, `prefs.get` for
 `processing` and `recent`, `audio.get` for `audio_device` and `app.getLog` for `log`.
 
-| Section        | Source                                        | Without the capability                    |
-| -------------- | --------------------------------------------- | ----------------------------------------- |
-| `processing`   | `prefs.get` merged with `session.info`        | `session.info` values only (`read.v1`)    |
-| `audio_device` | `audio.get`                                   | `null`, `capability_missing:audio.device` |
-| `recent`       | `prefs.get`                                   | `null`, `capability_missing:read.v1`      |
-| `export_caps`  | `session.info` (`import`, `export`, `limits`) | always available                          |
-| `log`          | `app.getLog`                                  | `null`, `capability_missing:read.v1`      |
+| Section        | Source                                               | Without the capability                         |
+| -------------- | ---------------------------------------------------- | ---------------------------------------------- |
+| `processing`   | `session.info`, null members filled from `prefs.get` | `session.info` values only (without `read.v1`) |
+| `audio_device` | `audio.get`                                          | `null`, `capability_missing:audio.device`      |
+| `recent`       | `prefs.get`                                          | `null`, `capability_missing:read.v1`           |
+| `export_caps`  | `session.info` (`import`, `export`, `limits`)        | always available                               |
+| `log`          | `app.getLog`                                         | `null`, `capability_missing:read.v1`           |
 
 A section whose capability is missing does not fail the call. When the log would make the result larger than 20,000
 characters, the oldest lines are left out and the summary says how many.
@@ -44,10 +44,22 @@ characters, the oldest lines are left out and the summary says how many.
 
 - **Untrusted strings.** Recent project paths, device names and log lines are returned only as JSON string values; the
   summary sentences contain only counts and names of enumerated values.
+- **Processing merge.** Both `session.info` and `prefs.get` list the same eight settings (and `language`). The live
+  value of `session.info` is taken first; a member that is `null` or missing there is filled from `prefs.get`; a `null`
+  never replaces a value. `session.info` alone supplies the runtime members (`backend`, `vocoderReady`,
+  `vocoderReconfiguring`), `prefs.get` alone supplies `onboardingShown`. `language` and `onboardingShown` are members of
+  `processing` and are named in the tool description. `processing.nullReasons` is rebuilt from the members that are
+  still `null`, so a reason never stays on a member that has a value; `onboardingShown` is `null` with
+  `capability_missing:read.v1` when the instance lacks `read.v1`.
+- **Log size.** When the log does not fit, the largest number of newest lines that does fit is kept (binary search). If
+  no line fits next to the other sections, the summary says so instead of claiming that the oldest lines were left out.
 - **Residual reference binding.** The specification says the AUTO button runs the reference mode only when the instance
   reports `reference.v1`. It does not say what the button runs for a clip that still has a reference binding on an
-  instance without that capability. The result then carries the warning `RESIDUAL_REFERENCE_BINDING` that says so; it
-  adds no field of its own.
+  instance without that capability. The result then carries a `notices` list with the code
+  `RESIDUAL_REFERENCE_BINDING`, and the first summary sentence says that the AUTO button may run AUTO Ref and that
+  `autoModes.uiButtonRuns` cannot be relied on. This is a notice of this MCP server, not an OTCP warning: the code is
+  not in `registry/warnings.json`, the list is named `notices` (not `warnings`) so that nothing treats it as an OTCP
+  warning envelope, and no check validates it against the OTCP registry. It adds no OTCP field.
 
 ## Compatibility
 

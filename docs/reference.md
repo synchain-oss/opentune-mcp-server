@@ -277,7 +277,7 @@ OTCP capabilities: `read.v1`. OTCP methods: `content.getDetails`, `project.get`.
 
 **Get OpenTune settings**: read-only, not destructive, idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only.
+OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features, language, whether onboarding was shown), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only.
 
 OTCP capabilities: `session.v1`, `read.v1`, `audio.device`. OTCP methods: `session.info`, `prefs.get`, `audio.get`, `app.getLog`.
 

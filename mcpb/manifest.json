@@ -96,7 +96,7 @@
     },
     {
       "name": "opentune_get_settings",
-      "description": "OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only."
+      "description": "OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features, language, whether onboarding was shown), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only."
     }
   ],
   "tools_generated": false,

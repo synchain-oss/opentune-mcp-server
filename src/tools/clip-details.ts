@@ -6,7 +6,7 @@
 // reference binding and the AUTO modes. The result carries the clip_revision, which the write tools
 // take as expected_revision. The AUTO fields are OTCP's; when the clip still has a reference
 // binding that the instance cannot act on, the result says what the specification leaves open
-// instead of inventing a field.
+// instead of inventing a field (a notice of this server, not an OTCP warning).
 
 import { z } from 'zod';
 
@@ -99,7 +99,9 @@ export async function getClipDetails(ctx: ToolContext, args: GetClipDetailsArgs)
       }
     }
 
-    const warnings: Json[] = [];
+    // MCP-layer notices, not OTCP warnings: the code is not in registry/warnings.json and the list is
+    // not called warnings, so nothing treats it as an OTCP warning envelope.
+    const notices: Json[] = [];
     const reference = isObject(details.reference) ? details.reference : null;
     const autoModes = isObject(details.autoModes) ? details.autoModes : null;
     if (
@@ -108,7 +110,7 @@ export async function getClipDetails(ctx: ToolContext, args: GetClipDetailsArgs)
       typeof reference.referencePlacementId === 'string' &&
       !session.hello.capabilities.includes('reference.v1')
     ) {
-      warnings.push({
+      notices.push({
         code: 'RESIDUAL_REFERENCE_BINDING',
         message:
           'The clip still has a reference binding, but this OpenTune build does not report reference.v1, so ' +
@@ -135,12 +137,18 @@ export async function getClipDetails(ctx: ToolContext, args: GetClipDetailsArgs)
       parts.push(`the pitch analysis state is ${f0State}${failure === null ? '' : ` (failed: ${failure})`}`);
     }
     const mode = trustedToken(autoModes?.uiButtonRuns, NAME_RE);
-    if (wanted.has('auto_modes') && mode !== null) parts.push(`the AUTO button would run ${mode}`);
+    if (wanted.has('auto_modes') && mode !== null) {
+      // With a leftover binding the value is not reliable; do not state it as a fact.
+      if (notices.length === 0) parts.push(`the AUTO button would run ${mode}`);
+      else parts.push('autoModes.uiButtonRuns is not reliable here (see notices)');
+    }
     const summary =
-      'Read the details of the clip' +
-      (parts.length > 0 ? `: ${parts.join('; ')}` : '') +
-      '. Times are in seconds; clip_revision can be passed as expected_revision to a write tool.' +
-      (warnings.length > 0 ? ' Read the warnings: a reference binding is left over.' : '');
+      (notices.length > 0
+        ? 'Read the details of the clip. Caution: a reference binding is left over, so the AUTO button may run ' +
+          'AUTO Ref and autoModes.uiButtonRuns cannot be relied on (see notices)'
+        : 'Read the details of the clip') +
+      (parts.length > 0 ? `${notices.length > 0 ? '; ' : ': '}${parts.join('; ')}` : '') +
+      '. Times are in seconds; clip_revision can be passed as expected_revision to a write tool.';
 
     return {
       ok: true,
@@ -152,7 +160,7 @@ export async function getClipDetails(ctx: ToolContext, args: GetClipDetailsArgs)
         durationSec: details.durationSec ?? null,
         clip_revision: revision,
         ...members,
-        ...(warnings.length > 0 ? { warnings } : {}),
+        ...(notices.length > 0 ? { notices } : {}),
         derived: Array.isArray(details.derived) ? details.derived : [],
         ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}),
       },
