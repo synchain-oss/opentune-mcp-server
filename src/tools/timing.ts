@@ -64,6 +64,7 @@ const opSchema = z.discriminatedUnion('op', [
     moves: z
       .array(
         z.strictObject({
+          // zod 4 counts max() in code points, as the spec's maxLength does, and listHandles counts the same way.
           handle_id: z
             .string()
             .min(1)
@@ -413,10 +414,10 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
       const failure = fromOtcpError(error.data, stepFor(error, args));
       const gridChanged = error.data.kind === 'REVISION_CONFLICT' && error.data.reason === 'grid_changed';
       // The grid moved under this call: the handles it reports now are the ones the next try needs.
-      const current: Json = gridChanged
+      const currentHandles: Json = gridChanged
         ? handleFields(await handlesOf(session, contentId), 'the read of the time grid failed')
         : {};
-      if (steps.length === 0) return { ok: false, error: failure, ...(gridChanged ? { context: current } : {}) };
+      if (steps.length === 0) return { ok: false, error: failure, ...(gridChanged ? { context: currentHandles } : {}) };
       const applied = steps.length;
       // Earlier operations of this call took effect; the error says which one failed.
       const retry = gridChanged
@@ -433,7 +434,7 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
             message: `${failure.nextStep.message} Operations 1 to ${String(applied)} are applied: ${retry}`,
           },
         },
-        context: { ...current, completed: steps.map((s) => s.body) },
+        context: { ...currentHandles, completed: steps.map((s) => s.body) },
       };
     }
     const [only] = steps;
