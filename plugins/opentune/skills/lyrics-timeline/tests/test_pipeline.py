@@ -183,3 +183,13 @@ def test_qwen_aligner_resamples_and_reports_the_mismatch():
     al.model = SimpleNamespace(align=lambda **kw: [[item(0.0, 0.3), item(0.3, 0.6), item(0.6, 1.0)]])
     al.align(None, 10.0, 12.0, units, "zh")
     assert al.last_mismatch is None
+
+
+def test_notes_that_parse_to_nothing_warn_and_are_not_snapped_to(vocal, truth):
+    shifted = FakeAligner(truth, noise=0.07)
+    doc = build_timeline(vocal, FakeAsr(truth), shifted, lyrics=SONG[0], language="zh", notes=[], notes_requested=True)
+    assert any("--notes" in w and "no usable notes" in w for w in doc["warnings"])
+    assert all(t["snap"]["source"] != "note" for ln in doc["lines"] for t in ln["tokens"] if t.get("snap"))
+    assert doc["params"]["notes_given"] == 0
+    quiet = build_timeline(vocal, FakeAsr(truth), shifted, lyrics=SONG[0], language="zh")
+    assert not any("--notes" in w for w in quiet["warnings"])  # no --notes, no warning

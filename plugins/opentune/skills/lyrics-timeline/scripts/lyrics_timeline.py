@@ -119,6 +119,7 @@ def main(argv: list[str] | None = None) -> int:
         audio_name=os.path.basename(args.audio),
         sample_rate=sr,
         model_info=info,
+        notes_requested=bool(args.notes),
     )
     problems = validate_output(doc)
     if problems:

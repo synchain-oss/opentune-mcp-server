@@ -14,7 +14,10 @@ allowed-tools: Bash Read Write
 
 Turns a dry vocal file into a per-character (Chinese) or per-word (English) timeline with line and
 section structure. The times are seconds inside the vocal file, which is OpenTune's **content
-clock** when the same file was imported. Lyrics, audio and the timeline never leave this computer.
+clock** when the same file was imported. The scripts make no network calls except the model
+download you agreed to, and this skill never uploads the audio. The lyrics and the timeline are
+text files that you (the assistant) read like any other file content, so they enter the
+conversation with the model provider.
 
 ## When to use it
 

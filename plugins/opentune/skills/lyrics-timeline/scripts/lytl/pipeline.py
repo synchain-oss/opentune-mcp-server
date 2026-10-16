@@ -179,6 +179,7 @@ def build_timeline(
     audio_name: str = "",
     sample_rate: int = TARGET_SR,
     model_info: dict[str, Any] | None = None,
+    notes_requested: bool = False,
 ) -> dict[str, Any]:
     """Build the timeline for 16 kHz mono audio ``x`` (see SKILL.md for the output fields)."""
     feats = frame_features(x)
@@ -186,6 +187,11 @@ def build_timeline(
     regions = energy_vad(feats)
     chunks = split_chunks(regions, feats, MAX_ASR_SEC)
     warnings: list[str] = []
+    if notes_requested and not notes:
+        warnings.append(
+            "--notes was given but no usable notes could be read from it; starts were not snapped to notes "
+            "(acoustic onsets only)"
+        )
     note_starts = sorted(n.start for n in notes)
     onsets = detect_onsets(feats)
     out: dict[str, Any] = {

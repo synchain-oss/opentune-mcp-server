@@ -307,3 +307,27 @@ def test_notes_pages_and_merged_array_give_the_same_notes(tmp_path):
     from_pages = cli._read_notes([str(p2), str(p1)])  # order of the files does not matter
     assert [x.start for x in from_pages] == [x.start for x in cli._read_notes([str(merged)])] == [0.5, 1.5, 2.5, 3.5, 4.5]
     assert cli._read_notes(None) == []
+
+
+def test_plan_reports_unsupported_python_and_platform_before_downloading(monkeypatch, capsys, tmp_path):
+    sys.path.insert(0, SCRIPTS)
+    import setup as setup_script  # noqa: PLC0415
+
+    # nagisa -> DyNet38 ships wheels only for CPython 3.10..3.14 and for x86-64 Windows, macOS and Linux.
+    assert setup_script.platform_problems((3, 12), "win32", "AMD64") == []
+    assert setup_script.platform_problems((3, 14), "darwin", "arm64") == []
+    assert setup_script.platform_problems((3, 12), "linux", "x86_64") == []
+    assert "Python 3.15" in setup_script.platform_problems((3, 15), "win32", "AMD64")[0]
+    assert "Python 3.9" in setup_script.platform_problems((3, 9), "darwin", "arm64")[0]
+    assert "ARM64" in setup_script.platform_problems((3, 12), "win32", "ARM64")[0]
+    assert "freebsd" in setup_script.platform_problems((3, 12), "freebsd14", "amd64")[0]
+
+    monkeypatch.setenv("OPENTUNE_LYRICS_HOME", str(tmp_path / "h"))
+    monkeypatch.setattr(setup_script, "current_platform", lambda: ((3, 15), "win32", "ARM64"))
+    monkeypatch.setattr(sys, "argv", ["setup.py"])
+    assert setup_script.main(["--plan", "--size", "0.6B", "--torch", "cpu"]) == 0
+    out = capsys.readouterr().out
+    assert "NOT SUPPORTED HERE" in out and "Python 3.15" in out and "ARM64" in out
+    # --yes refuses before anything is created or downloaded
+    assert setup_script.main(["--yes", "--size", "0.6B", "--torch", "cpu"]) == 2
+    assert not (tmp_path / "h").exists()

@@ -521,8 +521,6 @@ function reuseLint() {
     : { result: 'FAIL', note: `reuse lint exited with ${result.status ?? 'a signal'}` };
 }
 
-const SKILLS_DIR = 'plugins/opentune/skills';
-
 /** The first Python 3 on PATH that can import every module in `modules`, or the reason none can. */
 function findPython(modules) {
   const reasons = [];
@@ -541,15 +539,19 @@ function findPython(modules) {
 }
 
 async function skillPytest() {
-  // The Python skills carry their own tests (no torch, no model weights). They run here when Python
-  // and the test dependencies are importable; otherwise the row is a SKIP that says why.
+  // The Python skills carry their own tests (no torch, no model weights). Each skill is reported on
+  // its own: one whose test dependencies cannot be imported is a SKIP for that skill only and does
+  // not stop the others. The row is FAIL if any skill failed, else SKIP if any was skipped (so
+  // --no-skip turns it red), else PASS; the notes column lists every skill.
   const skillDirs = [];
   for (const entry of await fs.readdir(path.join(ROOT, SKILLS_DIR), { withFileTypes: true }).catch(() => [])) {
     const req = path.join(ROOT, SKILLS_DIR, entry.name, 'requirements-test.txt');
     if (entry.isDirectory() && (await fs.stat(req).catch(() => null))) skillDirs.push(path.dirname(req));
   }
   if (skillDirs.length === 0) throw new Skip(`no ${SKILLS_DIR}/*/requirements-test.txt`);
-  const passed = [];
+  const parts = [];
+  let failed = false;
+  let skipped = false;
   for (const dir of skillDirs) {
     const name = path.basename(dir);
     const text = await fs.readFile(path.join(dir, 'requirements-test.txt'), 'utf8');
@@ -560,21 +562,24 @@ async function skillPytest() {
       .map((l) => l.split(/[<>=!~;[ ]/)[0].replace(/-/g, '_'));
     const python = findPython(modules);
     if (python.reason) {
-      throw new Skip(
-        `${name}: cannot import ${modules.join(', ')} (${python.reason}); ` +
-          `pip install -r ${SKILLS_DIR}/${name}/requirements-test.txt`,
+      skipped = true;
+      parts.push(
+        `${name}: SKIP (cannot import ${modules.join(', ')}: ${python.reason}; ` +
+          `pip install -r ${SKILLS_DIR}/${name}/requirements-test.txt)`,
       );
+      continue;
     }
     const result = spawnSync(python.command, [...python.prefix, '-I', '-m', 'pytest', '-q'], {
       cwd: dir,
       stdio: ['ignore', 2, 2],
     });
     if (result.error) throw result.error;
-    if (result.status !== 0)
-      return { result: 'FAIL', note: `${name}: python -I -m pytest exited with ${result.status ?? 'a signal'}` };
-    passed.push(name);
+    if (result.status !== 0) {
+      failed = true;
+      parts.push(`${name}: FAIL (python -I -m pytest exited with ${result.status ?? 'a signal'})`);
+    } else parts.push(`${name}: PASS (python -I -m pytest)`);
   }
-  return { result: 'PASS', note: `python -I -m pytest passed in ${passed.join(', ')}` };
+  return { result: failed ? 'FAIL' : skipped ? 'SKIP' : 'PASS', note: parts.join('; ') };
 }
 
 async function contractVectors() {

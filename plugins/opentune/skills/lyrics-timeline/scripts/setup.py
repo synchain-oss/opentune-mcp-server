@@ -14,6 +14,7 @@ import argparse
 import hashlib
 import json
 import os
+import platform
 import subprocess
 import sys
 import urllib.error
@@ -36,6 +37,44 @@ TORCH_APPROX = {"cpu": 250_000_000, "cuda": 3_000_000_000, "default": 400_000_00
 PACKAGES_APPROX = 600_000_000  # transformers, librosa, scipy and friends
 MIRRORS = ("hf", "modelscope")
 UA = {"User-Agent": "opentune-lyrics-timeline-setup"}
+
+
+# nagisa 0.2.11 (imported at module level by qwen_asr) depends on DyNet38 2.2, a compiled C++ library
+# that ships wheels only, for CPython 3.9-3.14 (checked on PyPI: both packages list the same set), and
+# for the platforms below. Anything else would make pip try to compile DyNet, which fails in practice.
+NAGISA_PYTHONS = ((3, 10), (3, 14))  # the skill needs 3.10+; the wheels stop at 3.14
+NAGISA_WHEELS = {
+    "win32": {"x86_64"},  # no Windows on ARM wheels
+    "darwin": {"x86_64", "arm64"},
+    "linux": {"x86_64", "arm64"},
+}
+
+
+def current_platform() -> tuple[tuple[int, int], str, str]:
+    """(Python major.minor, sys.platform, machine); a separate function so that tests can stub it."""
+    return (sys.version_info[0], sys.version_info[1]), sys.platform, platform.machine()
+
+
+def platform_problems(py: tuple[int, int], plat: str, machine: str) -> list[str]:
+    """Why the pinned package set (nagisa -> DyNet38) cannot be installed here; empty when it can."""
+    problems: list[str] = []
+    lo, hi = NAGISA_PYTHONS
+    if not lo <= py <= hi:
+        problems.append(
+            f"Python {py[0]}.{py[1]} is not supported: nagisa and DyNet38 ship wheels only for "
+            f"Python {lo[0]}.{lo[1]} to {hi[0]}.{hi[1]} (this skill needs 3.10 or newer)"
+        )
+    key = "linux" if plat.startswith("linux") else plat
+    arch = {"amd64": "x86_64", "x64": "x86_64", "aarch64": "arm64"}.get(machine.lower(), machine.lower())
+    allowed = NAGISA_WHEELS.get(key)
+    if allowed is None:
+        problems.append(f"platform {plat} is not supported: nagisa and DyNet38 have no wheels for it")
+    elif arch not in allowed:
+        problems.append(
+            f"{plat} on {machine} is not supported: nagisa and DyNet38 ship wheels for it only on "
+            + ", ".join(sorted(allowed))
+        )
+    return problems
 
 
 def human(n: float) -> str:
@@ -70,11 +109,16 @@ def build_plan(size: str, mirror: str, variant: str, home: str) -> dict[str, Any
         "packages_approx_bytes": PACKAGES_APPROX,
         "total_approx_bytes": total,
         "mirror": mirror,
+        "problems": platform_problems(*current_platform()),
     }
 
 
 def print_plan(plan: dict[str, Any]) -> None:
     print("Lyrics timeline setup plan (nothing has been changed):")
+    if plan.get("problems"):
+        print("  NOT SUPPORTED HERE (nothing would be downloaded; --yes refuses):")
+        for p in plan["problems"]:
+            print(f"    - {p}")
     print(f"  Folder         : {plan['home']}")
     print(f"  Python venv    : {plan['venv']}")
     print(f"  Models         : {plan['models_dir']}  (Qwen3-ASR {plan['asr_size']} + forced aligner)")
@@ -273,6 +317,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.plan:
         print_plan(plan)
         return 0
+    if plan["problems"]:
+        for p in plan["problems"]:
+            print(f"error: {p}", file=sys.stderr)
+        return 2
     os.makedirs(home, exist_ok=True)
     install_runtime(home, variant)
     for repo in (lhome.ASR_REPOS[size], lhome.ALIGNER_REPO):
