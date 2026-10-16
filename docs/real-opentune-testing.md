@@ -31,14 +31,15 @@ instead, so the logs of the instance can be read afterwards (see below).
 
 ## Environment variables
 
-| Variable                   | Required | Meaning                                                                                         |
-| -------------------------- | -------- | ----------------------------------------------------------------------------------------------- |
-| `OTCP_TARGET_EXE`          | yes      | Absolute path of the OpenTune executable. Without it both checks are skipped, with that reason. |
-| `OTCP_TARGET_ARGS`         | no       | JSON array of strings, the arguments to start it with. Default `["--control-api"]`.             |
-| `OTCP_TARGET_TIMEOUT_MS`   | no       | How long to wait for the ready file, the hello and the exit. Default 30000.                     |
-| `OTCP_E2E_REPORT`          | no       | Absolute path of the JSON report written by `npm run e2e:exe` (folders are created).            |
-| `OTCP_E2E_STEP_TIMEOUT_MS` | no       | How long one wait (analysis, a job, a not-yet-ready content) may take. Default 180000.          |
-| `OTCP_TARGET_DATA_DIR`     | no       | Absolute path of an existing folder; keeps the data folders of the launches (see below).        |
+| Variable                    | Required | Meaning                                                                                         |
+| --------------------------- | -------- | ----------------------------------------------------------------------------------------------- |
+| `OTCP_TARGET_EXE`           | yes      | Absolute path of the OpenTune executable. Without it both checks are skipped, with that reason. |
+| `OTCP_TARGET_ARGS`          | no       | JSON array of strings, the arguments to start it with. Default `["--control-api"]`.             |
+| `OTCP_TARGET_TIMEOUT_MS`    | no       | How long to wait for the ready file, the hello and the exit. Default 30000.                     |
+| `OTCP_E2E_REPORT`           | no       | Absolute path of the JSON report written by `npm run e2e:exe` (folders are created).            |
+| `OTCP_E2E_STEP_TIMEOUT_MS`  | no       | How long one wait (analysis, a job, a not-yet-ready content) may take. Default 180000.          |
+| `OTCP_TARGET_DATA_DIR`      | no       | Absolute path of an existing folder; keeps the data folders of the launches (see below).        |
+| `OTCP_TARGET_DATA_TEMPLATE` | no       | Absolute path of an existing folder whose contents are copied into every launch's data folder.  |
 
 ```bash
 # PowerShell: $env:OTCP_TARGET_EXE = 'C:\path\to\OpenTune.exe'
@@ -72,9 +73,25 @@ OTCP_TARGET_EXE=/path/to/OpenTune OTCP_TARGET_DATA_DIR="$RUNNER_TEMP/opentune-da
 ```
 
 When a step gets `BUSY` with reason `modal_open`, its note says that the instance has a modal dialog
-open. In the smoke scenario the report also gets `busyDiagnostics`: one extra read-only
-`ui.getState` call (only if the instance reports `ui.bridge`) with its busy conditions, open
-dialogs (kind and title, cut short) and first-run onboarding state.
+open (decided by the `BUSY` error the instance actually sent, not by text in the vector). In the
+smoke scenario the report also gets `busyDiagnostics`: one extra read-only `ui.getState` call (only
+if the instance reports `ui.bridge`) with its busy conditions, open dialogs (kind and title) and
+first-run onboarding state. Dialog titles are untrusted: a path under a user folder in a title is
+replaced by `<home>` and the title is cut short.
+
+## Starting from a known state: `OTCP_TARGET_DATA_TEMPLATE`
+
+Every launch starts with an empty data folder, which is a first start of the application, with
+whatever a first start does (a first-run dialog that blocks writes, for instance). To start from a
+known state instead, set `OTCP_TARGET_DATA_TEMPLATE` to an existing folder (an absolute path; a
+relative path, a missing folder or a file is a configuration error and fails the run, it is not a
+skip). Before each launch, in the contract run and in the smoke scenario alike, the contents of that
+folder are copied as they are into the data folder of that launch, whether it is a temporary folder
+or a sub-folder of `OTCP_TARGET_DATA_DIR`; then the process starts. Only regular files and
+sub-folders are copied, symbolic links are not followed. Every launch gets its own copy, so what one
+launch changes is not seen by the next. Without the variable nothing is copied.
+
+Which files make up the state you want is up to the caller; this repository does not ship any.
 
 ## What the scenario does
 

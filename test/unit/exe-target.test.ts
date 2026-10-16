@@ -6,7 +6,7 @@
 // the start-up and the end can go wrong.
 
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -19,7 +19,7 @@ import { exeConfigFromEnv, exeTarget } from '../contract/exe-target.js';
 import { runExeVector } from '../contract/exe-vectors.js';
 import { mockTarget } from '../contract/mock-target.js';
 import { PreconditionUnavailable } from '../contract/target.js';
-import { loadVectors } from '../contract/vectors.js';
+import { loadVectors, type Vector } from '../contract/vectors.js';
 
 const FAKE = fileURLToPath(new URL('../support/fake-opentune.mjs', import.meta.url));
 const SLOW = 30_000;
@@ -336,6 +336,185 @@ describe('OTCP_TARGET_DATA_DIR (kept data folders)', () => {
       expect(outcome.dataDir).toBeDefined();
       expect(existsSync(path.join(parent, outcome.dataDir ?? ''))).toBe(true);
       expect(outcome.dataDir?.startsWith(vector.id.replace(/[^A-Za-z0-9._-]+/g, '-'))).toBe(true);
+    },
+    SLOW,
+  );
+});
+
+describe('OTCP_TARGET_DATA_TEMPLATE (a known starting state)', () => {
+  const dirs: string[] = [];
+  async function scratch(): Promise<string> {
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ot-exe-tpl-'));
+    dirs.push(dir);
+    return dir;
+  }
+  afterEach(async () => {
+    for (const dir of dirs.splice(0)) await rm(dir, { recursive: true, force: true });
+  });
+  /** A template with a file at the top, one in a sub-folder and an empty sub-folder. */
+  async function template(): Promise<string> {
+    const dir = await scratch();
+    await writeFile(path.join(dir, 'state.txt'), 'known\n');
+    await mkdir(path.join(dir, 'nested', 'deeper'), { recursive: true });
+    await writeFile(path.join(dir, 'nested', 'deeper', 'inner.txt'), 'inner');
+    await mkdir(path.join(dir, 'empty'));
+    return dir;
+  }
+  const withTemplate = (snapshot: string, dataTemplate: string | undefined, dataDirParent?: string) =>
+    exeTarget({
+      exe: process.execPath,
+      args: [FAKE, '--mode=ok', `--snapshot=${snapshot}`],
+      timeoutMs: 10_000,
+      ...(dataTemplate !== undefined && { dataTemplate }),
+      ...(dataDirParent !== undefined && { dataDirParent }),
+    });
+  const held = (snapshot: string) => JSON.parse(readFileSync(snapshot, 'utf8')) as Record<string, string>;
+
+  it(
+    'copies the contents of the folder into the data folder of each launch, and two launches do not affect each other',
+    async () => {
+      const tpl = await template();
+      const out = await scratch();
+      const snapshot = path.join(out, 'snapshot.json');
+      const target = withTemplate(snapshot, tpl);
+      const expected = { 'state.txt': 'known\n', 'nested/deeper/inner.txt': 'inner' };
+      const first = await target.open();
+      expect(held(snapshot)).toEqual(expected);
+      await first.close();
+      await rm(snapshot);
+      const second = await target.open();
+      expect(held(snapshot)).toEqual(expected);
+      await second.close();
+      // The template itself is left as it was.
+      expect(readFileSync(path.join(tpl, 'state.txt'), 'utf8')).toBe('known\n');
+      expect(target.takeProblems()).toEqual([]);
+    },
+    SLOW,
+  );
+
+  it(
+    'a launch that changes its copy does not change the template or the next launch',
+    async () => {
+      const tpl = await template();
+      const parent = await scratch();
+      const snapshot = path.join(await scratch(), 'snapshot.json');
+      const target = withTemplate(snapshot, tpl, parent);
+      const first = await target.open();
+      const [firstDir] = target.takeDataDirs();
+      await writeFile(path.join(parent, firstDir ?? '', 'state.txt'), 'changed');
+      await first.close();
+      await rm(snapshot);
+      const second = await target.open();
+      expect(held(snapshot)['state.txt']).toBe('known\n');
+      await second.close();
+      expect(readFileSync(path.join(tpl, 'state.txt'), 'utf8')).toBe('known\n');
+      // The copy is in the kept folder, next to the logs of the launch.
+      expect(readFileSync(path.join(parent, firstDir ?? '', 'nested', 'deeper', 'inner.txt'), 'utf8')).toBe('inner');
+    },
+    SLOW,
+  );
+
+  it(
+    'copies nothing when the variable is not set',
+    async () => {
+      const snapshot = path.join(await scratch(), 'snapshot.json');
+      const instance = await withTemplate(snapshot, undefined).open();
+      expect(held(snapshot)).toEqual({});
+      await instance.close();
+    },
+    SLOW,
+  );
+
+  it(
+    'does not follow a symbolic link',
+    async () => {
+      const tpl = await template();
+      const outside = await scratch();
+      await writeFile(path.join(outside, 'secret.txt'), 'outside');
+      // A junction needs no special right on Windows; a link to a file may not be allowed there.
+      await symlink(outside, path.join(tpl, 'link-to-folder'), 'junction');
+      try {
+        await symlink(path.join(outside, 'secret.txt'), path.join(tpl, 'link-to-file'), 'file');
+      } catch {
+        // checked with the folder link alone
+      }
+      const snapshot = path.join(await scratch(), 'snapshot.json');
+      const instance = await withTemplate(snapshot, tpl).open();
+      expect(Object.keys(held(snapshot)).sort()).toEqual(['nested/deeper/inner.txt', 'state.txt']);
+      await instance.close();
+    },
+    SLOW,
+  );
+
+  it('is a configuration error, not a skip, when the folder is relative, missing or not a folder', async () => {
+    const tpl = await template();
+    const env = { OTCP_TARGET_EXE: FAKE };
+    expect(exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_TEMPLATE: tpl })).toEqual({
+      options: { exe: FAKE, dataTemplate: tpl },
+    });
+    expect(exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_TEMPLATE: '' })).toEqual({ options: { exe: FAKE } });
+    expect(() => exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_TEMPLATE: 'relative/dir' })).toThrow('absolute path');
+    expect(() => exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_TEMPLATE: path.join(tpl, 'missing') })).toThrow(
+      'existing directory',
+    );
+    expect(() => exeConfigFromEnv({ ...env, OTCP_TARGET_DATA_TEMPLATE: FAKE })).toThrow('existing directory');
+    expect(() => exeTarget({ exe: process.execPath, dataTemplate: 'relative' })).toThrow('absolute path');
+    expect(() => exeTarget({ exe: process.execPath, dataTemplate: path.join(tpl, 'missing') })).toThrow(
+      'existing directory',
+    );
+  });
+});
+
+describe('runExeVector and BUSY modal_open', () => {
+  /** A vector that asks for a write and expects it to succeed, with the given dialogs open. */
+  const writeVector = (id: string, given: Vector['given']): Vector => ({
+    id,
+    type: 'request',
+    description: 'test',
+    capability: 'ui.bridge',
+    since: '1.0',
+    method: 'ui.setSelection',
+    session: 'authenticated',
+    ...(given !== undefined && { given }),
+    request: { jsonrpc: '2.0', id: 1, method: 'ui.setSelection', params: { trackId: 1 } },
+    response: { jsonrpc: '2.0', id: 1, result: {} },
+  });
+  const noProblems = () => [];
+
+  it('adds the modal-dialog note when the instance sent BUSY modal_open', async () => {
+    const vector = writeVector('test/modal-received', {
+      dialogs: [{ kind: 'trackColour', trackId: 0, colour: '#FF8800' }],
+    });
+    const outcome = await runExeVector(vector, { ...mockTarget(), takeProblems: noProblems });
+    expect(outcome.result).toBe('FAIL');
+    expect(outcome.note).toContain('(the instance has a modal dialog open)');
+  });
+
+  it(
+    'does not add it when only the expectation of a vector says modal_open',
+    async () => {
+      // Nothing is open, so the instance answers normally; the vector then waits for a BUSY modal_open
+      // line that never comes, and its note quotes what it expected.
+      const busy = {
+        jsonrpc: '2.0',
+        id: 2,
+        error: { code: -32010, message: 'BUSY', data: { kind: 'BUSY', reason: 'modal_open' } },
+      };
+      const call = (id: number) => ({
+        jsonrpc: '2.0',
+        id,
+        method: 'ui.setSelection',
+        params: { trackId: 1 },
+      });
+      const vector: Vector = {
+        ...writeVector('test/modal-expected', undefined),
+        type: 'scenario',
+        steps: [{ send: call(1) }, { expect: { jsonrpc: '2.0', id: 1, result: {} } }, { expect: busy }],
+      };
+      const outcome = await runExeVector(vector, { ...mockTarget(), takeProblems: noProblems });
+      expect(outcome.result).toBe('FAIL');
+      expect(outcome.note).toContain('modal_open');
+      expect(outcome.note).not.toContain('modal dialog open');
     },
     SLOW,
   );

@@ -33,7 +33,7 @@ export async function runExeVector(
   let outcome = await runVector(vector, target);
   const dataDir = target.takeDataDirs?.()[0];
   // A modal dialog open from the start refuses every write; say so where the FAIL is read.
-  if (outcome.result === 'FAIL' && outcome.note.includes('modal_open')) {
+  if (outcome.result === 'FAIL' && outcome.receivedModalOpen === true) {
     outcome = { ...outcome, note: `${outcome.note} (the instance has a modal dialog open)` };
   }
   const kept = dataDir === undefined ? {} : { dataDir };

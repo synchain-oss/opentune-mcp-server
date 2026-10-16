@@ -27,6 +27,7 @@ import {
   isModalBusy,
   readWav,
   runSmoke,
+  safeTitle,
   smokeSetupFromEnv,
   summarise,
   writeReport,
@@ -273,6 +274,21 @@ describe('data folder and diagnostics', () => {
   );
 
   it(
+    'copies the template folder into the data folder before the launch',
+    async () => {
+      const tpl = await tmp();
+      await writeFile(path.join(tpl, 'state.txt'), 'known');
+      const parent = await tmp();
+      const base = config('smoke');
+      const report = await runSmoke({ ...base, exe: { ...base.exe, dataDirParent: parent, dataTemplate: tpl } });
+      expect(report.result).toBe('PASS');
+      const [kept] = readdirSync(parent);
+      expect(await readFile(path.join(parent, kept ?? '', 'state.txt'), 'utf8')).toBe('known');
+    },
+    SLOW,
+  );
+
+  it(
     'says in the note that a modal dialog is open, and records what ui.getState reports',
     async () => {
       const report = await runSmoke(config('smoke-busy'));
@@ -299,6 +315,17 @@ describe('data folder and diagnostics', () => {
     },
     SLOW,
   );
+
+  it('folds paths under a user folder in a dialog title to <home> and cuts the title short', () => {
+    expect(safeTitle('Save C:\\Users\\username\\Music\\take1.wav?')).toBe('Save <home>\\Music\\take1.wav?');
+    expect(safeTitle('c:/users/username/x')).toBe('<home>/x');
+    expect(safeTitle('Open /Users/username/Music/a.wav')).toBe('Open <home>/Music/a.wav');
+    expect(safeTitle('/home/username/.config/x')).toBe('<home>/.config/x');
+    expect(safeTitle('[/home/username/x]')).toBe('[<home>/x]');
+    expect(safeTitle('Welcome to OpenTune')).toBe('Welcome to OpenTune');
+    expect(safeTitle('x'.repeat(100))).toHaveLength(60);
+    expect(safeTitle(undefined)).toBe('undefined');
+  });
 
   it('classifies BUSY modal_open apart from other errors', () => {
     const busy = (reason: string) =>

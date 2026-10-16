@@ -20,7 +20,7 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, statSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
@@ -46,6 +46,13 @@ export interface ExeTargetOptions {
    * which hold a token, are removed from it); otherwise a temporary folder that is deleted.
    */
   readonly dataDirParent?: string;
+  /**
+   * Absolute path of an existing folder. When given, the contents of this folder are copied into the
+   * data folder of every launch before the process starts (with or without `dataDirParent`), so a
+   * test starts from a known state. Only regular files and sub-folders are copied; symbolic links
+   * are not followed.
+   */
+  readonly dataTemplate?: string;
 }
 
 export type ExeConfig = { readonly skip: string } | { readonly options: ExeTargetOptions };
@@ -83,7 +90,7 @@ const START_TOLERANCE_MS = 2000;
 const PROBE_ATTEMPTS = 3;
 const READY_FILE_REF = 'schemas/discovery-file.schema.json#/$defs/readyFileKnownMembers';
 
-/** Reads OTCP_TARGET_EXE, OTCP_TARGET_ARGS, OTCP_TARGET_TIMEOUT_MS and OTCP_TARGET_DATA_DIR. Throws on a bad value. */
+/** Reads OTCP_TARGET_EXE, OTCP_TARGET_ARGS, OTCP_TARGET_TIMEOUT_MS, OTCP_TARGET_DATA_DIR and OTCP_TARGET_DATA_TEMPLATE. Throws on a bad value. */
 export function exeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ExeConfig {
   const exe = env.OTCP_TARGET_EXE;
   if (exe === undefined || exe === '') return { skip: 'OTCP_TARGET_EXE is not set' };
@@ -115,9 +122,47 @@ export function exeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ExeConfi
     checkDataDirParent(rawDataDir);
     dataDirParent = rawDataDir;
   }
+  let dataTemplate: string | undefined;
+  const rawTemplate = env.OTCP_TARGET_DATA_TEMPLATE;
+  if (rawTemplate !== undefined && rawTemplate !== '') {
+    checkDataTemplate(rawTemplate);
+    dataTemplate = rawTemplate;
+  }
   return {
-    options: { exe, ...(args && { args }), ...(timeoutMs && { timeoutMs }), ...(dataDirParent && { dataDirParent }) },
+    options: {
+      exe,
+      ...(args && { args }),
+      ...(timeoutMs && { timeoutMs }),
+      ...(dataDirParent && { dataDirParent }),
+      ...(dataTemplate && { dataTemplate }),
+    },
   };
+}
+
+/** The template folder must be an absolute path to an existing directory. */
+function checkDataTemplate(dir: string): void {
+  if (!path.isAbsolute(dir)) throw new Error('OTCP_TARGET_DATA_TEMPLATE must be an absolute path');
+  let isDir = false;
+  try {
+    isDir = statSync(dir).isDirectory();
+  } catch {
+    // reported below
+  }
+  if (!isDir) throw new Error('OTCP_TARGET_DATA_TEMPLATE is not an existing directory');
+}
+
+/** Copies the contents of `from` into `to`: regular files and sub-folders only, links are skipped. */
+async function copyTemplate(from: string, to: string): Promise<void> {
+  for (const entry of await readdir(from, { withFileTypes: true })) {
+    const source = path.join(from, entry.name);
+    const target = path.join(to, entry.name);
+    if (entry.isDirectory()) {
+      await mkdir(target, { recursive: true });
+      await copyTemplate(source, target);
+    } else if (entry.isFile()) {
+      await copyFile(source, target);
+    }
+  }
 }
 
 /** The folder for kept data folders must be an absolute path to an existing directory. */
@@ -260,6 +305,7 @@ async function ownHello(discovery: Record<string, unknown>, timeoutMs: number): 
 export function exeTarget(options: ExeTargetOptions): ExeTarget {
   checkExe(options.exe);
   if (options.dataDirParent !== undefined) checkDataDirParent(options.dataDirParent);
+  if (options.dataTemplate !== undefined) checkDataTemplate(options.dataTemplate);
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   // A probe of its own per question, so no start time is remembered across a reuse of the pid.
   const probeOnce = options.probe ?? ((pid: number) => systemProbe().probe(pid));
@@ -445,6 +491,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       try {
         // Never a real OpenTune folder, whatever the temporary directory is.
         resolveDiscoveryDir(instancesDir);
+        if (options.dataTemplate !== undefined) await copyTemplate(options.dataTemplate, dataDir);
         child = spawn(
           options.exe,
           [
