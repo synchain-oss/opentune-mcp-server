@@ -8,6 +8,7 @@
 // paths and files; untrusted strings; the read limits and the output budget.
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
@@ -28,13 +29,22 @@ afterEach(async () => {
   for (const fn of cleanup.splice(0).reverse()) await fn();
 });
 
+// Synthetic audio is rendered and analysed in the test itself. The slowest of these tests take
+// 0.5 to 0.6 s on an idle development machine and 1.7 s for the output-budget test (120 s clip,
+// 16 sections); the light CI tier runs under coverage on a shared ubuntu runner and was 10 to 20
+// times slower there (G major: over 5 s, output budget: 10.6 s) against vitest's default of 5 s.
+// 30 s is the limit audio-tools.test.ts and the stdio project already use, about three times the
+// slowest CI run seen. The global timeout stays as it is; the light tests keep the default.
+const HEAVY_MS = 30_000;
+
 type Rewrite = (method: string, result: Json) => Json;
 
 /** A context without any OpenTune instance: only the mix can be read. */
-function offline(platform: NodeJS.Platform = process.platform): ToolContext {
+function offline(platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = {}): ToolContext {
   const t = tempDir();
   cleanup.push(t.remove);
-  const ctx = { ...testContext(t.dir), platform };
+  const base = testContext(t.dir);
+  const ctx = { ...base, platform, env: { ...base.env, ...env } };
   cleanup.push(() => {
     ctx.instances.close();
   });
@@ -135,29 +145,33 @@ describe('opentune_estimate_key from a mix', () => {
     ['A minor', [minor(9), minor(2), major(4), minor(9)], { kind: 'pcm24', rate: 44_100, stereo: true }],
     ['G major', [major(7), major(0), major(2), major(7)], { kind: 'float32', rate: 48_000, stereo: true }],
     ['Eb major', [major(3), major(8), major(10), major(3)], { kind: 'pcm32', rate: 22_050, extensible: true }],
-  ] as const)('finds %s', async (expected, chords, options) => {
-    const out = body(await estimateSongKey(offline(), { mix_path: mixFile(chords, options) }));
-    expect(top(out)?.name).toBe(expected);
-    expect(out.scale_set_confidence).toBeGreaterThan(0.85);
-    expect(out.tonic_confidence).toBeGreaterThan(0.9);
-    expect(out.candidates).toHaveLength(5);
-    const first = top(out);
-    expect(out.recommendation).toMatchObject({ key: { root: first?.root, scale: first?.scale }, ask_user: false });
-    expect((out.recommendation as { reason: string }).reason).toMatch(/^scale set confidence [0-9.]+$/);
-    expect(out.summary).toMatch(
-      new RegExp(
-        `^Estimated key: ${expected} \\(scale set confidence [0-9.]+, tonic confidence [0-9.]+\\) from mix, bass; nothing was changed\\.`,
-      ),
-    );
-    expect(out.sources).toMatchObject({
-      mix: { used: true, channels: 'stereo' in options ? 2 : 1 },
-      bass: { used: true },
-      vocals: { used: false, reason: 'not_given' },
-    });
-    expect(out.local_keys).toEqual([expect.objectContaining({ name: expected, start_sec: 0 })]);
-    expect(out.estimated_over).toEqual({ start_sec: 0, end_sec: 24 });
-    expect(out.nullReasons).toMatchObject({ 'tuning.vocals_offset_cents': 'no_clip' });
-  });
+  ] as const)(
+    'finds %s',
+    async (expected, chords, options) => {
+      const out = body(await estimateSongKey(offline(), { mix_path: mixFile(chords, options) }));
+      expect(top(out)?.name).toBe(expected);
+      expect(out.scale_set_confidence).toBeGreaterThan(0.85);
+      expect(out.tonic_confidence).toBeGreaterThan(0.9);
+      expect(out.candidates).toHaveLength(5);
+      const first = top(out);
+      expect(out.recommendation).toMatchObject({ key: { root: first?.root, scale: first?.scale }, ask_user: false });
+      expect((out.recommendation as { reason: string }).reason).toMatch(/^scale set confidence [0-9.]+$/);
+      expect(out.summary).toMatch(
+        new RegExp(
+          `^Estimated key: ${expected} \\(scale set confidence [0-9.]+, tonic confidence [0-9.]+\\) from mix, bass; nothing was changed\\.`,
+        ),
+      );
+      expect(out.sources).toMatchObject({
+        mix: { used: true, channels: 'stereo' in options ? 2 : 1 },
+        bass: { used: true },
+        vocals: { used: false, reason: 'not_given' },
+      });
+      expect(out.local_keys).toEqual([expect.objectContaining({ name: expected, start_sec: 0 })]);
+      expect(out.estimated_over).toEqual({ start_sec: 0, end_sec: 24 });
+      expect(out.nullReasons).toMatchObject({ 'tuning.vocals_offset_cents': 'no_clip' });
+    },
+    HEAVY_MS,
+  );
 
   it('measures a tuning offset of +20 cents and says what it means for corrections', async () => {
     const out = body(
@@ -189,48 +203,54 @@ describe('opentune_estimate_key from a mix', () => {
     );
   });
 
-  it('finds a key change a semitone up near the end, and keys per section', async () => {
-    const t = tempDir('ot-key-mix-');
-    cleanup.push(t.remove);
-    const rate = 11_025;
-    const song = [major(0), major(5), major(7), major(0)];
-    const up = song.map((c) => ({ ...c, notes: c.notes.map((n) => n + 1), bass: (c.bass ?? 0) + 1 }));
-    const first = renderSong(song, { rateHz: rate, repeat: 4 });
-    const second = renderSong(up, { rateHz: rate, repeat: 2 });
-    const signal = new Float64Array(first.length + second.length);
-    signal.set(first);
-    signal.set(second, first.length);
-    const file = path.join(t.dir, 'change.wav');
-    fs.writeFileSync(file, encodeWav([signal], rate, 'pcm16'));
-    const out = body(
-      await estimateSongKey(offline(), {
-        mix_path: file,
-        sections: [
-          { start_sec: 0, end_sec: 30 },
-          { start_sec: 33, end_sec: 48 },
-          { start_sec: 50, end_sec: 60 },
-        ],
-      }),
-    );
-    // The whole song mixes two scales; the estimate is that of its longest part.
-    expect(top(out)?.name).toBe('C major');
-    const local = out.local_keys as { name: string; start_sec: number; end_sec: number }[];
-    expect(local.map((s) => s.name)).toEqual(['C major', 'Db major']);
-    expect(out.estimated_over).toEqual({ start_sec: 0, end_sec: local[1]?.start_sec });
-    expect(out.summary).toMatch(/^Estimated key of the main part \(0 to \d+ s\): C major/);
-    expect(local[1]?.start_sec).toBeGreaterThanOrEqual(28);
-    expect(local[1]?.start_sec).toBeLessThanOrEqual(36);
-    expect(local[1]?.end_sec).toBeCloseTo(48, 1);
-    expect(out.summary).toMatch(/The key seems to change: C major from 0 s, Db major from \d+ s \(see local_keys\)\./);
-    expect((out.recommendation as { reason: string }).reason).toMatch(
-      /opentune_autotune_range with that part's range and key/,
-    );
-    const sections = out.sections as { key: unknown; candidates: { name: string }[]; nullReasons?: unknown }[];
-    expect(sections[0]?.candidates[0]?.name).toBe('C major');
-    expect(sections[1]?.candidates[0]?.name).toBe('Db major');
-    expect(sections[1]?.key).toEqual({ root: 1, scale: 'major' });
-    expect(sections[2]).toMatchObject({ key: null, candidates: [], nullReasons: { key: 'no_evidence' } });
-  });
+  it(
+    'finds a key change a semitone up near the end, and keys per section',
+    async () => {
+      const t = tempDir('ot-key-mix-');
+      cleanup.push(t.remove);
+      const rate = 11_025;
+      const song = [major(0), major(5), major(7), major(0)];
+      const up = song.map((c) => ({ ...c, notes: c.notes.map((n) => n + 1), bass: (c.bass ?? 0) + 1 }));
+      const first = renderSong(song, { rateHz: rate, repeat: 4 });
+      const second = renderSong(up, { rateHz: rate, repeat: 2 });
+      const signal = new Float64Array(first.length + second.length);
+      signal.set(first);
+      signal.set(second, first.length);
+      const file = path.join(t.dir, 'change.wav');
+      fs.writeFileSync(file, encodeWav([signal], rate, 'pcm16'));
+      const out = body(
+        await estimateSongKey(offline(), {
+          mix_path: file,
+          sections: [
+            { start_sec: 0, end_sec: 30 },
+            { start_sec: 33, end_sec: 48 },
+            { start_sec: 50, end_sec: 60 },
+          ],
+        }),
+      );
+      // The whole song mixes two scales; the estimate is that of its longest part.
+      expect(top(out)?.name).toBe('C major');
+      const local = out.local_keys as { name: string; start_sec: number; end_sec: number }[];
+      expect(local.map((s) => s.name)).toEqual(['C major', 'Db major']);
+      expect(out.estimated_over).toEqual({ start_sec: 0, end_sec: local[1]?.start_sec });
+      expect(out.summary).toMatch(/^Estimated key of the main part \(0 to \d+ s\): C major/);
+      expect(local[1]?.start_sec).toBeGreaterThanOrEqual(28);
+      expect(local[1]?.start_sec).toBeLessThanOrEqual(36);
+      expect(local[1]?.end_sec).toBeCloseTo(48, 1);
+      expect(out.summary).toMatch(
+        /The key seems to change: C major from 0 s, Db major from \d+ s \(see local_keys\)\./,
+      );
+      expect((out.recommendation as { reason: string }).reason).toMatch(
+        /opentune_autotune_range with that part's range and key/,
+      );
+      const sections = out.sections as { key: unknown; candidates: { name: string }[]; nullReasons?: unknown }[];
+      expect(sections[0]?.candidates[0]?.name).toBe('C major');
+      expect(sections[1]?.candidates[0]?.name).toBe('Db major');
+      expect(sections[1]?.key).toEqual({ root: 1, scale: 'major' });
+      expect(sections[2]).toMatchObject({ key: null, candidates: [], nullReasons: { key: 'no_evidence' } });
+    },
+    HEAVY_MS,
+  );
 
   it('says so when a silent mix gives nothing to estimate from, and needs some evidence', async () => {
     const t = tempDir('ot-key-mix-');
@@ -268,7 +288,8 @@ describe('opentune_estimate_key from a mix', () => {
 
 describe('opentune_estimate_key refuses files and paths it cannot use', () => {
   it('refuses another format by its extension, with a next step towards WAV', async () => {
-    const error = failure(await estimateSongKey(offline(), { mix_path: 'C:\\Music\\song.mp3' }));
+    // Absolute on the running platform; a drive path is only a relative name on POSIX.
+    const error = failure(await estimateSongKey(offline(), { mix_path: path.join(os.tmpdir(), 'song.mp3') }));
     expect(error).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'path_bad_extension', executed: false });
     expect(error.nextStep.message).toMatch(/Give a WAV file .*opentune_open_audio .*opentune_export_audio/);
     expect(JSON.stringify(error)).not.toContain('song.mp3');
@@ -326,12 +347,26 @@ describe('opentune_estimate_key refuses files and paths it cannot use', () => {
     ['a drive-relative path', 'C:mix.wav', 'path_drive_relative'],
     ['an alternate data stream', 'C:\\Music\\mix.wav:hidden', 'path_alternate_stream'],
     ['a file URL with a host', 'file://box7/folder7/mix.wav', 'path_unc'],
-    ['a home path without a home', '~/mix.wav', null],
   ])('refuses %s on Windows before reading anything', async (_label, input, reason) => {
     const error = failure(await estimateSongKey(offline('win32'), { mix_path: input }));
-    expect(error.kind).toBe(reason === null ? 'NOT_FOUND' : 'INVALID_ARGUMENT');
-    if (reason !== null) expect(error.reason).toBe(reason);
+    expect(error.kind).toBe('INVALID_ARGUMENT');
+    expect(error.reason).toBe(reason);
     for (const word of ['box7', 'folder7', 'hidden']) expect(JSON.stringify(error)).not.toContain(word);
+  });
+
+  it('reads the home of a Windows user from USERPROFILE and does not repeat it', async () => {
+    const error = failure(
+      await estimateSongKey(offline('win32', { USERPROFILE: 'C:\\ot-key-home7' }), { mix_path: '~/mix.wav' }),
+    );
+    expect(error).toMatchObject({ kind: 'NOT_FOUND', reason: 'file_not_found' });
+    expect(JSON.stringify(error)).not.toContain('home7');
+  });
+
+  it('refuses a home path on POSIX when HOME is not absolute', async () => {
+    const error = failure(
+      await estimateSongKey(offline('linux', { HOME: 'relative/home' }), { mix_path: '~/mix.wav' }),
+    );
+    expect(error.kind).toBe('INVALID_ARGUMENT');
   });
 
   it('turns /mnt/<drive>/ into a drive path on Windows', async () => {
@@ -412,44 +447,58 @@ describe('opentune_estimate_key with a clip', () => {
     expect((out.tuning as { vocals_offset_cents: number }).vocals_offset_cents).toBeCloseTo(-30, 0);
   });
 
-  it('corrects a mix that leans to the dominant with the vocals, and tells when the clip key has other notes', async () => {
-    const line = melody([60, 62, 64, 65, 67, 65, 64, 62, 60], 0.5, 24);
-    const mix = mixFile([major(7), major(7), major(0), major(7)]);
-    expect(top(body(await estimateSongKey(offline(), { mix_path: mix })))?.name).toBe('G major');
-    const { ctx, placement } = await setup({ key: { root: 7, scale: 'major' } }, vocals(line));
-    const out = body(await estimateSongKey(ctx, { clip: placement, mix_path: mix }));
-    expect(top(out)?.name).toBe('C major');
-    expect(out.sources).toMatchObject({ mix: { used: true }, bass: { used: true }, vocals: { used: true } });
-    expect((out.clip as { same_scale_set_as_estimate: unknown }).same_scale_set_as_estimate).toBe(false);
-    expect(out.summary).toMatch(/The clip's key in OpenTune has other notes than the estimate/);
-  });
+  it(
+    'corrects a mix that leans to the dominant with the vocals, and tells when the clip key has other notes',
+    async () => {
+      const line = melody([60, 62, 64, 65, 67, 65, 64, 62, 60], 0.5, 24);
+      const mix = mixFile([major(7), major(7), major(0), major(7)]);
+      expect(top(body(await estimateSongKey(offline(), { mix_path: mix })))?.name).toBe('G major');
+      const { ctx, placement } = await setup({ key: { root: 7, scale: 'major' } }, vocals(line));
+      const out = body(await estimateSongKey(ctx, { clip: placement, mix_path: mix }));
+      expect(top(out)?.name).toBe('C major');
+      expect(out.sources).toMatchObject({ mix: { used: true }, bass: { used: true }, vocals: { used: true } });
+      expect((out.clip as { same_scale_set_as_estimate: unknown }).same_scale_set_as_estimate).toBe(false);
+      expect(out.summary).toMatch(/The clip's key in OpenTune has other notes than the estimate/);
+    },
+    HEAVY_MS,
+  );
 
-  it('corrects the parallel minor of a mix without thirds with the vocals', async () => {
-    const line = melody([64, 67, 69, 71, 72, 67, 64, 60], 0.5, 24);
-    const mix = mixFile([power(0), power(5), power(7), power(0)]);
-    const alone = body(await estimateSongKey(offline(), { mix_path: mix }));
-    expect(alone.scale_set_confidence).toBeLessThan(0.6);
-    expect(alone.recommendation).toMatchObject({ key: { scale: 'chromatic' }, ask_user: true });
-    expect(alone.summary).toMatch(/The scale set is uncertain: the recommendation is chromatic/);
-    const { ctx, placement } = await setup({}, vocals(line));
-    const out = body(await estimateSongKey(ctx, { clip: placement, mix_path: mix }));
-    expect(top(out)?.name).toBe('C major');
-    expect(out.recommendation).toMatchObject({ key: { root: 0, scale: 'major' }, ask_user: false });
-  });
+  it(
+    'corrects the parallel minor of a mix without thirds with the vocals',
+    async () => {
+      const line = melody([64, 67, 69, 71, 72, 67, 64, 60], 0.5, 24);
+      const mix = mixFile([power(0), power(5), power(7), power(0)]);
+      const alone = body(await estimateSongKey(offline(), { mix_path: mix }));
+      expect(alone.scale_set_confidence).toBeLessThan(0.6);
+      expect(alone.recommendation).toMatchObject({ key: { scale: 'chromatic' }, ask_user: true });
+      expect(alone.summary).toMatch(/The scale set is uncertain: the recommendation is chromatic/);
+      const { ctx, placement } = await setup({}, vocals(line));
+      const out = body(await estimateSongKey(ctx, { clip: placement, mix_path: mix }));
+      expect(top(out)?.name).toBe('C major');
+      expect(out.recommendation).toMatchObject({ key: { root: 0, scale: 'major' }, ask_user: false });
+    },
+    HEAVY_MS,
+  );
 
-  it('warns when the mix and the clip differ in length; mixolydian music gets the scale set of its notes', async () => {
-    // C, Bb, F, C: mixolydian on C has the notes of F major, so snapping to F major keeps the flat seventh.
-    const { ctx, placement } = await setup();
-    const out = body(
-      await estimateSongKey(ctx, {
-        clip: placement,
-        mix_path: mixFile([major(0), major(10), major(5), major(0)], { repeat: 5 }),
-      }),
-    );
-    expect(out.warnings).toContainEqual(expect.stringMatching(/^the mix lasts 40 s and the clip's source audio 24 s/));
-    expect(['F major', 'D minor']).toContain(top(out)?.name);
-    expect(out.warnings).not.toContainEqual(expect.stringMatching(/flat seventh/));
-  });
+  it(
+    'warns when the mix and the clip differ in length; mixolydian music gets the scale set of its notes',
+    async () => {
+      // C, Bb, F, C: mixolydian on C has the notes of F major, so snapping to F major keeps the flat seventh.
+      const { ctx, placement } = await setup();
+      const out = body(
+        await estimateSongKey(ctx, {
+          clip: placement,
+          mix_path: mixFile([major(0), major(10), major(5), major(0)], { repeat: 5 }),
+        }),
+      );
+      expect(out.warnings).toContainEqual(
+        expect.stringMatching(/^the mix lasts 40 s and the clip's source audio 24 s/),
+      );
+      expect(['F major', 'D minor']).toContain(top(out)?.name);
+      expect(out.warnings).not.toContainEqual(expect.stringMatching(/flat seventh/));
+    },
+    HEAVY_MS,
+  );
 
   it('points out a frequent flat seventh in a major key', async () => {
     // A line on C, E, G with B flat and no B: C major wins, but its seventh is the flat one.
@@ -524,16 +573,20 @@ describe('opentune_estimate_key with a clip', () => {
     expect((out.sources as { vocals: { note_count: number } }).vocals.note_count).toBe(2);
   });
 
-  it('stays within the output budget with every section asked for', async () => {
-    const { ctx, placement } = await setup({ durationSec: 120 });
-    const sections = Array.from({ length: 16 }, (_, i) => ({ start_sec: i * 7, end_sec: i * 7 + 6 }));
-    const mix = mixFile([major(0), major(5), major(7), major(0), minor(9), major(2), major(4), minor(11)], {
-      repeat: 8,
-    });
-    const outcome = await estimateSongKey(ctx, { clip: placement, mix_path: mix, sections });
-    expect((body(outcome).sections as unknown[]).length).toBe(16);
-    expect((render(outcome).content[0] as { text: string }).text.length).toBeLessThanOrEqual(OUTPUT_BUDGET);
-  });
+  it(
+    'stays within the output budget with every section asked for',
+    async () => {
+      const { ctx, placement } = await setup({ durationSec: 120 });
+      const sections = Array.from({ length: 16 }, (_, i) => ({ start_sec: i * 7, end_sec: i * 7 + 6 }));
+      const mix = mixFile([major(0), major(5), major(7), major(0), minor(9), major(2), major(4), minor(11)], {
+        repeat: 8,
+      });
+      const outcome = await estimateSongKey(ctx, { clip: placement, mix_path: mix, sections });
+      expect((body(outcome).sections as unknown[]).length).toBe(16);
+      expect((render(outcome).content[0] as { text: string }).text.length).toBeLessThanOrEqual(OUTPUT_BUDGET);
+    },
+    HEAVY_MS,
+  );
 
   it('declares a read-only tool that uses only existing read methods', () => {
     expect(estimateKeyTool.annotations).toEqual({
