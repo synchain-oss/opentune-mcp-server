@@ -162,9 +162,9 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci --ignore-scripts
-      # 契约向量对 mock（npm run test:contract：session/ 与 job/ 必须全部 PASS）在两个系统上都跑。
-      # Inspector CLI --strict、tools/list 体积门禁、token 金丝雀、输出预算还没有可运行的对象，gates 如实报
-      # SKIP（附原因）；它们落地后在 gates 里实现，本 job 无需改动。
+      # 契约向量对 mock（npm run test:contract）、MCP Inspector CLI 的 --strict 与脚本化场景（对打包后的
+      # bundle 和 mock）、tools/list 体积门禁、token 金丝雀（运行时生成随机 token / serverProof，跑遍全部工具
+      # 与 doctor，断言一次都不出现）、输出预算，都在两个系统上跑；具体判据在 scripts/gates.mjs 与 test/protocol/。
       - name: Gates (stdio smoke, contract vectors, Inspector, size gate, token canary, output budget)
         run: |
           node scripts/gates.mjs --base HEAD \

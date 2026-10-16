@@ -1265,8 +1265,8 @@ describe('contractVectorsVerdict: the contract vectors row', () => {
 });
 
 describe('gates.mjs --no-skip', () => {
-  // "token canary" is a placeholder check that reports SKIP until its tool exists, so it gives a
-  // deterministic SKIP row without running any real gate. "no pull_request_target" is a file scan
+  // "contract vectors (exe)" reports SKIP when OTCP_TARGET_EXE is empty (cleared below), so it gives
+  // a deterministic SKIP row without running any real gate. "no pull_request_target" is a file scan
   // that passes on this repository.
   const gates = fileURLToPath(new URL('../../scripts/gates.mjs', import.meta.url));
   const run = (only: string, ...extra: string[]) =>
@@ -1274,19 +1274,20 @@ describe('gates.mjs --no-skip', () => {
       cwd: fileURLToPath(new URL('../..', import.meta.url)),
       encoding: 'utf8',
       timeout: 60_000,
+      env: { ...process.env, OTCP_TARGET_EXE: '' },
     });
 
   it('keeps SKIP rows passing without the flag', () => {
-    const r = run('token canary');
+    const r = run('contract vectors (exe)');
     expect(r.status).toBe(0);
-    expect(r.stdout).toMatch(/\| token canary \| SKIP \|/);
+    expect(r.stdout).toMatch(/\| contract vectors \(exe\) \| SKIP \|/);
   });
 
   it('fails and names the skipped check with the flag', () => {
-    const r = run('token canary', '--no-skip');
+    const r = run('contract vectors (exe)', '--no-skip');
     expect(r.status).toBe(1);
-    expect(r.stderr).toContain('--no-skip: 1 check(s) skipped: token canary');
-    expect(r.stdout).toContain('counts as a failure: token canary');
+    expect(r.stderr).toContain('--no-skip: 1 check(s) skipped: contract vectors (exe)');
+    expect(r.stdout).toContain('counts as a failure: contract vectors (exe)');
   });
 
   it('passes with the flag when nothing is skipped', () => {

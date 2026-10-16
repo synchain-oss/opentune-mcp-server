@@ -294,12 +294,17 @@ describe('process probes', () => {
 
   it('reads this process: alive, started when Node started', async () => {
     const probe = systemProbe();
-    const self = await probe.probe(process.pid);
+    // The first read can start PowerShell cold on a loaded Windows runner and run out of the probe's
+    // 5 s limit: it then reports startTimeMs null, which is not cached. Ask again (the system is warm
+    // by then) before judging, so a slow runner passes while a probe that never answers still fails.
+    let self = await probe.probe(process.pid);
+    for (let attempt = 1; attempt < 3 && self.startTimeMs === null; attempt++) self = await probe.probe(process.pid);
     expect(self.alive).toBe(true);
+    if (process.platform === 'win32' || process.platform === 'linux') expect(self.startTimeMs).not.toBeNull();
     if (self.startTimeMs !== null) expect(Math.abs(self.startTimeMs - performance.timeOrigin)).toBeLessThan(2000);
     expect(await probe.probe(process.pid)).toEqual(self);
     expect((await probe.probe(2 ** 31 - 2)).alive).toBe(false);
     const list = await probe.listOpenTune();
     expect(list === null || Array.isArray(list)).toBe(true);
-  }, 20_000);
+  }, 40_000);
 });

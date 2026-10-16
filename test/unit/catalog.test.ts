@@ -16,6 +16,7 @@ import {
   GOLDEN_INSTRUCTIONS,
   GOLDEN_TOOLS,
   checkCatalogSize,
+  describeCatalogSize,
   goldenToolsText,
   sizeGate,
 } from '../../scripts/lib/catalog.mjs';
@@ -104,6 +105,14 @@ describe('tool catalog', () => {
     expect(checkCatalogSize([tool('opentune_edit_notes', 9300)])).toHaveLength(1);
     const many = Array.from({ length: 13 }, (_, i) => tool(`t${String(i)}`, 3800));
     expect(checkCatalogSize(many)).toEqual([expect.stringMatching(/^tools\/list is \d+ bytes, more than 47104$/)]);
+  });
+
+  it('describes the size of each tool against the limit that applies to it', () => {
+    const tool = (name: string, size: number) => ({ name, pad: 'x'.repeat(size) });
+    const note = describeCatalogSize([tool('a', 1000), tool('opentune_edit_notes', 8000)]);
+    expect(note).toMatch(/^2 tools, \d+ of 47104 bytes; closest to its limit: opentune_edit_notes \d+ of 9216$/);
+    expect(describeCatalogSize([tool('a', 3000), tool('opentune_edit_notes', 2000)])).toMatch(/: a \d+ of 4096$/);
+    expect(describeCatalogSize([])).toBe('0 tools, 2 of 47104 bytes');
   });
 
   it('the gate passes a bundle that lists the golden catalog and fails one that does not', async () => {

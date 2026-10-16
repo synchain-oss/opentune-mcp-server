@@ -36,6 +36,17 @@ export default defineConfig({
         },
       },
       {
+        // The built bundle against the mock, driven the way a client drives it: the token canary and
+        // the Inspector CLI scenarios. Builds the bundle first, like the stdio project.
+        extends: true,
+        test: {
+          name: 'protocol',
+          include: ['test/protocol/**/*.test.ts'],
+          globalSetup: ['test/stdio/global-setup.ts'],
+          testTimeout: 120_000,
+        },
+      },
+      {
         // Every OTCP vector against the test mock (mock/), over real loopback TCP.
         extends: true,
         test: { name: 'contract', include: ['test/contract/**/*.test.ts'], testTimeout: 60_000 },
