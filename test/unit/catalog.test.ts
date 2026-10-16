@@ -184,3 +184,69 @@ describe('docs/TROUBLESHOOTING.md', () => {
     expect(present.has(anchor)).toBe(true);
   });
 });
+
+describe('docs/TROUBLESHOOTING.zh-CN.md', () => {
+  const en = anchors(read('docs/TROUBLESHOOTING.md'));
+  const zh = anchors(read('docs/TROUBLESHOOTING.zh-CN.md'));
+
+  it('has every anchor of the English page, so that a url in an error result works in both', () => {
+    expect([...en].filter((a) => !zh.has(a))).toEqual([]);
+  });
+
+  it('has no anchor the English page lacks', () => {
+    // The title line of the Chinese page carries a gloss and is the only allowed difference.
+    expect([...zh].filter((a) => !en.has(a) && a !== 'troubleshooting')).toEqual([]);
+  });
+});
+
+describe('docs links to TROUBLESHOOTING and COMPATIBILITY sections', () => {
+  const targets: Record<string, Set<string>> = {
+    'docs/TROUBLESHOOTING.md': anchors(read('docs/TROUBLESHOOTING.md')),
+    'docs/TROUBLESHOOTING.zh-CN.md': anchors(read('docs/TROUBLESHOOTING.zh-CN.md')),
+    'docs/COMPATIBILITY.md': anchors(read('docs/COMPATIBILITY.md')),
+  };
+  const sources = [
+    'README.md',
+    'README.zh-CN.md',
+    'docs/TROUBLESHOOTING.md',
+    'docs/TROUBLESHOOTING.zh-CN.md',
+    'docs/COMPATIBILITY.md',
+  ];
+
+  it.each(sources)('%s: every link into a section of those pages names an existing heading', (source) => {
+    const missing: string[] = [];
+    const link = /\]\((?:docs\/)?((?:TROUBLESHOOTING(?:\.zh-CN)?|COMPATIBILITY)\.md)#([^)]+)\)/g;
+    for (const [, name = '', anchor = ''] of read(source).matchAll(link)) {
+      const file = `docs/${name}`;
+      if (!targets[file]?.has(anchor)) missing.push(`${file}#${anchor}`);
+    }
+    expect(missing).toEqual([]);
+  });
+});
+
+describe('install snippets in the READMEs equal what doctor --client prints', () => {
+  // The golden files hold the output of `doctor --client` on Windows with the home directory shown as ~
+  // in the JSON; the READMEs write the same path out in full.
+  const golden = (name: string) => read(`test/golden/client-config/${name}.txt`);
+  const jsonBlock = (text: string) => /^\{\n[\s\S]*?^\}$/m.exec(text)?.[0] ?? '';
+  const readmes = ['README.md', 'README.zh-CN.md'];
+
+  it.each(readmes)('%s: Claude Code command', (file) => {
+    const command = golden('claude-code-win32')
+      .split('\n')
+      .find((line) => line.trim().startsWith('claude mcp add'));
+    expect(command).toBeDefined();
+    expect(read(file)).toContain(command?.trim());
+  });
+
+  it.each(readmes)('%s: JSON configuration', (file) => {
+    // In the golden JSON text a path separator is two backslashes.
+    const json = jsonBlock(golden('cursor-win32')).replaceAll('~\\\\', 'C:\\\\Users\\\\user\\\\');
+    expect(json).toContain('C:\\\\Users\\\\user\\\\Apps');
+    expect(read(file)).toContain(json);
+  });
+
+  it('prints the same JSON block for Cursor and Claude Desktop', () => {
+    expect(jsonBlock(golden('claude-desktop-win32'))).toBe(jsonBlock(golden('cursor-win32')));
+  });
+});

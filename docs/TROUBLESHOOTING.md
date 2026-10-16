@@ -2,7 +2,8 @@
 
 Every result of `opentune_get_status`, and every tool error, carries a `nextStep` (`actor` is `agent` or `user`)
 and a `url` that points to one of the sections below. Run `opentune-mcp doctor` to check the set-up without starting
-the server; `opentune-mcp doctor --json` prints the same checks as JSON.
+the server; `opentune-mcp doctor --json` prints the same checks as JSON. For how long import, analysis, rendering and
+export take, see [How long to wait](COMPATIBILITY.md#how-long-to-wait).
 
 ## Statuses of opentune_get_status
 
@@ -61,7 +62,7 @@ be running. `opentune_launch` then starts nothing until the user confirms that n
 
 `OPENTUNE_MCP_OPENTUNE_PATH` names an executable without an `opentune-control.json` for protocol major 1 next to it
 (`reason`: `manifest_missing`, `manifest_too_large`, `manifest_invalid` or `protocol_mismatch`). The file must be a
-UTF-8 JSON object of at most 8 KiB whose `protocolMajors` lists 1; other members are ignored. Configure a build with
+UTF-8 JSON object of at most 8 KiB whose `protocolMajors` lists 1; other members are ignored. An official OpenTune release, which has no control API, lands here too. Configure a build with
 the control API. `opentune_launch` never starts such an executable.
 
 ### Status NOT_INSTALLED
@@ -155,7 +156,8 @@ The target exists and replacing it was not allowed.
 ### Error BUSY
 
 OpenTune is in use: a dialog is open, the user is dragging, or an import, export or project operation runs. Finish it
-in OpenTune, then retry.
+in OpenTune, then retry. With reason `modal_open` a modal dialog is open; the first one is usually the one-time welcome
+dialog, see [First launch dialog](#first-launch-dialog).
 
 ### Error TIMEOUT
 
@@ -167,7 +169,9 @@ The job was cancelled. Its result lists any work it committed before it stopped.
 
 ### Error IO_ERROR
 
-A file could not be read or written.
+A file could not be read or written. An export without `path` is written next to its source file; when that folder is
+read-only the export fails and the server does not choose another folder. Call `opentune_export_audio` again with a
+`path` in a folder you can write to.
 
 ### Error UNSUPPORTED
 
@@ -281,10 +285,34 @@ files.
 ### Doctor OT_D3D12_NOT_COPIED
 
 A test build lists the Direct3D 12 runtime in `opentune-control.json` (`d3d12`) without bundling it. Without the file
-OpenTune runs inference on the CPU, so this is a warning. Run the commands the check prints in PowerShell, which copy
+OpenTune runs inference on the CPU, so this is a warning and copying is optional. Measured on a machine with an NVIDIA
+GPU: without the copy the pitch analysis (F0) falls back to the CPU. Run the commands the check prints in PowerShell, which copy
 `D3D12Core.dll` from the official installation to the `D3D12` folder next to the executable and print its SHA-256 hash
-to compare with `opentune-control.json`. If the copied file has another hash (`fail`), delete the `D3D12` folder (back
+to compare with `opentune-control.json`; use the printed commands as they are, because they escape a path that contains
+special characters. If the copied file has another hash (`fail`), delete the `D3D12` folder (back
 to CPU) and copy it again from the official installation. `D3D12SDKLayers.dll` is the debug layer: do not copy it, and
 delete it if it is there.
 "Cannot tell" means the `d3d12` entry of `opentune-control.json` lists no files or has a hash that is not 64
 hexadecimal characters, so nothing could be checked: unpack the test build again.
+
+## First launch dialog
+
+The first time OpenTune starts with a fresh data folder it shows a one-time welcome (onboarding) dialog. A person has to
+answer it once in the OpenTune window. While it, or any other modal dialog, is open, every write operation fails with
+[BUSY](#error-busy) and reason `modal_open`. `opentune_get_settings` reports whether onboarding was shown. Ask the user
+to answer the dialog, then retry. The server never answers a dialog itself.
+
+## Hybrid mode
+
+OpenTune's preference "Hybrid Mode: Small corrections use DSP, large corrections use vocoder" (in the Chinese interface
+"混合模式:小修用dsp,大修用声码器") is on by default. The part of a correction smaller than 75 cents is applied by DSP pitch
+shifting instead of the vocoder. That is OpenTune's own design, in its window as well as through this server, and on
+real voices such a small correction can be barely audible. If small corrections must be clearly audible, switch the
+preference off in OpenTune's preferences. `opentune_get_settings` (section `processing`, member `hybridMode`) and the
+`processing.hybridMode` of an export result report the setting as it was; do not assume it.
+
+## Slow process discovery
+
+On Windows the server reads the start time of OpenTune processes to tell a live instance from a stale discovery file.
+The first such read after a cold start of PowerShell is sometimes slow, so finding an instance can take a few seconds
+longer than usual. This is not an error; call again if a client gave up waiting.

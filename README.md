@@ -9,47 +9,106 @@
 
 # OpenTune MCP Server (by Synchain)
 
-> An MCP server, in development, that will let AI agents operate OpenTune, the open-source AI vocal pitch-correction app, and report the result of every action in a clear, structured form.
+> An MCP server that lets AI agents operate OpenTune, the open-source AI vocal pitch-correction app, and reports the result of every action in a clear, structured form.
 
 OpenTune MCP Server is an open-source project led by [Synchain](https://www.synchain.ca), released under the [MIT License](LICENSE). It is a separate program that talks to OpenTune; it is not part of OpenTune itself.
 
 ## Status
 
-> **Pre-release, work in progress. Nothing is published yet.** There is no npm package, no release and no runnable server in this repository yet. The protocol, the tool names and the behaviour described below may still change before the first release.
+> **Pre-release.** The server, its tools and the protocol specification are in this repository, but no npm package, MCPB package or release is published yet; the install commands below work once the first release exists. Tool names and behaviour may still change before then.
 
-| Item | Status |
+| Setup | Status |
 | --- | --- |
-| This server (`@synchain/opentune-mcp`, command `opentune-mcp`) | Not published. The protocol specification, the server and its tests are being added to this repository. |
-| OpenTune with the control API | Required. Official OpenTune releases do not include the control API yet. A patched build is being developed in [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) and will be offered as a clearly labelled unofficial test build until the API is part of an official OpenTune release. |
-| Windows x64 | First target platform. |
-| macOS | Not yet. No macOS test builds will be published; on macOS the server is planned to work with an official OpenTune release that includes the control API, or with a build from source. |
+| Windows x64, with the unofficial test build of OpenTune from [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) (it has the control API) | Supported. |
+| Official OpenTune release (it has no control API) | Does not work: `opentune_get_status` reports `NO_API_BUILD`. |
+| macOS | Not yet. |
 | Linux | Not supported: OpenTune itself has no Linux build. |
-| Node.js | 22 or later (planned requirement). |
+| WSL | The server must run with Windows Node.js; see [WSL](#wsl). |
 
-**What works today:** nothing that you can install or run yet.
+The OpenTune VST3/ARA plug-in inside a DAW is not covered; only OpenTune Standalone is.
 
-**What will not work, even after the first release:** official OpenTune builds that lack the control API, Linux, and the OpenTune VST3/ARA plug-in inside a DAW (only OpenTune Standalone is covered).
+## Prerequisites
+
+- **Node.js 22 or later** (not needed for the MCPB package, which Claude Desktop runs with its own runtime).
+- **An installed official OpenTune, version 1.7.9 or newer.** The test build contains no models and no Direct3D 12 runtime; it uses the ones of the official installation. OpenTune 1.7.9 must be installed in its default location, because it keeps its models in its install folder. OpenTune 1.8.1 can be installed anywhere; it keeps its models in `%ProgramData%\OpenTune\Models`.
+- **The unofficial test build**, a zip that you unpack to a folder outside Program Files. Check that `opentune-control.json` sits next to `OpenTune.exe`.
+- **`OPENTUNE_MCP_OPENTUNE_PATH`** set to the absolute path of the test build's `OpenTune.exe`. The install snippets below set it for you.
+
+Run `opentune-mcp doctor` to check all of this (it never starts OpenTune); every check it reports has a section in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
+
+## First launch
+
+The first time OpenTune starts with a fresh data folder it shows a one-time welcome (onboarding) dialog. A person has to answer it once, in the OpenTune window. While that dialog or any other modal dialog is open, every write operation fails with `BUSY` (reason `modal_open`). Answer the dialog, then try again.
+
+## Install
+
+`opentune-mcp doctor --client <claude-code|claude-desktop|cursor>` prints the configuration for a client with your own paths filled in. It only prints; it never writes a client's configuration file. The snippets below are what it prints on Windows, with `C:\Users\user\Apps\OpenTune\OpenTune.exe` standing for the path of your test build.
+
+**Claude Desktop (recommended): the MCPB package.** Download `opentune-mcp-<version>.mcpb` and its `.sha256` file from the [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases) page, check the checksum, open the `.mcpb` file (or drag it into Settings > Extensions) and choose Install. In the extension settings, set "OpenTune executable" to the test build's `OpenTune.exe`. Details: [docs/install.md](docs/install.md). Advanced: register the npm package by hand with `opentune-mcp doctor --client claude-desktop`.
+
+**Claude Code:** run this once in a terminal (add `--scope user` to use the server in every project):
+
+```text
+claude mcp add --env OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\user\Apps\OpenTune\OpenTune.exe opentune -- cmd /c npx -y @synchain/opentune-mcp
+```
+
+**Cursor:** put this in `~/.cursor/mcp.json` (all projects) or `.cursor/mcp.json` (one project):
+
+```json
+{
+  "mcpServers": {
+    "opentune": {
+      "command": "cmd",
+      "args": [
+        "/c",
+        "npx",
+        "-y",
+        "@synchain/opentune-mcp"
+      ],
+      "env": {
+        "OPENTUNE_MCP_OPENTUNE_PATH": "C:\\Users\\user\\Apps\\OpenTune\\OpenTune.exe"
+      }
+    }
+  }
+}
+```
+
+Then ask the agent to check OpenTune. It calls `opentune_get_status` first and follows the `nextStep` in the result; `opentune_launch` starts the configured OpenTune with its control API.
+
+## Example prompts
+
+These show what the tools do. They make no promise about how the corrected vocal sounds: judge the result by listening, and ask the agent for a different setting if it is not what you want.
+
+1. **"Pull the out-of-tune notes of the second phrase into tune."** The agent calls `opentune_get_project` (the clips and their revisions), `opentune_analyze_pitch` (per note: how many cents the sung pitch is from its target; notes beyond the threshold are flagged) and `opentune_edit_notes` or `opentune_autotune_range` on that time range. Read the result as before and after values in cents, plus whether and how the change can be undone. With `dry_run` the agent can predict a change without applying it.
+2. **"Raise the whole vocal by 2 semitones, then export it."** The agent calls `opentune_set_clip` with a pitch shift of 2 semitones (one undo step) and `opentune_export_audio` with kind `clip`. The result names the WAV file that was written; an existing file is never overwritten, the next free name is used.
+3. **"Move this section 30 ms earlier."** The agent calls `opentune_edit_timing` with a `shift` of -30 ms (`delta_ms`) on that range. OpenTune does not detect beats: handle positions come from you, or from the `seed` operation. The result lists the handles and says if a move was limited (`CLAMPED`).
+4. **"Open `C:\Music\take1.wav` and tune it to C major."** The agent calls `opentune_open_audio`, follows the import with `opentune_get_job` until the analysis ends, then calls `opentune_autotune_range` with mode `regenerate` and the scale C major. Long audio takes time: see [How long to wait](docs/COMPATIBILITY.md#how-long-to-wait).
+
+## Using it with a DAW
+
+The exchange is by file path only; there is no DAW plug-in.
+
+1. In your DAW, export the dry vocal as a WAV file.
+2. Ask the agent to open that file in OpenTune, make the edits, and export a WAV file (`opentune_export_audio`; without `path` it is written next to the source as `<name>.opentune.wav`).
+3. Import the exported WAV back into the DAW, on a new track or in place of the dry vocal.
+
+## WSL
+
+The server must use Node.js on Windows, because OpenTune listens on `127.0.0.1` of Windows, which WSL cannot reach: inside WSL `opentune-mcp doctor` fails the check `OT_WSL_RUNTIME` and `opentune_get_status` reports `WSL_UNSUPPORTED_RUNTIME`. Configure your MCP client to start the server with Windows Node.js (the snippets above do that). File paths in the form `/mnt/c/Music/take1.wav` are converted to `C:\Music\take1.wav` in tool calls.
 
 ## What it does
 
-OpenTune analyses a recorded vocal, shows it as notes and a pitch curve, and re-renders the corrected voice with a neural vocoder. This server is planned to let an AI agent perform, through MCP tool calls, the operations a person can already perform in the OpenTune Standalone window:
+OpenTune analyses a recorded vocal, shows it as notes and a pitch curve, and re-renders the corrected voice with a neural vocoder. This server lets an AI agent perform, through MCP tool calls, operations that a person can perform in the OpenTune Standalone window. The complete list is in [docs/reference.md](docs/reference.md).
 
-- **Import and export**: open audio files (one file, several files in sequence, or one track per file) and export a clip, a track or the full mix as WAV.
-- **Read the analysis**: notes, pitch curves, the detected key, analysis and render status, and a pitch summary per phrase that an agent can reason about.
-- **Auto-tune**: run OpenTune's AUTO correction on chosen time ranges, with an explicit scale and explicit parameters.
-- **Note edits**: set a note's target pitch, shift it by cents, snap it to the scale, or change its retune speed, vibrato and drift.
-- **Timing**: shift a section earlier or later, and move time handles.
-- **Arrangement, tracks and transport**: move, trim, split, merge and delete clips, and set their gain and fades; set mute, solo, volume and colour per track; play, stop and seek; set tempo and time signature.
-- **Projects and settings**: save, save as and open projects; read and change processing preferences and the audio device.
-- **Undo and redo**: API changes go onto OpenTune's own undo history where OpenTune supports undo. When an action cannot be undone (some cannot, in OpenTune itself), the result says so and, where possible, includes a way to revert it.
+- **Import and export:** open audio files and export a clip, a track or the full mix as WAV.
+- **Read the analysis:** notes, pitch curves, the detected key, analysis and render status, and a pitch summary per phrase that an agent can reason about.
+- **Auto-tune and note edits:** run OpenTune's AUTO correction on chosen time ranges, set a note's target pitch, shift it by cents, snap it to the scale, change retune speed, vibrato and drift, and set a clip's key and pitch shift.
+- **Timing:** shift a section earlier or later, and move time handles.
+- **Undo and redo:** API changes go onto OpenTune's own undo history where OpenTune supports undo. When an action cannot be undone (some cannot, in OpenTune itself), the result says so and, where possible, includes a way to revert it.
 
-Every change will return a structured result: what changed (before and after, with units), side effects, warnings, whether it can be undone, and how to revert it when it cannot. The goal is not to judge whether a vocal "sounds right"; it is to make OpenTune's existing operations available to an agent and to report their effects clearly.
-
-Not in the first version: features that OpenTune's UI does not have, and drawing-style edits (drawing, stretching, splitting or merging notes, per-note EQ, hand-drawn curves), which are deferred to a later version.
+Every change returns a structured result: what changed (before and after, with units), side effects, warnings, whether it can be undone, and how to revert it when it cannot. The goal is not to judge whether a vocal "sounds right"; it is to make OpenTune's existing operations available to an agent and to report their effects clearly.
 
 ## How it works
-
-The planned design:
 
 ```text
 MCP client (for example Claude Desktop, Claude Code or Cursor)
@@ -61,36 +120,34 @@ opentune-mcp  (this repository, Node.js, MIT)
 OpenTune Standalone with the control API  (synchain-oss/OpenTune, AGPL-3.0)
 ```
 
-- **Two layers.** The control API will run inside OpenTune and speak a small, versioned protocol, the OpenTune Control Protocol (OTCP). This server will turn MCP tool calls into OTCP requests and turn the replies into readable results. The two are separate programs, so this repository contains no OpenTune code.
-- **Off by default.** The control API will be a build option. Even in a build that includes it, OpenTune will open it only when it is started with the API explicitly enabled.
-- **Local only.** OpenTune will listen on the literal address 127.0.0.1, on a port chosen by the operating system, and will accept requests only after a handshake with a random token created for each launch and stored in a per-user discovery file. This server will open no network port of its own; it will talk to your MCP client over stdio.
-- **Public specification.** The OTCP specification (JSON Schemas, examples and a threat model) will live in `spec/otcp/v1/` in this repository, under the MIT License.
+- **Two layers.** The control API runs inside OpenTune and speaks a small, versioned protocol, the OpenTune Control Protocol (OTCP). This server turns MCP tool calls into OTCP requests and the replies into readable results. The two are separate programs, so this repository contains no OpenTune code.
+- **Off by default.** The control API is a build option. Even in a build that includes it, OpenTune opens it only when it is started with the API explicitly enabled.
+- **Local only.** OpenTune listens on the literal address 127.0.0.1, on a port chosen by the operating system, and accepts requests only after a handshake with a random token created for each launch and stored in a per-user discovery file. This server opens no network port of its own; it talks to your MCP client over stdio.
+- **Public specification.** The OTCP specification (JSON Schemas, examples and a threat model) is in `spec/otcp/v1/` in this repository, under the MIT License.
+
+## Known limitations
+
+- **Hybrid mode and small corrections.** OpenTune's preference "Hybrid Mode: Small corrections use DSP, large corrections use vocoder" is on by default. The part of a correction below 75 cents is applied by DSP pitch shifting instead of the vocoder, which is OpenTune's own design, and on real voices such a small correction can be barely audible. To make small corrections count, switch that preference off in OpenTune. See [Hybrid mode](docs/TROUBLESHOOTING.md#hybrid-mode).
+- **`RUNNING_WITHOUT_API` was only checked by hand.** The state of an official OpenTune that runs without the control API was verified manually, not by an automated test.
+- **Read-only source folder.** An export without `path` goes next to the source file. When that folder is read-only the export fails with an error; it does not pick another folder. Give a writable `path`.
+- **First launch needs a person.** The welcome dialog has to be answered once ([First launch](#first-launch)).
+- **Not covered:** official OpenTune builds that lack the control API, Linux, the VST3/ARA plug-in, features that OpenTune's own window does not have, and drawing-style edits (drawing, stretching, splitting or merging notes, per-note EQ, hand-drawn curves).
 
 ## Relationship to OpenTune
 
 - [OpenTune](https://github.com/YuFeng926/OpenTune) is an open-source AI pitch-correction app. OpenTune is a project of DAYA STUDIO and is licensed under AGPL-3.0. Its only official release channel is [YuFeng926/OpenTune](https://github.com/YuFeng926/OpenTune).
 - The OpenTune author has agreed to this approach: we develop the control API in our fork, [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune), as added code that leaves OpenTune's behaviour unchanged while the API is off, and plan to propose it to the upstream project. This does not make it an official OpenTune feature; whether and how it is merged is up to the author.
 - This repository contains no OpenTune source code and no model weights.
-- Until the control API is part of an official OpenTune release, any patched build we publish will be clearly labelled as an unofficial test build. It will contain no model weights and will use the models from your official OpenTune installation.
+- Until the control API is part of an official OpenTune release, the patched build is an unofficial test build. It contains no model weights and uses the models from your official OpenTune installation.
 - OpenTune MCP Server is a Synchain project, not an official OpenTune or DAYA STUDIO product.
-
-## Roadmap
-
-1. The OTCP specification and a mock OpenTune, so that the server can be tested without OpenTune.
-2. First release on Windows: reading, import and export, auto-tune, note and timing edits, undo and redo, together with an unofficial OpenTune test build.
-3. Second release: arrangement, tracks, transport, project save and open, settings.
-4. macOS, with an official OpenTune release that includes the control API (or a build from source).
-5. Proposing the control API to the upstream OpenTune project. Listing in MCP directories only after an official OpenTune release includes the API.
 
 ## Documentation
 
-These documents will be added as the work lands:
-
-- `docs/install-for-agents.md`: setup for MCP clients and AI agents
-- `docs/reference.md`: tool reference, generated from the server
-- `docs/ARCHITECTURE.md`: how the two layers fit together
-- `docs/COMPATIBILITY.md`: which versions of this server, the protocol and OpenTune builds work together
-- `docs/TROUBLESHOOTING.md` (with a Chinese version): errors and fixes, by error code
+- [docs/install.md](docs/install.md): setup for MCP clients, including the MCPB package
+- [docs/reference.md](docs/reference.md): tool reference, generated from the server
+- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md): which OpenTune versions, test builds and protocol versions work together, and how long operations take
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) ([中文](docs/TROUBLESHOOTING.zh-CN.md)): errors, states and doctor checks, with fixes
+- [docs/real-opentune-testing.md](docs/real-opentune-testing.md): running the end-to-end checks against a real OpenTune
 - `spec/otcp/v1/`: the OTCP specification
 
 ## Contributing
