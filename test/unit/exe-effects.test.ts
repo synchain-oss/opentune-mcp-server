@@ -17,11 +17,18 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
+  HYBRID_MODE_NOTICE,
+  PHRASE_GAP_SEC,
   PITCH_TOLERANCE_CENTS,
+  RESYNTH_MAX_RESIDUAL_DB,
+  RESYNTH_PRE_ROLL_SEC,
+  alignedResidualDb,
+  awayWindow,
   compareSamples,
   consistencyOf,
   effectsSetupFromEnv,
   noteDelta,
+  resynthesisReach,
   runEffects,
   scrubText,
   snapshotProblems,
@@ -101,7 +108,26 @@ describe('effects scenario against the stand-in', () => {
       expect(target.notes.find((n) => n.index === 1)?.medianCents).toBeCloseTo(100, 0);
       expect(target.notes.filter((n) => n.index !== 1).every((n) => n.medianCents === 0)).toBe(true);
       expect(target.notes.every((n) => n.frames >= 20)).toBe(true);
-      expect(target.unedited).toMatchObject({ spans: 4, bitIdentical: 4 });
+      // Note 2 is the first note after the gap that follows the edited note: within the reach of
+      // re-synthesis, and bit-identical here. The notes before the edit and after note 2 are away from it.
+      expect(target.unedited).toEqual({
+        away: { spans: 3, bitIdentical: 3, maxAbsDiff: 0, maxAbsDiffDbfs: null, notes: [0, 3, 4] },
+        reach: [{ index: 2, bitIdentical: true, alignedResidualDb: null }],
+      });
+      // Hybrid mode off, as every export of the check said; nothing to note at the top of the report.
+      expect(report).toMatchObject({ hybridMode: false, notices: [], dataTemplateFrom: null });
+      expect(report.checks['setTargetPitch +100 cents']).toMatchObject({
+        processing: [{ export: 'setTargetPitch +100 cents', hybridMode: false, backend: 'fake' }],
+      });
+      expect(report.checks['baseline and noise floor']).toMatchObject({
+        processing: [{ export: 'baseline' }, { export: 'baseline again' }],
+      });
+      expect(report.checks['race: +100 cents, export, -100 cents']).toMatchObject({
+        processing: [{ export: 'race', hybridMode: false }],
+      });
+      expect(report.checks['timing 3 s']).toEqual({
+        processing: [{ export: 'timing 3 s', hybridMode: false, backend: 'fake' }],
+      });
       const auto = report.checks['AUTO snapNotes pulls the sharp note back'] as {
         notes: { index: number; medianCents: number }[];
       };
@@ -275,6 +301,64 @@ describe('effects scenario against the stand-in', () => {
   );
 
   it(
+    'says at the top of the report when hybrid mode was on, and judges the checks as usual',
+    async () => {
+      const report = await runEffects(config('effects-hybrid', { timingLengthsSec: [] }));
+      expect(report).toMatchObject({ result: 'PASS', hybridMode: true, notices: [HYBRID_MODE_NOTICE] });
+      expect(Object.keys(report).slice(0, 4)).toEqual(['schema', 'result', 'counts', 'notices']);
+      expect(noteOf(report, 'hello')).toContain('hybrid mode on');
+      expect(report.checks['shiftCents +100 cents']).toMatchObject({
+        processing: [{ export: 'shiftCents +100 cents', hybridMode: true, backend: 'fake' }],
+      });
+    },
+    SLOW,
+  );
+
+  it(
+    'accepts a note after an edit that is rendered again in another phase, and nothing further away',
+    async () => {
+      const resynth = await runEffects(config('effects-resynth', { timingLengthsSec: [] }));
+      expect(resynth.result).toBe('PASS');
+      const shift = resynth.checks['shiftCents +100 cents'] as {
+        unedited: {
+          away: { bitIdentical: number; notes: number[] };
+          reach: { index: number; bitIdentical: boolean; alignedResidualDb: number }[];
+        };
+      };
+      expect(shift.unedited.away).toMatchObject({ bitIdentical: 3, notes: [0, 1, 2] });
+      expect(shift.unedited.reach).toHaveLength(1);
+      expect(shift.unedited.reach[0]).toMatchObject({ index: 4, bitIdentical: false });
+      expect(shift.unedited.reach[0]?.alignedResidualDb).toBeLessThan(RESYNTH_MAX_RESIDUAL_DB);
+      expect(noteOf(resynth, 'shiftCents +100 cents')).toMatch(
+        /\(note 4 rendered again in another phase, -[0-9.]+ dB\)/,
+      );
+      // The note two after the edit is away from it: a change there fails, and says where.
+      const far = await runEffects(config('effects-resynth-far', { timingLengthsSec: [] }));
+      const r = results(far);
+      expect(r['setTargetPitch +100 cents']).toBe('FAIL');
+      expect(noteOf(far, 'setTargetPitch +100 cents')).toMatch(
+        /^notes away from the edit \(0, 3, 4\) differ from the baseline by up to [0-9.e+-]+ \(allowed 0\)$/,
+      );
+      // Note 3 is the last note: nothing is two after it.
+      expect(r['shiftCents +100 cents']).toBe('PASS');
+      // Rendered again 10 cents sharp is within the pitch tolerance, but not the same sound.
+      const detuned = await runEffects(config('effects-resynth-detuned', { timingLengthsSec: [] }));
+      for (const [name, index] of [
+        ['setTargetPitch +100 cents', 2],
+        ['shiftCents +100 cents', 4],
+      ] as const) {
+        expect(results(detuned)[name], name).toBe('FAIL');
+        expect(noteOf(detuned, name)).toMatch(
+          new RegExp(
+            `^note ${String(index)}, after the edit, was rendered again but is not the same sound: -?[0-9.]+ dB left after aligning its phase \\(allowed -20\\)$`,
+          ),
+        );
+      }
+    },
+    SLOW,
+  );
+
+  it(
     'is a FLAKY-SKIP when the backend cannot start, and SKIPs without history.v1 or the timing check without timing.v1',
     async () => {
       const backend = await runEffects(config('effects-backend', { timingLengthsSec: [] }));
@@ -367,6 +451,66 @@ describe('effects measurements', () => {
     );
     expect(scrubText('nothing to hide', {})).toBe('nothing to hide');
     expect(scrubText('a'.repeat(64), { audioPath: undefined, workDir: '' })).toBe('[redacted]');
+  });
+
+  it('tells a note rendered again in another phase from a moved, quieter or silent one', () => {
+    const a = tone(0);
+    const shifted = (wav: typeof a, by: number, gain = 1) => {
+      const mono = new Float64Array(wav.mono.length);
+      for (let i = 0; i < mono.length; i++) mono[i] = gain * (wav.mono[i - by] ?? 0);
+      return { ...wav, channels: [mono], mono };
+    };
+    const inside = { startSec: 0.4, endSec: 1.0 };
+    const period = a.sampleRateHz / 261.63;
+    // The same samples: nothing left. A phase offset of a third of a period: aligned away.
+    expect(alignedResidualDb(a, a, inside, period)).toBe(-200);
+    const phase = alignedResidualDb(a, shifted(a, Math.round(period / 3)), inside, period);
+    expect(phase).toBeLessThan(-40);
+    // Not aligned (no shift allowed), the same offset leaves far more than the limit.
+    expect(alignedResidualDb(a, shifted(a, Math.round(period / 3)), inside, 0)).toBeGreaterThan(
+      RESYNTH_MAX_RESIDUAL_DB + 5,
+    );
+    // Moved by 10 cents, 2 dB quieter, or silent: well above the limit.
+    expect(alignedResidualDb(a, tone(10), inside, period)).toBeGreaterThan(RESYNTH_MAX_RESIDUAL_DB + 10);
+    expect(alignedResidualDb(a, shifted(a, 0, 10 ** (-2 / 20)), inside, period)).toBeGreaterThan(
+      RESYNTH_MAX_RESIDUAL_DB,
+    );
+    expect(alignedResidualDb(a, shifted(a, 0, 0), inside, period)).toBe(0);
+    // Nothing to compare against: no energy, or a span shorter than two shifts.
+    expect(alignedResidualDb(shifted(a, 0, 0), a, inside, period)).toBeNull();
+    expect(alignedResidualDb(a, a, { startSec: 0.5, endSec: 0.5 + period / a.sampleRateHz }, period)).toBeNull();
+  });
+
+  it('finds the notes within the reach of an edit, and the part of the others that is compared', () => {
+    const note = (index: number, startSec: number, endSec: number) => ({ index, startSec, endSec });
+    // Two phrases: 0-1-2 without gaps, a phrase gap, 3-4 without gaps, a phrase gap, 5.
+    const gap = PHRASE_GAP_SEC + 0.05;
+    const notes = [
+      note(0, 0, 1),
+      note(1, 1, 2),
+      note(2, 2, 3),
+      note(3, 3 + gap, 4 + gap),
+      note(4, 4 + gap, 5 + gap),
+      note(5, 5 + 2 * gap, 6 + 2 * gap),
+    ];
+    // The rest of the phrase, and the first note after the gap that ends it; never a note before.
+    expect([...resynthesisReach(notes, [1])].sort()).toEqual([2, 3]);
+    expect([...resynthesisReach(notes, [0])].sort()).toEqual([1, 2, 3]);
+    expect([...resynthesisReach(notes, [3])].sort()).toEqual([4, 5]);
+    expect([...resynthesisReach(notes, [5])]).toEqual([]);
+    // An edited note is not in the reach of another edit; a short gap does not end a phrase.
+    expect([...resynthesisReach(notes, [0, 2])].sort()).toEqual([1, 3]);
+    const short = [note(0, 0, 1), note(1, 1 + PHRASE_GAP_SEC / 2, 2), note(2, 2 + gap, 3), note(3, 3 + gap * 2, 4)];
+    expect([...resynthesisReach(short, [0])].sort()).toEqual([1, 2]);
+    // Notes in any order: by time.
+    expect([...resynthesisReach([...notes].reverse(), [3])].sort()).toEqual([4, 5]);
+
+    // The compared part of a note stops RESYNTH_PRE_ROLL_SEC before an edited note after it.
+    expect(awayWindow(note(0, 0, 1), notes, [1])).toEqual({ startSec: -0.05, endSec: 1 - RESYNTH_PRE_ROLL_SEC });
+    expect(awayWindow(note(0, 0, 1), notes, [3])).toEqual({ startSec: -0.05, endSec: 1.05 });
+    expect(awayWindow(note(5, 5, 6), notes, [1])).toEqual({ startSec: 4.95, endSec: 6.05 });
+    // A note that ends within the pre-roll of an edited note has nothing left to compare.
+    expect(awayWindow(note(9, 0.96, 0.98), [note(9, 0.96, 0.98), note(1, 1, 2)], [1])).toBeNull();
   });
 
   it('compares samples: identical, different, and of different lengths', () => {
@@ -590,6 +734,43 @@ describe('effects configuration', () => {
     ];
     for (const env of bad) expect(() => effectsSetupFromEnv({ ...exe, ...env }), JSON.stringify(env)).toThrow();
   });
+
+  it('takes its data template from OTCP_E2E_EFFECTS_DATA_TEMPLATE before OTCP_TARGET_DATA_TEMPLATE', async () => {
+    const shared = await tmp();
+    const own = await tmp();
+    expect(effectsSetupFromEnv(exe)).toMatchObject({ config: { dataTemplateFrom: null } });
+    expect(effectsSetupFromEnv(exe)).not.toHaveProperty('config.exe.dataTemplate');
+    expect(effectsSetupFromEnv({ ...exe, OTCP_TARGET_DATA_TEMPLATE: shared })).toMatchObject({
+      config: { exe: { dataTemplate: shared }, dataTemplateFrom: 'OTCP_TARGET_DATA_TEMPLATE' },
+    });
+    for (const env of [
+      { OTCP_E2E_EFFECTS_DATA_TEMPLATE: own },
+      { OTCP_E2E_EFFECTS_DATA_TEMPLATE: own, OTCP_TARGET_DATA_TEMPLATE: shared },
+    ]) {
+      expect(effectsSetupFromEnv({ ...exe, ...env }), JSON.stringify(env)).toMatchObject({
+        config: {
+          exe: { exe: process.execPath, dataTemplate: own },
+          dataTemplateFrom: 'OTCP_E2E_EFFECTS_DATA_TEMPLATE',
+        },
+      });
+    }
+    // Empty is unset; anything else must be an absolute path of an existing folder, and the error names the variable.
+    expect(
+      effectsSetupFromEnv({ ...exe, OTCP_E2E_EFFECTS_DATA_TEMPLATE: '', OTCP_TARGET_DATA_TEMPLATE: shared }),
+    ).toMatchObject({
+      config: { exe: { dataTemplate: shared }, dataTemplateFrom: 'OTCP_TARGET_DATA_TEMPLATE' },
+    });
+    expect(() => effectsSetupFromEnv({ ...exe, OTCP_E2E_EFFECTS_DATA_TEMPLATE: 'relative' })).toThrow(
+      'OTCP_E2E_EFFECTS_DATA_TEMPLATE must be an absolute path',
+    );
+    expect(() => effectsSetupFromEnv({ ...exe, OTCP_E2E_EFFECTS_DATA_TEMPLATE: path.join(own, 'missing') })).toThrow(
+      'OTCP_E2E_EFFECTS_DATA_TEMPLATE is not an existing directory',
+    );
+    // Without an executable the scenario is skipped, whatever the template.
+    expect(effectsSetupFromEnv({ OTCP_E2E_EFFECTS_DATA_TEMPLATE: 'relative' })).toEqual({
+      skip: 'OTCP_TARGET_EXE is not set',
+    });
+  });
 });
 
 /** Runs the real test file of the scenario in a child process, with only the variables given. */
@@ -620,18 +801,28 @@ describe('the effects scenario as a test file', () => {
     'runs the scenario and writes effects.json next to the smoke report when OTCP_TARGET_EXE is set',
     async () => {
       const dir = await tmp();
+      const template = await tmp();
       const run = runTestFile({
         OTCP_TARGET_EXE: process.execPath,
-        OTCP_TARGET_ARGS: JSON.stringify([FAKE, '--mode=effects']),
+        OTCP_TARGET_ARGS: JSON.stringify([FAKE, '--mode=effects-hybrid']),
         OTCP_E2E_REPORT: path.join(dir, 'report.json'),
         OTCP_E2E_STEP_TIMEOUT_MS: '20000',
         OTCP_E2E_EFFECTS_TIMING_SEC: 'none',
+        OTCP_E2E_EFFECTS_DATA_TEMPLATE: template,
       });
       const output = `${run.stdout}\n${run.stderr}`;
       expect(run.status, output).toBe(0);
       expect(output).toMatch(/\| shiftTiming \+30 ms \| PASS \|/);
+      // The notice comes before the table.
+      expect(output).toContain(`NOTE: ${HYBRID_MODE_NOTICE}\n| step | result | time | note |`);
       const written = JSON.parse(await readFile(path.join(dir, 'effects.json'), 'utf8')) as EffectsReport;
-      expect(written).toMatchObject({ schema: 'opentune-mcp-e2e-effects/1', result: 'PASS' });
+      expect(written).toMatchObject({
+        schema: 'opentune-mcp-e2e-effects/1',
+        result: 'PASS',
+        notices: [HYBRID_MODE_NOTICE],
+        hybridMode: true,
+        dataTemplateFrom: 'OTCP_E2E_EFFECTS_DATA_TEMPLATE',
+      });
     },
     SLOW,
   );

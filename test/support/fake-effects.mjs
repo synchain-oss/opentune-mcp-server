@@ -26,6 +26,11 @@
 // export, exports the notes as they are when it ends, and reports a wrong `offsetCents` for a write
 // made during the export. `effects-extra-fields` reports a field in every note change that the
 // specification does not have (yet).
+//
+// Modes about rendering: `effects-hybrid` reports hybrid mode on (in session.info and every export)
+// and renders as `effects` does. `effects-resynth`, `effects-resynth-far` and
+// `effects-resynth-detuned` render notes after an edited note again, as a vocoder that re-synthesises
+// a stretch does (see reached() below). Every other mode reports hybrid mode off.
 
 import fs from 'node:fs';
 
@@ -113,19 +118,40 @@ function mapTime(handles, durationSec, t) {
   return t;
 }
 
+/** Whether a note's target is not where it was detected (the note was edited). */
+const moved = (note) => note !== undefined && Math.abs(note.targetMidi - note.detectedMidi) > 1e-9;
+
+/**
+ * How the `effects-resynth*` modes render a note that an edit before it reaches, the way a vocoder
+ * that synthesises a stretch again does: `effects-resynth` renders the note right after an edited
+ * note in another phase (same pitch and level), `effects-resynth-far` the two notes after it, and
+ * `effects-resynth-detuned` the note right after it 10 cents sharp. The offset follows from the
+ * edited note alone, so taking the edit back renders the note as before.
+ */
+function reached(mode, notes, i, hz) {
+  const note = notes[i];
+  const previous = notes[i - 1];
+  if (!mode.startsWith('effects-resynth') || moved(note)) return { hz, delaySec: 0 };
+  if (mode === 'effects-resynth-detuned') return { hz: moved(previous) ? hz * 2 ** (10 / 1200) : hz, delaySec: 0 };
+  const near = moved(previous) ? previous : mode === 'effects-resynth-far' && moved(notes[i - 2]) ? notes[i - 2] : null;
+  if (near === null) return { hz, delaySec: 0 };
+  const turn = 0.25 + 0.5 * (Math.abs(near.targetMidi - near.detectedMidi) % 1);
+  return { hz, delaySec: turn / hz };
+}
+
 /** Re-synthesises the notes: a harmonic series at each note's pitch, placed through the time grid. */
-function render(content, notes, pitchShift, handles) {
+function render(content, notes, pitchShift, handles, mode = '') {
   const out = new Float64Array(Math.round(content.durationSec * RATE));
-  for (const note of notes) {
+  for (const [i, note] of notes.entries()) {
     const midi = note.targetMidi + pitchShift.semitones + pitchShift.cents / 100;
-    const hz = TUNING_HZ * 2 ** ((midi - 69) / 12);
+    const { hz, delaySec } = reached(mode, notes, i, TUNING_HZ * 2 ** ((midi - 69) / 12));
     const from = Math.round(mapTime(handles, content.durationSec, note.startContentSec) * RATE);
     const to = Math.round(mapTime(handles, content.durationSec, note.endContentSec) * RATE);
     const count = to - from;
     for (let n = 0; n < count && from + n < out.length; n++) {
       const t = n / RATE;
       let v = 0;
-      for (let k = 1; k <= HARMONICS; k++) v += Math.sin(2 * Math.PI * k * hz * t) / k;
+      for (let k = 1; k <= HARMONICS; k++) v += Math.sin(2 * Math.PI * k * hz * (t + delaySec)) / k;
       const edge = Math.min(1, t / FADE_SEC, (count / RATE - t) / FADE_SEC);
       out[from + n] = 0.2 * v * Math.max(0, edge);
     }
@@ -142,6 +168,7 @@ export function createEffects(mode) {
   let exportLock = null;
   const next = (prefix) => `${prefix}${(++counter).toString(16).padStart(8, '0')}`;
   const writesDuringExport = ['effects-mixed', 'effects-conflict', 'effects-down-misreport'].includes(mode);
+  const hybridMode = mode === 'effects-hybrid';
 
   const ok = (id, result) => ({ jsonrpc: '2.0', id, result });
   const fail = (id, kind, reason, detail = 'fake') => ({
@@ -282,7 +309,7 @@ export function createEffects(mode) {
         c.pitchShift,
         c.handles,
       );
-    else samples = render(c, c.notes, c.pitchShift, c.handles);
+    else samples = render(c, c.notes, c.pitchShift, c.handles, mode);
     fs.writeFileSync(job.path, wavBytes(samples));
     return {
       result: {
@@ -294,7 +321,7 @@ export function createEffects(mode) {
         startTimelineSec: 0,
         contents: [{ contentId: c.id, revision: c.revision }],
         dryContents: dry ? [{ contentId: c.id, reason: 'nothingToRender' }] : [],
-        processing: { vocoderWeight: 'fake', hybridMode: true, backend: 'fake', tuningHz: TUNING_HZ },
+        processing: { vocoderWeight: 'fake', hybridMode, backend: 'fake', tuningHz: TUNING_HZ },
       },
     };
   }
@@ -327,7 +354,7 @@ export function createEffects(mode) {
         processing: {
           tuningHz: TUNING_HZ,
           editingScheme: 'openTune',
-          hybridMode: true,
+          hybridMode,
           vocoderWeight: 'fake',
           f0Model: 'fake',
           renderingPriority: null,

@@ -144,16 +144,19 @@ export function exeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ExeConfi
   };
 }
 
-/** The template folder must be an absolute path to an existing directory. */
-function checkDataTemplate(dir: string): void {
-  if (!path.isAbsolute(dir)) throw new Error('OTCP_TARGET_DATA_TEMPLATE must be an absolute path');
+/**
+ * The template folder must be an absolute path to an existing directory. `name` is the variable it
+ * came from, for the error (a scenario can take its template from a variable of its own).
+ */
+export function checkDataTemplate(dir: string, name = 'OTCP_TARGET_DATA_TEMPLATE'): void {
+  if (!path.isAbsolute(dir)) throw new Error(`${name} must be an absolute path`);
   let isDir = false;
   try {
     isDir = statSync(dir).isDirectory();
   } catch {
     // reported below
   }
-  if (!isDir) throw new Error('OTCP_TARGET_DATA_TEMPLATE is not an existing directory');
+  if (!isDir) throw new Error(`${name} is not an existing directory`);
 }
 
 /**

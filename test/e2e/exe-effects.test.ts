@@ -3,8 +3,8 @@
 
 // The effects scenario against a started OpenTune executable (test/e2e/effects.ts). Without
 // OTCP_TARGET_EXE the whole scenario is one skipped test that says why; it never reports PASS.
-// The step table goes to stderr, and the JSON report to OTCP_E2E_EFFECTS_REPORT, or to effects.json
-// next to OTCP_E2E_REPORT.
+// The step table goes to stderr, with the report's notices above it, and the JSON report to
+// OTCP_E2E_EFFECTS_REPORT, or to effects.json next to OTCP_E2E_REPORT.
 
 import { describe, it } from 'vitest';
 
@@ -31,7 +31,9 @@ describe('end-to-end effects against the exe', () => {
 
   it('changes in the exported audio what each write reports, and nothing else', async (ctx) => {
     const report = await runEffects(config);
-    process.stderr.write(`\n${formatTable(report)}\n`);
+    // What a reader must know first (hybrid mode on, for one) goes above the table.
+    const notices = report.notices.map((n) => `NOTE: ${n}\n`).join('');
+    process.stderr.write(`\n${notices}${formatTable(report)}\n`);
     if (config.reportPath !== undefined) writeReport(config.reportPath, report);
     if (report.result === 'FAIL') {
       const failed = report.steps.filter((s) => s.result === 'FAIL').map((s) => `${s.name}: ${s.note}`);

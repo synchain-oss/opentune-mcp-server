@@ -17,10 +17,20 @@
 //   voiced in both files count, and max(80 ms, 20 % of the note) is left out at both ends; the median
 //   difference must lie within PITCH_TOLERANCE_CENTS of the expected change. The time shift is
 //   measured by cross-correlation of the amplitude envelopes (test/support/time-shift.ts), not by F0.
-// - Wet and dry. An edited note differs from the baseline, notes that were not edited do not (the
-//   samples are compared: UNEDITED_MAX_ABS_DIFF_*), no export is silent, and an export that is not
-//   corrected is listed in dryContents. A race: +100 cents, export.start, at once -100 cents; the
-//   file must be one whole version or the job must fail with REVISION_CONFLICT(changed_during_export).
+// - Wet and dry. An edited note differs from the baseline, notes that were not edited do not: notes
+//   away from an edit are compared sample by sample (UNEDITED_MAX_ABS_DIFF_*); a note within the reach
+//   of an edit's re-synthesis (RESYNTH_*) is either bit-identical or the same sound in another phase.
+//   No export is silent, and an export that is not corrected is listed in dryContents. A race: +100
+//   cents, export.start, at once -100 cents; the file must be one whole version or the job must fail
+//   with REVISION_CONFLICT(changed_during_export).
+//
+// The checks are meant for an instance whose vocoder renders every corrected note, that is with
+// OpenTune's hybrid mode off: with it on, OpenTune renders small corrections on a lighter path
+// instead, so the checks of small corrections can fail for a reason of OpenTune's own. The scenario
+// does not change that preference; it starts its instance from the data template the caller gives
+// (OTCP_E2E_EFFECTS_DATA_TEMPLATE, else OTCP_TARGET_DATA_TEMPLATE), records the hybrid mode every
+// export reports, and says at the top of the report when it was on. The checks are judged the same
+// either way.
 //
 // Steps and their results follow the smoke scenario (test/e2e/smoke.ts): PASS, FAIL, SKIP (a
 // capability the scenario needs is not reported, or the audio given cannot answer the check) and
@@ -46,7 +56,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { parseDiscoveryFile } from '../../src/discovery/file.js';
 import { OtcpError } from '../../src/errors/tool-error.js';
 import { OtcpSession, type HelloInfo, type Json } from '../../src/otcp/client.js';
-import { exeConfigFromEnv, exeTarget, type ExeTargetOptions } from '../contract/exe-target.js';
+import { checkDataTemplate, exeConfigFromEnv, exeTarget, type ExeTargetOptions } from '../contract/exe-target.js';
 import type { TargetInstance } from '../contract/target.js';
 import { ESTIMATOR_ERROR_CENTS, centsBetween, estimateF0, median } from '../support/f0-estimator.js';
 import { generateTone, writeToneFiles, type Tone, type ToneFiles } from '../support/harmonic-tone.js';
@@ -72,39 +82,93 @@ import {
 
 // ---------------------------------------------------------------------------------------------
 // tolerances, fixed once from measurements against a control-API build of OpenTune 1.8.0 (Windows,
-// FCPE analysis, HiFi-GAN vocoder; see docs/real-opentune-testing.md, "Effects scenario")
+// FCPE analysis, HiFi-GAN vocoder), with hybrid mode on and off; see docs/real-opentune-testing.md,
+// "Effects scenario"
 
 /**
  * How far the median pitch difference of a note may lie from the expected change, in cents.
  *
  * Noise floor: two exports of the unchanged clip were bit-identical (0 cents), and the estimator
  * stays within ESTIMATOR_ERROR_CENTS (2) of known harmonic tones. Above that floor the renderer
- * itself puts a note a few cents off its target: the rendered baseline lay -3.9 to +0.8 cents from
- * the source, and the measured changes were +101.1 and +105.1 cents for +100 cents and +199.9 to
- * +205.1 cents for +2 semitones, so up to 5.1 cents off. 15 cents is three times that, and still
- * tells every effect apart from no effect: it is below half of the 40 cents that AUTO has to take
- * off the sharp note, and well below the 50 cents the smallest edit (100 cents) needs.
+ * itself puts a note a few cents off its target. With hybrid mode on, the rendered baseline lay -3.9
+ * to +0.8 cents from the source, and the measured changes were +101.1 and +105.1 cents for +100 cents
+ * and +199.9 to +205.1 cents for +2 semitones, so up to 5.1 cents off; with it off (the vocoder
+ * renders every note), -0.9 to +1.3 cents, +99.9 to +100.0 cents, +199.8 to +200.0 cents and -41.1
+ * cents for the 40 cents sharp note, so up to 1.1 cents off. 15 cents is three times the larger of
+ * the two, and still tells every effect apart from no effect: it is below half of the 40 cents that
+ * AUTO has to take off the sharp note, and well below the 50 cents the smallest edit (100 cents) needs.
  */
 export const PITCH_TOLERANCE_CENTS = 15;
 
 /**
- * How far the measured time shift may lie from the expected one. Measured: 29.2 ms for a 30 ms
- * move (the audio right after the handle is compressed a little, so the estimate falls just short),
- * 0.0 ms at the notes away from it; the estimator is within SHIFT_ERROR_SEC (2 ms). 5 ms leaves six
- * times the measured deviation and stays far from the 30 ms of the effect.
+ * How far the measured time shift may lie from the expected one. Measured: 29.2 ms (hybrid mode on)
+ * and 28.8 ms (off) for a 30 ms move (the audio right after the handle is compressed a little, so the
+ * estimate falls just short), 0.0 ms at the notes away from it; the estimator is within
+ * SHIFT_ERROR_SEC (2 ms). 5 ms leaves four times the larger measured deviation and stays far from
+ * the 30 ms of the effect.
  */
 export const SHIFT_TOLERANCE_SEC = 0.005;
 
 /**
- * The largest sample difference allowed in notes that a note or pitch edit did not touch (linear,
- * full scale 1.0): none. Measured bit-identical: the instance renders only the edited notes again.
+ * The largest sample difference allowed in notes away from a note or pitch edit (linear, full scale
+ * 1.0): none. Measured bit-identical in every export, with hybrid mode on and off: every note before
+ * an edited note (up to RESYNTH_PRE_ROLL_SEC before it), and every note past the reach of the edit's
+ * re-synthesis (resynthesisReach).
  */
 export const UNEDITED_MAX_ABS_DIFF_NOTES = 0;
+
+/*
+ * The reach of an edit's re-synthesis, measured with hybrid mode off (the vocoder renders every
+ * corrected note): every note of the scenario's audio and of a second tone with phrases of notes
+ * without gaps moved by +100 cents on its own (shiftCents, and setTargetPitch for two of them), and
+ * one note also by -100 and by +10 cents:
+ *
+ * - The renderer synthesises the edited stretch again from at most 78 ms before the edited note (69
+ *   to 78 ms inside a phrase without gaps; in the silence before a note that has one) to the end of
+ *   its render block, and also the next block when that one begins within about 0.16 s after the
+ *   edited note ends. Blocks are split in silences: each gap of 0.355 s and more was a split, a phrase
+ *   without gaps was one block. Taking the edit back gave a bit-identical export again.
+ * - A note in that stretch is synthesised again as a whole, not only near the edit: the same pitch
+ *   (median 0 cents) and the same level (0.0 dB), but in another phase, so its samples differ by about
+ *   its own size (peak differences of -3.1 to -9.8 dBFS on notes that peak at -8 to -9.6 dBFS). A
+ *   window of a few milliseconds around the edit would not cover it.
+ * - Nothing before that stretch and nothing after it changed by a single sample.
+ *
+ * Hence three zones per unedited note, instead of one tolerance for all: the last
+ * RESYNTH_PRE_ROLL_SEC before an edited note is not compared; the notes after an edited note, up to
+ * and including the first one after a gap of at least PHRASE_GAP_SEC, are in the reach and may be
+ * re-synthesised (then RESYNTH_MAX_RESIDUAL_DB applies, and their pitch is measured like every
+ * note's); every other note must be bit-identical (UNEDITED_MAX_ABS_DIFF_NOTES).
+ */
+
+/** Before an edited note, this much is not compared: re-synthesis started up to 78 ms before it. */
+export const RESYNTH_PRE_ROLL_SEC = 0.1;
+
+/**
+ * A gap between notes of at least this length ends a phrase: re-synthesis may reach the first note
+ * after it, and no further. Every measured gap of 0.355 s and more split the render blocks.
+ */
+export const PHRASE_GAP_SEC = 0.3;
+
+/**
+ * A re-synthesised note within the reach of an edit must be the same sound in another phase: over its
+ * inside (trimmed as for the F0 measurement), the energy of the difference left after aligning every
+ * RESYNTH_WINDOW_SEC window by at most one period of the note, relative to the note's energy.
+ * Measured: -25.1 to -40.3 dB on re-synthesised notes, against +2.2 to +3.0 dB on a note moved by 100
+ * cents and -0.3 dB on one moved by 10 cents. -20 dB lies 5 dB above the worst re-synthesised note and
+ * 20 dB below a 10 cents move; a stale, moved or silent note fails, and so does one that is louder or
+ * quieter by more than about 1 dB.
+ */
+export const RESYNTH_MAX_RESIDUAL_DB = -20;
+
+/** The windows of the aligned comparison. */
+const RESYNTH_WINDOW_SEC = 0.1;
 
 /**
  * The same for notes away from a moved time-grid handle. A grid change renders the clip again, and
  * the notes it did not move were not bit-identical: they differed by up to 1.1e-4 (-79 dBFS) from
- * the baseline, far below the notes themselves (about -16 dBFS). 1e-3 (-60 dBFS) is 20 dB above
+ * the baseline, with hybrid mode on and off alike, far below the notes themselves (about -16 dBFS).
+ * 1e-3 (-60 dBFS) is 20 dB above
  * that measurement and still 44 dB below the music, where a stale or shifted note would differ by
  * the size of the note itself.
  */
@@ -167,7 +231,12 @@ export interface EffectsConfig {
   readonly audioPath: string | undefined;
   /** Lengths, in seconds, of the extra clips that are only timed; 60 and 240 unless given. */
   readonly timingLengthsSec: readonly number[];
+  /** Which variable the data template of `exe` came from, for the report; null (or absent) for none. */
+  readonly dataTemplateFrom?: DataTemplateSource | null;
 }
+
+/** The variables a data template can come from: the scenario's own wins over the shared one. */
+export type DataTemplateSource = 'OTCP_E2E_EFFECTS_DATA_TEMPLATE' | 'OTCP_TARGET_DATA_TEMPLATE';
 
 export type EffectsSetup = { readonly skip: string } | { readonly config: EffectsConfig };
 
@@ -179,12 +248,26 @@ function absoluteOrUndefined(env: NodeJS.ProcessEnv, name: string): string | und
 }
 
 /**
- * Reads OTCP_TARGET_EXE (and its siblings), OTCP_E2E_EFFECTS_REPORT, OTCP_E2E_REPORT,
- * OTCP_E2E_STEP_TIMEOUT_MS, OTCP_E2E_EFFECTS_AUDIO and OTCP_E2E_EFFECTS_TIMING_SEC.
+ * Reads OTCP_TARGET_EXE (and its siblings), OTCP_E2E_EFFECTS_DATA_TEMPLATE, OTCP_E2E_EFFECTS_REPORT,
+ * OTCP_E2E_REPORT, OTCP_E2E_STEP_TIMEOUT_MS, OTCP_E2E_EFFECTS_AUDIO and OTCP_E2E_EFFECTS_TIMING_SEC.
+ *
+ * OTCP_E2E_EFFECTS_DATA_TEMPLATE, when set, is the data template of this scenario's instance in place
+ * of OTCP_TARGET_DATA_TEMPLATE (same meaning, same checks): the effects checks want an instance with
+ * hybrid mode off, and the other scenarios need not run on that state. Which files make up that
+ * state is the caller's business; the scenario only copies the folder.
  */
 export function effectsSetupFromEnv(env: NodeJS.ProcessEnv = process.env): EffectsSetup {
-  const exe = exeConfigFromEnv(env);
-  if ('skip' in exe) return { skip: exe.skip };
+  const shared = exeConfigFromEnv(env);
+  if ('skip' in shared) return { skip: shared.skip };
+  let exe = shared;
+  let dataTemplateFrom: DataTemplateSource | null =
+    shared.options.dataTemplate === undefined ? null : 'OTCP_TARGET_DATA_TEMPLATE';
+  const ownTemplate = env.OTCP_E2E_EFFECTS_DATA_TEMPLATE;
+  if (ownTemplate !== undefined && ownTemplate !== '') {
+    checkDataTemplate(ownTemplate, 'OTCP_E2E_EFFECTS_DATA_TEMPLATE');
+    exe = { options: { ...shared.options, dataTemplate: ownTemplate } };
+    dataTemplateFrom = 'OTCP_E2E_EFFECTS_DATA_TEMPLATE';
+  }
   let stepTimeoutMs = DEFAULT_STEP_TIMEOUT_MS;
   const raw = env.OTCP_E2E_STEP_TIMEOUT_MS;
   if (raw !== undefined && raw !== '') {
@@ -223,7 +306,7 @@ export function effectsSetupFromEnv(env: NodeJS.ProcessEnv = process.env): Effec
             return value;
           });
   }
-  return { config: { exe: exe.options, stepTimeoutMs, reportPath, audioPath, timingLengthsSec } };
+  return { config: { exe: exe.options, stepTimeoutMs, reportPath, audioPath, timingLengthsSec, dataTemplateFrom } };
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -233,6 +316,16 @@ export interface EffectsReport {
   readonly schema: 'opentune-mcp-e2e-effects/1';
   readonly result: StepResult;
   readonly counts: Readonly<Record<StepResult, number>>;
+  /** What a reader must know before reading the results (HYBRID_MODE_NOTICE); empty when nothing. */
+  readonly notices: readonly string[];
+  /**
+   * Whether OpenTune's hybrid mode was on: true when session.info or any export reported it on,
+   * false when all that reported it said off, null when nothing reported it. Each check has the
+   * `processing` of its own exports.
+   */
+  readonly hybridMode: boolean | null;
+  /** Which variable the instance's data template came from; null when none was copied in. */
+  readonly dataTemplateFrom: DataTemplateSource | null;
   readonly startedAt: string;
   readonly totalMs: number;
   readonly steps: readonly StepReport[];
@@ -255,6 +348,9 @@ export interface EffectsReport {
     readonly shiftMs: number;
     readonly uneditedMaxAbsDiffNotes: number;
     readonly uneditedMaxAbsDiffTiming: number;
+    readonly resynthPreRollMs: number;
+    readonly phraseGapMs: number;
+    readonly resynthMaxResidualDb: number;
     readonly minVoicedFrames: number;
     readonly estimatorErrorCents: number;
     readonly shiftEstimatorErrorMs: number;
@@ -268,6 +364,19 @@ export interface EffectsReport {
   readonly dataDir: string | null;
   readonly templateSkipped: number | null;
   readonly busyDiagnostics: string | null;
+}
+
+/** The first notice of a report whose instance had hybrid mode on. */
+export const HYBRID_MODE_NOTICE =
+  'Hybrid mode is on: checks of small corrections can fail because OpenTune itself renders small ' +
+  'corrections on its lighter path instead of the vocoder; the checks are judged as usual. Run them ' +
+  'on an instance with hybrid mode off (a data template given in OTCP_E2E_EFFECTS_DATA_TEMPLATE).';
+
+/** What an export reported about how it was processed, kept per step. */
+export interface ExportProcessing {
+  readonly export: string;
+  readonly hybridMode: boolean | null;
+  readonly backend: string | null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -673,6 +782,101 @@ export function compareSamples(
   };
 }
 
+/**
+ * How far two files differ over a span once each RESYNTH_WINDOW_SEC window of `b` may be shifted by
+ * up to `maxLagSamples` against `a` (a phase offset): the smallest energy of a - b per window, summed
+ * over the windows, relative to the energy of `a` there, in dB. Windows shorter than twice the largest
+ * shift are left out. Null when `a` has no energy in the span (nothing to compare against); -200 at
+ * the lowest (the same samples after the shift).
+ */
+export function alignedResidualDb(
+  a: DecodedWav,
+  b: DecodedWav,
+  span: { readonly startSec: number; readonly endSec: number },
+  maxLagSamples: number,
+): number | null {
+  const x = a.mono;
+  const y = b.mono;
+  const rate = a.sampleRateHz;
+  const lagMax = Math.max(0, Math.ceil(maxLagSamples));
+  const from = Math.max(0, Math.round(span.startSec * rate));
+  const to = Math.min(x.length, Math.round(span.endSec * rate));
+  const step = Math.max(1, Math.round(RESYNTH_WINDOW_SEC * rate));
+  let energy = 0;
+  let residual = 0;
+  for (let start = from; start < to; start += step) {
+    const end = Math.min(to, start + step);
+    if (end - start < 2 * lagMax) continue;
+    let windowEnergy = 0;
+    for (let i = start; i < end; i++) windowEnergy += (x[i] ?? 0) ** 2;
+    let best = Infinity;
+    for (let lag = -lagMax; lag <= lagMax; lag++) {
+      let e = 0;
+      for (let i = start; i < end && e < best; i++) e += ((x[i] ?? 0) - (y[i - lag] ?? 0)) ** 2;
+      if (e < best) best = e;
+    }
+    energy += windowEnergy;
+    residual += best;
+  }
+  if (!(energy > 0)) return null;
+  return round(Math.max(-200, 10 * Math.log10(residual / energy)), 1);
+}
+
+/** A note by its place in the clip (content seconds). */
+export interface NotePlace {
+  readonly index: number;
+  readonly startSec: number;
+  readonly endSec: number;
+}
+
+/**
+ * The unedited notes an edit's re-synthesis may reach (see RESYNTH_PRE_ROLL_SEC and the measurements
+ * above it): after every edited note, the notes that follow it in its phrase, and the first note
+ * after the gap of at least PHRASE_GAP_SEC that ends the phrase. `notes` are all notes of the clip.
+ */
+export function resynthesisReach(notes: readonly NotePlace[], edited: readonly number[]): Set<number> {
+  const sorted = [...notes].sort((p, q) => p.startSec - q.startSec || p.index - q.index);
+  const isEdited = new Set(edited);
+  const reach = new Set<number>();
+  for (const [at, note] of sorted.entries()) {
+    if (!isEdited.has(note.index)) continue;
+    let end = note.endSec;
+    for (const next of sorted.slice(at + 1)) {
+      const gap = next.startSec - end;
+      if (!isEdited.has(next.index)) reach.add(next.index);
+      if (gap >= PHRASE_GAP_SEC) break;
+      end = Math.max(end, next.endSec);
+    }
+  }
+  return reach;
+}
+
+/**
+ * The part of an unedited note that must be bit-identical: the note and 50 ms on either side, but
+ * only up to RESYNTH_PRE_ROLL_SEC before the start of an edited note after it. Null when nothing is
+ * left of it.
+ */
+export function awayWindow(
+  span: NotePlace,
+  notes: readonly NotePlace[],
+  edited: readonly number[],
+): { startSec: number; endSec: number } | null {
+  const startSec = span.startSec - 0.05;
+  let endSec = span.endSec + 0.05;
+  for (const note of notes) {
+    if (edited.includes(note.index) && note.startSec > span.startSec) {
+      endSec = Math.min(endSec, note.startSec - RESYNTH_PRE_ROLL_SEC);
+    }
+  }
+  return endSec > startSec ? { startSec, endSec } : null;
+}
+
+/** The inside of a note that is measured: max(EDGE_TRIM_SEC, EDGE_TRIM_FRACTION of it) off both ends. */
+function insideOf(span: { readonly startSec: number; readonly endSec: number }) {
+  const trim = Math.max(EDGE_TRIM_SEC, EDGE_TRIM_FRACTION * (span.endSec - span.startSec));
+  return { startSec: span.startSec + trim, endSec: span.endSec - trim };
+}
+
 /** The largest absolute sample of a file (all channels). */
 function peakOf(wav: DecodedWav): number {
   let peak = 0;
@@ -755,16 +959,35 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   let backend = null as EffectsReport['backend'];
   let noiseFloor: Record<string, unknown> | null = null;
   let diagnostics: string | null = null;
+  let sessionHybridMode: boolean | null = null;
+  /** The processing every export reported, by the step that made it. */
+  const processing = new Map<string, ExportProcessing[]>();
+  let currentStep = '';
   target.labelNext?.('effects');
 
   /** Report text without the given audio file, the export folder or a user folder (scrubText). */
   const scrub = (text: string) => scrubText(text, { audioPath: config.audioPath, workDir });
+
+  /** Keeps what an export result says about its processing (hybrid mode, backend) for the current step. */
+  const recordProcessing = (label: string, result: unknown) => {
+    const p = member(result, 'processing', 'the export result');
+    const entry: ExportProcessing = {
+      export: label,
+      hybridMode: isObject(p) && typeof p.hybridMode === 'boolean' ? p.hybridMode : null,
+      backend: isObject(p) && typeof p.backend === 'string' ? p.backend : null,
+    };
+    if (entry.backend !== null) exportBackends.add(entry.backend);
+    const list = processing.get(currentStep) ?? [];
+    list.push(entry);
+    processing.set(currentStep, list);
+  };
 
   const step = async (name: string, body: () => Promise<string>, options: StepOptions = {}) => {
     if (halted !== undefined && options.always !== true) {
       steps.push({ name, result: 'SKIP', ms: 0, note: `not run: ${halted}` });
       return;
     }
+    currentStep = name;
     const at = performance.now();
     try {
       const note = await body();
@@ -792,6 +1015,8 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   let workDir = '';
   let baseline: DecodedWav | undefined;
   let spans: Span[] = [];
+  /** Every note of the clip by its place, voiced or not: the gaps between them end phrases (resynthesisReach). */
+  let places: NotePlace[] = [];
   let picks: Picks | undefined;
   let exportCount = 0;
 
@@ -822,8 +1047,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       timeoutMs,
     );
     exportTimes.push({ label, ms: Math.round(performance.now() - at) });
-    const processing = member(result, 'processing', 'the export result');
-    if (isObject(processing) && typeof processing.backend === 'string') exportBackends.add(processing.backend);
+    recordProcessing(label, result);
     const dry = member(result, 'dryContents', 'the export result');
     if (!Array.isArray(dry)) throw new Error('dryContents is not an array');
     const wav = decodeWav(await readFile(text(result, 'path', 'the export result')));
@@ -1052,20 +1276,44 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         );
       }
     }
-    const unedited = spans
-      .filter((s) => !expected.has(s.index))
-      .map((s) => ({ startSec: s.startSec - 0.05, endSec: s.endSec + 0.05 }));
-    const samples = compareSamples(base, wet, unedited);
-    if (samples.maxAbsDiff > UNEDITED_MAX_ABS_DIFF_NOTES) {
+    // The notes that were not edited, in the zones of RESYNTH_*: those within the reach of an edit's
+    // re-synthesis, and those away from every edit.
+    const edited = [...expected.keys()];
+    const reachable = resynthesisReach(places, edited);
+    const uneditedSpans = spans.filter((s) => !expected.has(s.index));
+    const awaySpans = uneditedSpans.filter((s) => !reachable.has(s.index));
+    const windows = awaySpans
+      .map((s) => awayWindow(s, places, edited))
+      .filter((w): w is { startSec: number; endSec: number } => w !== null);
+    const away = compareSamples(base, wet, windows);
+    if (away.maxAbsDiff > UNEDITED_MAX_ABS_DIFF_NOTES) {
       problems.push(
-        `notes that were not edited differ from the baseline by up to ${samples.maxAbsDiff.toExponential(2)} ` +
-          `(allowed ${String(UNEDITED_MAX_ABS_DIFF_NOTES)})`,
+        `notes away from the edit (${awaySpans.map((s) => String(s.index)).join(', ')}) differ from the baseline ` +
+          `by up to ${away.maxAbsDiff.toExponential(2)} (allowed ${String(UNEDITED_MAX_ABS_DIFF_NOTES)})`,
       );
+    }
+    const reach = uneditedSpans
+      .filter((s) => reachable.has(s.index))
+      .map((s) => {
+        const identical =
+          compareSamples(base, wet, [{ startSec: s.startSec - 0.05, endSec: s.endSec + 0.05 }]).bitIdentical === 1;
+        // One period of the note's pitch is as far as a phase offset can move it.
+        const residualDb = identical ? null : alignedResidualDb(base, wet, insideOf(s), base.sampleRateHz / s.hz);
+        return { index: s.index, bitIdentical: identical, alignedResidualDb: residualDb };
+      });
+    for (const r of reach) {
+      if (r.bitIdentical) continue;
+      if (r.alignedResidualDb === null || r.alignedResidualDb > RESYNTH_MAX_RESIDUAL_DB) {
+        problems.push(
+          `note ${String(r.index)}, after the edit, was rendered again but is not the same sound: ` +
+            `${String(r.alignedResidualDb)} dB left after aligning its phase (allowed ${String(RESYNTH_MAX_RESIDUAL_DB)})`,
+        );
+      }
     }
     const report = {
       toleranceCents: PITCH_TOLERANCE_CENTS,
       notes: deltas.map(publicDelta),
-      unedited: samples,
+      unedited: { away: { ...away, notes: awaySpans.map((s) => s.index) }, reach },
     };
     return { deltas, problems, report };
   };
@@ -1139,7 +1387,12 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       f0Model: nullable('f0Model'),
       vocoderWeight: nullable('vocoderWeight'),
     };
-    return `protocol ${hello.protocol}; backend ${String(backend.sessionInfo)}, scheme ${text(processing, 'editingScheme', 'processing')}`;
+    const hybrid = isObject(processing) ? processing.hybridMode : undefined;
+    sessionHybridMode = typeof hybrid === 'boolean' ? hybrid : null;
+    return (
+      `protocol ${hello.protocol}; backend ${String(backend.sessionInfo)}, ` +
+      `scheme ${text(processing, 'editingScheme', 'processing')}, hybrid mode ${sessionHybridMode === null ? 'not reported' : sessionHybridMode ? 'on' : 'off'}`
+    );
   });
 
   let afterImport: ClipState | undefined;
@@ -1150,6 +1403,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     timings.importToF0ReadyMs = imported.ms;
     afterImport = await readState(need(), contentId);
     spans = spansOf(afterImport);
+    places = afterImport.notes.map((n) => ({ index: n.index, startSec: n.startContentSec, endSec: n.endContentSec }));
     const corrected = afterImport.notes.filter((n) => n.corrected).length;
     if (tone !== undefined) {
       if (spans.length !== tone.truth.notes.length) {
@@ -1282,8 +1536,13 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       const m = measure(await exportWet(name), want);
       problems.push(...m.problems);
       Object.assign(report, m.report, { writeToSettleMs, consistency });
+      const again = m.report.unedited.reach.filter((r) => !r.bitIdentical);
+      const rendered =
+        again.length === 0
+          ? ''
+          : ` (${again.map((r) => `note ${String(r.index)} rendered again in another phase, ${String(r.alignedResidualDb)} dB`).join(', ')})`;
       return {
-        note: `${describeDeltas(m.deltas, [...want.keys()])}; others unchanged; undo restored the clip`,
+        note: `${describeDeltas(m.deltas, [...want.keys()])}; others unchanged${rendered}; undo restored the clip`,
         problems,
       };
     });
@@ -1531,6 +1790,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
           if (existsSync(file)) throw new Error('the export failed but its target was written');
           outcome = 'REVISION_CONFLICT(changed_during_export), target untouched';
         } else {
+          recordProcessing('race', result);
           const dry = member(result, 'dryContents', 'the export result');
           if (Array.isArray(dry) && dry.length > 0) throw new Error('the race export lists the clip in dryContents');
           const wav = decodeWav(await readFile(text(result, 'path', 'the export result')));
@@ -1760,10 +2020,22 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   timings.exports = exportTimes;
   timings.lengths = lengthTimings;
   const finalBackend: EffectsReport['backend'] = backend === null ? null : { ...backend, exports: [...exportBackends] };
+  // Every step that exported gets the processing its exports reported (hybrid mode and backend).
+  for (const [name, list] of processing) {
+    const report = checks[name];
+    checks[name] = { ...(isObject(report) ? report : {}), processing: list };
+  }
+  const reported = [sessionHybridMode, ...[...processing.values()].flat().map((p) => p.hybridMode)].filter(
+    (v): v is boolean => v !== null,
+  );
+  const hybridMode = reported.length === 0 ? null : reported.includes(true);
 
   return {
     schema: 'opentune-mcp-e2e-effects/1',
     ...summarise(steps),
+    notices: hybridMode === true ? [HYBRID_MODE_NOTICE] : [],
+    hybridMode,
+    dataTemplateFrom: config.dataTemplateFrom ?? null,
     startedAt,
     totalMs: Math.round(performance.now() - started),
     steps: steps.map((st) => ({ ...st, ms: Math.round(st.ms) })),
@@ -1775,6 +2047,9 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       shiftMs: SHIFT_TOLERANCE_SEC * 1000,
       uneditedMaxAbsDiffNotes: UNEDITED_MAX_ABS_DIFF_NOTES,
       uneditedMaxAbsDiffTiming: UNEDITED_MAX_ABS_DIFF_TIMING,
+      resynthPreRollMs: RESYNTH_PRE_ROLL_SEC * 1000,
+      phraseGapMs: PHRASE_GAP_SEC * 1000,
+      resynthMaxResidualDb: RESYNTH_MAX_RESIDUAL_DB,
       minVoicedFrames: MIN_VOICED_FRAMES,
       estimatorErrorCents: ESTIMATOR_ERROR_CENTS,
       shiftEstimatorErrorMs: SHIFT_ERROR_SEC * 1000,
