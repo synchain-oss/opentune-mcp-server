@@ -154,6 +154,6 @@ describe('formatClientConfig', () => {
       ...LINUX_UNSET,
       env: { OPENTUNE_MCP_OPENTUNE_PATH: '/opt/Open Tune/OpenTune' },
     });
-    expect(text).toContain('--env OPENTUNE_MCP_OPENTUNE_PATH="/opt/Open Tune/OpenTune" opentune');
+    expect(text).toContain('opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH="/opt/Open Tune/OpenTune" --');
   });
 });

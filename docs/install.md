@@ -47,7 +47,10 @@ Run `opentune-mcp doctor --client claude-desktop` and follow the second half of 
 
 ## Claude Code
 
-Run `opentune-mcp doctor --client claude-code` and run the printed `claude mcp add` command.
+Run `opentune-mcp doctor --client claude-code` and run the printed `claude mcp add` command. The name (`opentune`) comes
+first and `-e` sets the environment variable, because `-e`/`--env` takes any number of values and would otherwise swallow
+the name. `--scope user` makes the server available in every project; leave it out for the current project only. On
+Windows the command starts with `claude.cmd`; see [Troubleshooting](TROUBLESHOOTING.md#claude-code-mcp-add-fails-in-powershell).
 
 ## Cursor
 

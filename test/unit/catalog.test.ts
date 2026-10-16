@@ -225,14 +225,23 @@ describe('docs links to TROUBLESHOOTING and COMPATIBILITY sections', () => {
     'docs/TROUBLESHOOTING.md',
     'docs/TROUBLESHOOTING.zh-CN.md',
     'docs/COMPATIBILITY.md',
+    'docs/install.md',
   ];
 
-  /** The links of `markdown` that point into a heading: [file or '' for the same page, anchor]. */
+  /**
+   * The links of `markdown` into a heading of one of the three pages, as 'resolved file#anchor'. A link
+   * resolves against the folder of the page that holds it: README links need the docs/ prefix, links between
+   * the pages in docs/ do not have it (docs/docs/X.md does not exist). A link that does not resolve to an
+   * existing page keeps its unresolved path, so it is reported as missing.
+   */
   function sectionLinks(markdown: string, own: string): string[] {
-    const link = /\]\((?:docs\/)?((?:TROUBLESHOOTING(?:\.zh-CN)?|COMPATIBILITY)\.md)?#([^)\s]+)\)/g;
-    return [...markdown.matchAll(link)].map(
-      ([, name, anchor = '']) => `${name === undefined ? own : `docs/${name}`}#${decodeURIComponent(anchor)}`,
-    );
+    const link = /\]\(([^)#\s]*)#([^)\s]+)\)/g;
+    const pages = /(?:^|\/)(?:TROUBLESHOOTING(?:\.zh-CN)?|COMPATIBILITY)\.md$/;
+    return [...markdown.matchAll(link)].flatMap(([, target = '', anchor = '']) => {
+      if (target !== '' && !pages.test(target)) return [];
+      const file = target === '' ? own : path.posix.join(path.posix.dirname(own), target);
+      return [`${file}#${decodeURIComponent(anchor)}`];
+    });
   }
 
   it.each(sources)('%s: every link into a section names an existing heading', (source) => {
@@ -245,14 +254,32 @@ describe('docs links to TROUBLESHOOTING and COMPATIBILITY sections', () => {
     expect(missing).toEqual([]);
   });
 
-  it('finds links to the same page and reports a broken one', () => {
+  it('finds links to the same page and resolves the others against the page that holds them', () => {
     const links = sectionLinks(
-      'See [a](#wsl), [b](docs/COMPATIBILITY.md#x) and [c](TROUBLESHOOTING.md#y).',
+      'See [a](#wsl), [b](docs/COMPATIBILITY.md#x) and [c](docs/TROUBLESHOOTING.md#y).',
       'README.md',
     );
     expect(links).toEqual(['README.md#wsl', 'docs/COMPATIBILITY.md#x', 'docs/TROUBLESHOOTING.md#y']);
+    const inDocs = sectionLinks(
+      'See [b](COMPATIBILITY.md#x) and [c](./TROUBLESHOOTING.zh-CN.md#y).',
+      'docs/TROUBLESHOOTING.md',
+    );
+    expect(inDocs).toEqual(['docs/COMPATIBILITY.md#x', 'docs/TROUBLESHOOTING.zh-CN.md#y']);
     expect(anchors('## WSL\n').has('wsl')).toBe(true);
     expect(anchors('## WSL\n').has('wsl-2')).toBe(false);
+  });
+
+  it('reports a link whose path does not resolve from the page that holds it', () => {
+    const known = new Set(['docs/COMPATIBILITY.md', 'docs/TROUBLESHOOTING.md']);
+    const unresolved = (markdown: string, own: string) =>
+      sectionLinks(markdown, own).filter((l) => !known.has(l.split('#')[0] ?? ''));
+    // README without docs/, and a docs page with docs/ (that would be docs/docs/...), are both broken.
+    expect(unresolved('[a](COMPATIBILITY.md#x)', 'README.md')).toEqual(['COMPATIBILITY.md#x']);
+    expect(unresolved('[a](docs/COMPATIBILITY.md#x)', 'docs/TROUBLESHOOTING.md')).toEqual([
+      'docs/docs/COMPATIBILITY.md#x',
+    ]);
+    expect(unresolved('[a](docs/COMPATIBILITY.md#x)', 'README.md')).toEqual([]);
+    expect(unresolved('[a](COMPATIBILITY.md#x)', 'docs/TROUBLESHOOTING.md')).toEqual([]);
   });
 });
 
@@ -266,7 +293,7 @@ describe('install snippets in the READMEs equal what doctor --client prints', ()
   it.each(readmes)('%s: Claude Code command', (file) => {
     const command = golden('claude-code-win32')
       .split('\n')
-      .find((line) => line.trim().startsWith('claude mcp add'));
+      .find((line) => line.trim().startsWith('claude.cmd mcp add'));
     expect(command).toBeDefined();
     expect(read(file)).toContain(command?.trim());
   });

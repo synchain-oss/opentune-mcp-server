@@ -295,6 +295,16 @@ delete it if it is there.
 "Cannot tell" means the `d3d12` entry of `opentune-control.json` lists no files or has a hash that is not 64
 hexadecimal characters, so nothing could be checked: unpack the test build again.
 
+## Claude Code mcp add fails in PowerShell
+
+`claude mcp add` fails with `missing required argument 'commandOrUrl'` (or `'name'`). Two causes:
+
+- In PowerShell, `claude` resolves to the `claude.ps1` that npm generates, and PowerShell drops a lone `--` before the
+  program sees it, so the command to register is missing. Run `claude.cmd mcp add …` instead, which `opentune-mcp doctor
+--client claude-code` prints on Windows. In cmd and on macOS and Linux, `claude` works.
+- `-e` (`--env`) takes any number of values, so a name written after it is read as one more variable. The name
+  (`opentune`) must come first, as the printed command has it.
+
 ## First launch dialog
 
 The first time OpenTune starts with a fresh data folder it shows a one-time welcome (onboarding) dialog. A person has to

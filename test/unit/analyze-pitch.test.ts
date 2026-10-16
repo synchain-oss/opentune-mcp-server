@@ -471,6 +471,7 @@ describe('opentune_analyze_pitch limits and declaration', () => {
       'content.getNotes',
       'content.getPitchCurve',
       'content.segmentNotes',
+      'prefs.get',
       'project.get',
     ]);
     const schema = analyzePitchTool.inputSchema;
@@ -479,5 +480,144 @@ describe('opentune_analyze_pitch limits and declaration', () => {
     expect(schema.safeParse({ clip: 'p:00000000:0:1', threshold_cents: 1201 }).success).toBe(false);
     expect(schema.safeParse({ clip: 'p:00000000:0:1', limit: 201 }).success).toBe(false);
     expect(schema.safeParse({ clip: 'p:00000000:0:1', detail: 'notes', limit: 20 }).success).toBe(true);
+  });
+});
+
+describe('opentune_analyze_pitch before and after the corrections', () => {
+  /** A corrected curve equal to `fn(original, timeSec)` for every frame of a getPitchCurve result. */
+  const withCorrected =
+    (fn: (original: number | null, timeSec: number) => number | null): Rewrite =>
+    (method, result) => {
+      if (method !== 'content.getPitchCurve') return result;
+      const original = result.originalMidi as (number | null)[];
+      const start = result.startContentSec as number;
+      const step = (result.hopSec as number) * (result.stepFrame as number);
+      return { ...result, correctedMidi: original.map((v, i) => fn(v, start + i * step)) };
+    };
+  const targetAt = (timeSec: number) =>
+    NOTES.find((n) => timeSec >= n.startContentSec - 1e-9 && timeSec < n.endContentSec - 1e-9)?.targetMidi;
+
+  it('gives both deviations per note, and the corrected pitch pulled towards the targets', async () => {
+    const { ctx, placement } = await setup();
+    const out = body(await analyzePitch(ctx, { clip: placement, detail: 'notes' }));
+    const notes = out.notes as Record<string, number | boolean | null>[];
+    // Note 2 is 150 cents sharp before; the correction brings it much closer to its target.
+    expect(notes[2]?.overThreshold).toBe(true);
+    expect(Math.abs(notes[2]?.correctedMedianDeviationCents as number)).toBeLessThan(25);
+    expect(notes[2]?.correctedOverThreshold).toBe(false);
+    expect(typeof notes[0]?.correctedStabilityCents).toBe('number');
+    expect(out.summary).toContain('corrected* fields after');
+  });
+
+  it('shows no deviation after the corrections when the pitch is already on the targets', async () => {
+    const { ctx, placement } = await setup(
+      {},
+      withCorrected((v, t) => (v === null ? null : (targetAt(t) ?? v))),
+    );
+    const summary = body(await analyzePitch(ctx, { clip: placement }));
+    expect(summary.flagged_note_indexes).toEqual([0, 2]);
+    expect(summary.corrected_flagged_note_indexes).toEqual([]);
+    expect(summary.overall).toMatchObject({
+      overThresholdCount: 2,
+      correctedMeanAbsDeviationCents: 0,
+      correctedMeanSignedDeviationCents: 0,
+      correctedMeanStabilityCents: 0,
+      correctedOverThresholdCount: 0,
+      correctedOverThresholdRatio: 0,
+    });
+    expect(summary.summary).toContain('2 beyond 25 cents before, 0 after the corrections');
+    const phrases = body(await analyzePitch(ctx, { clip: placement, detail: 'phrases' })).phrases as Record<
+      string,
+      number
+    >[];
+    expect(phrases.map((p) => p.correctedOverThresholdCount)).toEqual([0, 0]);
+    expect(phrases.map((p) => p.correctedMeanAbsDeviationCents)).toEqual([0, 0]);
+  });
+
+  it('still flags the notes that stay off after the corrections', async () => {
+    // Nothing is corrected: after equals before.
+    const { ctx, placement } = await setup(
+      {},
+      withCorrected((v) => v),
+    );
+    const summary = body(await analyzePitch(ctx, { clip: placement }));
+    expect(summary.corrected_flagged_note_indexes).toEqual([0, 2]);
+    const overall = summary.overall as Record<string, number>;
+    expect(overall.correctedOverThresholdCount).toBe(overall.overThresholdCount);
+    expect(overall.correctedMeanAbsDeviationCents).toBe(overall.meanAbsDeviationCents);
+    const notes = body(await analyzePitch(ctx, { clip: placement, detail: 'notes' })).notes as Record<string, number>[];
+    for (const n of notes) expect(n.correctedMedianDeviationCents).toBe(n.medianDeviationCents);
+  });
+
+  it.each([
+    ['no corrected curve', (r: Json): Json => ({ ...r, correctedMidi: undefined })],
+    ['a corrected curve of another length', (r: Json): Json => ({ ...r, correctedMidi: [60, 61] })],
+  ])('gives null and the reason when there is %s', async (_name, change) => {
+    const { ctx, placement } = await setup({}, (method, result) =>
+      method === 'content.getPitchCurve' ? change(result) : result,
+    );
+    const summary = body(await analyzePitch(ctx, { clip: placement }));
+    expect(summary.nullReasons).toMatchObject({
+      corrected_statistics: 'corrected_curve_unavailable',
+      hybrid_mode: 'not_read',
+    });
+    expect(summary.corrected_flagged_note_indexes).toBeNull();
+    expect(summary.overall).toMatchObject({ correctedMeanAbsDeviationCents: null, correctedOverThresholdCount: null });
+    // The before side is unaffected, and hybrid mode is not read when there is no after to qualify.
+    expect(summary.flagged_note_indexes).toEqual([0, 2]);
+    expect(summary.hybrid_mode).toBeNull();
+    expect(summary.summary).not.toContain('after the corrections');
+    const notes = body(await analyzePitch(ctx, { clip: placement, detail: 'notes' })).notes as Record<
+      string,
+      unknown
+    >[];
+    expect(notes[0]).toMatchObject({
+      correctedMedianDeviationCents: null,
+      correctedStabilityCents: null,
+      correctedOverThreshold: null,
+    });
+  });
+
+  it('warns when hybrid mode is on, because small corrections are then rendered by DSP shifting', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({
+      clips: [clip({ durationSec: 6, notes: NOTES })],
+      preferences: { hybridMode: true },
+    });
+    const out = body(await analyzePitch(ctx, { clip: need(ids, 'clip.placementId') }));
+    expect(out.hybrid_mode).toBe(true);
+    expect(out.warnings).toEqual([expect.stringContaining('hybrid mode may make a small correction sound smaller')]);
+    expect(out.nullReasons).toBeUndefined();
+  });
+
+  it('adds no warning when hybrid mode is off', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ clips: [clip({ durationSec: 6, notes: NOTES })], preferences: { hybridMode: false } });
+    const out = body(await analyzePitch(ctx, { clip: need(ids, 'clip.placementId') }));
+    expect(out.hybrid_mode).toBe(false);
+    expect(out.warnings).toBeUndefined();
+  });
+
+  it('says the preference is unavailable when reading it fails, and still analyzes', async () => {
+    const { ctx, placement } = await setup({}, (method, result) => {
+      if (method === 'prefs.get') throw new Error('prefs.get is not supported');
+      return result;
+    });
+    const out = body(await analyzePitch(ctx, { clip: placement }));
+    expect(out.hybrid_mode).toBeNull();
+    expect(out.nullReasons).toMatchObject({ hybrid_mode: 'unavailable' });
+    expect(out.warnings).toBeUndefined();
+    expect(out.flagged_note_indexes).toEqual([0, 2]);
+  });
+
+  it('says the preference is unavailable when the instance does not report it, and still analyzes', async () => {
+    const { ctx, placement } = await setup({}, (method, result) =>
+      method === 'prefs.get' ? { ...result, processing: {} } : result,
+    );
+    const out = body(await analyzePitch(ctx, { clip: placement }));
+    expect(out.hybrid_mode).toBeNull();
+    expect(out.nullReasons).toMatchObject({ hybrid_mode: 'unavailable' });
+    expect(out.warnings).toBeUndefined();
+    expect(out.flagged_note_indexes).toEqual([0, 2]);
   });
 });

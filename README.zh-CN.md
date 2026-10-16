@@ -46,10 +46,10 @@ OpenTune 在全新数据目录下首次启动时,会弹出一次「首次引导�
 
 **Claude Desktop(首推):MCPB 包。** 从 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases) 页面下载 `opentune-mcp-<version>.mcpb` 与对应的 `.sha256` 文件,核对校验和,打开 `.mcpb` 文件(或拖进 设置 > 扩展)并选择安装。在扩展设置里把「OpenTune executable」设为测试版的 `OpenTune.exe`。详见 [docs/install.md](docs/install.md)。进阶:用 `opentune-mcp doctor --client claude-desktop` 手动注册 npm 包。
 
-**Claude Code:** 在终端里运行一次(加 `--scope user` 则在所有项目里使用):
+**Claude Code:** 在终端里运行一次。`--scope user` 让服务在所有项目里可用(去掉则只注册到当前项目)。Windows 上命令写成 `claude.cmd`,因为 PowerShell 否则会运行 `claude.ps1`,它会吞掉 `--`,并报 `missing required argument`(见[排障](docs/TROUBLESHOOTING.zh-CN.md#claude-code-mcp-add-fails-in-powershell));macOS 与 Linux 写 `claude`。
 
 ```text
-claude mcp add --env OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\user\Apps\OpenTune\OpenTune.exe opentune -- cmd /c npx -y @synchain/opentune-mcp
+claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\user\Apps\OpenTune\OpenTune.exe -- cmd /c npx -y @synchain/opentune-mcp
 ```
 
 **Cursor:** 把下面的内容放进 `~/.cursor/mcp.json`(所有项目)或 `.cursor/mcp.json`(单个项目):
