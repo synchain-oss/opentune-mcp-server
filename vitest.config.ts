@@ -52,8 +52,10 @@ export default defineConfig({
         test: { name: 'contract', include: ['test/contract/**/*.test.ts'], testTimeout: 60_000 },
       },
       {
-        // The scenario against a started OpenTune; skipped as a whole unless OTCP_TARGET_EXE is set.
-        // A first start can load models and analyse audio, so the time limit is generous.
+        // The scenarios against a started OpenTune; skipped as a whole unless OTCP_TARGET_EXE is set.
+        // A first start can load models and analyse audio, so the time limit is generous. The files
+        // run one after the other: each starts an instance of its own, and two at once would share
+        // the machine (and its inference backend) and distort each other's timings.
         extends: true,
         test: {
           name: 'e2e',
@@ -62,6 +64,7 @@ export default defineConfig({
           globalSetup: ['test/stdio/global-setup.ts'],
           testTimeout: 1_800_000,
           hookTimeout: 120_000,
+          fileParallelism: false,
         },
       },
     ],
