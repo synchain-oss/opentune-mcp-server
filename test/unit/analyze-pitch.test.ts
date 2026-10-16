@@ -578,7 +578,7 @@ describe('opentune_analyze_pitch before and after the corrections', () => {
     });
   });
 
-  it('warns when hybrid mode is on, because small corrections are then rendered by DSP shifting', async () => {
+  it('warns when hybrid mode is on, because what you hear may change less than the corrected data', async () => {
     const { mock, ctx } = await withMock();
     const ids = mock.given({
       clips: [clip({ durationSec: 6, notes: NOTES })],
