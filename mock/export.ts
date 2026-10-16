@@ -180,6 +180,10 @@ export class ExportService {
       }
     }
     checkNotBusy(context);
+    // Rule 1: an export that would hold no audio fails at once, and no job starts.
+    if (plan.contents.length === 0) {
+      throw refuse('INVALID_ARGUMENT', 'nothing_to_export', 'the export holds no clip');
+    }
     if (this.#isLoadedMedia(plan.path)) {
       throw refuse('INVALID_ARGUMENT', 'target_is_loaded_media', 'the target is a source or media file of the project');
     }

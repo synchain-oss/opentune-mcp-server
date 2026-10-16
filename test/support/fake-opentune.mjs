@@ -258,7 +258,7 @@ function smokeReply(request) {
       pitchShift: { semitones: 0, cents: 0 },
       analysis: { f0State: 'ready', failure: null, hopSec: 0.01 },
       render: { current: true, publishedRevision: 'r1', desiredRevision: 'r1' },
-      timeGrid: { seeded: true, identity: true, handles: [] },
+      timeGrid: { seeded: true, identity: true, handles: [], minHandleSpacingSec: 0.05 },
       reference: { referencePlacementId: null, alignmentReady: false },
       autoModes: {
         editingScheme: 'openDyne',

@@ -149,14 +149,14 @@ describe('ifExists and the final rename', () => {
     const target = { placementId: ids['clip.placementId'] };
     const one = await finish(session, clock, await start(session, { kind: 'clip', target, path: second }));
     expect(one.result).toMatchObject({ channelCount: 1, startTimelineSec: 2, durationSec: 6 });
-    // A track without clips gives an empty file rather than an error.
-    const empty = await finish(
-      session,
-      clock,
-      await start(session, { kind: 'track', target: { trackId: 3 }, path: path.join(dir, 'empty.wav') }),
-    );
-    expect(empty.result).toMatchObject({ durationSec: 0, dryContents: [] });
-    expect(fs.statSync(path.join(dir, 'empty.wav')).size).toBe(44);
+    // A track without clips has no audio to export: the call fails at once and writes nothing (section 19 rule 1).
+    const empty = await session.fails('export.start', {
+      kind: 'track',
+      target: { trackId: 3 },
+      path: path.join(dir, 'empty.wav'),
+    });
+    expect(empty.data).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'nothing_to_export', executed: false });
+    expect(fs.existsSync(path.join(dir, 'empty.wav'))).toBe(false);
   });
 });
 
