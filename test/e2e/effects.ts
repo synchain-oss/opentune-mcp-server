@@ -195,9 +195,10 @@ export const RESYNTH_EDGE_MAX_RESIDUAL_DB = -12;
  * Its unedited export is therefore checked against the detected pitch only for notes whose own pitch
  * is steady: the frames of a note IN THE SOURCE AUDIO stay within STEADY_NOTE_MAX_SPREAD_CENTS
  * (standard deviation) of its median (never the export's own frames: a damaged export would then
- * excuse itself as unsteady). The export is compared by its median pitch per note. The harmonic tones measured 0.0 to 2.1 cents, so their notes are all steady; a steady
- * sung note wobbles by roughly 10 to 15 cents, vibrato of +-50 cents has a deviation near 35. 20
- * keeps the first and drops the second. Notes left out are counted in the report with the reason.
+ * excuse itself as unsteady). The export is compared by its median pitch per note.
+ * The harmonic tones measured 0.0 to 2.1 cents, so their notes are all steady; a steady sung note
+ * wobbles by roughly 10 to 15 cents, vibrato of +-50 cents has a deviation near 35. 20 keeps the
+ * first and drops the second. Notes left out are counted in the report with the reason.
  */
 export const STEADY_NOTE_MAX_SPREAD_CENTS = 20;
 

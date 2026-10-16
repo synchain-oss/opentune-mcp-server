@@ -309,10 +309,14 @@ The tolerances are fixed in `test/e2e/effects.ts`, each with the measurements it
 
   The same comparison is also made over the two ends of such a note alone (max(80 ms, 20 %) at each
   end, the stretches the inside check leaves out), against a wider limit of -12 dB: attack and
-  release are short and hold the onset, so a phase offset smears them more (measured: -28.1 dB at the ends
-  against -28.3 dB for the inside of the same note, on the one re-synthesised note the generated
-  audio gives; the limit is 16 dB above that and is to be tightened or loosened by a run on voices). A lost or changed attack or release fails here
-  while the inside still passes.
+  release are short and hold the onset, so a phase offset smears them more (measured: -28.1 dB at
+  the ends against -28.3 dB for the inside of the same note, on the one re-synthesised note the
+  generated audio gives; the limit is 16 dB above that and is to be tightened or loosened by a run
+  on voices). A lost or changed attack or release fails here while the inside still passes. With
+  external audio this edge residual is only written to the report (`edgeResidualDb`) and does not
+  fail the check: the two real voices measured so far reach -16.4 dB at worst, only 4.4 dB below
+  the -12 dB limit, so the limit needs more voices before it is calibrated for them. The generated
+  harmonic tones are still checked against -12 dB.
 
 - After a time-grid move, which renders the whole clip again, the notes away from the moved handle
   at most 1e-3 (-60 dBFS) from the baseline (measured: up to 1.1e-4, -79 dBFS) with the generated
@@ -341,8 +345,9 @@ steady pitch to the detected pitch: those whose voiced frames have a standard de
 roughly 10 to 15 cents, vibrato of +-50 cents is near 35). Up to 5 % of the steady notes (rounded
 down) may still lie beyond 15 cents, since a wrong export would be wrong for most notes and not for a
 few; the check is skipped when fewer than three notes are steady. The report lists the notes left out
-and why (`unsteadyPitch`, `tooFewVoicedFrames`) under the check. For the generated audio the limit is
-unchanged: every note.
+and why (`unsteadyPitch`, `tooFewVoicedFrames`) under the check. Steadiness is measured on the source audio, because the export gives only each
+note's median pitch; so `unsteadyPitch` describes a property of the source audio. For the generated
+audio the limit is unchanged: every note.
 
 ### The report
 
