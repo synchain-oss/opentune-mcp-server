@@ -27,6 +27,27 @@ describe('token canary detector', () => {
     }
   });
 
+  it('finds the encoded forms: base64, base64url, percent-encoding, hexadecimal and the bytes of a hex secret', () => {
+    const value = secret();
+    const odd = `${randomBytes(12).toString('base64')}/+ ${randomBytes(6).toString('hex')}`;
+    const cases: [string, string][] = [
+      [value, Buffer.from(value).toString('base64')],
+      [value, Buffer.from(value).toString('base64').replace(/=+$/, '')],
+      [value, Buffer.from(value, 'hex').toString('base64')],
+      [value, Buffer.from(value, 'hex').toString('base64url')],
+      [value, Buffer.from(value, 'hex').toString('base64').replace(/\+/g, '%2B').replace(/\//g, '%2F')],
+      [value, Buffer.from(value).toString('hex').toUpperCase()],
+      [odd, encodeURIComponent(odd)],
+      [odd, encodeURIComponent(odd).toLowerCase()],
+      [odd, Buffer.from(odd).toString('base64url')],
+    ];
+    for (const [plain, encoded] of cases) {
+      expect(findLeaks({ token: plain }, [{ source: 'stdout', text: `{"x":"${encoded}"}` }])).toEqual([
+        'the token appears in stdout',
+      ]);
+    }
+  });
+
   it('names the secret and the place but never prints the value', () => {
     const value = secret();
     const leaks = findLeaks({ serverProof: value }, [

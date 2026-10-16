@@ -11,11 +11,29 @@ export interface Output {
   readonly text: string;
 }
 
-/** The forms of one secret to look for: as is, in the other letter case, and a long prefix and suffix. */
+const HEX = /^(?:[0-9a-f]{2})+$/i;
+
+/**
+ * The forms of one secret to look for: as is, in the other letter case, a long prefix and suffix,
+ * and the encodings a careless implementation might print (base64 and base64url without padding,
+ * percent-encoding in both letter cases, hexadecimal of the text, and base64 of the bytes when the
+ * secret is itself hexadecimal).
+ */
 export function secretForms(secret: string): string[] {
   if (secret.length < 16) throw new Error('a canary secret needs at least 16 characters to be searched for');
   const part = Math.min(16, Math.floor(secret.length / 2));
-  return [...new Set([secret, secret.toLowerCase(), secret.toUpperCase(), secret.slice(0, part), secret.slice(-part)])];
+  const bytes = Buffer.from(secret, 'utf8');
+  const encodings: Buffer[] = [bytes];
+  if (HEX.test(secret)) encodings.push(Buffer.from(secret, 'hex'));
+  const forms = [secret, secret.toLowerCase(), secret.toUpperCase(), secret.slice(0, part), secret.slice(-part)];
+  for (const raw of encodings) {
+    const base64 = raw.toString('base64').replace(/=+$/, '');
+    forms.push(base64, raw.toString('base64url'), base64.replace(/\+/g, '%2B').replace(/\//g, '%2F'));
+    forms.push(raw.toString('hex'), raw.toString('hex').toUpperCase());
+  }
+  const percent = encodeURIComponent(secret);
+  if (percent !== secret) forms.push(percent, percent.toLowerCase());
+  return [...new Set(forms)];
 }
 
 /** One line per (secret, output) pair where the output holds any form of the secret; empty when none does. */

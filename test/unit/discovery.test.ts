@@ -294,7 +294,10 @@ describe('process probes', () => {
 
   it('reads this process: alive, started when Node started', async () => {
     const probe = systemProbe();
-    const self = await probe.probe(process.pid);
+    let self = await probe.probe(process.pid);
+    // The first read may start PowerShell cold on a loaded runner and run out of its time limit
+    // (startTimeMs null, which is not cached); a second try, with the system warm, must then answer.
+    if (self.startTimeMs === null) self = await probe.probe(process.pid);
     expect(self.alive).toBe(true);
     if (self.startTimeMs !== null) expect(Math.abs(self.startTimeMs - performance.timeOrigin)).toBeLessThan(2000);
     expect(await probe.probe(process.pid)).toEqual(self);
