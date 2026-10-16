@@ -11,10 +11,12 @@ themselves, in a temporary `OPENTUNE_DATA_DIR`, and stop it afterwards; your pre
 real discovery files are never touched. With `OTCP_TARGET_DATA_DIR` the data folders are kept
 instead, so the logs of the instance can be read afterwards (see below).
 
-| Command                 | What it runs                                                                                                   |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------- |
-| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`).         |
-| `npm run e2e:exe`       | The end-to-end scenario (import, analysis, AUTO, export, with timings) and the three boundary scenarios below. |
+| Command                 | What it runs                                                                                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`).                                                                                                             |
+| `npm run e2e:exe`       | The end-to-end scenarios, one after the other, each with an instance of its own: the smoke scenario (import, analysis, AUTO, export, with timings), the [effects scenario] and the three boundary scenarios below. |
+
+[effects scenario]: #effects-scenario
 
 ## Prerequisites
 
@@ -31,15 +33,19 @@ instead, so the logs of the instance can be read afterwards (see below).
 
 ## Environment variables
 
-| Variable                    | Required | Meaning                                                                                         |
-| --------------------------- | -------- | ----------------------------------------------------------------------------------------------- |
-| `OTCP_TARGET_EXE`           | yes      | Absolute path of the OpenTune executable. Without it both checks are skipped, with that reason. |
-| `OTCP_TARGET_ARGS`          | no       | JSON array of strings, the arguments to start it with. Default `["--control-api"]`.             |
-| `OTCP_TARGET_TIMEOUT_MS`    | no       | How long to wait for the ready file, the hello and the exit. Default 30000.                     |
-| `OTCP_E2E_REPORT`           | no       | Absolute path of the JSON report written by `npm run e2e:exe` (folders are created).            |
-| `OTCP_E2E_STEP_TIMEOUT_MS`  | no       | How long one wait (analysis, a job, a not-yet-ready content) may take. Default 180000.          |
-| `OTCP_TARGET_DATA_DIR`      | no       | Absolute path of an existing folder; keeps the data folders of the launches (see below).        |
-| `OTCP_TARGET_DATA_TEMPLATE` | no       | Absolute path of an existing folder whose contents are copied into every launch's data folder.  |
+| Variable                         | Required | Meaning                                                                                                                                         |
+| -------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OTCP_TARGET_EXE`                | yes      | Absolute path of the OpenTune executable. Without it both checks are skipped, with that reason.                                                 |
+| `OTCP_TARGET_ARGS`               | no       | JSON array of strings, the arguments to start it with. Default `["--control-api"]`.                                                             |
+| `OTCP_TARGET_TIMEOUT_MS`         | no       | How long to wait for the ready file, the hello and the exit. Default 30000.                                                                     |
+| `OTCP_E2E_REPORT`                | no       | Absolute path of the JSON report of the smoke scenario (folders are created).                                                                   |
+| `OTCP_E2E_EFFECTS_REPORT`        | no       | Absolute path of the JSON report of the effects scenario; default `effects.json` next to `OTCP_E2E_REPORT`, none without either.                |
+| `OTCP_E2E_EFFECTS_AUDIO`         | no       | Absolute path of a `.wav` file the effects scenario uses instead of its generated audio (see below).                                            |
+| `OTCP_E2E_EFFECTS_TIMING_SEC`    | no       | Lengths in seconds of the extra clips the effects scenario only times, comma-separated, or `none`. Default `60,240`.                            |
+| `OTCP_E2E_EFFECTS_DATA_TEMPLATE` | no       | Absolute path of an existing folder: the data template of the effects scenario's instance, in place of `OTCP_TARGET_DATA_TEMPLATE` (see below). |
+| `OTCP_E2E_STEP_TIMEOUT_MS`       | no       | How long one wait (analysis, a job, a not-yet-ready content, a render to settle) may take. Default 180000.                                      |
+| `OTCP_TARGET_DATA_DIR`           | no       | Absolute path of an existing folder; keeps the data folders of the launches (see below).                                                        |
+| `OTCP_TARGET_DATA_TEMPLATE`      | no       | Absolute path of an existing folder whose contents are copied into every launch's data folder.                                                  |
 
 ```bash
 # PowerShell: $env:OTCP_TARGET_EXE = 'C:\path\to\OpenTune.exe'
@@ -91,9 +97,16 @@ or a sub-folder of `OTCP_TARGET_DATA_DIR`; then the process starts. Only regular
 sub-folders are copied, symbolic links are not followed. Every launch gets its own copy, so what one
 launch changes is not seen by the next. Without the variable nothing is copied.
 
+Two paths of the template are never copied, because the runner uses them itself and a stale copy
+would be taken for the new instance's: the ready file at the top of the template (`ready.json`) and
+the discovery folder `control/instances/` with everything in it (other files under `control/` are
+copied). On Windows and macOS these names are matched without regard to case, as their file systems
+do by default (`Ready.json`, `Control/Instances`). A launch that left something out is counted:
+`templateSkipped` in the smoke and effects reports.
+
 Which files make up the state you want is up to the caller; this repository does not ship any.
 
-## What the scenario does
+## What the smoke scenario does
 
 1. **generate audio**: about 10 s of a synthetic sung-like signal (eight notes, 30 cents sharp), from the
    seeded generator in `test/support/harmonic-tone.ts`, written to a temporary directory.
@@ -178,10 +191,151 @@ is written as JSON:
   "instance": { "protocol": "1.0", "appVersion": "..." },
   "audio": { "sourceSeconds": 9.9, "exportSeconds": 9.9, "exportDryContents": 0 },
   "dataDir": null,
-  "busyDiagnostics": null
+  "busyDiagnostics": null,
+  "templateSkipped": 0
 }
 ```
 
 The report holds no absolute paths and no token (`dataDir` is only a folder name). `ms` is wall-clock time per step: `launch` is the start of the
 process until its discovery file and hello check, `import and analysis` runs until the pitch analysis is
 ready, `AUTO (regenerate)` and `export` include waiting for their jobs and for retryable not-ready answers.
+
+## Effects scenario
+
+The effects scenario (`test/e2e/effects.ts`) checks that what a write reports is what the instance
+then holds, and that what a write says it changed is what changed in the exported audio, and nothing
+else. It does not judge how good a correction sounds. It starts its own instance, exactly as the smoke
+scenario does (same variables, same data folders; its data folder starts with `effects-`), except
+that `OTCP_E2E_EFFECTS_DATA_TEMPLATE`, when set, is its data template instead of
+`OTCP_TARGET_DATA_TEMPLATE`.
+
+### Run it with hybrid mode off: `OTCP_E2E_EFFECTS_DATA_TEMPLATE`
+
+In hybrid mode (on by default in OpenTune) a correction that is small (in the measured build, below
+about 75 cents) is not rendered by the vocoder but on a lighter path, which leaves such a correction
+largely unapplied on real voices, in the user interface just as through the control API. That is
+OpenTune's own behaviour, not a defect of the API, but it makes the checks of small corrections
+(AUTO pulling a 40 cents sharp note back, `retuneSpeed` 1) fail. Run the effects scenario on an
+instance with hybrid mode off: give `OTCP_E2E_EFFECTS_DATA_TEMPLATE` a data template that starts
+OpenTune that way. The variable means the same as `OTCP_TARGET_DATA_TEMPLATE` (an absolute path of
+an existing folder, copied into the data folder before the launch; anything else is a configuration
+error, not a skip), but only the effects scenario uses it, so the smoke, boundary and contract runs
+keep their own state. Which files make up that state is not this repository's business: the fork's
+end-to-end workflow provides the template, and this repository ships none. `dataTemplateFrom` in the
+report says which variable the template came from.
+
+The scenario does not change the preference itself. Every export reports its `processing`
+(`hybridMode` and `backend`); the report keeps them per check, and `hybridMode` at its top is `true`
+when `session.info` or any export reported hybrid mode on. Then the first entry of `notices` (also
+printed above the step table) says that checks of small corrections can fail because of OpenTune's
+lighter path. The checks are judged as usual either way: a failure stays a `FAIL`.
+
+### What it checks
+
+Each check exports the clip (`export.start` of kind `clip`) and compares the file with a baseline
+export of the same clip, analysed with the same F0 estimator (`test/support/f0-estimator.ts`, YIN in
+TypeScript). For every note only the frames voiced in both files count, and max(80 ms, 20 % of the
+note) is left out at both ends; the median of the per-frame differences is the measured change. After
+every write the scenario reads the clip back: each `after` value in `changes` must equal the value
+read, and the tokens of the result must equal those of the fresh read. Only the fields the scenario
+reads back are compared (the note fields it parses, the pitch shift, a time-grid handle's
+`contentSec` and `outputSec`, the clip's tokens); any other field is listed in `unreadFields` of the
+check and counted in the step note, not treated as a problem, since fields are only ever added to the
+specification. Each check then takes its write back with `edit.undo` and verifies that the notes, the
+pitch shift and the time-grid handles read back equal the snapshot taken before the write.
+
+| Step                                    | What must hold                                                                                                                                                                                                                                                                                                                                                               |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prepare audio`                         | Generated audio: five notes of 1.2 s with 0.4 s of silence between them, the third one 40 cents sharp.                                                                                                                                                                                                                                                                       |
+| `import and analysis`                   | `import.start` with `generateNotes`, then `analysis.f0State` `ready`; OpenTune finds as many voiced notes as were generated.                                                                                                                                                                                                                                                 |
+| `export before any edit`                | Nothing is corrected yet: the export succeeds, either corrected or listing the clip in `dryContents` (PROTOCOL.md section 19 rule 6), at the pitch of the source.                                                                                                                                                                                                            |
+| `fixed note parameters`                 | `setParams` on every note (`retuneSpeed` 0.5, `vibratoDepth` 0, `pitchDriftScale` 1), so that no check depends on the defaults of the note generator; the render settles.                                                                                                                                                                                                    |
+| `baseline and noise floor`              | The baseline, exported twice: how far two exports of the unchanged clip differ (the noise floor).                                                                                                                                                                                                                                                                            |
+| `setTargetPitch +100 cents`             | One note gets its target + 1 semitone: that note +100 cents, the other notes unchanged (see the tolerances).                                                                                                                                                                                                                                                                 |
+| `shiftCents +100 cents`                 | Another note `shiftCents` +100: the same.                                                                                                                                                                                                                                                                                                                                    |
+| `setPitchShift +2 semitones`            | Every note +200 cents.                                                                                                                                                                                                                                                                                                                                                       |
+| `AUTO <mode> pulls the sharp note back` | `content.autoTune` in mode `regenerate` and, as a step of its own, in mode `snapNotes`, chromatic: the sharp note -40 cents, the other notes unchanged.                                                                                                                                                                                                                      |
+| `setParams retuneSpeed 1`               | `retuneSpeed` 1 flattens the notes to their targets. These notes are flat and the baseline holds them at their targets already, so no note may move.                                                                                                                                                                                                                         |
+| `race: +100 cents, export, -100 cents`  | Two notes +100 cents, `export.start`, at once -200 cents. The file is one whole version (both notes +100, or both -100), or the job fails with `REVISION_CONFLICT(changed_during_export)` and the target is not written; never a mix, a silent or a dry file. A second write refused with `BUSY(export_in_progress)` is allowed, and the file must then be the +100 version. |
+| `shiftTiming +30 ms`                    | Seeds the time grid (which must not change the sound) and moves the handle at a note start by +30 ms: the audio at the handle plays 30 ms later (cross-correlation of the amplitude envelopes, `test/support/time-shift.ts`), and the notes away from the moved handle stay where they were.                                                                                 |
+| `timing <n> s`                          | Times only: a generated clip of n seconds on a track of its own; import to F0 ready, AUTO (the mode the AUTO button runs) to a settled render, export.                                                                                                                                                                                                                       |
+
+No export of a check may be silent or list the clip in `dryContents`. In the race, a second write
+that is applied is checked against the clip read back once the export job has ended, like every
+other write. A failed set-up step stops the scenario; a failed check does not stop the checks after
+it, since each check has put the clip back as it was, also when it failed half-way: the `undoId` of a
+write that took effect is recorded before anything else is read from its result, and the clip is
+compared with the snapshot whether or not there was anything to take back. Only a check that could
+not put the clip back stops the rest, and so does a write that took effect without a usable `undoId`
+in its result, since nothing could take it back. The results are those of the
+smoke scenario (`PASS`, `FAIL`, `SKIP`, `FLAKY-SKIP`). The scenario also needs `history.v1` (for
+`edit.undo`); `shiftTiming +30 ms` is skipped without `timing.v1`. An export before any edit can wait
+up to the 120 s export limit, so a run takes a few minutes.
+
+### Tolerances
+
+The tolerances are fixed in `test/e2e/effects.ts`, each with the measurements it rests on:
+
+- Pitch: 15 cents around the expected change. Two exports of the unchanged clip were bit-identical,
+  the estimator stays within 2 cents of known tones (`test/unit/f0-estimator.test.ts`), and the
+  renderer put the measured changes up to 5.1 cents off with hybrid mode on and up to 1.1 cents off
+  with it off (AUTO took -41.1 cents off the 40 cents sharp note). 15 cents still tells the 40 cents
+  of AUTO and the 100 cents of an edit apart from no change.
+- Time: 5 ms around the expected shift (measured: 28.8 to 29.2 ms for 30 ms). The estimator is within 2 ms
+  (`test/unit/time-shift.test.ts`).
+- Notes that were not edited, after a note or pitch edit: by zone, as measured with hybrid mode off
+  (where the vocoder renders every corrected note). An edit makes OpenTune synthesise a stretch again,
+  from shortly before the edited note (69 to 78 ms before it where the note before runs into it,
+  inside the silence where there is one) to the end of its render block, and the next block too when
+  that one begins within about 0.16 s after the edited note ends (blocks are split in silences; every
+  gap of 0.355 s and more was a split). A note in that stretch is synthesised again as a whole:
+  same pitch (0 cents) and level (0.0 dB), another phase, so its samples differ by about its own size.
+  Nothing outside the stretch changed by a single sample, and taking the edit back gave a
+  bit-identical export again. Hence:
+  - the last 100 ms before an edited note are not compared;
+  - the notes after an edited note, up to and including the first note after a gap of at least
+    0.3 s (the rest of its phrase and the first note of the next one), are within the reach of the
+    re-synthesis: bit-identical, or the same sound in another phase. Over the inside of the note
+    (trimmed as for the pitch), the energy left after aligning each 100 ms window by at most one
+    period must be at least 20 dB below the note (measured: -25.1 to -40.3 dB on re-synthesised
+    notes, against +2.2 to +3.0 dB on a note moved by 100 cents and -0.3 dB on one moved by 10
+    cents); their pitch is measured like every note's;
+  - every other note must be bit-identical. A change there fails the check, also when it is only a
+    change of phase.
+
+  The report lists the notes of each zone (`unedited.away`, `unedited.reach`). In the scenario's
+  audio (gaps of 0.355 s) the reach is the one note after the edited note; it was synthesised again
+  after the `shiftCents` edit (-28.3 dB) and not after the `setTargetPitch` edit.
+
+- After a time-grid move, which renders the whole clip again, the notes away from the moved handle
+  at most 1e-3 (-60 dBFS) from the baseline (measured: up to 1.1e-4, -79 dBFS).
+
+### External audio: `OTCP_E2E_EFFECTS_AUDIO`
+
+With `OTCP_E2E_EFFECTS_AUDIO` (an absolute path of an existing `.wav` file; anything else is a
+configuration error) the scenario imports that file instead of the generated audio. The notes it
+edits are then chosen from the notes OpenTune finds (the two longest voiced notes of at least 0.4 s;
+shorter notes are not measured), and the checks that need to know the pitch in advance are skipped:
+the AUTO checks and the comparison of the estimator with the known pitch. The report says the audio
+is `external`, with its length and sample rate only, never its name or path. The file is only read.
+
+### The report
+
+The step table goes to stderr. The JSON report (`OTCP_E2E_EFFECTS_REPORT`, else `effects.json` next to
+`OTCP_E2E_REPORT`) has the members of the smoke report, with `schema` `opentune-mcp-e2e-effects/1`,
+and these:
+
+| Member             | Holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `notices`          | What to know before reading the results; with hybrid mode on, the note that checks of small corrections can fail for OpenTune's own reason. Empty otherwise.                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `hybridMode`       | `true` when `session.info` or any export reported hybrid mode on, `false` when all reported it off, `null` when none reported it.                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `dataTemplateFrom` | `OTCP_E2E_EFFECTS_DATA_TEMPLATE`, `OTCP_TARGET_DATA_TEMPLATE` or `null`: where the instance's data template came from.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `backend`          | The inference backend `session.info` reports, and every `processing.backend` the exports reported (they can differ: an analysis session can fall back to the CPU).                                                                                                                                                                                                                                                                                                                                                                                            |
+| `audio`            | `source` (`generated` or `external`), length and sample rate.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `tolerances`       | The tolerances above and the error bounds of the two estimators.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `noiseFloor`       | `repeatExport` (two exports of the unchanged clip: bit-identical or not, the change per note), and for generated audio `estimatorOnSource` and `renderedAgainstSource` (cents from the known pitch).                                                                                                                                                                                                                                                                                                                                                          |
+| `checks`           | Per step: the expected and the measured median change and the frame count of every note, the notes that were not edited by zone (`unedited.away`: their indices and the sample comparison, `bitIdentical`, `maxAbsDiff`, `maxAbsDiffDbfs`; `unedited.reach`: per note `bitIdentical` and `alignedResidualDb`), the measured shift, the race outcome, consistency problems, `unreadFields` (`entity.field`) when a result reported fields the scenario does not read back, and `processing` (`export`, `hybridMode`, `backend` of every export the step made). |
+| `timings`          | `launchToReadyMs`, `importToF0ReadyMs`, `fixedParamsToSettleMs`, `autoToSettleMs` per AUTO mode, the time of every export, and per timing clip `importToF0ReadyMs`, `autoToSettleMs` and `exportMs`.                                                                                                                                                                                                                                                                                                                                                          |
+
+Like the smoke report it holds no absolute path and no token. Timeouts for clients are not derived
+here; the timings are recorded for that.

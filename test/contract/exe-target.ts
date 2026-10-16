@@ -144,31 +144,48 @@ export function exeConfigFromEnv(env: NodeJS.ProcessEnv = process.env): ExeConfi
   };
 }
 
-/** The template folder must be an absolute path to an existing directory. */
-function checkDataTemplate(dir: string): void {
-  if (!path.isAbsolute(dir)) throw new Error('OTCP_TARGET_DATA_TEMPLATE must be an absolute path');
+/**
+ * The template folder must be an absolute path to an existing directory. `name` is the variable it
+ * came from, for the error (a scenario can take its template from a variable of its own).
+ */
+export function checkDataTemplate(dir: string, name = 'OTCP_TARGET_DATA_TEMPLATE'): void {
+  if (!path.isAbsolute(dir)) throw new Error(`${name} must be an absolute path`);
   let isDir = false;
   try {
     isDir = statSync(dir).isDirectory();
   } catch {
     // reported below
   }
-  if (!isDir) throw new Error('OTCP_TARGET_DATA_TEMPLATE is not an existing directory');
+  if (!isDir) throw new Error(`${name} is not an existing directory`);
+}
+
+/**
+ * Whether `rel` (a path relative to the data folder, as its parts) is one this runner uses itself:
+ * the ready file at the top, or the discovery folder. Windows and macOS compare file names without
+ * regard to case by default, so there `Ready.json` or `Control/Instances` is the same path and is
+ * matched as well.
+ */
+export function isRunnerPath(rel: readonly string[], platform: NodeJS.Platform = process.platform): boolean {
+  const fold =
+    platform === 'win32' || platform === 'darwin' ? (name: string) => name.toLowerCase() : (name: string) => name;
+  const parts = rel.map(fold);
+  return (
+    (parts.length === 1 && parts[0] === fold(READY_FILE_NAME)) ||
+    (parts.length === DISCOVERY_DIR_PARTS.length &&
+      parts.every((part, i) => part === fold(DISCOVERY_DIR_PARTS[i] ?? '')))
+  );
 }
 
 /**
  * Copies the contents of `from` into `to`: regular files and sub-folders only, links are skipped.
- * The paths this runner uses itself (the ready file at the top, the discovery folder) are not
- * copied: a stale one would be taken for the new instance's. Returns whether any was skipped.
+ * The paths this runner uses itself (isRunnerPath: the ready file at the top, the discovery folder)
+ * are not copied: a stale one would be taken for the new instance's. Returns whether any was skipped.
  */
 async function copyTemplate(from: string, to: string, rel: readonly string[] = []): Promise<boolean> {
   let skipped = false;
   for (const entry of await readdir(from, { withFileTypes: true })) {
     const here = [...rel, entry.name];
-    const own =
-      (here.length === 1 && entry.name === READY_FILE_NAME) ||
-      (here.length === DISCOVERY_DIR_PARTS.length && here.every((part, i) => part === DISCOVERY_DIR_PARTS[i]));
-    if (own) {
+    if (isRunnerPath(here)) {
       skipped = true;
       continue;
     }

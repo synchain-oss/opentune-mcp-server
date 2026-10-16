@@ -65,6 +65,12 @@ export interface SmokeReport {
   readonly dataDir: string | null;
   /** What the instance said about being busy after a step got BUSY (modal_open); null if that never happened. */
   readonly busyDiagnostics: string | null;
+  /**
+   * How many launches copied an OTCP_TARGET_DATA_TEMPLATE folder that held a ready file or a
+   * control/instances folder, which were left out of the copy (0 without a template); null when the
+   * target does not count them.
+   */
+  readonly templateSkipped: number | null;
 }
 
 export interface SmokeConfig {
@@ -154,8 +160,11 @@ export function summarise(steps: readonly StepReport[]): Pick<SmokeReport, 'resu
   return { result, counts };
 }
 
+/** What the step table needs of a report; the effects report (test/e2e/effects.ts) has it too. */
+export type TableReport = Pick<SmokeReport, 'steps' | 'result' | 'counts' | 'totalMs' | 'dataDir'>;
+
 /** The table printed to the test output (Markdown). */
-export function formatTable(report: SmokeReport): string {
+export function formatTable(report: TableReport): string {
   const rows = report.steps.map(
     (s) => `| ${s.name} | ${s.result} | ${(s.ms / 1000).toFixed(2)} s | ${s.note.replaceAll('|', '/')} |`,
   );
@@ -173,8 +182,8 @@ export function formatTable(report: SmokeReport): string {
 // ---------------------------------------------------------------------------------------------
 // the report file
 
-/** Writes the report where OTCP_E2E_REPORT says; the folder is created if needed. */
-export function writeReport(file: string, report: SmokeReport): void {
+/** Writes a report (JSON) to `file`; the folder is created if needed. */
+export function writeReport(file: string, report: object): void {
   mkdirSync(path.dirname(file), { recursive: true });
   writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`, 'utf8');
 }
@@ -334,7 +343,8 @@ function makeTone(): Tone {
 
 export interface SmokeHooks {
   /** For tests: replaces the target that starts the executable. */
-  readonly target?: Pick<ExeTarget, 'open' | 'takeProblems'> & Partial<Pick<ExeTarget, 'labelNext' | 'takeDataDirs'>>;
+  readonly target?: Pick<ExeTarget, 'open' | 'takeProblems'> &
+    Partial<Pick<ExeTarget, 'labelNext' | 'takeDataDirs' | 'stats'>>;
 }
 
 /**
@@ -354,7 +364,7 @@ export function safeTitle(title: unknown): string {
  * as one line for the report. Called only after a BUSY modal_open, and only when the instance
  * reports ui.bridge; never throws. Dialog titles are untrusted data and are cut short.
  */
-async function busyDiagnostics(session: OtcpSession | undefined): Promise<string> {
+export async function busyDiagnostics(session: OtcpSession | undefined): Promise<string> {
   if (session === undefined) return 'no session to ask for the window state';
   if (!session.hello.capabilities.includes('ui.bridge')) {
     return 'the instance does not report ui.bridge, so ui.getState was not called';
@@ -611,5 +621,6 @@ export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Pro
     audio,
     dataDir,
     busyDiagnostics: diagnostics,
+    templateSkipped: target.stats?.templateSkipped ?? null,
   };
 }
