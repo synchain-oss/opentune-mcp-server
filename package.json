@@ -49,6 +49,7 @@
     "test:unit": "vitest run --coverage --project unit",
     "test:stdio": "vitest run --project stdio",
     "test:contract": "vitest run --project contract",
+    "e2e:exe": "vitest run --project e2e",
     "test:catalog": "vitest run --project unit test/unit/catalog.test.ts test/unit/render-golden.test.ts test/unit/audio-tools.test.ts",
     "test:budget": "vitest run --project unit test/unit/output-budget.test.ts",
     "catalog:update": "node scripts/update-catalog.mjs",
