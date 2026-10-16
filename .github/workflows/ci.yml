@@ -60,7 +60,7 @@ defaults:
 # `ci-checks.mjs scope` 给出真实的 base。
 jobs:
   light:
-    name: light (lint, typecheck, unit tests, privacy, audio, gitleaks, attribution)
+    name: light (lint, typecheck, unit tests, privacy, audio, gitleaks, attribution, skills zip)
     if: github.event_name == 'pull_request' && startsWith(github.base_ref, 'feature/')
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -86,7 +86,7 @@ jobs:
           HEAD_REF: ${{ github.head_ref }}
           PR_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: node scripts/ci-checks.mjs scope >> "$GITHUB_OUTPUT"
-      - name: Gates (lint, format, typecheck, unit tests + coverage, gitleaks, privacy, audio, attribution, pull_request_target)
+      - name: Gates (lint, format, typecheck, unit tests + coverage, gitleaks, privacy, audio, attribution, pull_request_target, skills zip)
         env:
           BASE: ${{ steps.scope.outputs.base }}
           ALLOW_EXTERNAL_AUTHORS: ${{ steps.scope.outputs.allow_external_authors }}
@@ -96,13 +96,9 @@ jobs:
           if [ "$ALLOW_EXTERNAL_AUTHORS" = true ]; then args+=(--allow-external-authors); fi
           if [ "$ALLOW_DEPENDABOT" = true ]; then args+=(--allow-dependabot); fi
           node scripts/gates.mjs "${args[@]}" \
-            --only "lint (eslint),format:check,typecheck,unit tests,gitleaks,privacy,no new audio files,attribution,no pull_request_target" \
+            --only "lint (eslint),format:check,typecheck,unit tests,gitleaks,privacy,no new audio files,attribution,no pull_request_target,skills zip" \
             --no-skip \
             | tee -a "$GITHUB_STEP_SUMMARY"
-      # 不加 --no-skip：固定清单里的 skill 一个都还不在仓库时，这一行如实报 SKIP；只缺一部分时报 FAIL。
-      - name: Gates (skills zip)
-        run: |
-          node scripts/gates.mjs --base HEAD --only "skills zip" | tee -a "$GITHUB_STEP_SUMMARY"
       # PR 标题与正文是不可信文本：只经 env: 传入，由署名检查的正本从 stdin 读。
       # Dependabot 的 PR 同样检查，理由见 branch-gate.yml 的同名步骤。
       - name: PR title and body carry no AI attribution
@@ -256,15 +252,11 @@ jobs:
       - run: npm ci --ignore-scripts
       # claude plugin validate 用 scripts/claude-cli 锁定的 Claude Code 版本：gates 按锁文件把它装进
       # .cache/tools/claude-code（npm ci --ignore-scripts，只在 runner 上），配置目录指向 .cache 里的空目录。
-      # --no-skip：CLI 装不上时这里必须红，不能当作跳过。
-      - name: Gates (build, Claude Code plugin)
+      # --no-skip：CLI 装不上、或固定清单里的 skill 不在仓库时，这里必须红，不能当作跳过。
+      - name: Gates (build, Claude Code plugin, skills zip)
         run: |
-          node scripts/gates.mjs --base HEAD --no-skip --only "build (esbuild),Claude Code plugin" \
+          node scripts/gates.mjs --base HEAD --no-skip --only "build (esbuild),Claude Code plugin,skills zip" \
             | tee -a "$GITHUB_STEP_SUMMARY"
-      # 不加 --no-skip，理由见 light 的同名步骤。
-      - name: Gates (skills zip)
-        run: |
-          node scripts/gates.mjs --base HEAD --only "skills zip" | tee -a "$GITHUB_STEP_SUMMARY"
       # 每个带 requirements-test.txt 的 skill（文件里须列出 pytest）：在各自的 venv 里装测试依赖，
       # 在该 skill 的目录里跑 pytest。一个都没有时如实写进汇总，不算失败。
       - name: Skill tests (Python)

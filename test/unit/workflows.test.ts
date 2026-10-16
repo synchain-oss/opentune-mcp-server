@@ -181,10 +181,12 @@ describe('ci.yml', () => {
     }
   });
 
-  it('validates the Claude Code plugin in the full tier with --no-skip, and the skills zip in both tiers', () => {
+  it('validates the Claude Code plugin in the full tier and the skills zip in both tiers, all with --no-skip', () => {
     expect(onlyLists.get('plugin')).toContain('Claude Code plugin');
-    expect(jobs.get('plugin')).toMatch(/--no-skip --only "build \(esbuild\),Claude Code plugin"/);
-    for (const id of ['light', 'plugin']) expect(onlyLists.get(id), id).toContain('skills zip');
+    expect(jobs.get('plugin')).toMatch(/--no-skip --only "build \(esbuild\),Claude Code plugin,skills zip"/);
+    // The light tier runs the skills zip in its one --no-skip gates step.
+    expect(onlyLists.get('light')).toContain('skills zip');
+    expect([...(jobs.get('light') ?? '').matchAll(/node scripts\/gates\.mjs/g)]).toHaveLength(1);
   });
 
   it('runs the light tier with --no-skip, and its name lists gitleaks', () => {
