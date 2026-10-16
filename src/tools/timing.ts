@@ -29,7 +29,6 @@ import {
 const TOOL = 'opentune_edit_timing';
 const CLIP_RE = /^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/;
 const JOB_ID_RE = /^j:[0-9a-f]{8}:[1-9][0-9]*$/;
-const HANDLE_ID_RE = /^[A-Za-z0-9:_-]{1,64}$/;
 /** Most handles a result lists; the count of all of them is always given. */
 export const MAX_LISTED_HANDLES = 200;
 const WRITE_TIMEOUT_MS = 20_000;
@@ -184,7 +183,8 @@ function stepFor(error: OtcpError, args: EditTimingArgs): NextStep | undefined {
       tool: 'opentune_get_project',
       message:
         'The time grid changed since the clip_revision was read. Read the clip again with opentune_get_project for a ' +
-        'fresh clip_revision, then retry. Handle ids and positions are in time_grid_handles of the last result of this tool.',
+        'fresh clip_revision, then retry. The current handles are in time_grid_handles of this error (when that is null, ' +
+        'time_grid_handles_unavailable_reason says why); use them, not the handles of an earlier result.',
     };
   }
   return undefined;
@@ -203,38 +203,73 @@ function revisionAfter(result: Json, contentId: string, before: ClipTokens | nul
   return clipRevisionFrom(contentTokens(result, contentId), before?.geometry ?? null);
 }
 
+/** Why a listed handle has no usable id or position; fixed texts, never the value OpenTune sent. */
+const NO_HANDLE_ID = 'the handle id is not a string of 1 to 64 characters';
+const NO_HANDLE_POSITION = 'a position of the handle is missing or not a number';
+
+/**
+ * The handles of a content.getDetails answer. Every handle of the grid is listed, in order, so the count
+ * matches the grid; a handle whose id or position does not fit the spec keeps its place with a null and
+ * the reason, instead of being dropped.
+ */
+function listHandles(details: Json): Json[] {
+  const grid = isObject(details.timeGrid) ? details.timeGrid : {};
+  return (Array.isArray(grid.handles) ? grid.handles : []).map((h): Json => {
+    const raw = isObject(h) ? h : {};
+    const rawId = typeof raw.handleId === 'string' ? raw.handleId : null;
+    // The spec counts code points (maxLength 64), so the length is taken by code point, not by UTF-16 unit.
+    const length = rawId === null ? 0 : Array.from(rawId).length;
+    const id = length >= 1 && length <= 64 ? rawId : null;
+    const contentSec = typeof raw.contentSec === 'number' ? raw.contentSec : null;
+    const outputSec = typeof raw.outputSec === 'number' ? raw.outputSec : null;
+    const reason = id === null ? NO_HANDLE_ID : contentSec === null || outputSec === null ? NO_HANDLE_POSITION : null;
+    return {
+      handle_id: id,
+      content_sec: contentSec,
+      output_sec: outputSec,
+      ...(reason === null ? {} : { handle_unreadable_reason: reason }),
+    };
+  });
+}
+
+/** The result of reading the handles: the listed fields, or the kind of the failed read. */
+type HandleRead = { readonly listed: Json } | { readonly failed: string };
+
 /**
  * The time handles of a content as content.getDetails reports them, ids and positions with the clock in
- * the field names. null when the read fails: the write already happened and its result must not be lost.
+ * the field names. A failed read is reported, not thrown: the write already happened and its result must not be lost.
  */
-async function handlesOf(session: OtcpSession, contentId: string): Promise<Json | null> {
+async function handlesOf(session: OtcpSession, contentId: string): Promise<HandleRead> {
   try {
     const details = await session.call('content.getDetails', { contentId }, READ_TIMEOUT_MS);
-    const grid = isObject(details.timeGrid) ? details.timeGrid : {};
-    const all = (Array.isArray(grid.handles) ? grid.handles : []).flatMap((h): Json[] => {
-      const id = isObject(h) ? trustedToken(h.handleId, HANDLE_ID_RE) : null;
-      if (!isObject(h) || id === null || typeof h.contentSec !== 'number' || typeof h.outputSec !== 'number') return [];
-      return [{ handle_id: id, content_sec: h.contentSec, output_sec: h.outputSec }];
-    });
+    const all = listHandles(details);
     return {
-      time_grid_handles: all.slice(0, MAX_LISTED_HANDLES),
-      time_grid_handle_count: all.length,
-      ...(all.length > MAX_LISTED_HANDLES ? { time_grid_handles_truncated: true } : {}),
+      listed: {
+        time_grid_handles: all.slice(0, MAX_LISTED_HANDLES),
+        time_grid_handle_count: all.length,
+        ...(all.length > MAX_LISTED_HANDLES ? { time_grid_handles_truncated: true } : {}),
+      },
     };
   } catch (error) {
-    if (error instanceof OtcpError) return null;
+    if (error instanceof OtcpError) {
+      return { failed: trustedToken(error.data.kind, /^[A-Z][A-Z_]{0,63}$/) ?? 'UNKNOWN' };
+    }
     throw error;
   }
+}
+
+/** The handle fields of an answer: the list, or null with the reason the list could not be read. */
+function handleFields(read: HandleRead, when: string): Json {
+  return 'listed' in read
+    ? read.listed
+    : { time_grid_handles: null, time_grid_handles_unavailable_reason: `${when}: ${read.failed}` };
 }
 
 /** The outcome with the current handles of the content added to a success body. */
 async function withHandles(session: OtcpSession, contentId: string, outcome: Outcome): Promise<Outcome> {
   if (!outcome.ok) return outcome;
-  const handles = await handlesOf(session, contentId);
-  return {
-    ok: true,
-    body: { ...outcome.body, ...(handles ?? { time_grid_handles: null }) },
-  };
+  const read = await handlesOf(session, contentId);
+  return { ok: true, body: { ...outcome.body, ...handleFields(read, 'the read after the write failed') } };
 }
 
 function rendered(result: Json, revision: string | null): Outcome {
@@ -376,9 +411,17 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
     } catch (error) {
       if (!(error instanceof OtcpError)) throw error;
       const failure = fromOtcpError(error.data, stepFor(error, args));
-      if (steps.length === 0) return { ok: false, error: failure };
+      const gridChanged = error.data.kind === 'REVISION_CONFLICT' && error.data.reason === 'grid_changed';
+      // The grid moved under this call: the handles it reports now are the ones the next try needs.
+      const current: Json = gridChanged
+        ? handleFields(await handlesOf(session, contentId), 'the read of the time grid failed')
+        : {};
+      if (steps.length === 0) return { ok: false, error: failure, ...(gridChanged ? { context: current } : {}) };
       const applied = steps.length;
       // Earlier operations of this call took effect; the error says which one failed.
+      const retry = gridChanged
+        ? `retry only the operations from number ${String(applied + 1)} on.`
+        : `retry only the operations from number ${String(applied + 1)} on, with the clip_revision of the last item of completed.`;
       return {
         ok: false,
         error: {
@@ -387,12 +430,10 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
           executed: true,
           nextStep: {
             ...failure.nextStep,
-            message:
-              `${failure.nextStep.message} Operations 1 to ${String(applied)} are applied: retry only the operations ` +
-              `from number ${String(applied + 1)} on, with the clip_revision of the last item of completed.`,
+            message: `${failure.nextStep.message} Operations 1 to ${String(applied)} are applied: ${retry}`,
           },
         },
-        context: { completed: steps.map((s) => s.body) },
+        context: { ...current, completed: steps.map((s) => s.body) },
       };
     }
     const [only] = steps;
