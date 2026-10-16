@@ -294,6 +294,26 @@ describe('Direct3D 12 check', () => {
     expect(result.message).toContain("-Path 'C:\\Tools\\OpenTune-test\\x''; Remove-Item -Recurse ~; ''' | Out-Null");
   });
 
+  it('doubles the typographic single quotes PowerShell also reads as quotes', async () => {
+    for (const q of ['U2018', 'U2019', 'U201A', 'U201B']) {
+      const ch = String.fromCodePoint(Number.parseInt(q.slice(1), 16));
+      const hostile = { ...entry, directory: `x${ch}; Remove-Item -Recurse ~; ${ch}` };
+      const result = await run(manifestAt(manifest(hostile)));
+      expect(result.message, q).toContain(
+        `-Path 'C:\\Tools\\OpenTune-test\\x${ch}${ch}; Remove-Item -Recurse ~; ${ch}${ch}' | Out-Null`,
+      );
+    }
+    const mixed = `D:\\Bob${String.fromCodePoint(0x2019)}s 'tools' ${String.fromCodePoint(0x2018)}x${String.fromCodePoint(0x201b)}`;
+    const result = await d3d12Check(mixed, {
+      platform: 'win32',
+      fs: memoryFs({ [win.join(mixed, 'opentune-control.json')]: manifest(entry) }),
+      officialDir: official,
+    });
+    expect(result.message).toContain(
+      `-Path 'D:\\Bob${String.fromCodePoint(0x2019, 0x2019)}s ''tools'' ${String.fromCodePoint(0x2018, 0x2018)}x${String.fromCodePoint(0x201b, 0x201b)}\\D3D12'`,
+    );
+  });
+
   it('cannot tell when a manifest hash is not 64 hexadecimal characters, and accepts upper case', async () => {
     const copied = { [win.join(exeDir, 'D3D12', 'D3D12Core.dll')]: 'core' };
     for (const bad of ['', sha('core').slice(0, 63), `${sha('core').slice(0, 63)}g`, 'x']) {

@@ -290,6 +290,11 @@ describe('process probes', () => {
     });
     expect(await runTool(process.execPath, [script, '1'])).toEqual({ ok: false, exitCode: 1 });
     expect(await runTool(path.join(dir, 'missing-tool'), [])).toEqual({ ok: false, exitCode: null });
+    // The time limit is the caller's: a tool that is slower than it allows is ended and reports no exit status.
+    const slow = path.join(dir, 'slow.mjs');
+    writeFileSync(slow, "setTimeout(() => console.log('7'), 1500);\n");
+    expect(await runTool(process.execPath, [slow], undefined, 200)).toEqual({ ok: false, exitCode: null });
+    expect(await runTool(process.execPath, [slow], undefined, 15_000)).toMatchObject({ ok: true });
   }, 20_000);
 
   it('reads this process: alive, started when Node started', async () => {

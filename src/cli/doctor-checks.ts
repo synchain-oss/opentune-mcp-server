@@ -188,8 +188,8 @@ interface D3d12Entry {
 }
 
 const SAFE_NAME = /^[^\\/:*?"<>|\0]+$/;
-/** A PowerShell single-quoted string literal: the only character to escape inside it is the quote itself. */
-const psQuote = (s: string): string => `'${s.replaceAll("'", "''")}'`;
+/** A PowerShell single-quoted string literal. PowerShell also reads the typographic quotes U+2018 to U+201B as single quotes, so each is doubled like the ASCII one. */
+const psQuote = (s: string): string => `'${s.replace(/['\u2018\u2019\u201A\u201B]/g, (q) => q + q)}'`;
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
 /** The d3d12 member of opentune-control.json: 'none' when absent, 'invalid' when malformed, null when unreadable. */
