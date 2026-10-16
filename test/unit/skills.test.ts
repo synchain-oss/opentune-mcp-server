@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MIT
 
 // The companion skills are plain instructions: valid frontmatter, only real tool names, no scripts.
+// Every skill folder is checked; only the pure-instruction skills (PURE_SKILLS) are held to "no scripts".
 
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
@@ -11,7 +12,12 @@ import { describe, expect, it } from 'vitest';
 import { TOOLS } from '../../src/tools/index.js';
 
 const SKILLS_DIR = path.resolve(import.meta.dirname, '../../plugins/opentune/skills');
-const SKILLS = ['tuning-workflow', 'check-results'] as const;
+const SKILL_DIRS = readdirSync(SKILLS_DIR, { withFileTypes: true })
+  .filter((e) => e.isDirectory())
+  .map((e) => e.name)
+  .sort();
+// Skills that are instructions only. A skill that ships scripts (such as lyrics-timeline) is not listed here.
+const PURE_SKILLS = ['tuning-workflow', 'check-results'];
 const ALLOWED_FIELDS = new Set(['name', 'description', 'license', 'compatibility', 'metadata', 'allowed-tools']);
 // Delete this exception once opentune_estimate_key is registered.
 const NOT_YET_REGISTERED = new Set(['opentune_estimate_key']);
@@ -24,7 +30,13 @@ function readSkill(name: string): { fields: Map<string, string>; body: string; t
   const fields = new Map<string, string>();
   for (const line of (match[1] ?? '').split('\n')) {
     const field = /^([A-Za-z][A-Za-z0-9-]*):\s*(.*)$/.exec(line);
-    if (field !== null) fields.set(field[1] ?? '', field[2] ?? '');
+    if (field === null) continue;
+    const value = field[2] ?? '';
+    // A folded or literal block scalar would hide a long description from the length check.
+    if (/^[>|]/.test(value)) {
+      throw new Error(`${name}: field ${field[1] ?? ''} uses a YAML block scalar; write a one-line value`);
+    }
+    fields.set(field[1] ?? '', value);
   }
   return { fields, body: match[2] ?? '', text };
 }
@@ -35,7 +47,14 @@ function files(dir: string): string[] {
   );
 }
 
-describe.each(SKILLS)('skill %s', (name) => {
+describe('not yet registered tools', () => {
+  it.each(Array.from(NOT_YET_REGISTERED))('%s is really not registered', (tool) => {
+    const registered = new Set(TOOLS.map((t) => t.name));
+    expect(registered.has(tool), `${tool} is registered now: drop the exception`).toBe(false);
+  });
+});
+
+describe.each(SKILL_DIRS)('skill %s', (name) => {
   it('exists and starts with frontmatter', () => {
     expect(existsSync(path.join(SKILLS_DIR, name, 'SKILL.md'))).toBe(true);
     expect(readSkill(name).text.startsWith('---\n')).toBe(true);
@@ -70,7 +89,7 @@ describe.each(SKILLS)('skill %s', (name) => {
 
 describe('skill folders', () => {
   it('contain no script files', () => {
-    for (const name of SKILLS) {
+    for (const name of PURE_SKILLS) {
       for (const file of files(path.join(SKILLS_DIR, name))) {
         expect(SCRIPT_EXTENSIONS.test(file), file).toBe(false);
       }
