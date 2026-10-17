@@ -26,8 +26,10 @@ Every file comes with a `.sha256` file, and the release notes list the same dige
   published release. The entry therefore never changes between releases. The version is inside the zip, in
   `.claude-plugin/plugin.json`. Drafts and pre-releases are not "latest", so the marketplace keeps serving the last
   full release until the next one is published. See [ADR 0002](adr/0002-plugin-distribution.md).
-- **The skills zip** holds the instruction-only skills (`tuning-workflow`, `check-results`), one upload-ready zip per
-  skill. Skills that need local tools (for example Python) are only in the plugin.
+- **The skills zip** (`opentune-skills-<version>.zip`) holds the instruction-only skills (`tuning-workflow`,
+  `check-results`) as one zip per skill: the outer file contains `<skill>.zip` for each skill, and each of those has
+  the skill's folder at its top level. The user uploads the inner `<skill>.zip` in Claude's settings (one skill per
+  upload), not the outer file. Skills that need local tools (for example Python) are only in the plugin.
 
 ## Making a release
 
