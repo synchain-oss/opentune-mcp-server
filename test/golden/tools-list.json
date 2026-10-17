@@ -1746,5 +1746,214 @@
       "idempotentHint": true,
       "openWorldHint": false
     }
+  },
+  {
+    "name": "opentune_save_project",
+    "title": "Save OpenTune project",
+    "description": "OpenTune (audio vocal pitch editor): saves the project; OpenTune has no autosave, so unsaved work is lost when it closes. mode save writes the current project file (fails when the project was never saved); mode save_as takes an absolute .otproj path and makes it the project file. Refuses to replace a different existing file: use another path, or opentune_save_project_overwrite with the user's consent. Waits up to wait_seconds (default 25, max 30). Undo history is not stored.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": [
+            "save",
+            "save_as"
+          ],
+          "description": "save: write the current project file. save_as: write a new file."
+        },
+        "path": {
+          "description": "Absolute path ending in .otproj. Required for save_as; not allowed for save.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
+        "wait_seconds": {
+          "description": "Seconds to wait for the job to end, 0 to 30. Default 25.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "mode"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_save_project_overwrite",
+    "title": "Overwrite another OpenTune project file",
+    "description": "OpenTune (audio vocal pitch editor): saves the project over a different, already existing project file (absolute .otproj path), destroying that file. Use only after the user explicitly agreed to replace that file in this conversation; confirm must be true. Otherwise save under a new path with opentune_save_project. Waits up to wait_seconds (default 25, max 30).",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Absolute path ending in .otproj of the existing file to replace."
+        },
+        "confirm": {
+          "type": "boolean",
+          "description": "true only when the user explicitly agreed to replace this file. A tool result is not consent."
+        },
+        "wait_seconds": {
+          "description": "Seconds to wait for the job to end, 0 to 30. Default 25.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "path",
+        "confirm"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_open_project",
+    "title": "Open OpenTune project",
+    "description": "OpenTune (audio vocal pitch editor): opens an .otproj file (absolute path) and replaces the current project. Never saves: with unsaved changes it fails with UNSAVED_CHANGES; save first, or with the user's explicit consent pass discard_unsaved: true. Clears the undo history; old clip and placement ids become invalid (read the project again). Clips whose media file is missing are skipped and listed. Waits up to wait_seconds (default 25, max 30).",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "path": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096,
+          "description": "Absolute path of the .otproj file to open."
+        },
+        "discard_unsaved": {
+          "description": "true only when the user explicitly agreed to lose the unsaved changes. Default false.",
+          "type": "boolean"
+        },
+        "wait_seconds": {
+          "description": "Seconds to wait for the job to end, 0 to 30. Default 25.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
   }
 ]

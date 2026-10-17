@@ -13,6 +13,7 @@ import { launchTool } from './launch.js';
 import { getNotesTool } from './notes.js';
 import { openAudioTool } from './open-audio.js';
 import { getProjectTool } from './project.js';
+import { openProjectTool, overwriteProjectTool, saveProjectTool } from './project-files.js';
 import type { ToolDefinition } from './registry.js';
 import { setClipTool } from './set-clip.js';
 import { getSettingsTool } from './settings.js';
@@ -39,4 +40,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   getClipDetailsTool,
   getSettingsTool,
   estimateKeyTool,
+  saveProjectTool,
+  overwriteProjectTool,
+  openProjectTool,
 ];

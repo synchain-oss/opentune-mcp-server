@@ -104,5 +104,18 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   // executable, which is not configured for the bundle, so nothing starts and the result says why.
   await run('opentune_launch', {});
   await run('opentune_launch', { allow_second_instance: true });
+  // Last: opening a project replaces the clips whose ids the steps above used.
+  const project = f.audioFile.replace(/\.wav$/, '.otproj');
+  const next = f.audioFile.replace(/\.wav$/, '-02.otproj');
+  await run('opentune_save_project', { mode: 'save' }, 'error');
+  await run('opentune_save_project', { mode: 'save_as', path: project, wait_seconds: 10 });
+  await run('opentune_save_project', { mode: 'save', wait_seconds: 10 });
+  await run('opentune_save_project', { mode: 'save_as', path: 'relative/take1.otproj' }, 'error');
+  await run('opentune_save_project_overwrite', { path: project, confirm: false }, 'error');
+  await run('opentune_save_project', { mode: 'save_as', path: next, wait_seconds: 10 });
+  await run('opentune_save_project', { mode: 'save_as', path: project }, 'error');
+  await run('opentune_save_project_overwrite', { path: project, confirm: true, wait_seconds: 10 });
+  await run('opentune_open_project', { path: next, wait_seconds: 10 });
+  await run('opentune_open_project', { path: project.replace('.otproj', '-missing.otproj') }, 'error');
   return steps;
 }
