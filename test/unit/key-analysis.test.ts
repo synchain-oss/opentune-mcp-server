@@ -266,6 +266,36 @@ describe('local keys', () => {
     expect(sameScaleSetIndex(C, 1)).toBe(false);
   });
 
+  it('names a merged segment after the key that covers more of its time, the earlier one on a tie', () => {
+    const Am = 12 + 9;
+    const steps = [0, 4, 8, 12, 16, 20, 24, 28, 32, 36];
+    // A window owns the time up to half way to its neighbour, so `split` windows of the first key cover 4 * split + 4 s.
+    const merged = (split: number, first: number, second: number) =>
+      segmentKeys(
+        steps.map((s, i) => window(s, i < split ? first : second)),
+        48,
+      ).map((s) => s.key);
+    expect(merged(5, C, Am)).toEqual([C]);
+    expect(merged(5, Am, C)).toEqual([Am]);
+    expect(merged(6, C, Am)).toEqual([C]);
+    expect(merged(4, C, Am)).toEqual([Am]);
+    expect(merged(6, Am, C)).toEqual([Am]);
+    expect(merged(4, Am, C)).toEqual([C]);
+  });
+
+  it('keeps a real key change next to a merged pair of relative keys', () => {
+    const Am = 12 + 9;
+    const steps = [0, 4, 8, 12, 16, 20, 24, 28, 32, 36];
+    const path = segmentKeys(
+      steps.map((s, i) => window(s, i < 3 ? C : i < 6 ? Am : 1)),
+      48,
+    );
+    expect(path.map((s) => [s.key, s.startSec, s.endSec])).toEqual([
+      [C, 0, 28],
+      [1, 28, 48],
+    ]);
+  });
+
   it('carries the key through windows without evidence', () => {
     expect(segmentKeys([], 10)).toEqual([]);
     expect(viterbi([])).toEqual([]);
