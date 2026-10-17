@@ -30,31 +30,40 @@ zip for Claude Desktop.
   contents, `npm audit`, third-party notices, stdio smoke test, gitleaks (version and sha256 pinned in
   `scripts/tools.lock.json`), privacy, AI attribution, sign-off and commit identity, README heading parity, and the
   `pull_request_target` ban. It prints a PASS / FAIL / SKIP table for the current commit.
-- First tools: `opentune_get_status` (one state with a next step: READY, NOT_READY, PROTOCOL_MISMATCH, STARTING,
+- Status and jobs: `opentune_get_status` (one state with a next step: READY, NOT_READY, PROTOCOL_MISMATCH, STARTING,
   RUNNING_WITHOUT_API, NOT_RUNNING, NO_API_BUILD, NOT_INSTALLED, WSL_UNSUPPORTED_RUNTIME), `opentune_get_job` and
   `opentune_cancel_job`, and MCP instructions. Running OpenTune instances are found through their discovery files
   (stale files are recognised by process id and start time), sessions on `127.0.0.1` are verified before use, an
   instance is never switched silently, and every error has one shape with a next step and a
   [troubleshooting](docs/TROUBLESHOOTING.md) link.
-- `opentune-mcp doctor [--json]`: checks Node.js, WSL, the discovery directory and `OPENTUNE_MCP_OPENTUNE_PATH` without
-  starting the server.
-- Golden snapshots of `tools/list` and of the instructions, the generated [tool reference](docs/reference.md) and the
-  `tools/list` size limits, checked by the tests and by `npm run gates`.
-- `opentune_estimate_key`: estimates the key of a clip from its vocal pitch and a WAV file of the mix or the
-  instrumental. For a song that changes key it also reports `local_keys` for its sections.
-- Claude Code plugin `opentune` with the skills `tuning-workflow` (the tuning flow), `check-results` (checking the
-  result of a tuning pass) and `lyrics-timeline`, and a skills zip for Claude Desktop, which the user uploads in
-  Claude's settings. The plugin and the skills zip carry the package version.
-- `lyrics-timeline` skill: word-level timing and section detection, with lyrics in Japanese, Korean, Russian and
-  Western European languages, and timelines that use several vocal tracks.
-- `tuning-workflow` skill: a song that changes key gets its sections found first, and each section is tuned on its
-  own after the user confirms the sections.
-- Project tools: `opentune_save_project`, `opentune_save_project_overwrite` (only after the user agrees to replace
+- Launching: `opentune_launch` starts the OpenTune that `OPENTUNE_MCP_OPENTUNE_PATH` points to, and only an OpenTune
+  build with the control interface.
+- Reading a project: `opentune_get_project`, `opentune_get_notes`, `opentune_get_clip_details` and
+  `opentune_get_settings` show the tracks and clips, the notes of a clip, the details of one clip and the OpenTune
+  settings, without changing anything.
+- Analysis: `opentune_analyze_pitch` measures the pitch of a clip, so a clip can be compared before and after tuning.
+  `opentune_estimate_key` estimates the key of a clip from its vocal pitch and a WAV file of the mix or the
+  instrumental; a relative major or minor key is not reported as a key change, and for a song that changes key it also
+  reports `local_keys` for its sections. A secondary lookup reports a confidence below 0.5.
+- Editing: `opentune_set_clip` changes the settings of a clip, `opentune_autotune_range` tunes a range of a clip,
+  `opentune_edit_notes` changes notes and `opentune_edit_timing` changes timing. `opentune_undo` and `opentune_redo`
+  step back and forward through the steps that can be undone.
+- Audio files: `opentune_open_audio` opens an audio file in OpenTune, and `opentune_export_audio` exports audio. It
+  only writes `.wav` files, renames the file when the name is taken, and never overwrites a file.
+- Project files: `opentune_save_project`, `opentune_save_project_overwrite` (only after the user agrees to replace
   another project file) and `opentune_open_project`. OpenTune has no autosave, so the instructions and the
   `tuning-workflow` skill ask the agent to save the project regularly.
-
-### Fixed
-
-- `opentune_estimate_key` no longer reports a relative major or minor key as a key change.
-- The lyrics timeline installs the PyTorch CUDA build that matches the GPU driver, and a secondary lookup reports a
-  confidence below 0.5.
+- `opentune-mcp doctor [--json]`: checks Node.js, WSL, the discovery directory and `OPENTUNE_MCP_OPENTUNE_PATH` without
+  starting the server. `opentune-mcp doctor --client <name>` prints the configuration for an MCP client instead.
+- MCPB package for Claude Desktop, and the Claude Code plugin `opentune` with a marketplace entry. The plugin, the MCPB
+  package and the skills zip carry the package version.
+- Skills, installed with the plugin and also as a skills zip for Claude Desktop, which the user uploads in Claude's
+  settings: `tuning-workflow` (the tuning flow; a song that changes key gets its sections found first, and each section
+  is tuned on its own after the user confirms the sections), `check-results` (checking the result of a tuning pass) and
+  `lyrics-timeline` (word-level timing and section detection, with lyrics in Japanese, Korean, Russian and Western
+  European languages, and timelines that use several vocal tracks; it installs the PyTorch CUDA build that matches the
+  GPU driver).
+- The OTCP specification `spec-v1.0.0-rc.3` with its schemas and test vectors, a mock OpenTune that implements it, and
+  contract tests that run the tools against both.
+- Golden snapshots of `tools/list` and of the instructions, the generated [tool reference](docs/reference.md) and the
+  `tools/list` size limits, checked by the tests and by `npm run gates`.
