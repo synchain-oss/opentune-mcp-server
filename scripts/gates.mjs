@@ -569,9 +569,12 @@ async function skillPytest() {
       );
       continue;
     }
+    // LYTL_REQUIRE_READINGS=1: the test dependencies above include the Japanese readings, so a
+    // reading test that would skip because they cannot be loaded fails instead.
     const result = spawnSync(python.command, [...python.prefix, '-I', '-m', 'pytest', '-q'], {
       cwd: dir,
       stdio: ['ignore', 2, 2],
+      env: { ...process.env, LYTL_REQUIRE_READINGS: '1' },
     });
     if (result.error) throw result.error;
     if (result.status !== 0) {

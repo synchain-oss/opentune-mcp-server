@@ -3,3 +3,6 @@
 pytest>=8
 numpy>=1.26
 pypinyin>=0.50
+# Japanese readings for the lyric comparison (the same pair is installed by scripts/setup.py).
+sudachipy>=0.7
+sudachidict-core>=20261015
