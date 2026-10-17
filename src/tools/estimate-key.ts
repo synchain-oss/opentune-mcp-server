@@ -23,6 +23,7 @@ import {
   relativeIndex,
   round,
   scalePitchClasses,
+  sameScaleSetIndex,
   segmentKeys,
   steadyFrames,
   tuningOffset,
@@ -30,6 +31,7 @@ import {
   vocalReliability,
   type KeyEstimate,
   type KeyRef,
+  type KeySegment,
   type PitchEvent,
   type SourceEvidence,
 } from '../analysis/key.js';
@@ -154,6 +156,8 @@ interface Vocals {
   readonly placementId: string | null;
   readonly durationSec: number | null;
   readonly clipKey: ClipKey | null;
+  /** The instance sent a key that is not in the protocol form (as opposed to sending none). */
+  readonly clipKeyInvalid: boolean;
   readonly f0State: string | null;
   readonly tuningHz: number;
   readonly events: PitchEvent[];
@@ -238,6 +242,7 @@ async function readVocals(session: OtcpSession, clip: string, limits: ReadLimits
     placementId: clip.startsWith('p:') ? clip : null,
     durationSec: fin(details.durationSec) ? details.durationSec : null,
     clipKey: clipKeyOf(details.key),
+    clipKeyInvalid: details.key !== undefined && details.key !== null && clipKeyOf(details.key) === null,
     f0State,
     tuningHz,
     events: f0State === null || f0State === 'ready' ? events : [],
@@ -328,6 +333,20 @@ function localKeys(e: Evidence, durationSec: number) {
   return segmentKeys(windows, durationSec);
 }
 
+/**
+ * The key name of each local key. A segment with the same notes as the song's estimate carries the
+ * estimate's key, so local_keys never contradicts the top-level result; any other segment takes the
+ * best key of its own time range when that has the segment's notes, else the key the path found.
+ */
+function nameSegments(segments: readonly KeySegment[], estimate: KeyEstimate, e: Evidence): KeySegment[] {
+  const topKey = estimate.order[0] ?? 0;
+  return segments.map((s) => {
+    if (sameScaleSetIndex(s.key, topKey)) return { ...s, key: topKey };
+    const own = estimateKey(sourcesIn(e, s.startSec, s.endSec))?.order[0];
+    return own !== undefined && sameScaleSetIndex(s.key, own) ? { ...s, key: own } : s;
+  });
+}
+
 const cents = (value: number | null | undefined): number | null =>
   value === null || value === undefined ? null : round(value, 1);
 
@@ -413,6 +432,7 @@ function buildBody(
       : null;
   const estimate =
     main === null ? wholeSong : (estimateKey(sourcesIn(evidence, main.startSec, main.endSec)) ?? wholeSong);
+  if (segments !== null && estimate !== null) segments = nameSegments(segments, estimate, evidence);
   const whole = mix === null ? null : summarizeRange(mix);
   const sung = vocals === null ? null : vocalHistogram(vocals.events, evidence.vocalOffsetCents);
 
@@ -513,10 +533,18 @@ function buildBody(
               ? null
               : sameScaleSet(vocals.clipKey, keyOf(estimate.order[0] ?? 0)),
         };
-  if (vocals !== null && vocals.clipKey === null) reasons['clip.key'] = 'not_analyzed';
+  if (vocals !== null && vocals.clipKey === null) {
+    reasons['clip.key'] = vocals.clipKeyInvalid ? 'invalid' : 'not_analyzed';
+  }
   if (clipInfo?.same_scale_set_as_estimate === null) {
     reasons['clip.same_scale_set_as_estimate'] =
-      vocals?.clipKey == null ? 'not_analyzed' : estimate === null ? 'no_evidence' : 'unknown_scale';
+      vocals?.clipKey == null
+        ? vocals?.clipKeyInvalid === true
+          ? 'invalid'
+          : 'not_analyzed'
+        : estimate === null
+          ? 'no_evidence'
+          : 'unknown_scale';
   }
 
   if (wav !== null && vocals?.durationSec != null && Math.abs(wav.durationSec - vocals.durationSec) > 2) {
@@ -612,6 +640,7 @@ function buildBody(
       ? undefined
       : args.sections.map((s) => {
           const part = estimateKey(sourcesIn(evidence, s.start_sec, s.end_sec));
+          const outside = durationSec !== null && s.start_sec >= durationSec;
           return part === null
             ? {
                 start_sec: s.start_sec,
@@ -620,7 +649,7 @@ function buildBody(
                 scale_set_confidence: null,
                 tonic_confidence: null,
                 key: null,
-                nullReasons: { key: 'no_evidence' },
+                nullReasons: { key: outside ? 'outside_audio' : 'no_evidence' },
               }
             : {
                 start_sec: s.start_sec,

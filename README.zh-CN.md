@@ -94,6 +94,7 @@ claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\
 2. **「整体升高 2 个半音,然后导出。」** agent 调用 `opentune_set_clip`(移调 2 个半音,是一个撤销步骤)和 `opentune_export_audio`(kind 为 `clip`)。结果会写明生成的 WAV 文件;已有文件绝不会被覆盖,而是改用下一个空闲的名字。
 3. **「把这一段整体提前 30 毫秒。」** agent 对该范围调用 `opentune_edit_timing`,做一次 `shift`,`delta_ms` 为 -30。OpenTune 不检测节拍:时间柄的位置由你给出,或由 `seed` 操作生成。结果会列出时间柄,并说明某次移动是否被限制(`CLAMPED`)。
 4. **「打开 `C:\Music\take1.wav`,调到 C 大调。」** agent 调用 `opentune_open_audio`,用 `opentune_get_job` 跟踪导入直到分析结束,再用模式 `regenerate` 与 C 大调调用 `opentune_autotune_range`。较长的音频需要时间,见[要等多久](docs/COMPATIBILITY.md#how-long-to-wait)。
+5. **「用伴奏 WAV 帮我确定这首歌的调,再按这个调自动修音。」** agent 调用 `opentune_estimate_key`,传入 `mix_path`(`.wav` 文件的绝对路径),也可以再给出人声片段 `clip`。结果列出最可能的几个调及其置信度,并说明相对大小调(音阶相同)分不开的情况,给出 `recommendation.key`,agent 再把它传给 `opentune_autotune_range`。估计本身不会改动任何内容。
 
 ## 与 DAW 配合使用
 

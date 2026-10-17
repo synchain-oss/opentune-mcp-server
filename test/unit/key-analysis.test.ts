@@ -6,6 +6,7 @@
 // sung-note histogram, local keys by Viterbi, the WAV reader with its formats and refusals, and the
 // chroma of synthetic chord progressions. All audio is generated here; no audio file is checked in.
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -26,6 +27,7 @@ import {
   pearson,
   relativeIndex,
   scalePitchClasses,
+  sameScaleSetIndex,
   segmentKeys,
   softmax,
   steadyFrames,
@@ -250,6 +252,20 @@ describe('local keys', () => {
     expect(blip.map((s) => s.key)).toEqual([C]);
   });
 
+  it('merges neighbouring segments that share their scale set and keeps real changes', () => {
+    const steps = [0, 4, 8, 12, 16, 20, 24, 28, 32, 36];
+    const Am = 12 + 9;
+    const relative = segmentKeys(
+      steps.map((s, i) => window(s, i < 5 ? C : Am)),
+      48,
+    );
+    expect(relative).toHaveLength(1);
+    expect(relative[0]).toMatchObject({ startSec: 0, endSec: 48 });
+    expect(relative[0]?.scaleSetConfidence).toBeGreaterThan(0.8);
+    expect(sameScaleSetIndex(C, Am)).toBe(true);
+    expect(sameScaleSetIndex(C, 1)).toBe(false);
+  });
+
   it('carries the key through windows without evidence', () => {
     expect(segmentKeys([], 10)).toEqual([]);
     expect(viterbi([])).toEqual([]);
@@ -391,6 +407,13 @@ describe('WAV reader', () => {
     const bytes = encodeWav([tone(1, 8000)], 8000, 'pcm16');
     bytes.writeUInt32LE(0xffffffff, 40);
     expect((await readWav(write('cut.wav', bytes))).durationSec).toBeCloseTo(1, 3);
+  });
+
+  it.skipIf(process.platform === 'win32')('refuses a FIFO without waiting for a writer', async () => {
+    const dir = path.dirname(files()('f.wav', Buffer.alloc(0)));
+    const fifo = path.join(dir, 'pipe.wav');
+    execFileSync('mkfifo', [fifo]);
+    await expect(readWav(fifo)).rejects.toMatchObject({ problem: 'not_a_file' });
   });
 
   it('reports a path the system cannot open as a read failure with its code', async () => {

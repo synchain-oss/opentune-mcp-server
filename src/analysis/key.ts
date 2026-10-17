@@ -390,9 +390,49 @@ export function segmentKeys(windows: readonly KeyWindow[], durationSec: number):
       current.confidences.push(at(w.estimate.probabilities, key) + at(w.estimate.probabilities, relativeIndex(key)));
     }
   });
-  return segments.map((s, i) => ({
+  return mergeSameScaleSet(
+    segments.map((s, i) => ({
+      startSec: s.startSec,
+      endSec: segments[i + 1]?.startSec ?? durationSec,
+      key: s.key,
+      confidences: s.confidences,
+    })),
+  );
+}
+
+/** Same seven notes: the same key or relative keys (C major and A minor snap alike). */
+export const sameScaleSetIndex = (a: number, b: number): boolean => a === b || relativeIndex(a) === b;
+
+/**
+ * Neighbouring segments whose keys share their scale set are one segment: a move between relative
+ * keys changes nothing for snapping. The merged segment takes the key that covers more of its time
+ * (the earlier one on a tie) and the mean confidence of all its windows.
+ */
+function mergeSameScaleSet(
+  parts: readonly { startSec: number; endSec: number; key: number; confidences: number[] }[],
+): KeySegment[] {
+  const merged: {
+    startSec: number;
+    endSec: number;
+    key: number;
+    seconds: Map<number, number>;
+    confidences: number[];
+  }[] = [];
+  for (const part of parts) {
+    const last = merged[merged.length - 1];
+    const span = part.endSec - part.startSec;
+    if (last !== undefined && sameScaleSetIndex(last.key, part.key)) {
+      last.endSec = part.endSec;
+      last.seconds.set(part.key, (last.seconds.get(part.key) ?? 0) + span);
+      last.confidences.push(...part.confidences);
+      last.key = [...last.seconds].reduce((a, b) => (b[1] > a[1] ? b : a))[0];
+    } else {
+      merged.push({ ...part, seconds: new Map([[part.key, span]]), confidences: [...part.confidences] });
+    }
+  }
+  return merged.map((s) => ({
     startSec: s.startSec,
-    endSec: segments[i + 1]?.startSec ?? durationSec,
+    endSec: s.endSec,
     key: s.key,
     scaleSetConfidence:
       s.confidences.length === 0 ? 0 : s.confidences.reduce((a, b) => a + b, 0) / s.confidences.length,
