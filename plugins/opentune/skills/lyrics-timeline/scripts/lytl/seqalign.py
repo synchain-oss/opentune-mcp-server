@@ -143,6 +143,52 @@ def _align_timed(
     return out
 
 
+def align_within(lyric: list[str], heard: list[str]) -> list[Pair]:
+    """Align all of ``lyric`` with the stretch of ``heard`` that fits it best.
+
+    The heard keys before and after that stretch cost nothing (a fitting alignment); inside it
+    the scores are those of align_keys. Used to look for one lyric line among heard keys that the
+    whole-song alignment left over: there every other missing line competes for the same sounds
+    and may take them one by one. Heard keys outside the stretch are not in the result.
+    """
+    n, m = len(lyric), len(heard)
+    if n == 0 or m == 0:
+        return [Pair(i, None) for i in range(n)]
+    width = m + 1
+    trace = bytearray((n + 1) * width)  # 1 diagonal, 2 up (lyric only), 3 left (heard only)
+    prev = [0] * (m + 1)  # any heard prefix is free
+    for i in range(1, n + 1):
+        cur = [i * GAP] + [0] * m
+        trace[i * width] = 2
+        a = lyric[i - 1]
+        row = i * width
+        for j in range(1, m + 1):
+            best, move = prev[j - 1] + (MATCH if a == heard[j - 1] else MISMATCH), 1
+            if prev[j] + GAP > best:
+                best, move = prev[j] + GAP, 2
+            if cur[j - 1] + GAP > best:
+                best, move = cur[j - 1] + GAP, 3
+            cur[j] = best
+            trace[row + j] = move
+        prev = cur
+    j = max(range(m + 1), key=lambda k: (prev[k], -k))  # any heard suffix is free
+    out: list[Pair] = []
+    i = n
+    while i > 0:
+        move = trace[i * width + j] if j > 0 else 2
+        if move == 1:
+            out.append(Pair(i - 1, j - 1, lyric[i - 1] == heard[j - 1]))
+            i, j = i - 1, j - 1
+        elif move == 2:
+            out.append(Pair(i - 1, None))
+            i -= 1
+        else:
+            out.append(Pair(None, j - 1))
+            j -= 1
+    out.reverse()
+    return out
+
+
 def project_pairs(
     key_pairs: list[Pair],
     lyric_owners: Sequence[tuple[int, ...]],

@@ -263,6 +263,8 @@ jobs:
       # python -I -m pytest（pytest 命令只写在 scripts/gates.mjs）。--no-skip：依赖装不上就是红。
       # 一个都没有时如实写进汇总，不算失败。
       - name: Skill tests (Python, via gates)
+        env:
+          LYTL_REQUIRE_READINGS: "1" # 日语读音测试缺依赖时判红而不是跳过（gates 也会设置）
         run: |
           shopt -s nullglob
           reqs=(plugins/opentune/skills/*/requirements-test.txt)

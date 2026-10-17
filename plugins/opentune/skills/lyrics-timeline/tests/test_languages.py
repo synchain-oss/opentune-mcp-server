@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -16,7 +17,19 @@ from lytl.lyrics import parse_lyrics
 from lytl.pipeline import build_timeline
 from lytl.schema import validate_output
 
-needs_readings = pytest.mark.skipif(not ja.have_readings(), reason="SudachiPy / SudachiDict-core not installed")
+# The reading tests skip on a machine without SudachiPy and its dictionary. CI and the local gates
+# set LYTL_REQUIRE_READINGS=1, which turns that skip into a failure, so a broken install of the
+# test dependencies cannot pass silently.
+REQUIRE_READINGS = os.environ.get("LYTL_REQUIRE_READINGS") == "1"
+needs_readings = pytest.mark.skipif(
+    not ja.have_readings() and not REQUIRE_READINGS, reason="SudachiPy / SudachiDict-core not installed"
+)
+
+
+def test_japanese_readings_are_installed_when_required():
+    if not REQUIRE_READINGS:
+        pytest.skip("LYTL_REQUIRE_READINGS is not set")
+    assert ja.have_readings(), "LYTL_REQUIRE_READINGS=1 but SudachiPy with SudachiDict-core cannot be loaded"
 
 
 def script(lines: list[list[str]], start: float = 1.0, unit: float = 0.35, gap: float = 0.05, line_gap: float = 1.0):
@@ -142,8 +155,21 @@ def test_pipeline_reports_the_language_and_its_source():
     assert (doc["language"], doc["language_source"]) == ("en", "user")
     doc = build_timeline(x, FakeAsr(truth, reported_language="en"), FakeAligner(truth), lyrics=None)
     assert (doc["language"], doc["language_source"]) == ("en", "asr")
-    with pytest.raises(langs.UnsupportedLanguage):
-        build_timeline(x, FakeAsr(truth, reported_language="vi"), FakeAligner(truth), lyrics=None)
+    # Without lyrics, a language only the recogniser knows: Latin letters fall back to English with a
+    # warning (as they do with lyrics); any other writing is an error that points at --language.
+    doc = build_timeline(x, FakeAsr(truth, reported_language="vi"), FakeAligner(truth), lyrics=None)
+    assert (doc["language"], doc["language_source"]) == ("en", "asr")
+    assert any("Vietnamese (vi)" in w and "aligned as English" in w for w in doc["warnings"])
+    thai = script([["สวัสดี", "ครับ"]])
+    with pytest.raises(langs.UnsupportedLanguage, match=r"Thai \(th\).*--language"):
+        build_timeline(synth_vocal(thai), FakeAsr(thai, reported_language="th"), FakeAligner(thai), lyrics=None)
+
+
+def test_without_lyrics_an_asr_only_language_falls_back_only_for_latin_text():
+    lang, source, warnings = langs.decide_language("auto", None, [("nl", 10)], "ik hou van jou")
+    assert (lang, source) == ("en", "asr") and "Dutch (nl)" in warnings[0]
+    with pytest.raises(langs.UnsupportedLanguage, match=r"Greek \(el\).*run again with --language"):
+        langs.decide_language("auto", None, [("el", 10)], "σε αγαπώ")
 
 
 # --- Whole pipeline in other languages ---------------------------------------------------------

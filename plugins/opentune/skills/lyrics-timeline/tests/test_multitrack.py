@@ -258,7 +258,9 @@ def test_a_line_is_on_the_track_when_half_of_its_sounds_are_heard_exactly(heard,
     truth = sung(["春风吹过山岗上"], [0]) + stray
     doc = build_timeline(synth_vocal(truth, duration=10.0), FakeAsr(truth), FakeAligner(truth), lyrics="春风吹过山岗上\n小河流向远方去")
     assert by_id(doc)["l2"]["sung"] is on_track
-    assert by_id(doc)["l2"]["absent_reason"] == (None if on_track else "not_in_track")
+    # Too little of the line was heard, but there is singing where it would be that shares its
+    # sounds: the line may be there, badly recognised, so the model asks instead of dropping it.
+    assert by_id(doc)["l2"]["absent_reason"] == (None if on_track else "not_recognised")
 
 
 @pytest.mark.parametrize("heard, on_track", [("家", False), ("回家", True)])

@@ -208,7 +208,9 @@ def decide_language(
     With lyrics, their writing decides (the recogniser's guess is unreliable on singing); only for
     Latin-script lyrics, where the writing cannot tell English from French, the recogniser's report
     picks among the supported Latin-script languages. Without lyrics, the recogniser's own report
-    comes first and the writing of what it heard second.
+    comes first and the writing of what it heard second. A reported language that only the
+    recogniser knows falls back to English when what it heard is in Latin letters (as with lyrics)
+    and is an error otherwise.
     """
     warnings: list[str] = []
     if requested != "auto":
@@ -228,9 +230,21 @@ def decide_language(
                 "the lyrics were aligned as English (word by word). Pass --language to choose another supported language."
             )
         return "en", "lyrics", warnings
-    if rep is not None:
-        return check_language(rep), "asr", warnings
     heard_script = script_language(heard_text)
+    if rep in ALIGNER_LANGUAGES:
+        return rep, "asr", warnings
+    if rep is not None:
+        name = f"{ASR_LANGUAGES.get(rep, rep)} ({rep})"
+        if heard_script == "latin":
+            warnings.append(
+                f"the recogniser reported {name}, which the forced aligner does not support; what it heard was "
+                "aligned as English (word by word). Pass --language to choose another supported language."
+            )
+            return "en", "asr", warnings
+        raise UnsupportedLanguage(
+            f"the recogniser reported {name}, which the forced aligner cannot time; supported languages: "
+            f"{SUPPORTED_TEXT}. If the song is in one of them, run again with --language and its code."
+        )
     if heard_script in (None, "latin"):
         return "en", "asr", warnings
     if heard_script == "other":

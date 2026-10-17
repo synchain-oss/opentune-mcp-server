@@ -31,7 +31,7 @@ LINE_KEYS = ("id", "text", "start", "end", "section", "line_in_section", "sung",
 TOKEN_KEYS = ("i", "text", "start", "voiced_start", "end", "conf", "type", "snap", "notes")
 TOKEN_TYPES = ("char", "word", "adlib", "repeat")
 DIFF_TYPES = ("not_sung", "adlib", "repeat_unwritten", "heard_differently", "backing_unaligned", "singer_mismatch")
-ABSENT_REASONS = (None, "not_in_track")
+ABSENT_REASONS = (None, "not_in_track", "not_recognised")
 LANGUAGE_SOURCES = ("lyrics", "asr", "user")
 
 
@@ -110,19 +110,25 @@ def validate_multitrack(doc: dict[str, Any]) -> list[str]:
     errs: list[str] = [f"missing top-level key {k}" for k in MULTI_TOP_KEYS if k not in doc]
     if errs:
         return errs
-    ids = set()
+    if doc["language_source"] not in LANGUAGE_SOURCES:
+        errs.append("language_source must be lyrics, asr or user")
+    sung_lines: dict[str, set[str]] = {}  # track -> ids of its sung lines
     for t in doc["tracks"]:
         if not isinstance(t.get("track"), str):
             errs.append("track without an id")
-        ids.add(t.get("track"))
+        sung_lines[t.get("track")] = {ln.get("id") for ln in t.get("lines", []) if ln.get("sung")}
         errs.extend(f"{t.get('track')}: {e}" for e in validate_output({k: v for k, v in t.items() if k != "track"}))
     for ll in doc["lyric_lines"]:
         for k in ("id", "text", "singers", "sung_by"):
             if k not in ll:
                 errs.append(f"lyric line {ll.get('id')} lacks {k}")
         for sb in ll.get("sung_by", []):
-            if sb.get("track") not in ids:
+            if sb.get("track") not in sung_lines:
                 errs.append(f"lyric line {ll.get('id')} names unknown track {sb.get('track')}")
+            elif sb.get("line") != ll.get("id") or sb.get("line") not in sung_lines[sb["track"]]:
+                errs.append(f"lyric line {ll.get('id')}: sung_by line {sb.get('line')} is not that sung line of {sb.get('track')}")
             if not (_num(sb.get("start")) and _num(sb.get("end")) and sb["end"] >= sb["start"]):
                 errs.append(f"bad sung_by times in {ll.get('id')}")
+            if not (_num(sb.get("conf")) and 0 <= sb["conf"] <= 1):
+                errs.append(f"bad sung_by conf in {ll.get('id')}")
     return errs
