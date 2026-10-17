@@ -33,7 +33,20 @@ Ground rules:
 6. **Measure after.** `opentune_analyze_pitch` again. After tuning, the `corrected*` fields describe the corrected target curve, not a re-measurement of rendered audio. Compare with step 3 and report the change.
 7. **Export.** `opentune_export_audio` (`kind`: `clip`, `track` or `master`, with `target`, and `path` ending in `.wav`). Tell the user where the file is.
 
+## Save often
+
+OpenTune has no autosave, and the undo history is not stored in the project file. Unsaved work is lost when OpenTune closes or crashes.
+
+- **Right after importing**, if the project has no path yet (`opentune_get_project` shows it), call `opentune_save_project` with `mode: save_as` and a path next to the vocal file, named after it: `<vocal name>.otproj`. If that name exists, add a number (`<vocal name>-02.otproj`). Tell the user where the project is saved.
+- **After every finished step**, call `opentune_save_project` with `mode: save`: after the key is set, after each round of tuning the user accepted, after timing changes.
+- **Before a risky or irreversible step**, save a numbered checkpoint, then keep editing in the new file; the old file stays as the restore point. Risky steps include changing the key, `notesOnly`, a large automatic tuning pass and opening another project. Use `mode: save_as` with `<name>-01.otproj`, `<name>-02.otproj` and so on, and tell the user what each checkpoint is for, for example "02 = before tuning".
+- **Never replace another existing project file** (`opentune_save_project_overwrite`) without the user's explicit agreement. Pick a new number instead.
+- **Before ending the session**, check that `opentune_get_project` shows no unsaved changes (save if it does), and tell the user the project path and the export path.
+- **Next time**, continue with `opentune_open_project`. If the current project has unsaved changes it fails with `UNSAVED_CHANGES`: save first, or ask the user. Opening clears the undo history and invalidates all clip ids, so read the project again afterwards.
+
 ## Things that go wrong
+
+- **Lost work.** When OpenTune closes or crashes, every unsaved change is lost. Save as described above before you stop, and never leave a session with unsaved changes.
 
 - **First-run welcome dialog.** On its first start OpenTune shows a one-time onboarding dialog. While it (or any modal dialog) is open, every write returns `BUSY` with reason `modal_open`. Ask the user to close it in the OpenTune window, then retry. `opentune_get_settings` reports whether onboarding was shown.
 - **Hybrid mode.** When hybrid mode is on, small corrections can sound smaller than the data says. You can read the setting with `opentune_get_settings`; there is no tool to change it. If the user wants it changed for a test, ask them to change it in OpenTune's preferences and to restore it afterwards.
@@ -54,4 +67,4 @@ OpenTune is handed audio only by file path: export the vocal from the DAW, tune 
 
 ## Finish
 
-Summarize in a few sentences: what you changed (which notes or ranges), the before and after deviation, the export path, and anything the user should listen to and confirm. Remind them the numbers measure pitch, not taste.
+Summarize in a few sentences: what you changed (which notes or ranges), the before and after deviation, the project path (saved, with no unsaved changes) and the export path, and anything the user should listen to and confirm. Remind them the numbers measure pitch, not taste.

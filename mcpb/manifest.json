@@ -101,6 +101,18 @@
     {
       "name": "opentune_estimate_key",
       "description": "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch (OpenTune's analysis) and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses), tonic_confidence, tuning offset in cents, local keys over time and keys per section (seconds; the mix and the clip's source audio start together). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only."
+    },
+    {
+      "name": "opentune_save_project",
+      "description": "OpenTune (audio vocal pitch editor): saves the project; OpenTune has no autosave, so unsaved work is lost when it closes. mode save writes the current project file (fails when the project was never saved); mode save_as takes an absolute .otproj path and makes it the project file. Refuses to replace a different existing file: use another path, or opentune_save_project_overwrite with the user's consent. Waits up to wait_seconds (default 25, max 30). Undo history is not stored."
+    },
+    {
+      "name": "opentune_save_project_overwrite",
+      "description": "OpenTune (audio vocal pitch editor): saves the project over a different, already existing project file (absolute .otproj path), destroying that file. Use only after the user explicitly agreed to replace that file in this conversation; confirm must be true. Otherwise save under a new path with opentune_save_project. Waits up to wait_seconds (default 25, max 30)."
+    },
+    {
+      "name": "opentune_open_project",
+      "description": "OpenTune (audio vocal pitch editor): opens an .otproj file (absolute path) and replaces the current project. Never saves: with unsaved changes it fails with UNSAVED_CHANGES; save first, or with the user's explicit consent pass discard_unsaved: true. Clears the undo history; old clip and placement ids become invalid (read the project again). Clips whose media file is missing are skipped and listed. Waits up to wait_seconds (default 25, max 30)."
     }
   ],
   "tools_generated": false,
