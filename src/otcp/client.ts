@@ -15,6 +15,12 @@ import type { DiscoveryEntry } from '../discovery/file.js';
 import { SERVER_NAME, VERSION } from '../version.js';
 import { LineSplitter, decodeLine, encodeLine } from './framing.js';
 
+/** The protocol major this client speaks; a hello naming another major is refused. */
+const SUPPORTED_MAJOR = 1;
+
+/** The major of a `MAJOR.MINOR` protocol string, or NaN when it has none. */
+const majorOf = (protocol: string): number => Number(/^(\d+)(?:\.|$)/.exec(protocol)?.[1] ?? Number.NaN);
+
 /** The only address OTCP clients connect to (section 3.1 rule 3); host names are never resolved. */
 export const LOOPBACK = '127.0.0.1';
 /** Protocol version this client implements. */
@@ -155,6 +161,16 @@ export class OtcpSession {
                 'INSTANCE_UNVERIFIED',
                 'proof_mismatch',
                 'the instance at the discovered port does not match its discovery file (serverProof, instanceId or pid)',
+                false,
+                false,
+              ),
+            );
+          } else if (majorOf(hello.protocol) !== SUPPORTED_MAJOR) {
+            finish(
+              local(
+                'PROTOCOL_MISMATCH',
+                'major_not_served',
+                `the instance speaks OTCP ${hello.protocol}; this server speaks major ${String(SUPPORTED_MAJOR)}`,
                 false,
                 false,
               ),

@@ -13,6 +13,7 @@ import { z } from 'zod';
 
 import { OtcpError, fromOtcpError, toolError, type ToolError } from '../errors/tool-error.js';
 import type { Logger } from '../log.js';
+import { cleanDetail } from '../sanitize/untrusted.js';
 import type { DiscoveryEntry } from '../discovery/file.js';
 import type { ProcessProbe } from '../discovery/process.js';
 import type { LaunchDeps } from '../launch/start.js';
@@ -99,7 +100,9 @@ export function registerTools(server: McpServer, tools: readonly ToolDefinition[
         try {
           return render(await tool.run(args, ctx));
         } catch (error) {
-          ctx.logger.error(`${tool.name} failed: ${error instanceof Error ? error.message : String(error)}`);
+          ctx.logger.error(
+            `${tool.name} failed: ${cleanDetail(error instanceof Error ? error.message : String(error))}`,
+          );
           return render({ ok: false, error: toolError('INTERNAL', { detail: 'unexpected error in this server' }) });
         }
       },
