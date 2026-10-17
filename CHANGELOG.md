@@ -44,7 +44,7 @@ zip for Claude Desktop.
 - Analysis: `opentune_analyze_pitch` measures the pitch of a clip, so a clip can be compared before and after tuning.
   `opentune_estimate_key` estimates the key of a clip from its vocal pitch and a WAV file of the mix or the
   instrumental; a relative major or minor key is not reported as a key change, and for a song that changes key it also
-  reports `local_keys` for its sections. A secondary lookup reports a confidence below 0.5.
+  reports `local_keys` for its sections.
 - Editing: `opentune_set_clip` changes the settings of a clip, `opentune_autotune_range` tunes a range of a clip,
   `opentune_edit_notes` changes notes and `opentune_edit_timing` changes timing. `opentune_undo` and `opentune_redo`
   step back and forward through the steps that can be undone.
@@ -60,9 +60,10 @@ zip for Claude Desktop.
 - Skills, installed with the plugin and also as a skills zip for Claude Desktop, which the user uploads in Claude's
   settings: `tuning-workflow` (the tuning flow; a song that changes key gets its sections found first, and each section
   is tuned on its own after the user confirms the sections), `check-results` (checking the result of a tuning pass) and
-  `lyrics-timeline` (word-level timing and section detection, with lyrics in Japanese, Korean, Russian and Western
-  European languages, and timelines that use several vocal tracks; it installs the PyTorch CUDA build that matches the
-  GPU driver).
+  `lyrics-timeline` (word-level timing and section detection, with lyrics in 11 languages: Mandarin, Cantonese,
+  English, German, Spanish, French, Italian, Portuguese, Russian, Korean and Japanese, and timelines that use several
+  vocal tracks; lines found only by a second look at the leftover audio get a confidence below 0.5, so the agent asks
+  the user before using them; it installs the PyTorch CUDA build that matches the GPU driver).
 - The OTCP specification `spec-v1.0.0-rc.3` with its schemas and test vectors, a mock OpenTune that implements it, and
   contract tests that run the tools against both.
 - Golden snapshots of `tools/list` and of the instructions, the generated [tool reference](docs/reference.md) and the
