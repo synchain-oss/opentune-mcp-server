@@ -6,6 +6,7 @@
 // are averaged to mono and the signal is low-pass filtered and decimated to about ANALYSIS_RATE_HZ
 // on the way, so memory stays small for long files. Nothing is written.
 
+import { constants } from 'node:fs';
 import { open, type FileHandle } from 'node:fs/promises';
 
 /** Largest file accepted: 256 MiB, about 25 minutes of 16-bit stereo at 44.1 kHz. */
@@ -132,7 +133,9 @@ const ioError = (error: unknown): WavError => {
 export async function readWav(path: string, maxBytes = MAX_WAV_BYTES): Promise<DecodedWav> {
   let handle: FileHandle;
   try {
-    handle = await open(path, 'r');
+    // A FIFO or device opened for reading would block until a writer shows up: open without blocking
+    // on POSIX and let the isFile() check below refuse it. Windows has no such files and no O_NONBLOCK.
+    handle = await open(path, process.platform === 'win32' ? 'r' : constants.O_RDONLY | constants.O_NONBLOCK);
   } catch (error) {
     throw ioError(error);
   }

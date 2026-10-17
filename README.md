@@ -94,6 +94,7 @@ These show what the tools do. They make no promise about how the corrected vocal
 2. **"Raise the whole vocal by 2 semitones, then export it."** The agent calls `opentune_set_clip` with a pitch shift of 2 semitones (one undo step) and `opentune_export_audio` with kind `clip`. The result names the WAV file that was written; an existing file is never overwritten, the next free name is used.
 3. **"Move this section 30 ms earlier."** The agent calls `opentune_edit_timing` with a `shift` of -30 ms (`delta_ms`) on that range. OpenTune does not detect beats: handle positions come from you, or from the `seed` operation. The result lists the handles and says if a move was limited (`CLAMPED`).
 4. **"Open `C:\Music\take1.wav` and tune it to C major."** The agent calls `opentune_open_audio`, follows the import with `opentune_get_job` until the analysis ends, then calls `opentune_autotune_range` with mode `regenerate` and the scale C major. Long audio takes time: see [How long to wait](docs/COMPATIBILITY.md#how-long-to-wait).
+5. **"Use the backing-track WAV to find the key of this song, then autotune in that key."** The agent calls `opentune_estimate_key` with `mix_path` (an absolute path to a `.wav` file) and, optionally, the vocal `clip`. The result lists the best keys with confidences, says when relative keys (which share their notes) cannot be told apart, and gives a `recommendation.key` that the agent passes to `opentune_autotune_range`. Nothing is changed by the estimate itself.
 
 ## Using it with a DAW
 
