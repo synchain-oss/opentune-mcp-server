@@ -15,6 +15,8 @@ import hashlib
 import json
 import os
 import platform
+import re
+import shutil
 import subprocess
 import sys
 import urllib.error
@@ -30,9 +32,26 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 REQUIREMENTS = os.path.join(os.path.dirname(HERE), "requirements.in")
 MANIFEST = os.path.join(HERE, "model_manifest.json")
 QWEN_ASR_PIN = "qwen-asr==0.0.6"
-TORCH_PIN = "torch==2.14.1"
-TORCH_INDEX_CPU = "https://download.pytorch.org/whl/cpu"
-TORCH_INDEX_CUDA = "https://download.pytorch.org/whl/cu128"
+TORCH_VERSION = "2.14.1"
+TORCH_PIN = f"torch=={TORCH_VERSION}"
+TORCH_INDEX_URL = "https://download.pytorch.org/whl/{}"
+# CUDA builds of the pinned PyTorch, newest first: (the CUDA version the NVIDIA driver must support
+# at least, index name). A driver runs builds for its own CUDA version and older ones, so the
+# newest build the driver supports is taken. There is no cu128 build of the pinned version.
+CUDA_INDEXES = (((13, 0), "cu130"), ((12, 6), "cu126"))
+# The platforms for which the pinned PyTorch has wheels for CPython 3.10 to 3.14 (every version the
+# skill accepts, see NAGISA_PYTHONS), by package index; "pypi" is the default index, used on macOS.
+# Checked by hand on TORCH_WHEELS_CHECKED against https://download.pytorch.org/whl/<index>/torch/
+# and https://pypi.org/project/torch/ (macOS wheels exist only for Apple silicon). Check again and
+# update this table whenever TORCH_VERSION changes; setup refuses a platform that is not listed
+# for the index it would use, instead of letting pip fail.
+TORCH_WHEELS_CHECKED = "2026-10-17"
+TORCH_WHEELS = {
+    "cpu": {"win32-x86_64", "linux-x86_64", "linux-arm64"},
+    "cu126": {"win32-x86_64", "linux-x86_64", "linux-arm64"},
+    "cu130": {"win32-x86_64", "linux-x86_64", "linux-arm64"},
+    "pypi": {"darwin-arm64"},
+}
 TORCH_APPROX = {"cpu": 250_000_000, "cuda": 3_000_000_000, "default": 400_000_000}
 PACKAGES_APPROX = 600_000_000  # transformers, librosa, scipy and friends
 # SudachiPy 0.7.0 (about 1.5-3 MB per platform wheel) and SudachiDict-core 20261015 (a 77 MB wheel
@@ -59,6 +78,14 @@ def current_platform() -> tuple[tuple[int, int], str, str]:
     return (sys.version_info[0], sys.version_info[1]), sys.platform, platform.machine()
 
 
+def _arch(machine: str) -> str:
+    return {"amd64": "x86_64", "x64": "x86_64", "aarch64": "arm64"}.get(machine.lower(), machine.lower())
+
+
+def _os_key(plat: str) -> str:
+    return "linux" if plat.startswith("linux") else plat
+
+
 def platform_problems(py: tuple[int, int], plat: str, machine: str) -> list[str]:
     """Why the pinned package set (nagisa -> DyNet38) cannot be installed here; empty when it can."""
     problems: list[str] = []
@@ -68,9 +95,8 @@ def platform_problems(py: tuple[int, int], plat: str, machine: str) -> list[str]
             f"Python {py[0]}.{py[1]} is not supported: nagisa and DyNet38 ship wheels only for "
             f"Python {lo[0]}.{lo[1]} to {hi[0]}.{hi[1]} (this skill needs 3.10 or newer)"
         )
-    key = "linux" if plat.startswith("linux") else plat
-    arch = {"amd64": "x86_64", "x64": "x86_64", "aarch64": "arm64"}.get(machine.lower(), machine.lower())
-    allowed = NAGISA_WHEELS.get(key)
+    arch = _arch(machine)
+    allowed = NAGISA_WHEELS.get(_os_key(plat))
     if allowed is None:
         problems.append(f"platform {plat} is not supported: nagisa and DyNet38 have no wheels for it")
     elif arch not in allowed:
@@ -81,27 +107,138 @@ def platform_problems(py: tuple[int, int], plat: str, machine: str) -> list[str]
     return problems
 
 
+def torch_wheel_problems(index: str, plat: str, machine: str) -> list[str]:
+    """Why the pinned PyTorch has no wheel for this platform on ``index`` (see TORCH_WHEELS)."""
+    if f"{_os_key(plat)}-{_arch(machine)}" in TORCH_WHEELS.get(index, set()):
+        return []
+    where = "PyPI" if index == "pypi" else f"the {index} index"
+    return [f"PyTorch {TORCH_VERSION} has no wheel for {plat} on {machine} on {where}"]
+
+
 def human(n: float) -> str:
     return f"{n / 1e9:.1f} GB" if n >= 1e9 else f"{n / 1e6:.0f} MB"
 
 
-def choose_size(requested: str, nvidia: bool) -> str:
+def choose_size(requested: str, gpu: bool) -> str:
+    """The ASR model size: 1.7B when PyTorch will run on an NVIDIA GPU, else 0.6B (or as requested)."""
     if requested != "auto":
         return requested
-    return "1.7B" if nvidia else "0.6B"
+    return "1.7B" if gpu else "0.6B"
 
 
-def torch_variant(cuda: bool | None, nvidia: bool) -> str:
-    if sys.platform == "darwin":
-        return "default"
-    use_cuda = nvidia if cuda is None else cuda
-    return "cuda" if use_cuda else "cpu"
+# --- PyTorch build -------------------------------------------------------------------------------
+
+# nvidia-smi prints the CUDA version the driver supports in its header: "CUDA Version: 12.4" in
+# older drivers, "CUDA UMD Version: 13.4" in newer ones (next to "KMD Version", which is not it).
+_CUDA_VERSION = re.compile(r"\bCUDA\s+(?:UMD\s+)?Version\s*:\s*(\d+)\.(\d+)")
+# Below the header it lists every GPU with its PCI bus id (00000000:01:00.0), also when the header
+# has no CUDA version to give ("CUDA Version: N/A").
+_GPU_BUS_ID = re.compile(r"\b[0-9A-Fa-f]{4,8}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\.[0-7]\b")
 
 
-def build_plan(size: str, mirror: str, variant: str, home: str) -> dict[str, Any]:
+def parse_cuda_version(text: str | None) -> tuple[int, int] | None:
+    """The CUDA version from the header that nvidia-smi prints; None when there is none."""
+    m = _CUDA_VERSION.search(text or "")
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def parse_nvidia_smi(text: str | None) -> tuple[bool, tuple[int, int] | None]:
+    """(whether an NVIDIA GPU is listed, the CUDA version its driver supports) from nvidia-smi's output.
+
+    A CUDA version in the header is enough to count as a GPU; without one, a GPU listed below it
+    still counts (and the CPU build is planned, with advice to update the driver).
+    """
+    cuda = parse_cuda_version(text)
+    return cuda is not None or bool(_GPU_BUS_ID.search(text or "")), cuda
+
+
+def nvidia_driver() -> tuple[bool, tuple[int, int] | None]:
+    """Whether there is an NVIDIA GPU and the CUDA version its driver supports, from one run of ``nvidia-smi``."""
+    exe = shutil.which("nvidia-smi")
+    if not exe:
+        return False, None
+    try:
+        r = subprocess.run(
+            [exe], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False, None
+    return parse_nvidia_smi(r.stdout) if r.returncode == 0 else (False, None)
+
+
+def cuda_index(cuda: tuple[int, int] | None) -> str | None:
+    """The newest CUDA build of the pinned PyTorch that a driver for ``cuda`` runs; None if none."""
+    if cuda is None:
+        return None
+    return next((name for need, name in CUDA_INDEXES if cuda >= need), None)
+
+
+def _version(v: tuple[int, int]) -> str:
+    return f"{v[0]}.{v[1]}"
+
+
+def choose_torch(requested: str, nvidia: bool, cuda: tuple[int, int] | None, plat: str) -> dict[str, Any]:
+    """Which PyTorch build to install and from which index, with advice and blocking problems.
+
+    ``requested`` is the --torch value (auto, cpu or cuda), ``nvidia`` whether an NVIDIA GPU was
+    found and ``cuda`` the CUDA version its driver supports (None when it could not be read).
+    """
+    oldest = _version(CUDA_INDEXES[-1][0])
+    out: dict[str, Any] = {"variant": "cpu", "index": "cpu", "driver_cuda": _version(cuda) if cuda else None}
+    advice: list[str] = []
+    problems: list[str] = []
+    if plat == "darwin":
+        out.update(variant="default", index="pypi")  # PyPI's macOS build; there is no CUDA on macOS
+    elif requested == "cuda":
+        index = cuda_index(cuda)
+        out.update(variant="cuda", index=index or CUDA_INDEXES[-1][1])
+        if index is None:
+            if not nvidia:
+                why = "no NVIDIA GPU was found (nvidia-smi is missing or failed)"
+            elif cuda is None:
+                why = "the CUDA version of the NVIDIA driver could not be read from nvidia-smi"
+            else:
+                why = f"the NVIDIA driver supports CUDA {_version(cuda)}"
+            problems.append(
+                f"--torch cuda: {why}, but the CUDA builds of PyTorch {TORCH_VERSION} need a driver for "
+                f"CUDA {oldest} or newer. Update the NVIDIA driver, or use --torch cpu"
+            )
+    elif nvidia:
+        index = cuda_index(cuda)
+        if index is None:
+            have = f"supports only CUDA {_version(cuda)}" if cuda else "did not report its CUDA version"
+            advice.append(
+                f"An NVIDIA GPU was found, but its driver {have}; the CUDA builds of PyTorch {TORCH_VERSION} "
+                f"need CUDA {oldest} or newer, so the CPU build is planned. Update the NVIDIA driver to use "
+                "the GPU, then run setup again with --torch cuda."
+            )
+        elif requested == "auto":
+            out.update(variant="cuda", index=index)
+            advice.append(
+                f"An NVIDIA GPU was found (driver supports CUDA {_version(cuda)}), so the GPU install is "
+                "planned and recommended: Qwen3-ASR 1.7B with the CUDA build of PyTorch. The GPU is much "
+                "faster; on a CPU the 0.6B model took about 6 to 8 minutes for an 8-track song."
+            )
+        else:
+            advice.append(
+                "An NVIDIA GPU was found: the GPU install (--torch auto or --torch cuda, with Qwen3-ASR "
+                "1.7B) is recommended because the GPU is much faster."
+            )
+    out["advice"] = advice
+    out["problems"] = problems
+    return out
+
+
+def build_plan(size: str, mirror: str, torch: dict[str, Any], home: str) -> dict[str, Any]:
     repos = [lhome.ASR_REPOS[size], lhome.ALIGNER_REPO]
     model_bytes = sum(lhome.APPROX_BYTES[r] for r in repos)
+    variant = torch["variant"]
     total = model_bytes + TORCH_APPROX[variant] + PACKAGES_APPROX + JAPANESE_APPROX
+    py, plat, machine = current_platform()
+    problems = platform_problems(py, plat, machine)
+    if not problems:  # a platform that nothing supports needs no second reason
+        problems += torch_wheel_problems(torch["index"], plat, machine)
+    problems += torch["problems"]
     return {
         "home": home,
         "venv": os.path.join(home, "venv"),
@@ -109,7 +246,13 @@ def build_plan(size: str, mirror: str, variant: str, home: str) -> dict[str, Any
         "asr_size": size,
         "models": [{"repo": r, "approx_bytes": lhome.APPROX_BYTES[r]} for r in repos],
         "model_bytes": model_bytes,
-        "torch": {"variant": variant, "pin": TORCH_PIN, "approx_bytes": TORCH_APPROX[variant]},
+        "torch": {
+            "variant": variant,
+            "index": torch["index"],
+            "pin": torch_pin(torch["index"]),
+            "driver_cuda": torch["driver_cuda"],
+            "approx_bytes": TORCH_APPROX[variant],
+        },
         "packages_approx_bytes": PACKAGES_APPROX,
         "japanese_readings": {
             "packages": ["sudachipy", "sudachidict-core"],
@@ -118,7 +261,8 @@ def build_plan(size: str, mirror: str, variant: str, home: str) -> dict[str, Any
         },
         "total_approx_bytes": total,
         "mirror": mirror,
-        "problems": platform_problems(*current_platform()),
+        "advice": torch["advice"],
+        "problems": problems,
     }
 
 
@@ -133,7 +277,10 @@ def print_plan(plan: dict[str, Any]) -> None:
     print(f"  Models         : {plan['models_dir']}  (Qwen3-ASR {plan['asr_size']} + forced aligner)")
     for m in plan["models"]:
         print(f"    - {m['repo']}  about {human(m['approx_bytes'])}")
-    print(f"  PyTorch        : {plan['torch']['variant']} build, about {human(plan['torch']['approx_bytes'])}")
+    t = plan["torch"]
+    build = {"cuda": "CUDA", "cpu": "CPU", "default": "standard"}[t["variant"]]
+    where = "PyPI" if t["index"] == "pypi" else f"{t['index']} index"
+    print(f"  PyTorch        : {build} build ({t['pin']} from {where}), about {human(t['approx_bytes'])}")
     print(f"  Other packages : about {human(plan['packages_approx_bytes'])}")
     ja = plan["japanese_readings"]
     print(
@@ -142,7 +289,12 @@ def print_plan(plan: dict[str, Any]) -> None:
     )
     print(f"  Mirror         : {plan['mirror']}")
     print(f"  Total download : about {human(plan['total_approx_bytes'])} (models alone {human(plan['model_bytes'])})")
-    print("Run again with --yes to do it.")
+    for a in plan.get("advice", []):
+        print(f"  Note           : {a}")
+    if plan.get("problems"):
+        print("Nothing can be installed with these settings (see NOT SUPPORTED HERE above).")
+    else:
+        print("Run again with --yes to do it.")
 
 
 # --- downloading -------------------------------------------------------------------------------
@@ -291,16 +443,25 @@ def run(cmd: list[str]) -> None:
     subprocess.run(cmd, check=True)
 
 
-def install_runtime(home: str, variant: str) -> None:
+def torch_pin(index: str) -> str:
+    """The pip requirement for PyTorch from ``index``.
+
+    The builds on download.pytorch.org carry the index name as a local version (2.14.1+cu130).
+    Naming it makes pip replace a build from another index (a CPU build installed earlier) instead
+    of keeping it because the version number matches.
+    """
+    return TORCH_PIN if index == "pypi" else f"{TORCH_PIN}+{index}"
+
+
+def install_runtime(home: str, index: str) -> None:
     venv = os.path.join(home, "venv")
     if not os.path.isfile(lhome.venv_python(home)):
         run([sys.executable, "-m", "venv", venv])
     py = lhome.venv_python(home)
     run([py, "-m", "pip", "install", "--upgrade", "pip"])
-    index = {"cpu": TORCH_INDEX_CPU, "cuda": TORCH_INDEX_CUDA}.get(variant)
-    cmd = [py, "-m", "pip", "install", TORCH_PIN]
-    if index:
-        cmd += ["--index-url", index]
+    cmd = [py, "-m", "pip", "install", torch_pin(index)]
+    if index != "pypi":
+        cmd += ["--index-url", TORCH_INDEX_URL.format(index)]
     run(cmd)
     run([py, "-m", "pip", "install", "-r", REQUIREMENTS])
     # No dependencies: qwen-asr declares soynlp (GPL-3.0), gradio and flask, which this skill never
@@ -325,10 +486,10 @@ def main(argv: list[str] | None = None) -> int:
     except lhome.HomeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    nvidia = lhome.has_nvidia_gpu()
-    size = choose_size(args.size, nvidia)
-    variant = torch_variant(None if args.torch == "auto" else args.torch == "cuda", nvidia)
-    plan = build_plan(size, args.mirror, variant, home)
+    nvidia, cuda = nvidia_driver()
+    torch = choose_torch(args.torch, nvidia, cuda, current_platform()[1])
+    size = choose_size(args.size, torch["variant"] == "cuda")
+    plan = build_plan(size, args.mirror, torch, home)
     if args.plan:
         print_plan(plan)
         return 0
@@ -336,8 +497,10 @@ def main(argv: list[str] | None = None) -> int:
         for p in plan["problems"]:
             print(f"error: {p}", file=sys.stderr)
         return 2
+    for a in plan["advice"]:
+        print(f"Note: {a}")
     os.makedirs(home, exist_ok=True)
-    install_runtime(home, variant)
+    install_runtime(home, plan["torch"]["index"])
     for repo in (lhome.ASR_REPOS[size], lhome.ALIGNER_REPO):
         print(f"Downloading {repo}")
         download_repo(repo, args.mirror, home)

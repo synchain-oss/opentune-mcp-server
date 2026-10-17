@@ -328,6 +328,265 @@ def test_plan_reports_unsupported_python_and_platform_before_downloading(monkeyp
     assert setup_script.main(["--plan", "--size", "0.6B", "--torch", "cpu"]) == 0
     out = capsys.readouterr().out
     assert "NOT SUPPORTED HERE" in out and "Python 3.15" in out and "ARM64" in out
+    assert "Run again with --yes" not in out  # nothing to agree to
     # --yes refuses before anything is created or downloaded
     assert setup_script.main(["--yes", "--size", "0.6B", "--torch", "cpu"]) == 2
     assert not (tmp_path / "h").exists()
+
+
+# --- PyTorch build: which index, from the driver's CUDA version ---------------------------------
+
+NEW_HEADER = """+-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 617.14                 KMD Version: 617.14        CUDA UMD Version: 13.4     |
++-----------------------------------------+------------------------+----------------------+
+"""
+OLD_HEADER = """+-----------------------------------------------------------------------------------------+
+| NVIDIA-SMI 550.54.14              Driver Version: 550.54.14      CUDA Version: 12.4     |
+|-----------------------------------------+------------------------+----------------------+
+"""
+GPU_ROW = """|   0  NVIDIA GeForce RTX 3070      WDDM  |   00000000:01:00.0  On |                  N/A |
+| 30%   45C    P8             20W /  240W |     512MiB /   8192MiB |      2%      Default |
+"""
+
+
+def test_the_cuda_version_is_read_from_both_nvidia_smi_headers():
+    setup_script = _setup_module()
+    assert setup_script.parse_cuda_version(NEW_HEADER) == (13, 4)  # not the KMD version next to it
+    assert setup_script.parse_cuda_version(OLD_HEADER) == (12, 4)
+    assert setup_script.parse_cuda_version(OLD_HEADER.replace("12.4", "12.8")) == (12, 8)
+    failed = "NVIDIA-SMI has failed because it could not communicate with the NVIDIA driver"
+    for unreadable in ("", None, failed, "CUDA Version: N/A"):
+        assert setup_script.parse_cuda_version(unreadable) is None
+
+
+def test_one_run_of_nvidia_smi_tells_both_whether_there_is_a_gpu_and_its_cuda_version(monkeypatch):
+    setup_script = _setup_module()
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    parse = setup_script.parse_nvidia_smi
+    assert parse(NEW_HEADER + GPU_ROW) == (True, (13, 4))
+    assert parse(OLD_HEADER + GPU_ROW) == (True, (12, 4))
+    assert parse(NEW_HEADER) == (True, (13, 4))  # a CUDA version is enough
+    no_version = OLD_HEADER.replace("12.4", "N/A")
+    assert parse(no_version + GPU_ROW) == (True, None)  # a GPU whose driver gives no version: CPU build, with advice
+    assert parse(no_version) == (False, None)  # no version and no GPU listed
+    assert parse("NVIDIA-SMI has failed because it could not communicate with the NVIDIA driver") == (False, None)
+    assert parse(None) == (False, None)
+
+    calls: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout=NEW_HEADER + GPU_ROW)
+
+    monkeypatch.setattr(setup_script.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(setup_script.subprocess, "run", run)
+    assert setup_script.nvidia_driver() == (True, (13, 4)) and calls == [["nvidia-smi"]]
+    monkeypatch.setattr(setup_script.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=9, stdout=NEW_HEADER))
+    assert setup_script.nvidia_driver() == (False, None)
+    monkeypatch.setattr(setup_script.shutil, "which", lambda name: None)
+    assert setup_script.nvidia_driver() == (False, None)
+
+
+def test_plan_runs_nvidia_smi_once(monkeypatch, capsys, tmp_path):
+    setup_script = _setup_module()
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    calls: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout=NEW_HEADER + GPU_ROW)
+
+    monkeypatch.setattr(setup_script.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(setup_script.subprocess, "run", run)
+    monkeypatch.setattr(setup_script, "current_platform", lambda: ((3, 12), "win32", "AMD64"))
+    monkeypatch.setenv("OPENTUNE_LYRICS_HOME", str(tmp_path / "h"))
+    assert setup_script.main(["--plan"]) == 0
+    assert calls == [["nvidia-smi"]]
+    assert "CUDA build (torch==2.14.1+cu130 from cu130 index)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    "cuda, index",
+    [((13, 4), "cu130"), ((13, 0), "cu130"), ((12, 8), "cu126"), ((12, 6), "cu126"), ((12, 4), None), (None, None)],
+)
+def test_the_newest_cuda_build_the_driver_runs_is_chosen(cuda, index):
+    assert _setup_module().cuda_index(cuda) == index
+
+
+@pytest.mark.parametrize(
+    "cuda, variant, index",
+    [((13, 4), "cuda", "cu130"), ((12, 8), "cuda", "cu126"), ((12, 4), "cpu", "cpu"), (None, "cpu", "cpu")],
+)
+def test_with_an_nvidia_gpu_the_gpu_install_is_planned_when_the_driver_allows_it(cuda, variant, index):
+    setup_script = _setup_module()
+    t = setup_script.choose_torch("auto", True, cuda, "win32")
+    assert (t["variant"], t["index"], t["problems"]) == (variant, index, [])
+    advice = " ".join(t["advice"])
+    if variant == "cuda":
+        assert "GPU install is planned and recommended" in advice and "much faster" in advice
+    else:  # a driver too old (or silent) for any CUDA build: the CPU build, and how to get the GPU
+        assert "Update the NVIDIA driver to use the GPU" in advice and "--torch cuda" in advice
+        assert ("supports only CUDA 12.4" if cuda else "did not report its CUDA version") in advice
+
+
+def test_without_an_nvidia_gpu_or_on_macos_nothing_is_recommended():
+    setup_script = _setup_module()
+    assert setup_script.choose_torch("auto", False, None, "linux") == {
+        "variant": "cpu", "index": "cpu", "driver_cuda": None, "advice": [], "problems": []
+    }
+    mac = setup_script.choose_torch("auto", False, None, "darwin")
+    assert (mac["variant"], mac["index"], mac["advice"], mac["problems"]) == ("default", "pypi", [], [])
+    cpu = setup_script.choose_torch("cpu", True, (13, 4), "win32")  # the CPU build asked for on purpose
+    assert cpu["index"] == "cpu" and "GPU install" in cpu["advice"][0] and "recommended" in cpu["advice"][0]
+
+
+@pytest.mark.parametrize(
+    "nvidia, cuda, why",
+    [(True, (12, 4), "supports CUDA 12.4"), (True, None, "could not be read"), (False, None, "no NVIDIA GPU")],
+)
+def test_torch_cuda_with_a_driver_that_cannot_run_it_is_refused_before_pip(nvidia, cuda, why):
+    t = _setup_module().choose_torch("cuda", nvidia, cuda, "win32")
+    assert len(t["problems"]) == 1 and why in t["problems"][0] and "CUDA 12.6 or newer" in t["problems"][0]
+    assert "Update the NVIDIA driver, or use --torch cpu" in t["problems"][0]
+
+
+def _stub_machine(monkeypatch, setup_script, nvidia: bool, cuda, plat=("win32", "AMD64")):
+    monkeypatch.setattr(setup_script, "nvidia_driver", lambda: (nvidia, cuda))
+    monkeypatch.setattr(setup_script, "current_platform", lambda: ((3, 12), *plat))
+
+
+def test_plan_with_a_current_nvidia_driver_recommends_the_gpu_install(monkeypatch, capsys, tmp_path):
+    setup_script = _setup_module()
+    _stub_machine(monkeypatch, setup_script, True, (13, 4))
+    monkeypatch.setenv("OPENTUNE_LYRICS_HOME", str(tmp_path / "h"))
+    assert setup_script.main(["--plan"]) == 0
+    out = capsys.readouterr().out
+    assert "Qwen3-ASR 1.7B" in out and "CUDA build (torch==2.14.1+cu130 from cu130 index)" in out
+    assert "Total download : about 10.2 GB" in out and "planned and recommended" in out
+    assert out.rstrip().endswith("Run again with --yes to do it.")
+
+
+def test_plan_and_yes_with_torch_cuda_and_an_old_driver_stop_before_anything_is_downloaded(monkeypatch, capsys, tmp_path):
+    setup_script = _setup_module()
+    _stub_machine(monkeypatch, setup_script, True, (12, 4))
+    monkeypatch.setenv("OPENTUNE_LYRICS_HOME", str(tmp_path / "h"))
+    assert setup_script.main(["--plan", "--torch", "cuda"]) == 0
+    out = capsys.readouterr().out
+    assert "NOT SUPPORTED HERE" in out and "the NVIDIA driver supports CUDA 12.4" in out
+    assert "Run again with --yes" not in out
+    monkeypatch.setattr(setup_script, "run", lambda cmd: pytest.fail(f"ran {cmd}"))
+    assert setup_script.main(["--yes", "--torch", "cuda"]) == 2
+    assert "the NVIDIA driver supports CUDA 12.4" in capsys.readouterr().err
+    assert not (tmp_path / "h").exists()
+
+
+def test_yes_with_an_old_driver_installs_the_cpu_build_and_says_why(monkeypatch, capsys, tmp_path):
+    setup_script = _setup_module()
+    _stub_machine(monkeypatch, setup_script, True, (12, 4))
+    monkeypatch.setenv("OPENTUNE_LYRICS_HOME", str(tmp_path / "h"))
+    cmds: list[list[str]] = []
+    monkeypatch.setattr(setup_script, "run", lambda cmd: cmds.append(cmd))
+    monkeypatch.setattr(setup_script, "download_repo", lambda repo, mirror, home: None)
+    os.makedirs(tmp_path / "h" / "models")
+    assert setup_script.main(["--yes"]) == 0
+    assert "Update the NVIDIA driver to use the GPU" in capsys.readouterr().out
+    torch_cmd = next(c for c in cmds if any(a.startswith("torch==") for a in c))
+    assert "torch==2.14.1+cpu" in torch_cmd and torch_cmd[-1] == "https://download.pytorch.org/whl/cpu"
+    assert json.loads((tmp_path / "h" / "models" / "selected.json").read_text(encoding="utf-8")) == {"asr": "0.6B"}
+
+
+@pytest.mark.parametrize(
+    "index, pin, url",
+    [
+        ("cu130", "torch==2.14.1+cu130", "https://download.pytorch.org/whl/cu130"),
+        ("cu126", "torch==2.14.1+cu126", "https://download.pytorch.org/whl/cu126"),
+        ("cpu", "torch==2.14.1+cpu", "https://download.pytorch.org/whl/cpu"),
+        ("pypi", "torch==2.14.1", None),
+    ],
+)
+def test_torch_is_installed_from_its_index_with_the_build_named(monkeypatch, tmp_path, index, pin, url):
+    # Naming the build (+cu130) makes pip replace a CPU build installed earlier with the same version.
+    setup_script = _setup_module()
+    cmds: list[list[str]] = []
+    monkeypatch.setattr(setup_script, "run", lambda cmd: cmds.append(cmd))
+    monkeypatch.setattr(setup_script.os.path, "isfile", lambda p: True)
+    setup_script.install_runtime(str(tmp_path), index)
+    torch_cmd = next(c for c in cmds if any(a.startswith("torch==") for a in c))
+    assert pin in torch_cmd
+    assert (torch_cmd[torch_cmd.index("--index-url") + 1] if "--index-url" in torch_cmd else None) == url
+
+
+def test_the_pinned_torch_has_wheels_on_every_index_setup_can_choose():
+    # A static table, checked by hand on the date it gives against the index listings (see setup.py).
+    setup_script = _setup_module()
+    import datetime  # noqa: PLC0415
+
+    datetime.date.fromisoformat(setup_script.TORCH_WHEELS_CHECKED)
+    assert setup_script.TORCH_PIN == f"torch=={setup_script.TORCH_VERSION}"
+    choosable = {name for _, name in setup_script.CUDA_INDEXES} | {"cpu"}
+    assert choosable == {"cpu", "cu126", "cu130"}  # cu128 has no build of the pinned version
+    for index in choosable:
+        assert "win32-x86_64" in setup_script.TORCH_WHEELS[index], index
+        assert setup_script.torch_wheel_problems(index, "win32", "AMD64") == []
+    assert setup_script.TORCH_WHEELS["pypi"] == {"darwin-arm64"}  # macOS takes PyPI's build
+    assert setup_script.torch_wheel_problems("pypi", "darwin", "arm64") == []
+    # No macOS build for Intel: refused up front instead of a pip failure.
+    assert "no wheel for darwin on x86_64 on PyPI" in setup_script.torch_wheel_problems("pypi", "darwin", "x86_64")[0]
+    needs = [need for need, _ in setup_script.CUDA_INDEXES]  # newest CUDA first
+    assert needs == sorted(needs, reverse=True)
+
+
+def test_plan_on_an_intel_mac_is_not_supported(monkeypatch, capsys, tmp_path):
+    setup_script = _setup_module()
+    _stub_machine(monkeypatch, setup_script, False, None, ("darwin", "x86_64"))
+    monkeypatch.setenv("OPENTUNE_LYRICS_HOME", str(tmp_path / "h"))
+    assert setup_script.main(["--plan"]) == 0
+    out = capsys.readouterr().out
+    assert "NOT SUPPORTED HERE" in out and "PyTorch 2.14.1 has no wheel for darwin on x86_64" in out
+    assert "Run again with --yes" not in out
+
+
+def test_a_notes_page_without_notes_is_reported_when_several_pages_are_given(tmp_path):
+    sys.path.insert(0, SCRIPTS)
+    import lyrics_timeline as cli  # noqa: PLC0415
+
+    full = tmp_path / "page1.json"
+    full.write_text(json.dumps({"notes": [{"index": 0, "startContentSec": 1.0, "endContentSec": 1.3}]}), encoding="utf-8")
+    empty = tmp_path / "page2.json"
+    empty.write_text(json.dumps({"notes": [], "nextCursor": None}), encoding="utf-8")
+    warnings: list[str] = []
+    assert [n.start for n in cli._read_notes([str(full), str(empty)], warnings)] == [1.0]
+    assert warnings == [
+        "--notes file 'page2.json' holds no usable notes; only the notes of the other files were used "
+        "(check that every page of opentune_get_notes was saved)"
+    ]
+    warnings.clear()  # one file without notes is reported by the pipeline instead
+    assert cli._read_notes([str(empty)], warnings) == [] and warnings == []
+
+
+def test_cli_warns_about_an_empty_notes_page(tmp_path, vocal, truth):
+    wav = tmp_path / "vocal.wav"
+    with wave.open(str(wav), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SR)
+        wf.writeframes((np.clip(vocal, -1, 1) * 32767).astype("<i2").tobytes())
+    script = tmp_path / "truth.json"
+    script.write_text(json.dumps([{"text": t.text, "start": t.start, "end": t.end} for t in truth], ensure_ascii=False), encoding="utf-8")
+    page1 = tmp_path / "notes1.json"
+    page1.write_text(json.dumps({"notes": [{"index": 0, "startContentSec": 1.03, "endContentSec": 1.3}], "nextCursor": "c1"}), encoding="utf-8")
+    page2 = tmp_path / "notes2.json"
+    page2.write_text(json.dumps({"notes": []}), encoding="utf-8")
+    lyr = tmp_path / "lyrics.txt"
+    lyr.write_text(LYRICS, encoding="utf-8")
+    out = tmp_path / "out.json"
+    r = _run(
+        CLI, str(wav), "--lyrics-file", str(lyr), "--notes", str(page1), str(page2), "--out", str(out),
+        "--backend", "fake", "--fake-truth", str(script), env=_env(),
+    )
+    assert r.returncode == 0, r.stderr
+    doc = json.loads(out.read_text(encoding="utf-8"))
+    assert doc["warnings"][0].startswith("--notes file 'notes2.json' holds no usable notes")
+    assert doc["params"]["notes_given"] == 1

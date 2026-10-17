@@ -31,7 +31,7 @@ LINE_KEYS = ("id", "text", "start", "end", "section", "line_in_section", "sung",
 TOKEN_KEYS = ("i", "text", "start", "voiced_start", "end", "conf", "type", "snap", "notes")
 TOKEN_TYPES = ("char", "word", "adlib", "repeat")
 DIFF_TYPES = ("not_sung", "adlib", "repeat_unwritten", "heard_differently", "backing_unaligned", "singer_mismatch")
-ABSENT_REASONS = (None, "not_in_track", "not_recognised")
+ABSENT_REASONS = ("not_in_track", "not_recognised", "no_alignment")  # why a line with sung: false has no times
 LANGUAGE_SOURCES = ("lyrics", "asr", "user")
 
 
@@ -83,8 +83,10 @@ def validate_output(doc: dict[str, Any]) -> list[str]:
                     errs.append("bad notes[] sub-segment")
         if ln.get("sung") and not ln.get("tokens"):
             errs.append(f"sung line {ln.get('id')} has no tokens")
-        if ln.get("absent_reason") not in ABSENT_REASONS or (ln.get("sung") and ln.get("absent_reason") is not None):
-            errs.append(f"bad absent_reason in {ln.get('id')}")
+        if ln.get("sung") and ln.get("absent_reason") is not None:
+            errs.append(f"sung line {ln.get('id')} has an absent_reason")
+        elif not ln.get("sung") and ln.get("absent_reason") not in ABSENT_REASONS:
+            errs.append(f"line {ln.get('id')} is not sung but its absent_reason is {ln.get('absent_reason')!r}")
     for sec in doc["sections"]:
         for k in SECTION_KEYS:
             if k not in sec:

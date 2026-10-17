@@ -2,9 +2,9 @@
 name: lyrics-timeline
 description: Time-stamp every sung character or word of one or more vocal WAV tracks (Chinese, English, Japanese, Korean and more), so OpenTune notes can be found by lyric. Runs locally.
 license: MIT
-compatibility: Local only (not for claude.ai skills upload). Needs Python 3.10+, about 3.7 GB (CPU) or 6.5 GB (NVIDIA GPU) of one-time downloads, Windows or macOS.
+compatibility: Local only (not for claude.ai skills upload). Needs Python 3.10+, about 4.7 GB (CPU) or 10 GB (NVIDIA GPU, recommended when there is one) of one-time downloads, Windows or macOS on Apple silicon.
 metadata:
-  version: '0.2.0'
+  version: '0.3.0'
   runs-locally: 'true'
   models: Qwen3-ASR + Qwen3-ForcedAligner-0.6B (Apache-2.0)
 allowed-tools: Bash Read Write
@@ -36,19 +36,26 @@ wait for a yes. Never start the download on your own.
    Windows, so use forward slashes there:
    - Windows (Git Bash): `py -3 "${CLAUDE_SKILL_DIR}/scripts/setup.py" --plan`
    - macOS: `python3 "${CLAUDE_SKILL_DIR}/scripts/setup.py" --plan`
-2. Tell the user: about **3.7 GB** for the models on a computer without an NVIDIA GPU (0.6B), about
-   **6.5 GB** with one (1.7B), plus a few hundred MB to a few GB of Python packages (PyTorch, and
-   about 80 MB for the Japanese reading dictionary). Say where the files go and that nothing outside
-   that folder is touched.
+2. If the plan shows **NOT SUPPORTED HERE**, stop: tell the user why, do not ask for consent
+   (`--yes` refuses anyway). Else tell the user the total download (models, PyTorch, packages, 80 MB
+   of Japanese dictionary), where the files go and that nothing outside that folder is touched:
+   - **NVIDIA GPU found** (the plan's note says so): recommend the **GPU install** it shows,
+     Qwen3-ASR 1.7B with CUDA PyTorch, about **10 GB**, because the GPU is much faster (on a CPU
+     the 0.6B model took about 6 to 8 minutes for an 8-track song).
+   - **No NVIDIA GPU**: Qwen3-ASR 0.6B with CPU PyTorch, about **4.7 GB**.
+   - **The note says the NVIDIA driver is too old**: the plan is the CPU install; tell the user
+     that a driver update makes the GPU usable (then run setup again with `--torch cuda`).
 3. Only after the user agrees, run the same command with `--yes` instead of `--plan`. Useful flags:
    `--size 0.6B|1.7B`, `--mirror modelscope` (for users in mainland China; `hf` honours
-   `HF_ENDPOINT`), `--torch cpu|cuda`. Each model repo is pinned to one fixed revision (a Hugging
-   Face commit, a ModelScope revision), and every downloaded file is checked against the size and
-   sha256 listed in `scripts/model_manifest.json`, which ships with the skill. A file that is not in
-   that list is not downloaded, and a file that does not match is discarded. The Python packages are
+   `HF_ENDPOINT`), `--torch cpu|cuda` (`cuda` needs a driver for CUDA 12.6 or newer, else the plan
+   says why and `--yes` refuses). Each model repo is pinned to one fixed revision (a Hugging Face
+   commit, a ModelScope revision), and every downloaded file is checked against the size and sha256
+   listed in `scripts/model_manifest.json`, which ships with the skill. A file that is not in that
+   list is not downloaded, and a file that does not match is discarded. The Python packages are
    pinned to exact versions in `requirements.in`; pip does not verify hashes for them yet (see
    `NOTICE`). Running `--yes` again on an existing install adds packages that a newer version of
-   this skill needs (a warning about missing Japanese readings means exactly that).
+   this skill needs (a warning about missing Japanese readings means exactly that) and switches
+   PyTorch to the planned build (CUDA after a driver update).
 
 Where the files go: `${CLAUDE_PLUGIN_DATA}` when the skill runs as part of the plugin. When that
 variable is not set (the skill was copied on its own), use `OPENTUNE_LYRICS_HOME`: ask the user for
@@ -112,10 +119,12 @@ its own with its notes.
 Each track may sing only part of the lyrics. A line counts as sung on a track when at least half of
 its sounds (characters, syllables or words; at least two) were recognised exactly, in one stretch of
 the file. A line not found that way is compared once more on its own with the sounds no found line
-explains; when it is found then, a warning says so and its `conf` is at most 0.75. With several
-tracks, four or more sounds of a line heard in a row where the other tracks sing it also count (a
-harmony that joins for part of a line); the rest of the line is a `not_sung` diff and `conf` stays
-under 0.5.
+explains, except stretches made only of fillers (ad-libs such as あ, ねえ, oh, 啊). When it is found
+then, the warning `line lN: found only by a second, line-by-line comparison ...` says so and its
+`conf` stays under 0.5 (0.35 for a line of fewer than six sounds): **ask the user before using such
+a line**. With several tracks, four or more sounds of a line heard in a row where the other tracks
+sing it also count (a harmony that joins for part of a line); the rest of the line is a `not_sung`
+diff, `conf` stays under 0.5 and a warning says so.
 
 Lines that were not recognised but sit between two found lines, with singing between them that
 nothing else explains, are still timed, with `conf` of at most 0.45 and a warning per line: on one
@@ -130,13 +139,15 @@ that another track sings at that time. Other lines are `sung: false` with no tim
   with the line (or, on a single track, nothing was recognised at all). The line may be on the
   track but too badly recognised to time. Before treating it as missing, tell the user and ask
   whether this track sings it.
+- `no_alignment`: found on the track, but the aligner gave it no times (a warning says so). Tell
+  the user; on this track the line cannot be edited by lyric.
 
 Tracks are compared on one shared timeline. A line heard on a track more than about 8 s away from
 where the other tracks sing it does not count there (a warning names the line), unless most of it was
-heard exactly. A track that seems to be exported with an offset is compared after removing it (a
-warning gives the offset; its times are reported as they are in its file). When the lines the
-tracks share are sung at inconsistent times, no comparison across tracks is made and a warning says
-so.
+heard exactly. A track that seems to be exported with an offset (measured against the largest group
+of tracks in time with each other) is compared after removing it; a warning names it and gives the
+offset (its times are reported as they are in its file). When the lines the tracks share are sung at
+inconsistent times, no comparison across tracks is made and a warning says so.
 
 ## Output
 
@@ -149,9 +160,8 @@ One file: JSON with `version`, `generator`, `audio`, `label`, `language`, `langu
   (the user's tags) or `inferred` (repeat structure; treat as a guess and confirm with the user).
 - `lines[]`:
   `{id, text, start, end, section, line_in_section, sung, absent_reason, backing, singers, conf, tokens[]}`.
-  `sung: false` means no times; `absent_reason` is `not_in_track` or `not_recognised` (see
-  "Several tracks of one song"; ask the user about `not_recognised` lines). `singers` are the names
-  from the marks.
+  `sung: false` means no times; `absent_reason` (`null` on sung lines) is then `not_in_track`,
+  `not_recognised` or `no_alignment` (see "Several tracks of one song"). `singers` come from marks.
 - `tokens[]`: `{i, text, start, voiced_start, end, conf, type, snap, notes[]}`. `i` is the position
   of the unit in the written line (`lines[].text`), starting at 1, the same position that a
   `not_sung` diff uses; so when the 5th unit was not sung, the tokens go 1, 2, 3, 4, 6. Ad-libs have
@@ -206,8 +216,8 @@ snap to every note of one clip, call it with `clock: content`, follow the cursor
 next page, and merge the `notes` of all pages into one array. Save the result with the Write tool
 (for example as `$TEMP/notes.json`) and pass it to `--notes`. `--notes` accepts either one file
 holding the merged array (or one page) or several files, one per page, in any order; notes that
-appear twice are counted once. The notes are only used to find times and are never changed by this
-skill.
+appear twice are counted once; a warning names a file with no readable notes (check that every
+page was saved). The notes are only used to find times and are never changed by this skill.
 
 ## Without lyrics
 
