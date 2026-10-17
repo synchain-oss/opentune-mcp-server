@@ -68,6 +68,10 @@ const TOOL_FOR = table<(params: Json) => Mapped | null>({
         ? { pitch_shift: { semitones: shift.semitones, cents: shift.cents } }
         : null;
     }),
+  'project.open': (params) =>
+    typeof params.path === 'string' && params.path.length >= 1 && params.path.length <= 4096
+      ? { call: { tool: 'opentune_open_project', arguments: { path: params.path } }, needsRevision: false }
+      : null,
   'edit.undo': (params) => history('opentune_undo', params),
   'edit.redo': (params) => history('opentune_redo', params),
 });

@@ -284,6 +284,7 @@ describe('revert recipes as tool calls', () => {
     { method: 'content.setPitchShift', params: { contentId: CONTENT, pitchShift: { semitones: -3, cents: 20 } } },
     { method: 'edit.undo', params: { expectedUndoId: 'u:01234567:3' } },
     { method: 'edit.redo', params: { expectedUndoId: 'u:01234567:3' } },
+    { method: 'project.open', params: { path: 'C:/Music/a.otproj' } },
   ];
 
   it("turns every recipe a tool performs into a call that the tool's input schema accepts", () => {

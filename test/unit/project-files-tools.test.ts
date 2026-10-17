@@ -16,6 +16,7 @@ import { getJob } from '../../src/tools/jobs.js';
 import { TOOLS } from '../../src/tools/index.js';
 import {
   openProject,
+  openedSentences,
   openProjectTool,
   overwriteProject,
   overwriteProjectTool,
@@ -202,6 +203,35 @@ describe('opentune_open_project', () => {
     );
     expect(result.summary).not.toContain(need(ids, 'existing'));
     expect(result).toMatchObject({ path: need(ids, 'existing'), job: { kind: 'projectOpen', state: 'succeeded' } });
+  });
+
+  it('gives the way back to the previous project when it had a file, and says there is none when it had not', async () => {
+    const { ctx, mock } = await setup();
+    const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true });
+    await save(ctx, { mode: 'save_as', path: need(ids, 'fresh') });
+    const result = body(await openProject(ctx, { path: need(ids, 'existing'), ...wait }));
+    expect(result.summary).toMatch(/cannot be undone with opentune_undo, but opening the previous project again/);
+    expect(result.summary).not.toMatch(/cannot be undone or restored/);
+    const restore = (result.lines as { kind: string; restore?: unknown }[]).find((l) => l.kind === 'revert');
+    expect(restore?.restore).toEqual({ tool: 'opentune_open_project', arguments: { path: need(ids, 'fresh') } });
+
+    const second = await setup();
+    const ids2 = second.mock.given({ files: [...FILES], clips: [clip()], dirty: true });
+    const discarded = body(
+      await openProject(second.ctx, { path: need(ids2, 'existing'), discard_unsaved: true, ...wait }),
+    );
+    expect(discarded.summary).toMatch(/which cannot be undone or restored/);
+  });
+
+  it('says how many reference bindings were not restored', () => {
+    // The mock cannot make a project with reference bindings, so the rendering is checked on a result built by hand.
+    const sentences = openedSentences({ skipped: { media: [], placementCount: 0, referenceBindingCount: 2 } }).join(
+      ' ',
+    );
+    expect(sentences).toMatch(/2 reference bindings could not be restored/);
+    expect(
+      openedSentences({ skipped: { media: [], placementCount: 0, referenceBindingCount: 0 } }).join(' '),
+    ).not.toMatch(/reference binding/);
   });
 
   it('fails with UNSAVED_CHANGES and never saves; discard_unsaved opens and says it discarded', async () => {

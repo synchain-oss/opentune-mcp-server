@@ -15,6 +15,7 @@ import type { Json } from '../otcp/client.js';
 import { resolvePath } from '../paths/index.js';
 import { isObject } from '../render/changes.js';
 import { writeBody, writeOutcome } from '../render/index.js';
+import { revertPlan } from '../render/revert.js';
 import { warningCodes } from '../render/summary.js';
 import { token } from '../render/text.js';
 import {
@@ -277,6 +278,38 @@ const count = (n: number, noun: string) => `${String(n)} ${noun}${n === 1 ? '' :
 const natural = (value: unknown): number =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0;
 
+/** The sentences of the summary of a finished open: what was replaced, how to get it back, what was left out. */
+export function openedSentences(result: Json): string[] {
+  const previous = isObject(result.previous) ? result.previous : {};
+  const skipped = isObject(result.skipped) ? result.skipped : {};
+  const media = Array.isArray(skipped.media) ? skipped.media.length : 0;
+  const clips = natural(skipped.placementCount);
+  const restored = isObject(result.restored) ? natural(result.restored.placementCount) : 0;
+  const discarded = previous.discarded === true;
+  const plan = revertPlan(isObject(result.undo) ? result.undo.revert : null);
+  const bindings = natural(skipped.referenceBindingCount);
+  const undoText =
+    plan.kind === 'tool'
+      ? 'which cannot be undone with opentune_undo, but opening the previous project again restores it (see the restore line).'
+      : 'which cannot be undone or restored.';
+
+  const parts = [
+    `opened the project (path in path) and replaced the previous one, ${discarded ? 'DISCARDING its unsaved changes, ' : ''}` +
+      undoText,
+    'The undo history is cleared and every earlier clip, placement and content id is invalid: read the project again with opentune_get_project.',
+    `${count(restored, 'clip')} restored.`,
+  ];
+  if (media > 0 || clips > 0) {
+    parts.push(
+      `${count(media, 'media file')} could not be found or read (listed in skipped.media), so ${count(clips, 'clip')} ${clips === 1 ? 'was' : 'were'} not restored.`,
+    );
+  }
+  if (bindings > 0) {
+    parts.push(`${count(bindings, 'reference binding')} could not be restored.`);
+  }
+  return parts;
+}
+
 export async function openProject(ctx: ToolContext, args: OpenProjectArgs): Promise<Outcome> {
   const resolved = resolvePath(args.path, ctx, 'path', '.otproj');
   if (!resolved.ok) return { ok: false, error: resolved.error };
@@ -317,24 +350,7 @@ export async function openProject(ctx: ToolContext, args: OpenProjectArgs): Prom
         error: toolError('INTERNAL', { detail: 'OpenTune finished the open job without a result', executed: null }),
       } satisfies Outcome;
     }
-    const previous = isObject(result.previous) ? result.previous : {};
-    const skipped = isObject(result.skipped) ? result.skipped : {};
-    const media = Array.isArray(skipped.media) ? skipped.media.length : 0;
-    const clips = natural(skipped.placementCount);
-    const restored = isObject(result.restored) ? natural(result.restored.placementCount) : 0;
-    const discarded = previous.discarded === true;
-
-    const parts = [
-      `opened the project (path in path) and replaced the previous one, ${discarded ? 'DISCARDING its unsaved changes, ' : ''}` +
-        'which cannot be undone.',
-      'The undo history is cleared and every earlier clip, placement and content id is invalid: read the project again with opentune_get_project.',
-      `${count(restored, 'clip')} restored.`,
-    ];
-    if (media > 0 || clips > 0) {
-      parts.push(
-        `${count(media, 'media file')} could not be found or read (listed in skipped.media), so ${count(clips, 'clip')} ${clips === 1 ? 'was' : 'were'} not restored.`,
-      );
-    }
+    const parts = openedSentences(result);
     const rendered = writeBody(result, { tool: OPEN });
     return {
       ok: true,
