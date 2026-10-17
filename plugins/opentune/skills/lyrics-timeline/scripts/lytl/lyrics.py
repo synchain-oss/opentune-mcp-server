@@ -1,5 +1,15 @@
 # SPDX-License-Identifier: MIT
-"""Parse user-supplied lyrics: section tags, LRC times, bracketed backing vocals and "x2" repeats."""
+"""Parse user-supplied lyrics: section tags, LRC times, bracketed backing vocals, "x2" repeats and
+singer marks.
+
+A singer mark is a name in curly braces, which no other part of the syntax uses (section tags and
+backing vocals use [] 【】 () （）). At the start of a line it applies to that line only; on a line
+of its own it applies to the following lines until the next mark on a line of its own. ``{A, B}``
+names several singers, ``{all}`` everybody, and an empty ``{}`` clears the mark. A bare section tag
+that repeats an earlier block keeps that block's marks, unless a mark on a line of its own follows
+the tag (before the next tag): then the repeat is sung by those singers. The marks are hints for
+multi-track runs, never part of the sung text.
+"""
 
 from __future__ import annotations
 
@@ -29,6 +39,8 @@ _TAG_ONLY = re.compile(r"^[\[【(（]\s*([^\]】)）]*?)\s*[\]】)）]$")
 _NUM_SUFFIX = re.compile(r"^(.*?)[\s_-]*(\d{1,2}|[一二三四五六七八九])?$")
 _ZH_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 _MAX_REPEAT = 8
+_SINGER_MARK = re.compile(r"^[{｛]([^{}｛｝]*)[}｝]\s*(.*)$")
+_SINGER_SPLIT = re.compile(r"[,，、/／&＆;；]")
 
 
 @dataclass
@@ -42,6 +54,7 @@ class LyricLine:
     backing: bool = False  # the whole line was in brackets
     backing_text: str = ""  # bracketed text inside an otherwise normal line
     expanded: bool = False  # produced by "x2" or by repeating a bare tag
+    singers: tuple[str, ...] = ()  # names from a {singer} mark, as written; ("all",) for everybody
 
 
 @dataclass
@@ -69,6 +82,12 @@ def _parse_tag(inner: str) -> tuple[str, int | None, int] | None:
     if key in _LABEL_LOOKUP:
         return _LABEL_LOOKUP[key], num, max(1, min(repeat, _MAX_REPEAT))
     return None
+
+
+def parse_singers(inner: str) -> tuple[str, ...]:
+    """Names inside a singer mark: "A, B" -> ("A", "B"); "all" in any case -> ("all",)."""
+    names = tuple(n.strip() for n in _SINGER_SPLIT.split(inner) if n.strip())
+    return ("all",) if any(n.casefold() == "all" for n in names) else names
 
 
 def _lrc_seconds(m: re.Match[str]) -> float:
@@ -99,15 +118,19 @@ def parse_lyrics(source: str) -> ParsedLyrics:
     block_tag = ""  # the text inside the tag that opened the current block
     seen_blocks: dict[str, list[LyricLine]] = {}
     pending_blank = False
+    singers: tuple[str, ...] = ()  # the mark on a line of its own that is in force
+    repeat_singers: tuple[str, ...] | None = None  # a mark on a line of its own inside the current block
 
     def close_block() -> None:
         nonlocal block_repeat
         added = parsed.lines[block_start:]
         if label is not None and not added and label in seen_blocks:
-            # A bare tag stands for the earlier block of that label, as often as "x2" says.
+            # A bare tag stands for the earlier block of that label, as often as "x2" says, with
+            # that block's singers unless a mark was given after the tag.
             for _ in range(block_repeat):
                 for ln in seen_blocks[label]:
-                    parsed.lines.append(_copy(ln, label_number, block))
+                    who = ln.singers if repeat_singers is None else repeat_singers
+                    parsed.lines.append(_copy(ln, label_number, block, who))
             if label_number is not None:
                 parsed.warnings.append(
                     f"lyrics: [{block_tag}] has no text; the text of the earlier {label} block was assumed"
@@ -145,6 +168,7 @@ def parse_lyrics(source: str) -> ParsedLyrics:
                     close_block()
                     block += 1
                     block_start = len(parsed.lines)
+                    repeat_singers = None
                     label, label_number, block_repeat = lead
                     block_tag = line[1:close].strip()
                     parsed.has_labels = True
@@ -154,11 +178,21 @@ def parse_lyrics(source: str) -> ParsedLyrics:
             close_block()
             block += 1
             block_start = len(parsed.lines)
+            repeat_singers = None
             label, label_number, block_repeat = parsed_tag
             block_tag = tag.group(1).strip()  # type: ignore[union-attr]
             parsed.has_labels = True
             pending_blank = False
             continue
+        line_singers = singers
+        mark = _SINGER_MARK.match(line)
+        if mark:
+            if not mark.group(2).strip():  # a mark on its own line holds until the next one
+                singers = parse_singers(mark.group(1))
+                repeat_singers = singers
+                continue
+            line_singers = parse_singers(mark.group(1))
+            line = mark.group(2).strip()
         if not line:
             continue
         if pending_blank:
@@ -175,10 +209,12 @@ def parse_lyrics(source: str) -> ParsedLyrics:
             line = line[: m.start()].strip()
         whole = re.fullmatch(r"[(（]([^()（）]*)[)）]", line)
         if whole:
-            entry = LyricLine(whole.group(1).strip(), raw, label, label_number, block, lrc_time, backing=True)
+            entry = LyricLine(
+                whole.group(1).strip(), raw, label, label_number, block, lrc_time, backing=True, singers=line_singers
+            )
         else:
             main, back = _split_inline_backing(line)
-            entry = LyricLine(main, raw, label, label_number, block, lrc_time, backing_text=back)
+            entry = LyricLine(main, raw, label, label_number, block, lrc_time, backing_text=back, singers=line_singers)
         if not entry.text:
             continue
         parsed.lines.append(entry)
@@ -188,7 +224,7 @@ def parse_lyrics(source: str) -> ParsedLyrics:
     return parsed
 
 
-def _copy(line: LyricLine, label_number: int | None, block: int) -> LyricLine:
+def _copy(line: LyricLine, label_number: int | None, block: int, singers: tuple[str, ...] | None = None) -> LyricLine:
     return LyricLine(
         line.text,
         line.raw,
@@ -199,4 +235,5 @@ def _copy(line: LyricLine, label_number: int | None, block: int) -> LyricLine:
         line.backing,
         line.backing_text,
         True,
+        line.singers if singers is None else singers,
     )

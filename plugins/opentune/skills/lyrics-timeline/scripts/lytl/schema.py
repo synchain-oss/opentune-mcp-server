@@ -9,7 +9,9 @@ TOP_KEYS = (
     "version",
     "generator",
     "audio",
+    "label",
     "language",
+    "language_source",
     "mode",
     "models",
     "params",
@@ -17,16 +19,20 @@ TOP_KEYS = (
     "lines",
     "breaths",
     "adlibs",
+    "unmatched",
     "diffs",
     "suspects",
     "warnings",
     "confidence",
 )
+MULTI_TOP_KEYS = ("version", "generator", "mode", "language", "language_source", "models", "params", "lyric_lines", "tracks", "warnings")
 SECTION_KEYS = ("id", "label", "occurrence", "start", "end", "lines", "source", "conf")
-LINE_KEYS = ("id", "text", "start", "end", "section", "line_in_section", "sung", "backing", "tokens")
+LINE_KEYS = ("id", "text", "start", "end", "section", "line_in_section", "sung", "absent_reason", "backing", "singers", "tokens")
 TOKEN_KEYS = ("i", "text", "start", "voiced_start", "end", "conf", "type", "snap", "notes")
 TOKEN_TYPES = ("char", "word", "adlib", "repeat")
-DIFF_TYPES = ("not_sung", "adlib", "repeat_unwritten", "heard_differently", "backing_unaligned")
+DIFF_TYPES = ("not_sung", "adlib", "repeat_unwritten", "heard_differently", "backing_unaligned", "singer_mismatch")
+ABSENT_REASONS = (None, "not_in_track")
+LANGUAGE_SOURCES = ("lyrics", "asr", "user")
 
 
 def _num(v: Any) -> bool:
@@ -35,6 +41,8 @@ def _num(v: Any) -> bool:
 
 def validate_output(doc: dict[str, Any]) -> list[str]:
     """Return a list of problems; an empty list means the document has the documented shape."""
+    if doc.get("mode") == "multi_track":
+        return validate_multitrack(doc)
     errs: list[str] = []
     for k in TOP_KEYS:
         if k not in doc:
@@ -42,7 +50,9 @@ def validate_output(doc: dict[str, Any]) -> list[str]:
     if errs:
         return errs
     if doc["mode"] not in ("lyrics", "asr_only"):
-        errs.append("mode must be lyrics or asr_only")
+        errs.append("mode must be lyrics, asr_only or multi_track")
+    if doc["language_source"] not in LANGUAGE_SOURCES:
+        errs.append("language_source must be lyrics, asr or user")
     line_ids = set()
     for ln in doc["lines"]:
         for k in LINE_KEYS:
@@ -73,6 +83,8 @@ def validate_output(doc: dict[str, Any]) -> list[str]:
                     errs.append("bad notes[] sub-segment")
         if ln.get("sung") and not ln.get("tokens"):
             errs.append(f"sung line {ln.get('id')} has no tokens")
+        if ln.get("absent_reason") not in ABSENT_REASONS or (ln.get("sung") and ln.get("absent_reason") is not None):
+            errs.append(f"bad absent_reason in {ln.get('id')}")
     for sec in doc["sections"]:
         for k in SECTION_KEYS:
             if k not in sec:
@@ -83,8 +95,34 @@ def validate_output(doc: dict[str, Any]) -> list[str]:
     for d in doc["diffs"]:
         if d.get("type") not in DIFF_TYPES:
             errs.append(f"bad diff type {d.get('type')}")
-    for key in ("breaths", "adlibs"):
+    for key in ("breaths", "adlibs", "unmatched"):
         for item in doc[key]:
             if not (_num(item.get("start")) and _num(item.get("end"))):
                 errs.append(f"bad {key} entry")
+    for item in doc["unmatched"]:
+        if not isinstance(item.get("heard_text"), str):
+            errs.append("unmatched entry lacks heard_text")
+    return errs
+
+
+def validate_multitrack(doc: dict[str, Any]) -> list[str]:
+    """The multi-track shape: shared fields, lyric_lines with sung_by, and one single-track result per track."""
+    errs: list[str] = [f"missing top-level key {k}" for k in MULTI_TOP_KEYS if k not in doc]
+    if errs:
+        return errs
+    ids = set()
+    for t in doc["tracks"]:
+        if not isinstance(t.get("track"), str):
+            errs.append("track without an id")
+        ids.add(t.get("track"))
+        errs.extend(f"{t.get('track')}: {e}" for e in validate_output({k: v for k, v in t.items() if k != "track"}))
+    for ll in doc["lyric_lines"]:
+        for k in ("id", "text", "singers", "sung_by"):
+            if k not in ll:
+                errs.append(f"lyric line {ll.get('id')} lacks {k}")
+        for sb in ll.get("sung_by", []):
+            if sb.get("track") not in ids:
+                errs.append(f"lyric line {ll.get('id')} names unknown track {sb.get('track')}")
+            if not (_num(sb.get("start")) and _num(sb.get("end")) and sb["end"] >= sb["start"]):
+                errs.append(f"bad sung_by times in {ll.get('id')}")
     return errs

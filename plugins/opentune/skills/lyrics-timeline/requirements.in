@@ -2,9 +2,12 @@
 # Runtime dependencies, installed by scripts/setup.py into the plugin data folder. Exact versions.
 # torch is installed first by setup.py from the CPU or CUDA index; the pin here only has to match.
 # qwen-asr itself is installed afterwards with --no-deps (see QWEN_ASR_PIN in setup.py): its own
-# requirements list soynlp (GPL-3.0), gradio and flask, which the zh / en path never imports. The
-# list below is what qwen-asr 0.0.6 really imports on that path (checked against the wheel source):
-# transformers, accelerate, nagisa (imported at module level by qwen_asr), librosa, soundfile.
+# requirements list soynlp (GPL-3.0), gradio and flask, which this skill never imports (Korean is
+# sent to the aligner under a name that selects its space splitter). The list below is what
+# qwen-asr 0.0.6 really imports (checked against the wheel source): transformers, accelerate,
+# nagisa (imported at module level by qwen_asr, and the aligner's Japanese splitter), librosa,
+# soundfile. sudachipy and sudachidict-core are this skill's own: readings for comparing Japanese
+# lyrics with what the recogniser wrote (about 80 MB download, 210 MB on disk).
 # Hash-pinned lock files per platform are future work.
 torch==2.14.1
 transformers==4.57.6
@@ -15,3 +18,5 @@ numpy==2.2.6
 scipy==1.15.3
 soundfile==0.14.0
 pypinyin==0.55.0
+sudachipy==0.7.0
+sudachidict-core==20261015

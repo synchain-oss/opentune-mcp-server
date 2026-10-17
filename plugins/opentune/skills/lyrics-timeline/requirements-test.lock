@@ -93,6 +93,26 @@ pytest==9.1.1 \
     --hash=sha256:1088fbde8f2b49d95a549a195707afa7a76a3ce9bcadc26b6d71f0ffda5fe313 \
     --hash=sha256:37a86b45efb9a47a61a36449063e8e18d0cab3161329fc099eb21783169c4f0c
     # via -r requirements-test.txt
+sudachidict-core==20261015 \
+    --hash=sha256:32d2bfc1491b82659959d28f79eb7c034d3a57d77f7610c3d2ea834151d15d23 \
+    --hash=sha256:6d7774b518e64c88a0578975d569590b3dae3b3c834f166486aa611879ee9d98
+    # via -r requirements-test.txt
+sudachipy==0.7.0 \
+    --hash=sha256:0e60cefd3a7a9680206ae160bf86d266d0d60e434adac2384f8c7a6dfb0f3ba7 \
+    --hash=sha256:14a2505e7d086fe9da64c0048d8e2de13cdded3aac4f1e047929cef51dba338c \
+    --hash=sha256:1bf2254ee6357e0defa498630f188fefa8a543b82887077cfb1596bc3e8d4840 \
+    --hash=sha256:68be139f5d7f053eba16fd3f792e4ef0c6bfed81a1b63e68b4544c7159296034 \
+    --hash=sha256:6be34e856c99498e990904f7155e1a102f675cf5edfdaf7a396f26d71ce4b333 \
+    --hash=sha256:8d0429db2d02d408daa7dccd062a6d8c2984a07f8e448b49a3ea694377617658 \
+    --hash=sha256:907eadc1db305f9bc6e502a9acf9ff1ac871cd8d4ac3a2e0aaba3ddc60e93b2a \
+    --hash=sha256:9446eba17985b1d14926afc6312fb0367687ab1b5397fa65d7e2cdd1745451c9 \
+    --hash=sha256:c8306eab503d891e394fb21156e417c2f9f54cc39f56dddb8cf2b40620d470fa \
+    --hash=sha256:dfc90631aa2276d2165e1995bc94b56c9f5bc27b875f43fb7d67e4a3b7346d4f \
+    --hash=sha256:efd56375584dec9523fe9a26daa69da02a70ae2f2c22d25248e65a4998cae8e1 \
+    --hash=sha256:f1e24f71a71816dcbc6fb759a5819cca5d603a4d49b7ade63dd0fe49468ed22c
+    # via
+    #   -r requirements-test.txt
+    #   sudachidict-core
 tomli==2.5.0 \
     --hash=sha256:069435bd5480429b98c5e5afb02ab21c219b6f0064680671c6dc0d46817346ea \
     --hash=sha256:0dc598040da8d42cf20f0be588ed7004f46db12a0ac6c32e03a59dccedaaadcd \

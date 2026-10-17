@@ -41,9 +41,11 @@ def build_truth(lines: list[str] = SONG, start: float = 1.0) -> list[TruthToken]
     return truth
 
 
-def synth_vocal(truth: list[TruthToken], extra_tail: float = 1.5, noise: float = 0.0005) -> np.ndarray:
-    """Pitched bursts at the scripted times over a very quiet noise floor."""
-    n = int((truth[-1].end + extra_tail) * SR)
+def synth_vocal(
+    truth: list[TruthToken], extra_tail: float = 1.5, noise: float = 0.0005, duration: float | None = None
+) -> np.ndarray:
+    """Pitched bursts at the scripted times over a very quiet noise floor (``duration`` fixes the length)."""
+    n = int((duration if duration is not None else truth[-1].end + extra_tail) * SR)
     rng = np.random.default_rng(7)
     x = rng.normal(0, noise, n).astype(np.float32)
     t_all = np.arange(n) / SR

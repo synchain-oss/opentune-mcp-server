@@ -1,9 +1,11 @@
 # SPDX-License-Identifier: MIT
 """Text normalisation for lyrics and ASR output.
 
-Chinese is compared as toneless pinyin per character, English as lower-case words. Traditional
-characters are folded to simplified with a small built-in table of common characters; anything
-outside the table is kept as is (a known limitation, see SKILL.md).
+Chinese is compared as toneless pinyin per character, Japanese by reading per mora (japanese.py),
+Korean per syllable, and words of Latin or Cyrillic languages as lower-case words without accents
+or apostrophes. Traditional characters are folded to simplified (Chinese only) with a small
+built-in table of common characters; anything outside the table is kept as is (a known
+limitation, see SKILL.md).
 """
 
 from __future__ import annotations
@@ -11,6 +13,8 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass
+
+from .langs import is_hangul, script_language
 
 # Two characters per entry: traditional first, simplified second.
 _T2S_PAIRS = (
@@ -67,7 +71,11 @@ HOMOPHONE_GROUPS = (
 )
 
 FILLERS_ZH = set("啊哦噢哎呀嗯呜哟唉嘿哈啦喔嗷呐")
-FILLERS_EN = {"oh", "ah", "yeah", "ooh", "uh", "hey", "la", "na", "mm", "hmm", "woah", "whoa", "ha", "yo"}
+FILLERS_EN = {
+    "oh", "ah", "yeah", "ooh", "uh", "hey", "la", "na", "mm", "hmm", "woah", "whoa", "ha", "yo",
+    "eh", "ay", "ayy", "ohh", "aah", "mmm", "ooh", "oo",
+}
+FILLERS_KO = set("아오우예음라워어에야")  # a word made only of these syllables (아, 오오, 라라) is a filler
 
 
 @dataclass(frozen=True)
@@ -137,18 +145,27 @@ def strip_punctuation(text: str) -> str:
 
 
 def detect_language(text: str) -> str:
-    """Return "zh" when CJK characters make up at least a third of the letters, else "en"."""
-    letters = [c for c in text if c.isalpha()]
-    if not letters:
-        return "en"
-    cjk = sum(1 for c in letters if is_cjk(c))
-    return "zh" if cjk * 3 >= len(letters) else "en"
+    """The language the writing points to (zh, ja, ko or ru); "en" for Latin script or anything else."""
+    lang = script_language(text)
+    return lang if lang in ("zh", "ja", "ko", "ru") else "en"
 
 
 def tokenize(text: str, language: str = "auto") -> list[Unit]:
-    """Normalise ``text`` and split it into alignment units (one per CJK character or Latin word)."""
+    """Normalise ``text`` and split it into alignment units.
+
+    Chinese and Cantonese: one per character; Japanese: one per kanji or kana syllable (see
+    japanese.py); everything else: one per word. A Chinese character inside a word-based language
+    is its own unit, as the aligner splits it. Latin words are lower-cased.
+    """
     lang = detect_language(text) if language == "auto" else language
-    cleaned = strip_punctuation(digits_to_words(to_simplified(text), lang))
+    if lang == "ja":
+        from .japanese import ja_units
+
+        return ja_units(text)[1]
+    if lang in ("zh", "yue", "en"):
+        cleaned = strip_punctuation(digits_to_words(to_simplified(text), lang))
+    else:  # digits stay as written: only Chinese and English have a reading rule for them
+        cleaned = strip_punctuation(unicodedata.normalize("NFKC", text))
     units: list[Unit] = []
     word: list[str] = []
 
@@ -180,18 +197,58 @@ def have_pinyin() -> bool:
     return lazy_pinyin is not None
 
 
+def word_key(text: str) -> str:
+    """Comparison key of a word: lower case, accents and apostrophes removed (café = cafe, don't = dont)."""
+    decomposed = unicodedata.normalize("NFKD", text.lower())
+    return "".join(c for c in decomposed if unicodedata.category(c) != "Mn" and c not in "'’")
+
+
 def unit_key(unit: Unit) -> str:
-    """Comparison key: toneless pinyin for a character, the lower-case word otherwise."""
+    """Comparison key: toneless pinyin for a Chinese character, the folded word otherwise."""
     if unit.kind == "char" and lazy_pinyin is not None:
         return lazy_pinyin(unit.text, style=Style.NORMAL, errors="default")[0]
     if unit.kind == "word":
-        return unit.text.replace("'", "")
+        return word_key(unit.text)
     return unit.text
 
 
+def match_sequence(text: str, language: str) -> tuple[list[Unit], list[tuple[str, tuple[int, ...]]]]:
+    """Units of ``text`` and the key sequence used to compare it: (key, indexes of owning units).
+
+    Most languages have one key per unit. Japanese has one per mora of the reading (a kanji can own
+    several, and the kanji of one word can share them); Korean one per syllable of each word.
+    """
+    if language == "ja":
+        from .japanese import ja_sequence
+
+        return ja_sequence(text)
+    units = tokenize(text, language)
+    if language != "ko":
+        return units, [(unit_key(u), (i,)) for i, u in enumerate(units)]
+    seq: list[tuple[str, tuple[int, ...]]] = []
+    for i, u in enumerate(units):
+        rest = ""
+        for ch in u.text:
+            if is_hangul(ch):
+                if rest:
+                    seq.append((word_key(rest), (i,)))
+                    rest = ""
+                seq.append((ch, (i,)))
+            else:
+                rest += ch
+        if rest:
+            seq.append((word_key(rest), (i,)))
+    return units, seq
+
+
 def is_filler(unit: Unit) -> bool:
+    """Sung sounds without words: 啊, oh, あ / ねえ (per syllable), 아 / 오오."""
     if unit.kind == "char":
-        return unit.text in FILLERS_ZH
+        from .japanese import is_filler_kana
+
+        return unit.text in FILLERS_ZH or is_filler_kana(unit.text)
+    if unit.text and all(is_hangul(c) for c in unit.text):
+        return all(c in FILLERS_KO for c in unit.text)
     return unit.text in FILLERS_EN
 
 

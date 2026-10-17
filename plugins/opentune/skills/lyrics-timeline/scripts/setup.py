@@ -35,6 +35,10 @@ TORCH_INDEX_CPU = "https://download.pytorch.org/whl/cpu"
 TORCH_INDEX_CUDA = "https://download.pytorch.org/whl/cu128"
 TORCH_APPROX = {"cpu": 250_000_000, "cuda": 3_000_000_000, "default": 400_000_000}
 PACKAGES_APPROX = 600_000_000  # transformers, librosa, scipy and friends
+# SudachiPy 0.7.0 (about 1.5-3 MB per platform wheel) and SudachiDict-core 20261015 (a 77 MB wheel
+# holding a 202 MB dictionary file), checked on PyPI. Used to compare Japanese lyrics by reading.
+JAPANESE_APPROX = 80_000_000
+JAPANESE_INSTALLED_APPROX = 210_000_000
 MIRRORS = ("hf", "modelscope")
 UA = {"User-Agent": "opentune-lyrics-timeline-setup"}
 
@@ -97,7 +101,7 @@ def torch_variant(cuda: bool | None, nvidia: bool) -> str:
 def build_plan(size: str, mirror: str, variant: str, home: str) -> dict[str, Any]:
     repos = [lhome.ASR_REPOS[size], lhome.ALIGNER_REPO]
     model_bytes = sum(lhome.APPROX_BYTES[r] for r in repos)
-    total = model_bytes + TORCH_APPROX[variant] + PACKAGES_APPROX
+    total = model_bytes + TORCH_APPROX[variant] + PACKAGES_APPROX + JAPANESE_APPROX
     return {
         "home": home,
         "venv": os.path.join(home, "venv"),
@@ -107,6 +111,11 @@ def build_plan(size: str, mirror: str, variant: str, home: str) -> dict[str, Any
         "model_bytes": model_bytes,
         "torch": {"variant": variant, "pin": TORCH_PIN, "approx_bytes": TORCH_APPROX[variant]},
         "packages_approx_bytes": PACKAGES_APPROX,
+        "japanese_readings": {
+            "packages": ["sudachipy", "sudachidict-core"],
+            "approx_bytes": JAPANESE_APPROX,
+            "installed_approx_bytes": JAPANESE_INSTALLED_APPROX,
+        },
         "total_approx_bytes": total,
         "mirror": mirror,
         "problems": platform_problems(*current_platform()),
@@ -126,6 +135,11 @@ def print_plan(plan: dict[str, Any]) -> None:
         print(f"    - {m['repo']}  about {human(m['approx_bytes'])}")
     print(f"  PyTorch        : {plan['torch']['variant']} build, about {human(plan['torch']['approx_bytes'])}")
     print(f"  Other packages : about {human(plan['packages_approx_bytes'])}")
+    ja = plan["japanese_readings"]
+    print(
+        f"  Japanese       : SudachiPy + SudachiDict-core (readings for Japanese lyrics), about "
+        f"{human(ja['approx_bytes'])} download, {human(ja['installed_approx_bytes'])} on disk"
+    )
     print(f"  Mirror         : {plan['mirror']}")
     print(f"  Total download : about {human(plan['total_approx_bytes'])} (models alone {human(plan['model_bytes'])})")
     print("Run again with --yes to do it.")
@@ -289,8 +303,9 @@ def install_runtime(home: str, variant: str) -> None:
         cmd += ["--index-url", index]
     run(cmd)
     run([py, "-m", "pip", "install", "-r", REQUIREMENTS])
-    # No dependencies: qwen-asr declares soynlp (GPL-3.0), gradio and flask, which the zh / en path
-    # never imports. What it does import is pinned in requirements.in.
+    # No dependencies: qwen-asr declares soynlp (GPL-3.0), gradio and flask, which this skill never
+    # imports (Korean is sent to the aligner under a name that selects its space splitter, so the
+    # soynlp branch is never reached). What it does import is pinned in requirements.in.
     run([py, "-m", "pip", "install", "--no-deps", QWEN_ASR_PIN])
 
 
