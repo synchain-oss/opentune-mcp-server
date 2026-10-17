@@ -104,8 +104,13 @@ NOT_RECOGNISED_MIN_SHARE = 0.25
 NOT_RECOGNISED_MIN_KEYS = 2
 # The end of a line goes back to it from the echo line after it only when it follows the line
 # without a pause: at most this many median unit lengths of the track without voice between them
-# (see _return_echo_tails).
+# (see _return_echo_tails). The median leaves out units without length: the aligner often gives a
+# held unit none, and on a track where most units have none it would be zero, so that a few frames
+# without voice at the edges of the units' times would refuse every hand-back. The pause allowed is
+# never shorter than ECHO_MIN_PAUSE_SEC (also its value when no unit has a length); that floor is
+# below the 0.35 s under which the voice activity bridges a gap, so a pause it shows still counts.
 ECHO_MAX_PAUSE_UNITS = 1.5
+ECHO_MIN_PAUSE_SEC = 0.3
 
 # --- A second look at lines that were not found ---------------------------------------------------
 # The whole-song alignment lets every missing line compete for the same leftover sounds, so a line
@@ -612,6 +617,16 @@ def _ambiguous(lyr: _Lyrics, decisions: list[_Decision]) -> bool:
     return any(len({decisions[li].present for li in f}) == 2 for f in lyr.families)
 
 
+def _echo_max_pause(heard: Sequence[Heard]) -> float:
+    """The longest pause without voice after which the end of a line still goes back to it.
+
+    ECHO_MAX_PAUSE_UNITS times the median length of the heard units that have a length, and never
+    less than ECHO_MIN_PAUSE_SEC.
+    """
+    lengths = [h.end - h.start for h in heard if h.end > h.start]
+    return max(ECHO_MAX_PAUSE_UNITS * median(lengths), ECHO_MIN_PAUSE_SEC) if lengths else ECHO_MIN_PAUSE_SEC
+
+
 def _return_echo_tails(
     lyr: _Lyrics, tr: _Track, key_pairs: list[Pair], label: str | None
 ) -> tuple[list[Pair], list[_Decision]] | None:
@@ -623,16 +638,15 @@ def _return_echo_tails(
     when all of these hold: the line's unmatched tail has exactly the keys of the echo line; the
     echo line's matches are the heard keys right after the line's last match, every one of them;
     and between that last match and the first of them the track is silent for no more than
-    ECHO_MAX_PAUSE_UNITS median unit lengths of this track. That is the end of the line sung
-    straight on, not an echo sung after a pause while the end of the line was not recognised. The
-    pause is measured on the voice activity, not on the times of the units, because the aligner
-    often gives the last, held unit of a line no length at all (on real stems the next unit then
-    starts two to four unit lengths later, with voice all the way). The change is kept only when
-    the line is then on the track.
+    ECHO_MAX_PAUSE_UNITS median unit lengths of this track (see _echo_max_pause). That is the end of
+    the line sung straight on, not an echo sung after a pause while the end of the line was not
+    recognised. The pause is measured on the voice activity, not on the times of the units, because
+    the aligner often gives the last, held unit of a line no length at all (on real stems the next
+    unit then starts two to four unit lengths later, with voice all the way). The change is kept
+    only when the line is then on the track.
     """
     heard_owners = [o for _, o in tr.heard_seq]
-    lengths = [h.end - h.start for h in tr.heard]
-    max_pause = ECHO_MAX_PAUSE_UNITS * median(lengths) if lengths else 0.0
+    max_pause = _echo_max_pause(tr.heard)
     pos = {p.lyric: i for i, p in enumerate(key_pairs) if p.lyric is not None}
     changed: tuple[list[Pair], list[_Decision]] | None = None
     pairs = key_pairs
@@ -854,6 +868,30 @@ def _outside(t: float, window: tuple[float, float]) -> float:
     return max(0.0, window[0] - t, t - window[1])
 
 
+def _offset_reference(offsets: dict[int, float], shared: dict[int, int]) -> float:
+    """The offset that counts as zero, from the tracks' offsets and how many lines each shares.
+
+    Tracks whose offsets are all within OFFSET_ZERO_SEC of each other form a group. When one group
+    is larger than every other, the middle of its offsets is the reference: the tracks then named as
+    offset are those off from most of the others (a lead exported 10 s late next to two harmonies in
+    time is named, not the two harmonies, though the lead shares the most lines). When several
+    groups are equally large (two tracks that disagree, for one), one track of them is the
+    reference: the one that shares the most lines with the others; on a tie, the one nearest to the
+    middle of all offsets; then the first. Taking the middle of all offsets instead would split one
+    track's offset between the two of a pair (10 s as 5 s each, 2.9 s as 1.45 s each, which is then
+    within OFFSET_ZERO_SEC on both).
+    """
+    order = sorted(offsets, key=lambda t: (offsets[t], t))
+    groups = [[u for u in order[i:] if offsets[u] - offsets[t] <= OFFSET_ZERO_SEC] for i, t in enumerate(order)]
+    size = max(len(g) for g in groups)
+    largest = [g for g in groups if len(g) == size]
+    if len(largest) == 1:
+        return median(offsets[t] for t in largest[0])
+    middle = median(offsets.values())
+    tied = {t for g in largest for t in g}
+    return offsets[min(tied, key=lambda t: (-shared[t], round(abs(offsets[t] - middle), 3), t))]
+
+
 def _shared_timeline(lyr: _Lyrics, tracks: list[_Track], warnings: list[str]) -> _Timeline | None:
     """Offsets of the tracks and where each line is expected; None when the tracks disagree."""
     n = len(tracks)
@@ -885,14 +923,9 @@ def _shared_timeline(lyr: _Lyrics, tracks: list[_Track], warnings: list[str]) ->
             "comparing times across tracks; export every stem from the same start to get that check"
         )
         return None
-    # The offsets above share an arbitrary constant. They are measured from one reference track: the
-    # one that shares the most lines with the others; on a tie, the one nearest to the middle of all
-    # (with two tracks equally near: the first). Taking the middle of the offsets instead would split
-    # one track's offset between the two of a pair (10 s as 5 s each, 2.9 s as 1.45 s each, which is
-    # then within OFFSET_ZERO_SEC on both).
-    middle = median(offsets[t] for t in spread)
-    ref = min(spread, key=lambda t: (-shared[t], round(abs(offsets[t] - middle), 3), t))
-    known = {t: offsets[t] - offsets[ref] for t in spread}
+    # The offsets above share an arbitrary constant; see _offset_reference for what counts as zero.
+    base = _offset_reference({t: offsets[t] for t in spread}, shared)
+    known = {t: offsets[t] - base for t in spread}
     same_start = all(abs(o) <= OFFSET_ZERO_SEC for o in known.values())
     final: list[float | None] = []
     for t in range(n):

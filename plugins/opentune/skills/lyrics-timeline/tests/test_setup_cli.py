@@ -344,6 +344,9 @@ OLD_HEADER = """+---------------------------------------------------------------
 | NVIDIA-SMI 550.54.14              Driver Version: 550.54.14      CUDA Version: 12.4     |
 |-----------------------------------------+------------------------+----------------------+
 """
+GPU_ROW = """|   0  NVIDIA GeForce RTX 3070      WDDM  |   00000000:01:00.0  On |                  N/A |
+| 30%   45C    P8             20W /  240W |     512MiB /   8192MiB |      2%      Default |
+"""
 
 
 def test_the_cuda_version_is_read_from_both_nvidia_smi_headers():
@@ -356,17 +359,52 @@ def test_the_cuda_version_is_read_from_both_nvidia_smi_headers():
         assert setup_script.parse_cuda_version(unreadable) is None
 
 
-def test_the_driver_cuda_version_comes_from_nvidia_smi(monkeypatch):
+def test_one_run_of_nvidia_smi_tells_both_whether_there_is_a_gpu_and_its_cuda_version(monkeypatch):
     setup_script = _setup_module()
     from types import SimpleNamespace  # noqa: PLC0415
 
+    parse = setup_script.parse_nvidia_smi
+    assert parse(NEW_HEADER + GPU_ROW) == (True, (13, 4))
+    assert parse(OLD_HEADER + GPU_ROW) == (True, (12, 4))
+    assert parse(NEW_HEADER) == (True, (13, 4))  # a CUDA version is enough
+    no_version = OLD_HEADER.replace("12.4", "N/A")
+    assert parse(no_version + GPU_ROW) == (True, None)  # a GPU whose driver gives no version: CPU build, with advice
+    assert parse(no_version) == (False, None)  # no version and no GPU listed
+    assert parse("NVIDIA-SMI has failed because it could not communicate with the NVIDIA driver") == (False, None)
+    assert parse(None) == (False, None)
+
+    calls: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout=NEW_HEADER + GPU_ROW)
+
     monkeypatch.setattr(setup_script.shutil, "which", lambda name: "nvidia-smi")
-    monkeypatch.setattr(setup_script.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=0, stdout=NEW_HEADER))
-    assert setup_script.driver_cuda_version() == (13, 4)
+    monkeypatch.setattr(setup_script.subprocess, "run", run)
+    assert setup_script.nvidia_driver() == (True, (13, 4)) and calls == [["nvidia-smi"]]
     monkeypatch.setattr(setup_script.subprocess, "run", lambda *a, **k: SimpleNamespace(returncode=9, stdout=NEW_HEADER))
-    assert setup_script.driver_cuda_version() is None
+    assert setup_script.nvidia_driver() == (False, None)
     monkeypatch.setattr(setup_script.shutil, "which", lambda name: None)
-    assert setup_script.driver_cuda_version() is None
+    assert setup_script.nvidia_driver() == (False, None)
+
+
+def test_plan_runs_nvidia_smi_once(monkeypatch, capsys, tmp_path):
+    setup_script = _setup_module()
+    from types import SimpleNamespace  # noqa: PLC0415
+
+    calls: list[list[str]] = []
+
+    def run(cmd, **kwargs):
+        calls.append(cmd)
+        return SimpleNamespace(returncode=0, stdout=NEW_HEADER + GPU_ROW)
+
+    monkeypatch.setattr(setup_script.shutil, "which", lambda name: "nvidia-smi")
+    monkeypatch.setattr(setup_script.subprocess, "run", run)
+    monkeypatch.setattr(setup_script, "current_platform", lambda: ((3, 12), "win32", "AMD64"))
+    monkeypatch.setenv("OPENTUNE_LYRICS_HOME", str(tmp_path / "h"))
+    assert setup_script.main(["--plan"]) == 0
+    assert calls == [["nvidia-smi"]]
+    assert "CUDA build (torch==2.14.1+cu130 from cu130 index)" in capsys.readouterr().out
 
 
 @pytest.mark.parametrize(
@@ -415,8 +453,7 @@ def test_torch_cuda_with_a_driver_that_cannot_run_it_is_refused_before_pip(nvidi
 
 
 def _stub_machine(monkeypatch, setup_script, nvidia: bool, cuda, plat=("win32", "AMD64")):
-    monkeypatch.setattr(setup_script.lhome, "has_nvidia_gpu", lambda: nvidia)
-    monkeypatch.setattr(setup_script, "driver_cuda_version", lambda: cuda)
+    monkeypatch.setattr(setup_script, "nvidia_driver", lambda: (nvidia, cuda))
     monkeypatch.setattr(setup_script, "current_platform", lambda: ((3, 12), *plat))
 
 

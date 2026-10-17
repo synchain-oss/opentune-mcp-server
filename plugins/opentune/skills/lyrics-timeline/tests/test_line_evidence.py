@@ -4,14 +4,18 @@
 from __future__ import annotations
 
 import copy
+import inspect
 
 import pytest
 
 from conftest import SR, synth_vocal
+from lytl.audio import energy_vad
 from lytl.backends import FakeAligner, FakeAsr, TruthToken
 from lytl.normalize import tokenize
 from lytl.pipeline import (
     APPROX_CONF_CAP,
+    ECHO_MAX_PAUSE_UNITS,
+    ECHO_MIN_PAUSE_SEC,
     GAP_FILL_CONF_CAP,
     SECOND_PASS_CONF_HIGH,
     SECOND_PASS_CONF_LOW,
@@ -19,7 +23,9 @@ from lytl.pipeline import (
     TrackInput,
     _clusters,
     _Decision,
+    _echo_max_pause,
     _keep_in_chunks,
+    _offset_reference,
     _second_cap,
     _spread_zero_spans,
     _without_filler_stretches,
@@ -169,6 +175,43 @@ def test_an_echo_line_sung_after_a_pause_keeps_its_sounds_when_the_end_of_the_li
     assert [(d["line"], d["text"]) for d in doc["diffs"] if d["type"] == "not_sung"] == [("l1", "山岗上")]
 
 
+class ZeroSpanAligner(FakeAligner):
+    """Gives two units of every three no length, as the real aligner does with held notes on some stems."""
+
+    def align(self, audio, start, end, units, language):
+        spans = super().align(audio, start, end, units, language)
+        return [(a, b) if k % 3 == 0 else (a, a) for k, (a, b) in enumerate(spans)]
+
+
+def test_an_echo_line_gives_the_end_back_when_most_units_have_no_length():
+    # Line 1 is sung with a short breath before its end, which the echo line repeats. With the
+    # median taken over every unit, the units without length made the pause allowed zero, and the
+    # breath kept the end of line 1 on the echo line.
+    lyrics = "春风吹过山岗上\n山岗上\n小河流向远方去"
+    head = sung(["春风吹过"], [0])
+    t = head[-1].end + 0.4
+    tail = [TruthToken(ch, round(t + k * 0.4, 3), round(t + k * 0.4 + 0.35, 3)) for k, ch in enumerate("山岗上")]
+    truth = head + tail + sung(["小河流向远方去"], [2])
+    doc = build_timeline(track(truth, 3).x, FakeAsr(truth), ZeroSpanAligner(truth), lyrics=lyrics)
+    assert validate_output(doc) == []
+    lines = by_id(doc)
+    assert lines["l1"]["sung"] and [t["text"] for t in lines["l1"]["tokens"]] == list("春风吹过山岗上")
+    assert not lines["l2"]["sung"] and lines["l2"]["absent_reason"] == "not_in_track"
+
+
+def test_the_pause_allowed_before_the_end_of_a_line_leaves_out_units_without_length():
+    def heard(lengths: list[float]) -> list[Heard]:
+        unit = tokenize("啊", "zh")[0]
+        return [Heard(unit, 1.0 + k, 1.0 + k + n) for k, n in enumerate(lengths)]
+
+    assert _echo_max_pause(heard([0.4, 0.0, 0.0, 0.0, 0.3])) == pytest.approx(ECHO_MAX_PAUSE_UNITS * 0.35)
+    assert _echo_max_pause(heard([0.0, 0.0])) == ECHO_MIN_PAUSE_SEC  # no unit with a length
+    assert _echo_max_pause(heard([0.1, 0.1, 0.0])) == ECHO_MIN_PAUSE_SEC  # never below the floor
+    assert _echo_max_pause([]) == ECHO_MIN_PAUSE_SEC
+    # Below the shortest stretch without voice that the voice activity shows (shorter gaps are bridged).
+    assert 0 < ECHO_MIN_PAUSE_SEC < inspect.signature(energy_vad).parameters["merge_gap"].default == 0.35
+
+
 def test_a_line_whose_end_starts_the_next_line_is_found_by_the_second_look():
     # The end of line 1 is the start of line 2 (not on this track), and one character of line 1 is
     # misheard. Giving the shared sounds to line 1 or to line 2 costs the same in the whole-song
@@ -302,6 +345,39 @@ def test_of_two_tracks_only_the_one_that_is_off_is_reported_with_the_whole_offse
     assert all(v == ["t1", "t2"] for v in who(doc).values())
     assert by_id(doc["tracks"][0])["l3"]["start"] == pytest.approx(first[14].start, abs=0.06)
     assert by_id(doc["tracks"][1])["l3"]["start"] == pytest.approx(second[14].start, abs=0.06)  # reported unchanged
+
+
+def test_of_three_tracks_the_one_off_from_the_other_two_is_named_though_it_shares_the_most_lines():
+    # The lead sings every line, so it shares the most lines with the others; it was exported 10 s
+    # late, the two harmonies are in time. Measured from the track that shares the most lines, both
+    # harmonies would be named as 10 s early and the lead not at all.
+    lead = sung(SIX, [0, 1, 2, 3, 4, 5], start=11.0)
+    low = sung(SIX[:4], [0, 1, 2, 3])
+    high = sung(SIX[2:], [2, 3, 4, 5])
+    truths = [lead, low, high]
+    inputs = [TrackInput(synth_vocal(t, duration=song_length(6) + 10.0), f"t{k}.wav", SR, None) for k, t in enumerate(truths)]
+    doc = build_multitrack(inputs, FakeAsr(lead, tracks=truths), FakeAligner(lead, tracks=truths), lyrics="\n".join(SIX))
+    offsets = [w for w in doc["warnings"] if "seems to run" in w]
+    assert len(offsets) == 1 and offsets[0].startswith("track t1 seems to run 10.0 s later than the other tracks")
+    assert not any(w.startswith(("track t2 ", "track t3 ")) for w in offsets)
+    assert who(doc) == {"l1": ["t1", "t2"], "l2": ["t1", "t2"], "l3": ["t1", "t2", "t3"], "l4": ["t1", "t2", "t3"],
+                        "l5": ["t1", "t3"], "l6": ["t1", "t3"]}
+
+
+@pytest.mark.parametrize(
+    "offsets, shared, zero",
+    [
+        ({0: 10.0, 1: 0.0, 2: 0.4}, {0: 6, 1: 4, 2: 4}, 0.2),  # the largest group, by the middle of its offsets
+        # A group is not a chain (0 and 2.2 are too far apart), and the track sharing the most lines may be outside it.
+        ({0: 0.0, 1: 1.0, 2: 2.0, 3: 2.2}, {0: 9, 1: 3, 2: 3, 3: 3}, 2.0),
+        ({0: 0.0, 1: 10.0}, {0: 6, 1: 6}, 0.0),  # two groups of one: the first of two equally near the middle
+        ({0: 0.0, 1: 10.0}, {0: 4, 1: 6}, 10.0),  # ... unless the other shares more lines
+        ({0: 0.0, 1: 1.0, 2: 2.0}, {0: 5, 1: 5, 2: 5}, 1.0),  # two overlapping groups: the track nearest the middle
+        ({0: 0.0, 1: 0.5, 2: 5.0, 3: 5.5, 4: 20.0}, {0: 3, 1: 3, 2: 4, 3: 3, 4: 9}, 5.0),  # never a smaller group
+    ],
+)
+def test_the_offset_that_counts_as_zero_is_that_of_the_largest_group_of_tracks(offsets, shared, zero):
+    assert _offset_reference(offsets, shared) == pytest.approx(zero)
 
 
 def test_the_multi_track_shape_checks_the_language_source_and_each_sung_by_entry():

@@ -144,9 +144,9 @@ that another track sings at that time. Other lines are `sung: false` with no tim
 
 Tracks are compared on one shared timeline. A line heard on a track more than about 8 s away from
 where the other tracks sing it does not count there (a warning names the line), unless most of it was
-heard exactly. A track that seems to be exported with an offset (measured against the track that
-shares the most lines) is compared after removing it; a warning names it and gives the offset (its
-times are reported as they are in its file). When the lines the tracks share are sung at
+heard exactly. A track that seems to be exported with an offset (measured against the largest group
+of tracks in time with each other) is compared after removing it; a warning names it and gives the
+offset (its times are reported as they are in its file). When the lines the tracks share are sung at
 inconsistent times, no comparison across tracks is made and a warning says so.
 
 ## Output

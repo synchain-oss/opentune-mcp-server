@@ -131,6 +131,9 @@ def choose_size(requested: str, gpu: bool) -> str:
 # nvidia-smi prints the CUDA version the driver supports in its header: "CUDA Version: 12.4" in
 # older drivers, "CUDA UMD Version: 13.4" in newer ones (next to "KMD Version", which is not it).
 _CUDA_VERSION = re.compile(r"\bCUDA\s+(?:UMD\s+)?Version\s*:\s*(\d+)\.(\d+)")
+# Below the header it lists every GPU with its PCI bus id (00000000:01:00.0), also when the header
+# has no CUDA version to give ("CUDA Version: N/A").
+_GPU_BUS_ID = re.compile(r"\b[0-9A-Fa-f]{4,8}:[0-9A-Fa-f]{2}:[0-9A-Fa-f]{2}\.[0-7]\b")
 
 
 def parse_cuda_version(text: str | None) -> tuple[int, int] | None:
@@ -139,18 +142,28 @@ def parse_cuda_version(text: str | None) -> tuple[int, int] | None:
     return (int(m.group(1)), int(m.group(2))) if m else None
 
 
-def driver_cuda_version() -> tuple[int, int] | None:
-    """The CUDA version the installed NVIDIA driver supports, read from ``nvidia-smi``."""
+def parse_nvidia_smi(text: str | None) -> tuple[bool, tuple[int, int] | None]:
+    """(whether an NVIDIA GPU is listed, the CUDA version its driver supports) from nvidia-smi's output.
+
+    A CUDA version in the header is enough to count as a GPU; without one, a GPU listed below it
+    still counts (and the CPU build is planned, with advice to update the driver).
+    """
+    cuda = parse_cuda_version(text)
+    return cuda is not None or bool(_GPU_BUS_ID.search(text or "")), cuda
+
+
+def nvidia_driver() -> tuple[bool, tuple[int, int] | None]:
+    """Whether there is an NVIDIA GPU and the CUDA version its driver supports, from one run of ``nvidia-smi``."""
     exe = shutil.which("nvidia-smi")
     if not exe:
-        return None
+        return False, None
     try:
         r = subprocess.run(
             [exe], capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, check=False
         )
     except (OSError, subprocess.SubprocessError):
-        return None
-    return parse_cuda_version(r.stdout) if r.returncode == 0 else None
+        return False, None
+    return parse_nvidia_smi(r.stdout) if r.returncode == 0 else (False, None)
 
 
 def cuda_index(cuda: tuple[int, int] | None) -> str | None:
@@ -473,8 +486,8 @@ def main(argv: list[str] | None = None) -> int:
     except lhome.HomeError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    nvidia = lhome.has_nvidia_gpu()
-    torch = choose_torch(args.torch, nvidia, driver_cuda_version() if nvidia else None, current_platform()[1])
+    nvidia, cuda = nvidia_driver()
+    torch = choose_torch(args.torch, nvidia, cuda, current_platform()[1])
     size = choose_size(args.size, torch["variant"] == "cuda")
     plan = build_plan(size, args.mirror, torch, home)
     if args.plan:
