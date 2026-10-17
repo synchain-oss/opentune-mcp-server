@@ -79,7 +79,7 @@ npm run gates
 | `claude-review.yml` | 所有 same-repo、非草稿 PR(dependabot 经 `allowed_bots`) | 无 `id-token`;action 锁定 release SHA;中文分级;MCP 专项:stdout 污染、schema 兼容、描述即 prompt、路径与覆盖、提示注入、回环与 token、错误可操作性、结果清晰约定;不给 `gh pr comment` 写通道;PR 含被 git 跟踪的符号链接时拒审,检查之后关掉 `core.symlinks`(action 再检出的提交里的链接只会是普通文件);prompt 末尾带不可信数据声明 |
 | `review-dispatch.yml` | `issue_comment`:`/review`,评论者 ∈ {OWNER, MEMBER, COLLABORATOR} | fork PR 的人工触发 AI review;固定 `/review` 时的 head SHA 并按它核对:diff 碰到 `.github/workflows/` 即中止、含符号链接即拒审;检出 PR 代码之前关掉 `core.symlinks`;action 之后核对模型读到的提交与 PR head 仍是该 SHA,否则回帖判作废;只有 `/review` 评论进入并发组;prompt、工具边界与前置步骤与 `claude-review.yml` 逐字一致(单测比对) |
 | `pr-agent.yml` | PR → `dev`(job 级 `if:`) | 仓库变量 `ENABLE_PR_AGENT == 'true'` 才运行(默认关);永不设为必需 |
-| `release.yml` | push tag `v*`;`workflow_dispatch`(在分支上永远 dry-run) | build job(无 `id-token`):tag 与 `package.json` 一致且位于 `prod`、经 `workflow_call` 跑全套 gate、bundle / pack / sha256 / MCPB / `server.json`、生成的正文过署名检查、草稿 Release;publish job(唯一带 `environment: npm-publish` 与 `id-token: write` 的 job):`sha256sum -c`、幂等守卫、`npm publish --provenance`、Release 转正 |
+| `release.yml` | push tag `v*`;`workflow_dispatch`(在分支上永远 dry-run) | gate:tag 与 `package.json` 一致且位于 `prod`、经 `workflow_call` 跑全套 CI;build job(无 `id-token`、`contents: read`):bundle、`npm pack`、MCPB、插件 zip、skills zip 及各自的 `.sha256`,生成的正文过署名检查;draft job(唯一有 `contents: write`,不检出代码)只建草稿 Release。转正与 npm 发布不在本 workflow 里,按 `docs/RELEASE.md` 由维护者手工进行。**规划中**:从 0.2.0 起由 CI 经 OIDC trusted publishing 发布 npm(带 provenance),以及 `server.json` 的生成与发布(MCP Registry,目前 build 不生成 `server.json`) |
 | `dependabot.yml` | – | actions 每月;npm 每月分组;每个生态同时最多一个分组 PR |
 
 - workflow 顶层默认 `permissions: contents: read`,需要更高权限的只在 job 级声明。

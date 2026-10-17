@@ -172,6 +172,26 @@ describe('OtcpSession against other listeners', () => {
     expect(error.data.kind).toBe('INSTANCE_UNVERIFIED');
   });
 
+  it.each([
+    ['2.0', 'PROTOCOL_MISMATCH'],
+    ['10.0', 'PROTOCOL_MISMATCH'],
+    ['x', 'PROTOCOL_MISMATCH'],
+    ['1.7', null],
+  ])('checks the protocol major of a hello naming %s', async (protocol, kind) => {
+    const entry = entryOf(discoveryContent(4290));
+    const fake = await fakeInstance((line, socket) => {
+      const { id } = JSON.parse(line) as { id: number };
+      socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, result: helloResult(entry, { protocol }) })}
+`);
+    });
+    const opened = OtcpSession.open({ ...entry, port: fake.port });
+    if (kind === null) {
+      expect((await opened).hello.protocol).toBe(protocol);
+    } else {
+      expect((await failure(opened)).data).toMatchObject({ kind, reason: 'major_not_served', executed: false });
+    }
+  });
+
   it('rejects a hello response that is not JSON-RPC', async () => {
     const entry = entryOf(discoveryContent(4244));
     const fake = await fakeInstance((_line, socket) => socket.write('HTTP/1.1 400 Bad Request\n'));
