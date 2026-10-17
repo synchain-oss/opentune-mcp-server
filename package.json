@@ -1,6 +1,6 @@
 {
   "name": "@synchain/opentune-mcp",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "OpenTune MCP Server (by Synchain): a local MCP (stdio) server that lets AI agents operate OpenTune Standalone and reports every result in a clear, structured form.",
   "keywords": [
     "mcp",

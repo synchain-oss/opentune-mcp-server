@@ -8,6 +8,14 @@ versioned separately and has its own changelog.
 
 ## Unreleased
 
+## [0.1.0] - 2026-10-17
+
+The first public version of OpenTune MCP Server (by Synchain). It implements OTCP specification `spec-v1.0.0-rc.3` and
+talks to the unofficial OpenTune test build from synchain-oss/OpenTune, which has the control interface enabled; the
+official OpenTune releases do not provide it yet. The release has four packages built from the same version: the npm
+package `@synchain/opentune-mcp`, the MCPB package for Claude Desktop, the Claude Code plugin `opentune`, and the skills
+zip for Claude Desktop.
+
 ### Added
 
 - Project scaffold: TypeScript (strict, ESM) checked with `tsc`, eslint (typescript-eslint, type-aware) and prettier;
@@ -32,3 +40,21 @@ versioned separately and has its own changelog.
   starting the server.
 - Golden snapshots of `tools/list` and of the instructions, the generated [tool reference](docs/reference.md) and the
   `tools/list` size limits, checked by the tests and by `npm run gates`.
+- `opentune_estimate_key`: estimates the key of a clip from its vocal pitch and a WAV file of the mix or the
+  instrumental. For a song that changes key it also reports `local_keys` for its sections.
+- Claude Code plugin `opentune` with the skills `tuning-workflow` (the tuning flow), `check-results` (checking the
+  result of a tuning pass) and `lyrics-timeline`, and a skills zip for Claude Desktop, which the user uploads in
+  Claude's settings. The plugin and the skills zip carry the package version.
+- `lyrics-timeline` skill: word-level timing and section detection, with lyrics in Japanese, Korean, Russian and
+  Western European languages, and timelines that use several vocal tracks.
+- `tuning-workflow` skill: a song that changes key gets its sections found first, and each section is tuned on its
+  own after the user confirms the sections.
+- Project tools: `opentune_save_project`, `opentune_save_project_overwrite` (only after the user agrees to replace
+  another project file) and `opentune_open_project`. OpenTune has no autosave, so the instructions and the
+  `tuning-workflow` skill ask the agent to save the project regularly.
+
+### Fixed
+
+- `opentune_estimate_key` no longer reports a relative major or minor key as a key change.
+- The lyrics timeline installs the PyTorch CUDA build that matches the GPU driver, and a secondary lookup reports a
+  confidence below 0.5.
