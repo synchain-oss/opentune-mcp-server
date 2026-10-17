@@ -36,35 +36,26 @@ wait for a yes. Never start the download on your own.
    Windows, so use forward slashes there:
    - Windows (Git Bash): `py -3 "${CLAUDE_SKILL_DIR}/scripts/setup.py" --plan`
    - macOS: `python3 "${CLAUDE_SKILL_DIR}/scripts/setup.py" --plan`
-
-   If the plan shows **NOT SUPPORTED HERE**, stop: tell the user the reason it gives and do not ask
-   for consent to download (`--yes` refuses anyway).
-
-2. Tell the user what the plan says, with its total download size:
-   - **NVIDIA GPU found** (the plan's note says so): recommend the **GPU install** the plan shows,
-     Qwen3-ASR 1.7B with the CUDA build of PyTorch, about **10 GB** to download in total, because the
-     GPU is much faster (on a CPU the 0.6B model took about 6 to 8 minutes for an 8-track song).
-   - **No NVIDIA GPU**: Qwen3-ASR 0.6B with the CPU build of PyTorch, about **4.7 GB** in total.
-   - **NVIDIA GPU, but the note says its driver is too old** for the CUDA build: the plan is the CPU
-     install; tell the user that updating the NVIDIA driver makes the GPU usable (then run setup
-     again with `--torch cuda`).
-
-   The total includes PyTorch, the other Python packages and about 80 MB for the Japanese reading
-   dictionary. Say where the files go and that nothing outside that folder is touched.
-
+2. If the plan shows **NOT SUPPORTED HERE**, stop: tell the user why, do not ask for consent
+   (`--yes` refuses anyway). Else tell the user the total download (models, PyTorch, packages, 80 MB
+   of Japanese dictionary), where the files go and that nothing outside that folder is touched:
+   - **NVIDIA GPU found** (the plan's note says so): recommend the **GPU install** it shows,
+     Qwen3-ASR 1.7B with CUDA PyTorch, about **10 GB**, because the GPU is much faster (on a CPU
+     the 0.6B model took about 6 to 8 minutes for an 8-track song).
+   - **No NVIDIA GPU**: Qwen3-ASR 0.6B with CPU PyTorch, about **4.7 GB**.
+   - **The note says the NVIDIA driver is too old**: the plan is the CPU install; tell the user
+     that a driver update makes the GPU usable (then run setup again with `--torch cuda`).
 3. Only after the user agrees, run the same command with `--yes` instead of `--plan`. Useful flags:
    `--size 0.6B|1.7B`, `--mirror modelscope` (for users in mainland China; `hf` honours
-   `HF_ENDPOINT`), `--torch cpu|cuda` (`cuda` takes the newest CUDA build of PyTorch that the
-   driver supports: cu130 for a driver that supports CUDA 13.0 or newer, cu126 for 12.6 or newer;
-   with an older driver the plan says why and `--yes` refuses). Each model repo is pinned to one
-   fixed revision (a Hugging Face commit, a ModelScope revision), and every downloaded file is
-   checked against the size and sha256 listed in `scripts/model_manifest.json`, which ships with
-   the skill. A file that is not in that list is not downloaded, and a file that does not match is
-   discarded. The Python packages are pinned to exact versions in `requirements.in`; pip does not
-   verify hashes for them yet (see `NOTICE`). Running `--yes` again on an existing install adds
-   packages that a newer version of this skill needs (a warning about missing Japanese readings
-   means exactly that), and replaces the PyTorch build when another one is planned (the CUDA build
-   after a driver update).
+   `HF_ENDPOINT`), `--torch cpu|cuda` (`cuda` needs a driver for CUDA 12.6 or newer, else the plan
+   says why and `--yes` refuses). Each model repo is pinned to one fixed revision (a Hugging Face
+   commit, a ModelScope revision), and every downloaded file is checked against the size and sha256
+   listed in `scripts/model_manifest.json`, which ships with the skill. A file that is not in that
+   list is not downloaded, and a file that does not match is discarded. The Python packages are
+   pinned to exact versions in `requirements.in`; pip does not verify hashes for them yet (see
+   `NOTICE`). Running `--yes` again on an existing install adds packages that a newer version of
+   this skill needs (a warning about missing Japanese readings means exactly that) and switches
+   PyTorch to the planned build (CUDA after a driver update).
 
 Where the files go: `${CLAUDE_PLUGIN_DATA}` when the skill runs as part of the plugin. When that
 variable is not set (the skill was copied on its own), use `OPENTUNE_LYRICS_HOME`: ask the user for
@@ -128,12 +119,12 @@ its own with its notes.
 Each track may sing only part of the lyrics. A line counts as sung on a track when at least half of
 its sounds (characters, syllables or words; at least two) were recognised exactly, in one stretch of
 the file. A line not found that way is compared once more on its own with the sounds no found line
-explains, leaving out stretches made only of fillers such as あ, ねえ, oh and 啊 (ad-libs).
-When it is found then, the warning `line lN: found only by a second, line-by-line comparison ...`
-says so and its `conf` stays under 0.5 (0.35 for a line of fewer than six sounds): **ask the user
-before using such a line**. With several tracks, four or more sounds of a line heard in a row where
-the other tracks sing it also count (a harmony that joins for part of a line); the rest of the line
-is a `not_sung` diff, `conf` stays under 0.5 and a warning says so.
+explains, except stretches made only of fillers (ad-libs such as あ, ねえ, oh, 啊). When it is found
+then, the warning `line lN: found only by a second, line-by-line comparison ...` says so and its
+`conf` stays under 0.5 (0.35 for a line of fewer than six sounds): **ask the user before using such
+a line**. With several tracks, four or more sounds of a line heard in a row where the other tracks
+sing it also count (a harmony that joins for part of a line); the rest of the line is a `not_sung`
+diff, `conf` stays under 0.5 and a warning says so.
 
 Lines that were not recognised but sit between two found lines, with singing between them that
 nothing else explains, are still timed, with `conf` of at most 0.45 and a warning per line: on one
@@ -148,16 +139,15 @@ that another track sings at that time. Other lines are `sung: false` with no tim
   with the line (or, on a single track, nothing was recognised at all). The line may be on the
   track but too badly recognised to time. Before treating it as missing, tell the user and ask
   whether this track sings it.
-- `no_alignment`: the line was found on the track, but the aligner returned no times for it (a
-  warning says so). Tell the user; it cannot be edited by lyric on this track.
+- `no_alignment`: found on the track, but the aligner gave it no times (a warning says so). Tell
+  the user; on this track the line cannot be edited by lyric.
 
 Tracks are compared on one shared timeline. A line heard on a track more than about 8 s away from
 where the other tracks sing it does not count there (a warning names the line), unless most of it was
-heard exactly. A track that seems to be exported with an offset is compared after removing it: the
-offset is measured from the track that shares the most lines with the others, and a warning names
-the track that is off and gives the offset (its times are reported as they are in its file). When
-the lines the tracks share are sung at inconsistent times, no comparison across tracks is made and
-a warning says so.
+heard exactly. A track that seems to be exported with an offset (measured against the track that
+shares the most lines) is compared after removing it; a warning names it and gives the offset (its
+times are reported as they are in its file). When the lines the tracks share are sung at
+inconsistent times, no comparison across tracks is made and a warning says so.
 
 ## Output
 
@@ -170,9 +160,8 @@ One file: JSON with `version`, `generator`, `audio`, `label`, `language`, `langu
   (the user's tags) or `inferred` (repeat structure; treat as a guess and confirm with the user).
 - `lines[]`:
   `{id, text, start, end, section, line_in_section, sung, absent_reason, backing, singers, conf, tokens[]}`.
-  `sung: false` means no times, and then `absent_reason` says why: `not_in_track`,
-  `not_recognised` or `no_alignment` (see "Several tracks of one song"; ask the user about
-  `not_recognised` lines). It is `null` on sung lines. `singers` are the names from the marks.
+  `sung: false` means no times; `absent_reason` (`null` on sung lines) is then `not_in_track`,
+  `not_recognised` or `no_alignment` (see "Several tracks of one song"). `singers` come from marks.
 - `tokens[]`: `{i, text, start, voiced_start, end, conf, type, snap, notes[]}`. `i` is the position
   of the unit in the written line (`lines[].text`), starting at 1, the same position that a
   `not_sung` diff uses; so when the 5th unit was not sung, the tokens go 1, 2, 3, 4, 6. Ad-libs have
@@ -227,9 +216,8 @@ snap to every note of one clip, call it with `clock: content`, follow the cursor
 next page, and merge the `notes` of all pages into one array. Save the result with the Write tool
 (for example as `$TEMP/notes.json`) and pass it to `--notes`. `--notes` accepts either one file
 holding the merged array (or one page) or several files, one per page, in any order; notes that
-appear twice are counted once. A file from which no note could be read is named in a warning:
-check that every page was saved. The notes are only used to find times and are never changed by
-this skill.
+appear twice are counted once; a warning names a file with no readable notes (check that every
+page was saved). The notes are only used to find times and are never changed by this skill.
 
 ## Without lyrics
 
