@@ -21,12 +21,15 @@ const PURE_SKILLS = ['tuning-workflow', 'check-results'];
 const ALLOWED_FIELDS = new Set(['name', 'description', 'license', 'compatibility', 'metadata', 'allowed-tools']);
 const SCRIPT_EXTENSIONS = /\.(sh|bash|ps1|bat|cmd|py|js|mjs|cjs|ts|rb|pl)$/i;
 
-// A double-quoted value is read without its quotes (\" and \\ are the escapes), so the length check counts the text.
+// A quoted value is read without its quotes (\" and \\ are the escapes of a double-quoted value, '' the escape of a
+// single-quoted one), so the length check counts the text.
 function unquote(skill: string, key: string, value: string): string {
-  if (!value.startsWith('"')) return value;
-  if (value.length < 2 || !value.endsWith('"'))
-    throw new Error(`${skill}: field ${key} has an unterminated quoted value`);
-  return value.slice(1, -1).replace(/\\(["\\])/g, '$1');
+  const quote = value.charAt(0);
+  if (quote !== '"' && quote !== "'") return value;
+  if (value.length < 2 || !value.endsWith(quote))
+    throw new Error(`${skill}: field ${key} has an unterminated value in quotes`);
+  const inner = value.slice(1, -1);
+  return quote === '"' ? inner.replace(/\\(["\\])/g, '$1') : inner.replaceAll("''", "'");
 }
 
 function readSkill(name: string): { fields: Map<string, string>; body: string; text: string } {

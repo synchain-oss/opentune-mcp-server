@@ -64,11 +64,12 @@ export const SKIPPED_NAMES = Object.freeze([
 ]);
 /**
  * Test conventions of a skill that ships Python: they stay in the repository (CI runs them from
- * the source directory) and never go into the plugin.
+ * the source directory) and never go into the plugin. A directory named `tests` is left out at any
+ * depth on purpose, so a skill cannot ship a folder of that name.
  */
 export function isSkillTestFile(name, isDirectory) {
   if (isDirectory) return name === 'tests';
-  return /^requirements-test.*.(?:txt|lock)$/.test(name) || name === 'conftest.py' || name === 'pytest.ini';
+  return /^requirements-test.*\.(?:txt|lock)$/.test(name) || name === 'conftest.py' || name === 'pytest.ini';
 }
 export const TOOL_SRC = 'scripts/claude-cli';
 export const TOOL_DIR = '.cache/tools/claude-code';
@@ -301,8 +302,17 @@ function cliEnv(root) {
   };
 }
 
-/** Quotes one argument for cmd.exe; the arguments here are paths and flags without quotes. */
-const cmdQuote = (arg) => (/^[\w./:=-]+$/.test(arg) ? arg : `"${arg}"`);
+/**
+ * Quotes one argument for cmd.exe; the arguments here are paths and flags without quotes. Double
+ * quotes do not stop cmd.exe from expanding %VAR%, so an argument with a percent sign is refused.
+ * @param {string} arg
+ * @returns {string}
+ */
+export const cmdQuote = (arg) => {
+  if (arg.includes('%'))
+    throw new Error(`cannot pass an argument with a percent sign to cmd.exe; use a path without one: ${arg}`);
+  return /^[\w./:=-]+$/.test(arg) ? arg : `"${arg}"`;
+};
 
 /**
  * Finds the pinned Claude Code CLI: the `claude` on PATH when it reports exactly the pinned

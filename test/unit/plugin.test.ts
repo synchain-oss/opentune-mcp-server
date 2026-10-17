@@ -20,6 +20,8 @@ import {
   assemblePlugin,
   buildPlugin,
   checkPluginSources,
+  cmdQuote,
+  isSkillTestFile,
   pluginSourceFiles,
   readPluginSources,
 } from '../../scripts/plugin.mjs';
@@ -191,6 +193,21 @@ describe('plugin assembly', () => {
       ctx.skip(); // creating links needs a privilege on Windows
     }
     await expect(pluginSourceFiles(tree.root)).rejects.toThrow('symbolic link');
+  });
+
+  it('quotes arguments for cmd.exe and refuses a percent sign', () => {
+    expect(cmdQuote('--version')).toBe('--version');
+    expect(cmdQuote('C:/Music/take 1')).toBe('"C:/Music/take 1"');
+    expect(() => cmdQuote('C:/%TEMP%/x')).toThrow('percent sign');
+  });
+
+  it('leaves out Python test files, matching the extension dot literally', () => {
+    expect(isSkillTestFile('requirements-test.txt', false)).toBe(true);
+    expect(isSkillTestFile('requirements-test-dev.lock', false)).toBe(true);
+    expect(isSkillTestFile('requirements-testXtxt', false)).toBe(false);
+    expect(isSkillTestFile('requirements.txt', false)).toBe(false);
+    expect(isSkillTestFile('tests', true)).toBe(true);
+    expect(isSkillTestFile('tests', false)).toBe(false);
   });
 
   it('writes the assembled directory, the zip and its sha256 file', async () => {

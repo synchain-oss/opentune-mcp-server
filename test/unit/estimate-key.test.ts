@@ -471,6 +471,29 @@ describe('opentune_estimate_key with a clip', () => {
     expect((out.sources as { vocals: { note_count: number } }).vocals.note_count).toBeGreaterThan(0);
   });
 
+  it(
+    'does not call a section outside the audio while the clip lasts longer than the mix',
+    async () => {
+      const { ctx, placement } = await setup({ durationSec: 24 });
+      const mix = mixFile([major(0), major(5), major(7), major(0)], { repeat: 1 });
+      const out = body(
+        await estimateSongKey(ctx, {
+          clip: placement,
+          mix_path: mix,
+          sections: [
+            { start_sec: 12, end_sec: 20 },
+            { start_sec: 40, end_sec: 50 },
+          ],
+        }),
+      );
+      const sections = out.sections as { nullReasons?: { key: string } }[];
+      // Past the mix but inside the clip's source audio: no evidence there, yet not beyond the audio.
+      expect(sections[0]?.nullReasons?.key).toBe('no_evidence');
+      expect(sections[1]?.nullReasons?.key).toBe('outside_audio');
+    },
+    HEAVY_MS,
+  );
+
   it('goes on with the mix when the pitch analysis of the clip is not ready', async () => {
     const { ctx, placement } = await setup({ analysis: 'running' });
     const out = body(
