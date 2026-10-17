@@ -124,9 +124,10 @@ One file: JSON with `version`, `generator`, `audio`, `label`, `language`, `langu
 
 - `sections[]`: `{id, label, occurrence, start, end, lines[], source, conf}`. `source` is `user`
   (the user's tags) or `inferred` (repeat structure; treat as a guess and confirm with the user).
-- `lines[]`: `{id, text, start, end, section, line_in_section, sung, absent_reason, backing, singers,
-  conf, tokens[]}`. `sung: false` means no times: `absent_reason: "not_in_track"` when the line is
-  not on this track. `singers` are the names from the marks.
+- `lines[]`:
+  `{id, text, start, end, section, line_in_section, sung, absent_reason, backing, singers, conf, tokens[]}`.
+  `sung: false` means no times: `absent_reason: "not_in_track"` when the line is not on this track.
+  `singers` are the names from the marks.
 - `tokens[]`: `{i, text, start, voiced_start, end, conf, type, snap, notes[]}`. `i` is the position
   of the unit in the written line (`lines[].text`), starting at 1, the same position that a
   `not_sung` diff uses; so when the 5th unit was not sung, the tokens go 1, 2, 3, 4, 6. Ad-libs have
