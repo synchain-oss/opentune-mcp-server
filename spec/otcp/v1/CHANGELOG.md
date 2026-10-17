@@ -2,7 +2,7 @@
 
 All notable changes to the OTCP specification are recorded here. Versions follow `MAJOR.MINOR.PATCH` (README.md, "Versions"); each released version is tagged `spec-v<version>`.
 
-## [1.0.0-rc.3] - unreleased
+## [1.0.0-rc.3] - 2026-10-17
 
 Third release candidate of protocol major 1. It records what implementing the methods against OpenTune showed: where OpenTune behaves differently from what rc.2 assumed, which failures had no reason code, and where the specification left a choice open. The wire version stays `1.0`, and no member, code, capability or vector is removed or renamed. Three behaviours are tightened (listed under "Changed"): `timeGrid.minHandleSpacingSec` of `content.getDetails` is always present, deletions list the contents they remove, and an export without audio fails. Where the reference implementation does not send a new reason or warning yet, the text says that an implementation of this release candidate may leave it out.
 

@@ -635,12 +635,15 @@ function buildBody(
   }
   rest.push('Pass recommendation.key as key to opentune_set_clip or as scale to opentune_autotune_range.');
 
+  // A section is outside the audio only when both the mix and the clip's source audio end before it.
+  const audioEndSec =
+    wav === null && vocals?.durationSec == null ? null : Math.max(wav?.durationSec ?? 0, vocals?.durationSec ?? 0);
   const sections =
     args.sections === undefined
       ? undefined
       : args.sections.map((s) => {
           const part = estimateKey(sourcesIn(evidence, s.start_sec, s.end_sec));
-          const outside = durationSec !== null && s.start_sec >= durationSec;
+          const outside = audioEndSec !== null && s.start_sec >= audioEndSec;
           return part === null
             ? {
                 start_sec: s.start_sec,
