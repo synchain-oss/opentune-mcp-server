@@ -246,9 +246,13 @@ jobs:
         with:
           node-version: 24
           cache: npm
+      # pip 缓存以各 skill 的 requirements-test.lock 为键：锁文件不变就复用下载过的 wheel
+      # （安装仍按锁文件的 hash 校验）。
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: pip
+          cache-dependency-path: plugins/opentune/skills/*/requirements-test.lock
       - run: npm ci --ignore-scripts
       # claude plugin validate 用 scripts/claude-cli 锁定的 Claude Code 版本：gates 按锁文件把它装进
       # .cache/tools/claude-code（npm ci --ignore-scripts，只在 runner 上），配置目录指向 .cache 里的空目录。

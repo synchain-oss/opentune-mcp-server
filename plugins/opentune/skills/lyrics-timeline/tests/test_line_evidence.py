@@ -14,11 +14,15 @@ from lytl.pipeline import (
     APPROX_CONF_CAP,
     GAP_FILL_CONF_CAP,
     SECOND_PASS_CONF_HIGH,
+    SECOND_PASS_CONF_LOW,
     Heard,
     TrackInput,
     _clusters,
+    _Decision,
     _keep_in_chunks,
+    _second_cap,
     _spread_zero_spans,
+    _without_filler_stretches,
     build_multitrack,
     build_timeline,
 )
@@ -150,6 +154,21 @@ def test_an_echo_line_sung_on_its_own_is_kept():
     assert by_id(doc)["l2"]["start"] == pytest.approx(truth[7].start, abs=0.06)
 
 
+def test_an_echo_line_sung_after_a_pause_keeps_its_sounds_when_the_end_of_the_line_was_missed():
+    # Both lines are sung, but the recogniser missed the end of line 1 (山岗上). What it heard next
+    # is the echo line, sung a second later: that is no tail of line 1 sung straight on.
+    lyrics = "春风吹过山岗上\n山岗上\n小河流向远方去"
+    sung_all = sung(["春风吹过山岗上", "山岗上", "小河流向远方去"], [0, 1, 2])
+    heard = sung_all[:4] + sung_all[7:]
+    doc = build_timeline(track(sung_all, 3).x, FakeAsr(heard), FakeAligner(heard), lyrics=lyrics)
+    lines = by_id(doc)
+    assert [ln["sung"] for ln in doc["lines"]] == [True, True, True]
+    assert lines["l2"]["start"] == pytest.approx(sung_all[7].start, abs=0.06)
+    assert [t["text"] for t in lines["l1"]["tokens"]] == list("春风吹过")
+    assert lines["l1"]["end"] < sung_all[7].start
+    assert [(d["line"], d["text"]) for d in doc["diffs"] if d["type"] == "not_sung"] == [("l1", "山岗上")]
+
+
 def test_a_line_whose_end_starts_the_next_line_is_found_by_the_second_look():
     # The end of line 1 is the start of line 2 (not on this track), and one character of line 1 is
     # misheard. Giving the shared sounds to line 1 or to line 2 costs the same in the whole-song
@@ -160,8 +179,50 @@ def test_a_line_whose_end_starts_the_next_line_is_found_by_the_second_look():
     lines = by_id(doc)
     assert lines["l1"]["sung"] and not lines["l2"]["sung"]
     assert lines["l1"]["start"] == pytest.approx(truth[0].start, abs=0.06)
-    assert 0 < max(t["conf"] for t in lines["l1"]["tokens"]) <= SECOND_PASS_CONF_HIGH
+    # Five sounds: a short line, so the lowest cap, well under the 0.5 at which the model asks first.
+    assert 0 < max(t["conf"] for t in lines["l1"]["tokens"]) <= SECOND_PASS_CONF_LOW < 0.5
     assert warned(doc, "line l1: found only by a second, line-by-line comparison (4 of 5")
+    assert warned(doc, "line l1: found only by a second")[0].endswith(f"check it (conf at most {SECOND_PASS_CONF_LOW})")
+
+
+@pytest.mark.parametrize(
+    "keys, cap", [(2, 0.35), (3, 0.35), (5, 0.35), (6, 0.37), (8, 0.41), (11, 0.47), (12, 0.49), (40, 0.49)]
+)
+def test_lines_found_by_the_second_look_stay_below_one_half_and_short_lines_lower(keys, cap):
+    # However many of its sounds matched: the line was found only among the leftovers.
+    for exact in {min(keys, 3), keys}:
+        d = _Decision(present=True, exact_keys=exact, total_keys=keys, second=exact / keys)
+        assert _second_cap(d) == cap
+    assert SECOND_PASS_CONF_LOW <= cap <= SECOND_PASS_CONF_HIGH < 0.5
+
+
+def test_only_leftover_stretches_made_of_fillers_are_left_out_of_the_second_look():
+    units = [u for text in ("らふうん", "まえに") for u in tokenize(text, "ja")]
+    near = [Heard(u, 1.0 + k * 0.4, 1.35 + k * 0.4, None, 0) for k, u in enumerate(units)]
+    assert _without_filler_stretches(near, list(range(7))) == list(range(7))  # one stretch, with words in it
+    assert _without_filler_stretches(near, [0, 1, 2, 3, 5, 6]) == [5, 6]  # ま was explained: え stays with に
+    far = near[:4] + [Heard(h.unit, h.start + 5.0, h.end + 5.0, None, 0) for h in near[4:]]
+    assert _without_filler_stretches(far, list(range(7))) == [4, 5, 6]  # ad-libs seconds before the word
+
+
+def test_a_short_line_is_not_found_again_among_the_ad_libs_of_a_harmony():
+    # The lead sings the short line あ、ねえ (three sounds, all of them fillers). The harmony only
+    # throws in "あ ら ね え" there and joins for the last line. Nothing in the whole-song
+    # alignment gives those ad-libs to the short line on the harmony track; compared on its own
+    # with the leftovers, it would match all three sounds by chance.
+    lines = ["あ、ねえ", "ねえ、あなたははしってた", "とおいまちへてがみをかく"]
+    units = [[u.text for u in tokenize(text, "ja")] for text in lines]  # sung() takes one unit per item
+    lead = sung(units, [0, 1, 3])  # type: ignore[arg-type]
+    adlibs = [TruthToken(ch, round(1.0 + k * 0.4, 3), round(1.35 + k * 0.4, 3)) for k, ch in enumerate("あらねえ")]
+    harmony = adlibs + sung(units[2:], [3])  # type: ignore[arg-type]
+    truths = [lead, harmony]
+    inputs = [track(t, 4, name=f"t{k}.wav") for k, t in enumerate(truths)]
+    doc = build_multitrack(inputs, FakeAsr(lead, tracks=truths), FakeAligner(lead, tracks=truths), lyrics="\n".join(lines))
+    assert validate_output(doc) == []
+    assert who(doc) == {"l1": ["t1"], "l2": ["t1"], "l3": ["t1", "t2"]}
+    l1 = by_id(doc["tracks"][1])["l1"]
+    assert not l1["sung"] and l1["absent_reason"] is not None
+    assert not warned(doc["tracks"][1], "line l1: found only by a second")
 
 
 LONG = ["春风吹过山岗上", "小河流向远方去", "我们一起来歌唱吧朋友", "夜色慢慢地降临"]
@@ -227,6 +288,22 @@ def test_a_track_exported_with_an_offset_is_compared_after_removing_it():
     assert by_id(doc["tracks"][2])["l1"]["start"] == pytest.approx(4.0, abs=0.06)  # reported unchanged
 
 
+@pytest.mark.parametrize("shift", [10.0, 2.9])
+def test_of_two_tracks_only_the_one_that_is_off_is_reported_with_the_whole_offset(shift):
+    # With two tracks the offset used to be split between them: 10 s became 5 s on each, and 2.9 s
+    # became 1.45 s on each, which is within the tolerance on both, so it was taken for none.
+    first = sung(SIX, [0, 1, 2, 3, 4, 5])
+    second = sung(SIX, [0, 1, 2, 3, 4, 5], start=1.0 + shift)
+    truths = [first, second]
+    inputs = [TrackInput(synth_vocal(t, duration=song_length(6) + shift), f"t{k}.wav", SR, None) for k, t in enumerate(truths)]
+    doc = build_multitrack(inputs, FakeAsr(first, tracks=truths), FakeAligner(first, tracks=truths), lyrics="\n".join(SIX))
+    offsets = [w for w in doc["warnings"] if "seems to run" in w]
+    assert len(offsets) == 1 and offsets[0].startswith(f"track t2 seems to run {shift:.1f} s later than the other tracks")
+    assert all(v == ["t1", "t2"] for v in who(doc).values())
+    assert by_id(doc["tracks"][0])["l3"]["start"] == pytest.approx(first[14].start, abs=0.06)
+    assert by_id(doc["tracks"][1])["l3"]["start"] == pytest.approx(second[14].start, abs=0.06)  # reported unchanged
+
+
 def test_the_multi_track_shape_checks_the_language_source_and_each_sung_by_entry():
     truths, inputs = far_tracks([0, 1, 2, 3])
     doc = build_multitrack(inputs, FakeAsr(truths[0], tracks=truths), FakeAligner(truths[0], tracks=truths), lyrics="\n".join(SIX))
@@ -269,6 +346,45 @@ class StuckAligner(FakeAligner):
     def align(self, audio, start, end, units, language):
         spans = super().align(audio, start, end, units, language)
         return [(a, a) if u.text == "河" else (a, b) for u, (a, b) in zip(units, spans)]
+
+
+class SilentAligner(FakeAligner):
+    """Returns no times at all when asked to align line 2 on its own."""
+
+    def align(self, audio, start, end, units, language):
+        if [u.text for u in units] == list(EIGHT[1]):
+            return []
+        return super().align(audio, start, end, units, language)
+
+
+def test_a_line_on_the_track_that_the_aligner_cannot_time_says_why_it_has_no_times():
+    truth = sung(EIGHT[:3], [0, 1, 2])
+    doc = build_timeline(track(truth, 3).x, FakeAsr(truth), SilentAligner(truth), lyrics="\n".join(EIGHT[:3]))
+    assert validate_output(doc) == []
+    l2 = by_id(doc)["l2"]
+    assert (l2["sung"], l2["absent_reason"], l2["tokens"], l2["start"]) == (False, "no_alignment", [], None)
+    assert warned(doc, "line l2: found on this track, but the aligner returned no times for it")
+    assert by_id(doc)["l1"]["sung"] and by_id(doc)["l3"]["sung"]
+    # Several tracks: the line is not listed as sung on that track.
+    truths = [truth, sung(EIGHT[1:3], [1, 2])]
+    inputs = [track(t, 3, name=f"t{k}.wav") for k, t in enumerate(truths)]
+    multi = build_multitrack(inputs, FakeAsr(truth, tracks=truths), SilentAligner(truth, tracks=truths), lyrics="\n".join(EIGHT[:3]))
+    assert validate_output(multi) == []
+    assert who(multi)["l2"] == [] and [by_id(t)["l2"]["absent_reason"] for t in multi["tracks"]] == ["no_alignment"] * 2
+
+
+def test_a_line_without_times_must_say_why():
+    truth = sung([EIGHT[0], EIGHT[2]], [0, 2])  # line 2 is not sung
+    doc = build_timeline(track(truth, 3).x, FakeAsr(truth), FakeAligner(truth), lyrics="\n".join(EIGHT[:3]))
+    assert validate_output(doc) == [] and by_id(doc)["l2"]["absent_reason"] == "not_in_track"
+    bad = copy.deepcopy(doc)
+    by_id(bad)["l2"]["absent_reason"] = None
+    assert validate_output(bad) == ["line l2 is not sung but its absent_reason is None"]
+    by_id(bad)["l2"]["absent_reason"] = "missing"
+    assert validate_output(bad) == ["line l2 is not sung but its absent_reason is 'missing'"]
+    bad = copy.deepcopy(doc)
+    by_id(bad)["l1"]["absent_reason"] = "no_alignment"
+    assert validate_output(bad) == ["sung line l1 has an absent_reason"]
 
 
 def test_a_zero_length_span_takes_the_time_up_to_the_next_unit_with_low_confidence():

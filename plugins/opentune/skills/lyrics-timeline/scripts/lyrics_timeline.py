@@ -33,8 +33,12 @@ def _read_lyrics(file: str | None, text: str | None) -> str | None:
     return text or None
 
 
-def _read_notes(paths: list[str] | None) -> list[Note]:
-    """Notes from one or more JSON files (each a page of opentune_get_notes or a merged array)."""
+def _read_notes(paths: list[str] | None, warnings: list[str] | None = None) -> list[Note]:
+    """Notes from one or more JSON files (each a page of opentune_get_notes or a merged array).
+
+    With several files, each file from which no note could be read adds a line to ``warnings``
+    (one file without notes is reported by the pipeline, which then snaps to onsets only).
+    """
     if not paths:
         return []
     pages = []
@@ -43,6 +47,11 @@ def _read_notes(paths: list[str] | None) -> list[Note]:
             pages.append(parse_notes(_read_json(path)))
         except (OSError, ValueError) as exc:
             raise SystemExit(f"error: cannot read --notes file {path!r}: {exc}") from exc
+        if not pages[-1] and len(paths) > 1 and warnings is not None:
+            warnings.append(
+                f"--notes file {os.path.basename(path)!r} holds no usable notes; only the notes of the other "
+                "files were used (check that every page of opentune_get_notes was saved)"
+            )
     return merge_notes(pages)
 
 
@@ -150,7 +159,8 @@ def main(argv: list[str] | None = None) -> int:
         precheck(args.language, lyrics)  # before any model is loaded
     except UnsupportedLanguage as exc:
         raise SystemExit(f"error: {exc}") from exc
-    notes = _read_notes(args.notes)
+    notes_warnings: list[str] = []
+    notes = _read_notes(args.notes, notes_warnings)
     inputs = []
     for path, label in zip(args.audio, labels):
         x, sr = load_audio(path)
@@ -185,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             )
     except UnsupportedLanguage as exc:
         raise SystemExit(f"error: {exc}") from exc
+    doc["warnings"][:0] = notes_warnings  # --notes works with one file only, so doc is single-track
     problems = validate_output(doc)
     if problems:
         print("warning: output failed its own structure check: " + "; ".join(problems[:5]), file=sys.stderr)

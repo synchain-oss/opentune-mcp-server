@@ -102,22 +102,33 @@ UNMATCHED_MIN_UNITS = 3
 # stems, humming and held notes; flagging those buried the few lines that were really missed).
 NOT_RECOGNISED_MIN_SHARE = 0.25
 NOT_RECOGNISED_MIN_KEYS = 2
+# The end of a line goes back to it from the echo line after it only when it follows the line
+# without a pause: at most this many median unit lengths of the track without voice between them
+# (see _return_echo_tails).
+ECHO_MAX_PAUSE_UNITS = 1.5
 
 # --- A second look at lines that were not found ---------------------------------------------------
 # The whole-song alignment lets every missing line compete for the same leftover sounds, so a line
 # can lose its sounds one by one to lines that are not on the track. Each line not found is also
 # compared on its own with the heard units that no found line explains, between the found lines
-# around it (and, with several tracks, near where the others sing it). It needs the same share of
+# around it (and, with several tracks, near where the others sing it). Stretches of those units
+# made only of fillers (あ, ねえ, oh, 啊) are left out: a harmony's ad-libs are full of them, and a
+# short line made of the same sounds would be found there by chance. It needs the same share of
 # exact keys, but at least SECOND_PASS_MIN_KEYS of them (all of a shorter line): a short line that
 # may pick its stretch freely matches by chance more easily.
 SECOND_PASS_MIN_KEYS = 3
 # With several tracks, an unbroken run of at least PARTIAL_MIN_KEYS exact keys at the time the
 # other tracks sing the line also counts (a harmony often joins for part of a line only).
 PARTIAL_MIN_KEYS = 4
-# Lines found by the second look: conf at most SECOND_PASS_CONF_LOW for a line at the threshold,
-# rising with the share of exact keys to SECOND_PASS_CONF_HIGH for a full match.
-SECOND_PASS_CONF_LOW = 0.45
-SECOND_PASS_CONF_HIGH = 0.75
+# Lines found by the second look always get conf below 0.5, the point at which SKILL.md tells the
+# model to ask the user first, however much of the line matched: the line was found only by being
+# compared on its own with what was left over. Shorter lines match leftovers by chance more easily,
+# so a line of fewer than SECOND_PASS_SHORT_KEYS keys gets SECOND_PASS_CONF_LOW, and each key
+# beyond that adds SECOND_PASS_CONF_STEP, up to SECOND_PASS_CONF_HIGH (reached at 12 keys).
+SECOND_PASS_SHORT_KEYS = 6
+SECOND_PASS_CONF_LOW = 0.35
+SECOND_PASS_CONF_STEP = 0.02
+SECOND_PASS_CONF_HIGH = 0.49
 
 # --- Several tracks: one shared timeline -------------------------------------------------------
 # Stems of one song are normally exported from the same start. Each track's offset from the others
@@ -608,11 +619,20 @@ def _return_echo_tails(
 
     Lyrics often write a short echo of the end of a line as its own next line ("... night" then
     "night", sung by another voice). On the track of the main line the alignment may pair the heard
-    end with the echo line instead (both cost the same). When a line's unmatched tail has exactly
-    the keys of the next line, and the next line's matches follow the line's last match directly,
-    those matches go back to the line; this is kept only when the line is then on the track.
+    end with the echo line instead (both cost the same). The echo line's matches go back to the line
+    when all of these hold: the line's unmatched tail has exactly the keys of the echo line; the
+    echo line's matches are the heard keys right after the line's last match, every one of them;
+    and between that last match and the first of them the track is silent for no more than
+    ECHO_MAX_PAUSE_UNITS median unit lengths of this track. That is the end of the line sung
+    straight on, not an echo sung after a pause while the end of the line was not recognised. The
+    pause is measured on the voice activity, not on the times of the units, because the aligner
+    often gives the last, held unit of a line no length at all (on real stems the next unit then
+    starts two to four unit lengths later, with voice all the way). The change is kept only when
+    the line is then on the track.
     """
     heard_owners = [o for _, o in tr.heard_seq]
+    lengths = [h.end - h.start for h in tr.heard]
+    max_pause = ECHO_MAX_PAUSE_UNITS * median(lengths) if lengths else 0.0
     pos = {p.lyric: i for i, p in enumerate(key_pairs) if p.lyric is not None}
     changed: tuple[list[Pair], list[_Decision]] | None = None
     pairs = key_pairs
@@ -628,6 +648,9 @@ def _return_echo_tails(
         last = pairs[pos[matched[-1]]].heard
         assert last is not None
         if heard_b != list(range(last + 1, last + 1 + len(heard_b))):
+            continue
+        a, b = tr.heard[max(heard_owners[last])].end, tr.heard[min(heard_owners[last + 1])].start
+        if b > a and (b - a) - _voice(tr.regions, a, b)[0] > max_pause:
             continue
         moved = list(pairs)
         for k, kb, h in zip(tail, lb_keys, heard_b):
@@ -696,7 +719,9 @@ def _second_look(lyr: _Lyrics, tr: _Track, label: str | None, timeline: _Timelin
             run_end += 1
         lo = ds[li - 1].extent[1] if li > 0 and ds[li - 1].extent else -1.0  # type: ignore[index]
         hi = ds[run_end].extent[0] if run_end < len(ds) and ds[run_end].extent else math.inf  # type: ignore[index]
-        free = [h for h in range(len(heard)) if h not in explained and lo <= (heard[h].start + heard[h].end) / 2 <= hi]
+        free = _without_filler_stretches(
+            heard, [h for h in range(len(heard)) if h not in explained and lo <= (heard[h].start + heard[h].end) / 2 <= hi]
+        )
         taken: list[tuple[int, int, int]] = []  # (line, first heard, last heard) found in this run
         candidates = set(range(li, run_end))
         while candidates and free:
@@ -723,10 +748,29 @@ def _second_look(lyr: _Lyrics, tr: _Track, label: str | None, timeline: _Timelin
         li = run_end
 
 
+def _without_filler_stretches(heard: list[Heard], hs: list[int]) -> list[int]:
+    """``hs`` without its stretches made only of fillers: ad-libs such as あ, ねえ, oh or 啊.
+
+    A stretch is a run of units of ``hs`` that follow each other in what was heard, at most
+    UNMATCHED_JOIN_SEC apart. A filler inside a stretch with other words stays: in Japanese a
+    kana such as え or あ is also part of ordinary words (まえ, うえ).
+    """
+    out: list[int] = []
+    run: list[int] = []
+    for h in [*hs, None]:
+        if run and (h is None or h != run[-1] + 1 or heard[h].start - heard[run[-1]].end > UNMATCHED_JOIN_SEC):
+            if not all(is_filler(heard[k].unit) for k in run):
+                out.extend(run)
+            run = []
+        if h is not None:
+            run.append(h)
+    return out
+
+
 def _second_cap(d: _Decision) -> float:
-    share = d.second or 0.0
-    span = SECOND_PASS_CONF_HIGH - SECOND_PASS_CONF_LOW
-    return round(SECOND_PASS_CONF_LOW + span * max(0.0, min(1.0, (share - PRESENT_MIN_SHARE) / (1 - PRESENT_MIN_SHARE))), 3)
+    """The conf cap of a line found by the second look; see SECOND_PASS_CONF_LOW."""
+    extra = max(0, d.total_keys - SECOND_PASS_SHORT_KEYS + 1)
+    return round(min(SECOND_PASS_CONF_HIGH, SECOND_PASS_CONF_LOW + SECOND_PASS_CONF_STEP * extra), 3)
 
 
 def _look_for(
@@ -819,6 +863,7 @@ def _shared_timeline(lyr: _Lyrics, tracks: list[_Track], warnings: list[str]) ->
     ]
     offsets: list[float] = [0.0] * n
     spread: dict[int, float] = {}
+    shared: dict[int, int] = {}  # track -> how many of its lines other tracks sing too
     for _ in range(3):  # a few rounds settle the offsets of tracks that share lines with each other
         for t in range(n):
             diffs = []
@@ -829,6 +874,7 @@ def _shared_timeline(lyr: _Lyrics, tracks: list[_Track], warnings: list[str]) ->
             if len(diffs) >= OFFSET_MIN_LINES:
                 offsets[t] = median(diffs)
                 spread[t] = median(abs(x - offsets[t]) for x in diffs)
+                shared[t] = len(diffs)
     if not spread:
         return None
     bad = sorted(t for t, s in spread.items() if s > OFFSET_MAX_SPREAD_SEC)
@@ -839,8 +885,14 @@ def _shared_timeline(lyr: _Lyrics, tracks: list[_Track], warnings: list[str]) ->
             "comparing times across tracks; export every stem from the same start to get that check"
         )
         return None
-    gauge = median(offsets[t] for t in spread)
-    known = {t: offsets[t] - gauge for t in spread}
+    # The offsets above share an arbitrary constant. They are measured from one reference track: the
+    # one that shares the most lines with the others; on a tie, the one nearest to the middle of all
+    # (with two tracks equally near: the first). Taking the middle of the offsets instead would split
+    # one track's offset between the two of a pair (10 s as 5 s each, 2.9 s as 1.45 s each, which is
+    # then within OFFSET_ZERO_SEC on both).
+    middle = median(offsets[t] for t in spread)
+    ref = min(spread, key=lambda t: (-shared[t], round(abs(offsets[t] - middle), 3), t))
+    known = {t: offsets[t] - offsets[ref] for t in spread}
     same_start = all(abs(o) <= OFFSET_ZERO_SEC for o in known.values())
     final: list[float | None] = []
     for t in range(n):
@@ -1361,6 +1413,12 @@ def _track_doc(
     # Tokens, snapping, confidence ---------------------------------------------------------
     line_records: list[dict[str, Any]] = []
     for li, ln in enumerate(lines):
+        aligned = bool(ln.spans)
+        if ln.sung and not aligned:
+            warnings.append(
+                f"line l{li + 1}: found on this track, but the aligner returned no times for it "
+                "(absent_reason no_alignment)"
+            )
         rec: dict[str, Any] = {
             "id": f"l{li + 1}",
             "text": ln.text,
@@ -1368,8 +1426,10 @@ def _track_doc(
             "end": None,
             "section": None,
             "line_in_section": None,
-            "sung": ln.sung and bool(ln.spans),
-            "absent_reason": ln.absent_reason,
+            "sung": ln.sung and aligned,
+            # A line found on the track that the aligner gave no times is not sung as far as the
+            # result goes; it still says why.
+            "absent_reason": "no_alignment" if ln.sung and not aligned else ln.absent_reason,
             "backing": bool(ln.lyric and ln.lyric.backing),
             "singers": list(ln.lyric.singers) if ln.lyric else [],
             "tokens": [],
@@ -1605,6 +1665,7 @@ def build_multitrack(
     tracks, lyr, lang, source, shared = _run(inputs, asr, aligner, lyrics, language)
     docs = []
     for i, tr in enumerate(tracks):
+        aligner.start_track(i)  # each line is aligned again on its own track
         doc = _track_doc(tr, lyr, lang, source, asr, aligner, lyrics, snap_window, model_info, [])
         docs.append({"track": f"t{i + 1}", **doc})
     warnings = list(shared)

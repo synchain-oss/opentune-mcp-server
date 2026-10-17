@@ -300,7 +300,7 @@ def test_without_japanese_readings_the_result_says_so(monkeypatch):
 def test_setup_plan_lists_the_japanese_readings(capsys, tmp_path):
     import setup as setup_script  # noqa: PLC0415
 
-    plan = setup_script.build_plan("0.6B", "hf", "cpu", str(tmp_path))
+    plan = setup_script.build_plan("0.6B", "hf", setup_script.choose_torch("cpu", False, None, "win32"), str(tmp_path))
     assert plan["japanese_readings"]["packages"] == ["sudachipy", "sudachidict-core"]
     assert plan["total_approx_bytes"] == plan["model_bytes"] + plan["torch"]["approx_bytes"] + plan["packages_approx_bytes"] + plan["japanese_readings"]["approx_bytes"]
     setup_script.print_plan(plan)
