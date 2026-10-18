@@ -1,0 +1,331 @@
+{
+  "description": "The result of the prefsApply job after a switch to openDyne: the generated notes cannot be undone or reverted, and the first sentence says so before the revert line.",
+  "tool": "opentune_set_settings",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "preference",
+        "ref": {
+          "preference": "editingScheme"
+        },
+        "label": "Editing scheme",
+        "fields": {
+          "editingScheme": {
+            "before": "openTune",
+            "after": "openDyne",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n3",
+              "after": "n12"
+            },
+            "pitch": {
+              "before": "p4",
+              "after": "p13"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r14",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "prefs.set",
+        "params": {
+          "editingScheme": "openTune"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "notesGenerated": {
+        "contentId": "c:01234567:0:1",
+        "noteCount": 11,
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "GLOBAL_PREFERENCE",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "editingScheme"
+          ]
+        }
+      },
+      {
+        "code": "SCHEME_GENERATED_NOTES",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null
+  },
+  "rendered": {
+    "summary": "opentune_set_settings: this changes user-global OpenTune settings, which belong to the installation and not to the project, and OpenTune records no undo entry for it, and the notes it generated can be neither undone nor reverted: the revert line gives the opentune_set_settings call that puts back only the previous values it can, and the warnings say what stays. changed 1 preference (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_settings, see the revert line; side effects: OpenTune generated notes for a content). Warnings: GLOBAL_PREFERENCE, SCHEME_GENERATED_NOTES, IRREVERSIBLE.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "preference",
+        "ref": {
+          "preference": "editingScheme"
+        },
+        "label": "Editing scheme",
+        "fields": {
+          "editingScheme": {
+            "before": "openTune",
+            "after": "openDyne",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n3",
+              "after": "n12"
+            },
+            "pitch": {
+              "before": "p4",
+              "after": "p13"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r14",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "prefs.set",
+        "params": {
+          "editingScheme": "openTune"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "notesGenerated": {
+        "contentId": "c:01234567:0:1",
+        "noteCount": 11,
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "GLOBAL_PREFERENCE",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "editingScheme"
+          ]
+        }
+      },
+      {
+        "code": "SCHEME_GENERATED_NOTES",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "preferences",
+        "effect": "changed preference",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Open the preferences."
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      },
+      {
+        "surface": "piano roll",
+        "effect": "notes generated",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "preference",
+          "label": "Editing scheme",
+          "ref": {
+            "preference": "editingScheme"
+          },
+          "fields": [
+            {
+              "field": "editingScheme",
+              "before": "openTune",
+              "after": "openDyne",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "GLOBAL_PREFERENCE",
+        "text": "A user-global preference changed; it outlives the project and the session.",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "editingScheme"
+          ]
+        }
+      },
+      {
+        "kind": "warning",
+        "code": "SCHEME_GENERATED_NOTES",
+        "text": "Switching the editing scheme generated notes for the clip open in the piano roll, with no undo entry.",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "notesGenerated",
+        "text": "OpenTune generated notes for a content.",
+        "details": {
+          "contentId": "c:01234567:0:1",
+          "noteCount": 11,
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_settings with the arguments in restore, as they are.",
+        "revert": {
+          "method": "prefs.set",
+          "params": {
+            "editingScheme": "openTune"
+          }
+        },
+        "restore": {
+          "tool": "opentune_set_settings",
+          "arguments": {
+            "processing": {
+              "editing_scheme": "openTune"
+            }
+          }
+        }
+      }
+    ]
+  }
+}

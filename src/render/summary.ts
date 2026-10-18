@@ -12,7 +12,7 @@ import { revertFlag, revertPlan } from './revert.js';
 import { SIDE_EFFECT_TEXT, token, undoReasonText } from './text.js';
 
 /** Warning codes that make a result destructive on their own. */
-const DESTRUCTIVE_WARNINGS = new Set(['IRREVERSIBLE', 'UPSTREAM_UNDO_DEFECT', 'OVERWROTE_OTHER_PROJECT']);
+export const DESTRUCTIVE_WARNINGS = new Set(['IRREVERSIBLE', 'UPSTREAM_UNDO_DEFECT', 'OVERWROTE_OTHER_PROJECT']);
 
 export function warningCodes(envelope: Json): string[] {
   return asList(envelope.warnings).flatMap((w) => {
