@@ -357,19 +357,18 @@ describe('opentune_manage_ui: dismiss_dialogs and dismiss_onboarding', () => {
     expect(refused.error.nextStep.message).toMatch(/OpenTune window/);
   });
 
-  it('is the way out of BUSY modal_open, and says that consent comes first', async () => {
+  it('BUSY modal_open asks the user, and the tool still works while the dialog is open', async () => {
     const { mock, ctx } = await setup();
     mock.given({ clips: [clip()], dialogs: [{ kind: 'message' }] });
     const busy = failure(await setTracks(ctx, { ops: [{ op: 'mute', track_id: 0, on: true }] }));
     expect(busy.error).toMatchObject({ kind: 'BUSY', reason: 'modal_open' });
-    expect(busy.error.nextStep).toMatchObject({
-      actor: 'agent',
-      tool: 'opentune_manage_ui',
-      args: { op: 'dismiss_dialogs' },
-    });
-    expect(busy.error.nextStep.message).toMatch(
-      /ask the user first, and set accept_commit: true only after the user agrees/,
-    );
+    expect(busy.error.nextStep.actor).toBe('user');
+    expect(busy.error.nextStep.tool).toBeUndefined();
+    expect(busy.error.nextStep.args).toBeUndefined();
+    expect(busy.error.nextStep.message).toMatch(/close it in OpenTune themselves/);
+    expect(busy.error.nextStep.message).toMatch(/agree explicitly/);
+    expect(busy.error.nextStep.message).toMatch(/dismiss_dialogs/);
+    expect(busy.error.nextStep.message).toMatch(/cancels the action/);
     expect(kindStep('BUSY', 'pointer_down').nextStep.tool).toBeUndefined();
     // And the tool works while the dialog is open.
     body(await manageUi(ctx, { op: 'dismiss_dialogs' }));

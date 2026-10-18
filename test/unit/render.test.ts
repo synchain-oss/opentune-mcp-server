@@ -362,6 +362,32 @@ describe('revert recipes as tool calls', () => {
     }
   });
 
+  it('writes a volume outside the dB range back as the linear factor, and keeps the other members', () => {
+    const plan = revertPlan({ method: 'track.set', params: { tracks: [{ trackId: 1, muted: true, volumeDb: -200 }] } });
+    if (plan.kind !== 'tool') throw new Error('expected a tool call');
+    expect(plan.call.arguments).toEqual({
+      ops: [
+        { op: 'mute', track_id: 1, on: true },
+        { op: 'volume', track_id: 1, linear: 10 ** (-200 / 20) },
+      ],
+    });
+  });
+
+  it('degrades a track.set recipe with a member it cannot map to manual, never to a partial restore', () => {
+    for (const track of [
+      { trackId: 1, muted: true, colour: 'not-a-colour' },
+      { trackId: 1, muted: true, volumeDb: 60 },
+      { trackId: 1, muted: true, volumeLinear: 9 },
+      { trackId: 1, muted: true, pan: 0.5 },
+      { trackId: 1, muted: 'yes' },
+    ]) {
+      const recipe = { method: 'track.set', params: { tracks: [track] } };
+      expect(revertPlan(recipe).kind, JSON.stringify(track)).toBe('manual');
+      const r = render({ changes: [change('track')], undo: { undoable: false, reason: 'ui_parity', revert: recipe } });
+      expect(r.summary).not.toContain('opentune_set_tracks');
+    }
+  });
+
   it('names the tool call in the line and the summary, and what to add to it', () => {
     const r = render({ changes: [change('key')], undo: { undoable: false, reason: 'ui_parity', revert: SET_KEY } });
     expect(r.summary).toContain('can be restored with opentune_set_clip, see the revert line');

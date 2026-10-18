@@ -156,17 +156,40 @@ const COLOUR_RE = /^#[0-9A-Fa-f]{6}$/;
 const isNum = (value: unknown, min: number, max: number): value is number =>
   typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
 
-/** The opentune_set_tracks ops that set the values a track.set recipe names. */
+/**
+ * The opentune_set_tracks ops that set the values a track.set recipe names. A member that cannot be
+ * mapped makes the whole recipe manual: a restore that silently leaves a value out is wrong.
+ */
 function trackOps(params: Json): Mapped | null {
   const ops: Json[] = [];
   for (const item of Array.isArray(params.tracks) ? (params.tracks as unknown[]) : []) {
     if (!isObject(item) || !isInt(item.trackId, 0, TRACK_ID_MAX)) return null;
     const track_id = item.trackId;
-    if (typeof item.muted === 'boolean') ops.push({ op: 'mute', track_id, on: item.muted });
-    if (typeof item.solo === 'boolean') ops.push({ op: 'solo', track_id, on: item.solo });
-    if (isNum(item.volumeDb, -120, 24)) ops.push({ op: 'volume', track_id, db: item.volumeDb });
-    else if (isNum(item.volumeLinear, 0, 4)) ops.push({ op: 'volume', track_id, linear: item.volumeLinear });
-    if (typeof item.colour === 'string' && COLOUR_RE.test(item.colour)) {
+    const known = new Set(['trackId', 'muted', 'solo', 'volumeDb', 'volumeLinear', 'colour']);
+    if (Object.keys(item).some((key) => !known.has(key))) return null;
+    if (item.muted !== undefined) {
+      if (typeof item.muted !== 'boolean') return null;
+      ops.push({ op: 'mute', track_id, on: item.muted });
+    }
+    if (item.solo !== undefined) {
+      if (typeof item.solo !== 'boolean') return null;
+      ops.push({ op: 'solo', track_id, on: item.solo });
+    }
+    if (item.volumeDb !== undefined) {
+      if (isNum(item.volumeDb, -120, 24)) {
+        ops.push({ op: 'volume', track_id, db: item.volumeDb });
+      } else {
+        // Out of the dB range of the tool: write it back as the linear factor when that is in range.
+        const linear = typeof item.volumeDb === 'number' ? 10 ** (item.volumeDb / 20) : Number.NaN;
+        if (!isNum(linear, 0, 4)) return null;
+        ops.push({ op: 'volume', track_id, linear });
+      }
+    } else if (item.volumeLinear !== undefined) {
+      if (!isNum(item.volumeLinear, 0, 4)) return null;
+      ops.push({ op: 'volume', track_id, linear: item.volumeLinear });
+    }
+    if (item.colour !== undefined) {
+      if (typeof item.colour !== 'string' || !COLOUR_RE.test(item.colour)) return null;
       ops.push({ op: 'colour', track_id, colour: item.colour });
     }
   }

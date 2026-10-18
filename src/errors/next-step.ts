@@ -125,15 +125,12 @@ const REASONS: Readonly<Record<string, NextStep>> = {
       'removed). Nothing was deleted. Read the project again, check that the track id still names the track ' +
       'meant, then call again with the new arrangement_revision.',
   },
-  'BUSY/modal_open': {
-    actor: 'agent',
-    tool: 'opentune_manage_ui',
-    args: { op: 'dismiss_dialogs' },
-    message:
-      'A dialog is open in OpenTune. Call opentune_manage_ui with op dismiss_dialogs, then retry. Closing a ' +
-      'dialog can commit the value it shows (the track-colour dialog commits its colour), so that tool refuses ' +
-      'unless the user agreed: ask the user first, and set accept_commit: true only after the user agrees.',
-  },
+  'BUSY/modal_open': user(
+    'A dialog is open in OpenTune. Ask the user to close it in OpenTune themselves, or to agree explicitly that you ' +
+      'close it with opentune_manage_ui (op dismiss_dialogs). Closing a dialog can commit the value it shows (the ' +
+      'track-colour dialog commits its colour), and closing a confirmation box cancels the action it asked about. ' +
+      'Set accept_commit: true only after the user agrees.',
+  ),
   'NOT_READY/export_wait_timeout': agent(
     'Analysis or rendering did not settle in time and nothing was written. Wait for OpenTune to finish, then export again.',
   ),
