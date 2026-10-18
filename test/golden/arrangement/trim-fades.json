@@ -1,0 +1,174 @@
+{
+  "description": "A trim that shortens the fades: FADES_RECLAMPED, and the undo step restores them.",
+  "input": {
+    "ops": [
+      {
+        "op": "trim",
+        "clip": "p:01234567:0:1",
+        "edge": "end",
+        "to_timeline_sec": 1.5
+      }
+    ],
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "summary": "opentune_edit_arrangement: changed 1 placement. Undo it as one step with undoId u:01234567:3. Warnings: FADES_RECLAMPED. The undo step also puts back the clip fades as they were before the trim (OpenTune's own does not).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:1"
+        },
+        "label": "Clip 1 on Track 1",
+        "fields": {
+          "durationSec": {
+            "before": 4,
+            "after": 1.5,
+            "unit": "sec"
+          },
+          "fadeOutSec": {
+            "before": 1.5,
+            "after": 0.85,
+            "unit": "sec"
+          },
+          "endTimelineSec": {
+            "before": 4,
+            "after": 1.5,
+            "unit": "sec"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a33",
+        "after": "a35"
+      },
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a35",
+      "contents": [],
+      "placements": [
+        {
+          "placementId": "p:01234567:0:1",
+          "geometryHash": "h34"
+        }
+      ]
+    },
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:3",
+      "description": "Trim clip",
+      "innerActions": [
+        "setFade",
+        "trimClip"
+      ],
+      "steps": 1
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 6
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "FADES_RECLAMPED",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": {
+          "fadeInSec": null,
+          "fadeOutSec": {
+            "before": 1.5,
+            "after": 0.85
+          }
+        }
+      }
+    ],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "changed placement",
+        "target": "p:01234567:0:1",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "placement",
+          "label": "Clip 1 on Track 1",
+          "ref": {
+            "placementId": "p:01234567:0:1"
+          },
+          "fields": [
+            {
+              "field": "durationSec",
+              "before": 4,
+              "after": 1.5,
+              "unit": "sec"
+            },
+            {
+              "field": "fadeOutSec",
+              "before": 1.5,
+              "after": 0.85,
+              "unit": "sec"
+            },
+            {
+              "field": "endTimelineSec",
+              "before": 4,
+              "after": 1.5,
+              "unit": "sec"
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "FADES_RECLAMPED",
+        "text": "Clip fades were shortened to fit the clip's new length.",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": {
+          "fadeInSec": null,
+          "fadeOutSec": {
+            "before": 1.5,
+            "after": 0.85
+          }
+        }
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
+        "undoId": "u:01234567:3",
+        "description": "Trim clip"
+      }
+    ],
+    "arrangement_revision": "ar1.YTM1",
+    "clip_ids": {
+      "created": [],
+      "removed": []
+    }
+  }
+}

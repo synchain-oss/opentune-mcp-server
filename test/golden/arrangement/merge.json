@@ -1,0 +1,221 @@
+{
+  "description": "Merging the two parts again: cannot be undone either.",
+  "input": {
+    "ops": [
+      {
+        "op": "merge",
+        "leading_clip": "p:01234567:0:4",
+        "trailing_clip": "p:01234567:0:5"
+      }
+    ],
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "summary": "opentune_edit_arrangement: this merge cannot be undone: OpenTune frees objects its own undo entry needs, so undoing a merge makes its audio vanish from the timeline; opentune_undo refuses it, and the user should not undo it in the OpenTune window either. Ask the user before every split, merge or delete. Created 1 placement, removed 2 placements (destructive; not undoable: OpenTune cannot undo this reliably; can be restored with opentune_edit_arrangement, see the revert line). Warnings: UPSTREAM_UNDO_DEFECT.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:6"
+        },
+        "label": "Clip 6 on Track 3"
+      }
+    ],
+    "removed": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:4"
+        },
+        "label": "Clip 4 on Track 3"
+      },
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:5"
+        },
+        "label": "Clip 5 on Track 3"
+      }
+    ],
+    "idMap": [
+      {
+        "entity": "placement",
+        "relation": "merge",
+        "from": [
+          {
+            "placementId": "p:01234567:0:4"
+          },
+          {
+            "placementId": "p:01234567:0:5"
+          }
+        ],
+        "to": [
+          {
+            "placementId": "p:01234567:0:6"
+          }
+        ]
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a38",
+        "after": "a40"
+      },
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a40",
+      "contents": [],
+      "placements": [
+        {
+          "placementId": "p:01234567:0:6",
+          "geometryHash": "h39"
+        }
+      ]
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "upstream_undo_defect",
+      "revert": {
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": "a40",
+          "ops": [
+            {
+              "op": "split",
+              "placementId": "p:01234567:0:6",
+              "atTimelineSec": 11.5
+            }
+          ]
+        }
+      }
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 6
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "UPSTREAM_UNDO_DEFECT",
+        "subject": {
+          "placementId": "p:01234567:0:4"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "created placement",
+        "target": "p:01234567:0:6",
+        "visibleNow": true
+      },
+      {
+        "surface": "arrangement view",
+        "effect": "removed placement",
+        "target": "p:01234567:0:4",
+        "visibleNow": true
+      },
+      {
+        "surface": "arrangement view",
+        "effect": "removed placement",
+        "target": "p:01234567:0:5",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "created",
+          "entity": "placement",
+          "label": "Clip 6 on Track 3",
+          "ref": {
+            "placementId": "p:01234567:0:6"
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "placement",
+          "label": "Clip 4 on Track 3",
+          "ref": {
+            "placementId": "p:01234567:0:4"
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "placement",
+          "label": "Clip 5 on Track 3",
+          "ref": {
+            "placementId": "p:01234567:0:5"
+          }
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "UPSTREAM_UNDO_DEFECT",
+        "text": "OpenTune cannot undo this change reliably: it frees objects its own undo entry needs.",
+        "subject": {
+          "placementId": "p:01234567:0:4"
+        },
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune cannot undo this reliably). Restore: call opentune_edit_arrangement with the arguments in restore, as they are.",
+        "revert": {
+          "method": "arrangement.edit",
+          "params": {
+            "expectedArrangementRevision": "a40",
+            "ops": [
+              {
+                "op": "split",
+                "placementId": "p:01234567:0:6",
+                "atTimelineSec": 11.5
+              }
+            ]
+          }
+        },
+        "restore": {
+          "tool": "opentune_edit_arrangement",
+          "arguments": {
+            "expected_revision": "ar1.YTQw",
+            "ops": [
+              {
+                "clip": "p:01234567:0:6",
+                "op": "split",
+                "at_timeline_sec": 11.5
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "arrangement_revision": "ar1.YTQw",
+    "clip_ids": {
+      "created": [
+        "p:01234567:0:6"
+      ],
+      "removed": [
+        "p:01234567:0:4",
+        "p:01234567:0:5"
+      ]
+    }
+  }
+}

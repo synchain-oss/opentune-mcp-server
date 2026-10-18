@@ -14,8 +14,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { OtcpError } from '../../src/errors/tool-error.js';
 import type { OtcpSession } from '../../src/otcp/client.js';
-import { encodeClipRevision } from '../../src/otcp/tokens.js';
+import { encodeArrangementRevision, encodeClipRevision } from '../../src/otcp/tokens.js';
 import { autotuneTool } from '../../src/tools/autotune.js';
+import { editArrangementTool } from '../../src/tools/edit-arrangement.js';
 import { editNotesTool } from '../../src/tools/edit-notes.js';
 import { exportAudioTool } from '../../src/tools/export-audio.js';
 import { redoTool, undoTool } from '../../src/tools/history.js';
@@ -73,6 +74,11 @@ const WRITES: readonly {
   },
   { name: 'opentune_undo', tool: undoTool, args: { undo_id: 'u:00000000:1' } },
   { name: 'opentune_redo', tool: redoTool, args: { undo_id: 'u:00000000:1' } },
+  {
+    name: 'opentune_edit_arrangement',
+    tool: editArrangementTool,
+    args: { expected_revision: encodeArrangementRevision('a1'), ops: [{ op: 'gain', clip: CLIP, gain_db: -3 }] },
+  },
 ];
 
 describe('write tools with several instances', () => {
@@ -177,7 +183,7 @@ describe('a write whose outcome is unknown is not sent again', () => {
   const cases: readonly {
     readonly tool: ToolDefinition;
     readonly method: string;
-    readonly args: (e: { placement: string; revision: string }) => Record<string, unknown>;
+    readonly args: (e: { placement: string; revision: string; arrangement: string }) => Record<string, unknown>;
   }[] = [
     {
       tool: editNotesTool,
@@ -204,6 +210,11 @@ describe('a write whose outcome is unknown is not sent again', () => {
       args: () => ({ kind: 'master', path: absWav('unknown-outcome.wav') }),
     },
     { tool: undoTool, method: 'edit.undo', args: () => ({ undo_id: 'u:00000000:1' }) },
+    {
+      tool: editArrangementTool,
+      method: 'arrangement.edit',
+      args: (e) => ({ expected_revision: e.arrangement, ops: [{ op: 'gain', clip: e.placement, gain_db: -3 }] }),
+    },
   ];
 
   for (const { tool, method, args } of cases) {
@@ -213,9 +224,10 @@ describe('a write whose outcome is unknown is not sent again', () => {
         const project = await getProject(ctx, {});
         if (!project.ok) throw new Error('project');
         const revision = (project.body.placements as { clip_revision: string }[])[0]?.clip_revision ?? '';
+        const arrangement = project.body.arrangement_revision as string;
         const sent = failOn(session, method, error);
         const outcome = await tool.run(
-          tool.inputSchema.parse(args({ placement: ids['clip.placementId'] ?? '', revision })),
+          tool.inputSchema.parse(args({ placement: ids['clip.placementId'] ?? '', revision, arrangement })),
           ctx,
         );
         expect(sent.filter((m) => m === method)).toHaveLength(1);

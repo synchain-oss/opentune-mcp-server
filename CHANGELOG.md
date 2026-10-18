@@ -8,6 +8,17 @@ versioned separately and has its own changelog.
 
 ## Unreleased
 
+### Added
+
+- `opentune_edit_arrangement`: edits clips on the timeline as OpenTune's arrangement view does (OTCP
+  `arrangement.edit` and `arrangement.copy`). `move`, `trim`, `gain`, `fade` and `set_reference` run in order as one
+  undo step; `split`, `merge`, `delete` and `copy` each go in a call of their own. The first sentence of a split, merge
+  or delete result says that it cannot be undone (OpenTune frees objects its own undo entry needs) and to ask the user
+  first; `delete` needs `confirm: true`, given only with the user's consent. `dry_run` previews every op but `copy`.
+  The tool takes and returns the `arrangement_revision`, so edits of notes, keys or pitch never conflict with a clip
+  edit, and lists the ids of new and removed clips in `clip_ids`. Revert recipes that name `arrangement.edit` (the
+  merge after a split, the removal of copies) are now given as calls of this tool.
+
 ## [0.1.0] - 2026-10-17
 
 The first public version of OpenTune MCP Server (by Synchain). It implements OTCP specification `spec-v1.0.0-rc.3` and
