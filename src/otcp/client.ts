@@ -21,6 +21,12 @@ const SUPPORTED_MAJOR = 1;
 /** The major of a `MAJOR.MINOR` protocol string, or NaN when it has none. */
 const majorOf = (protocol: string): number => Number(/^(\d+)(?:\.|$)/.exec(protocol)?.[1] ?? Number.NaN);
 
+/** `OTCP major 2` for a `MAJOR.MINOR` protocol, else a phrase for a version with no readable major. */
+const protocolName = (protocol: string): string => {
+  const major = majorOf(protocol);
+  return Number.isNaN(major) ? 'an unreadable OTCP version' : `OTCP major ${String(major)}`;
+};
+
 /** The only address OTCP clients connect to (section 3.1 rule 3); host names are never resolved. */
 export const LOOPBACK = '127.0.0.1';
 /** Protocol version this client implements. */
@@ -170,7 +176,7 @@ export class OtcpSession {
               local(
                 'PROTOCOL_MISMATCH',
                 'major_not_served',
-                `the instance speaks OTCP ${hello.protocol}; this server speaks major ${String(SUPPORTED_MAJOR)}`,
+                `the instance speaks ${protocolName(hello.protocol)}; this server speaks major ${String(SUPPORTED_MAJOR)}`,
                 false,
                 false,
               ),

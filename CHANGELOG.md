@@ -75,8 +75,8 @@ zip for Claude Desktop.
   `lyrics-timeline` (word-level timing and section detection, with lyrics in 11 languages: Mandarin, Cantonese,
   English, German, Spanish, French, Italian, Portuguese, Russian, Korean and Japanese, and timelines that use several
   vocal tracks; lines found only by a second look at the leftover audio get a confidence below 0.5, so the agent asks
-  the user before using them; with an NVIDIA GPU whose driver supports CUDA 12.6 or newer it offers the PyTorch CUDA build,
-  and otherwise the CPU build, in both cases only after the user agrees to the download).
+  the user before using them; with an NVIDIA GPU whose driver supports CUDA 12.6 or newer it offers the PyTorch CUDA
+  build, and otherwise the CPU build, in both cases only after the user agrees to the download).
 - The OTCP specification `spec-v1.0.0-rc.3` with its schemas and test vectors, a mock OpenTune that implements it, and
   contract tests that run the tools against both.
 - Golden snapshots of `tools/list` and of the instructions, the generated [tool reference](docs/reference.md) and the
