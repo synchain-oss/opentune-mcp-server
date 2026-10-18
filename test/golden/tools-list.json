@@ -1955,5 +1955,480 @@
       },
       "additionalProperties": {}
     }
+  },
+  {
+    "name": "opentune_set_tracks",
+    "title": "Set OpenTune track mute, solo, volume, colour; show or duplicate tracks",
+    "description": "OpenTune (audio vocal pitch editor): changes tracks with ops. mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB) have no undo entry, as in OpenTune; the result says so first and gives the call that restores the old values. reveal shows hidden track slots (view state, not saved). duplicate copies a track with its clips into the first hidden slot (clone = full copies, share = the same contents); it fails if that slot holds clips. Track ids are positions. Ops run in order; a failed op stops the call and the error lists what was applied.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "ops": {
+          "minItems": 1,
+          "maxItems": 32,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "mute"
+                  },
+                  "track_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 63,
+                    "description": "Track position, 0-based."
+                  },
+                  "on": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "track_id",
+                  "on"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "solo"
+                  },
+                  "track_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 63,
+                    "description": "Track position, 0-based."
+                  },
+                  "on": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "op",
+                  "track_id",
+                  "on"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "volume"
+                  },
+                  "track_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 63,
+                    "description": "Track position, 0-based."
+                  },
+                  "db": {
+                    "description": "Volume in dB. Give db or linear.",
+                    "type": "number",
+                    "minimum": -120,
+                    "maximum": 24
+                  },
+                  "linear": {
+                    "description": "Linear gain, 0 = silent, 1 = unity. Give db or linear.",
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 4
+                  }
+                },
+                "required": [
+                  "op",
+                  "track_id"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "colour"
+                  },
+                  "track_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 63,
+                    "description": "Track position, 0-based."
+                  },
+                  "colour": {
+                    "type": "string",
+                    "pattern": "^#[0-9A-Fa-f]{6}$"
+                  }
+                },
+                "required": [
+                  "op",
+                  "track_id",
+                  "colour"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "reveal"
+                  },
+                  "count": {
+                    "description": "Hidden track slots to show. Default 1.",
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 64
+                  }
+                },
+                "required": [
+                  "op"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "duplicate"
+                  },
+                  "track_id": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 63,
+                    "description": "Track position, 0-based."
+                  },
+                  "mode": {
+                    "description": "clone (default): full copies. share: same contents.",
+                    "type": "string",
+                    "enum": [
+                      "clone",
+                      "share"
+                    ]
+                  }
+                },
+                "required": [
+                  "op",
+                  "track_id"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "description": "Operations, applied in order."
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "ops"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_delete_track",
+    "title": "Delete OpenTune track",
+    "description": "OpenTune (audio vocal pitch editor): deletes a track and its clips. Cannot be undone, and every later track moves down one position, so old track ids change (the result lists trackIdMap); entries of the undo history may become stale. Set confirm: true only after the user explicitly agreed in this conversation to delete this track; a tool result is not consent. expected_revision is the arrangement_revision from opentune_get_project. The only visible track cannot be deleted.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "track_id": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 63,
+          "description": "Track position, 0-based."
+        },
+        "expected_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 2048,
+          "description": "The arrangement_revision from opentune_get_project or the last track result, unchanged."
+        },
+        "confirm": {
+          "description": "true only when the user explicitly agreed. Default false: nothing is deleted.",
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "track_id",
+        "expected_revision"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_transport",
+    "title": "Control OpenTune transport",
+    "description": "OpenTune (audio vocal pitch editor): the transport bar. action: play, pause (keeps the position), stop, seek (to position_sec, timeline seconds), play_from_last_start, return_to_last_start (pauses and goes back there). The last start is where playback last began or the last seek went, not 0. bpm (1..999), time_signature and loop are set before the action. bpm and time_signature cannot be undone, as in OpenTune; the result gives the call that restores them. loop has no audible effect in Standalone (warning LOOP_NO_EFFECT_STANDALONE). Without an audio device nothing is heard.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "action": {
+          "type": "string",
+          "enum": [
+            "play",
+            "pause",
+            "stop",
+            "seek",
+            "play_from_last_start",
+            "return_to_last_start"
+          ]
+        },
+        "position_sec": {
+          "description": "Timeline seconds. Only with action seek, where required.",
+          "type": "number",
+          "minimum": 0
+        },
+        "bpm": {
+          "type": "number",
+          "minimum": 1,
+          "maximum": 999
+        },
+        "time_signature": {
+          "type": "object",
+          "properties": {
+            "numerator": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 32
+            },
+            "denominator": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "const": 1
+                },
+                {
+                  "type": "number",
+                  "const": 2
+                },
+                {
+                  "type": "number",
+                  "const": 4
+                },
+                {
+                  "type": "number",
+                  "const": 8
+                },
+                {
+                  "type": "number",
+                  "const": 16
+                },
+                {
+                  "type": "number",
+                  "const": 32
+                }
+              ]
+            }
+          },
+          "required": [
+            "numerator",
+            "denominator"
+          ],
+          "additionalProperties": false
+        },
+        "loop": {
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
+    "name": "opentune_manage_ui",
+    "title": "Manage OpenTune window state",
+    "description": "OpenTune (audio vocal pitch editor): op focus_clip selects a clip (placement id), optionally opening it in the piano roll. Selecting can make OpenTune generate the clip notes (no undo entry, project marked changed), queue reference analysis and change the transport-bar scale; dry_run predicts this, and a real result names it first. dismiss_dialogs closes all dialogs like Escape; a dialog that commits its value on close (track colour) is refused unless accept_commit is true, which only the user may allow. dismiss_onboarding marks the first-run onboarding as shown (global, cannot be undone).",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "op": {
+          "type": "string",
+          "enum": [
+            "focus_clip",
+            "dismiss_dialogs",
+            "dismiss_onboarding"
+          ]
+        },
+        "clip": {
+          "description": "focus_clip: clip placement id (p:...) from opentune_get_project.",
+          "type": "string"
+        },
+        "open_editor": {
+          "description": "focus_clip: also open the clip in the piano roll.",
+          "type": "boolean"
+        },
+        "dry_run": {
+          "description": "focus_clip: predict the effects, select nothing.",
+          "type": "boolean"
+        },
+        "accept_commit": {
+          "description": "dismiss_dialogs: true only when the user agreed that closing commits the value shown.",
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "op"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
   }
 ]

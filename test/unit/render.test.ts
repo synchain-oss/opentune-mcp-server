@@ -285,6 +285,23 @@ describe('revert recipes as tool calls', () => {
     { method: 'edit.undo', params: { expectedUndoId: 'u:01234567:3' } },
     { method: 'edit.redo', params: { expectedUndoId: 'u:01234567:3' } },
     { method: 'project.open', params: { path: 'C:/Music/a.otproj' } },
+    {
+      method: 'track.set',
+      params: {
+        tracks: [
+          { trackId: 1, muted: true, volumeDb: -6, colour: '#112233' },
+          { trackId: 2, solo: false, volumeLinear: 0 },
+        ],
+      },
+    },
+    {
+      method: 'track.delete',
+      params: { trackId: 4, expectedArrangementRevision: 'a1' },
+      requiresConsent: true,
+    },
+    { method: 'transport.setTempo', params: { bpm: 120, timeSignature: { numerator: 4, denominator: 4 } } },
+    { method: 'transport.setLoop', params: { enabled: false } },
+    { method: 'ui.setSelection', params: { placementId: 'p:01234567:0:1' } },
   ];
 
   it("turns every recipe a tool performs into a call that the tool's input schema accepts", () => {
@@ -299,6 +316,42 @@ describe('revert recipes as tool calls', () => {
       expect(tool.inputSchema.safeParse(args).success, plan.call.tool).toBe(true);
       // The revision the line asks for is the one argument the call cannot do without.
       if (plan.needsRevision) expect(tool.inputSchema.safeParse(plan.call.arguments).success).toBe(false);
+    }
+  });
+
+  it('asks for the arrangement_revision, and for consent, where the deletion of a track is the way back', () => {
+    const copy = {
+      method: 'track.delete',
+      params: { trackId: 4, expectedArrangementRevision: 'a1' },
+      requiresConsent: true,
+    };
+    const r = render({ changes: [change('track')], undo: { undoable: false, reason: 'ui_parity', revert: copy } });
+    expect(r.lines.at(-1)).toMatchObject({
+      text:
+        'Not undoable (OpenTune records no undo entry for this, as in its own interface). Only after the user ' +
+        'explicitly agrees to restore it: call opentune_delete_track with the arguments in restore, adding ' +
+        'expected_revision: the latest arrangement_revision of opentune_get_project.',
+      restore: { tool: 'opentune_delete_track', arguments: { track_id: 4 } },
+    });
+    expect(r.summary).toContain('can be restored with opentune_delete_track only after the user explicitly agrees');
+  });
+
+  it('leaves recipes of tracks, tempo and selection to the user when no tool call fits them', () => {
+    const many = Array.from({ length: 33 }, (_, i) => ({ trackId: i, muted: true }));
+    for (const recipe of [
+      { method: 'track.set', params: { tracks: [] } },
+      { method: 'track.set', params: { tracks: [{ trackId: 1 }] } },
+      { method: 'track.set', params: { tracks: [{ trackId: 1, colour: 'red' }] } },
+      { method: 'track.set', params: { tracks: [{ trackId: 'x', muted: true }] } },
+      { method: 'track.set', params: { tracks: many } },
+      { method: 'track.delete', params: { trackId: -1 } },
+      { method: 'transport.setTempo', params: { bpm: 0, timeSignature: { numerator: 4, denominator: 4 } } },
+      { method: 'transport.setTempo', params: { bpm: 100, timeSignature: { numerator: 4, denominator: 3 } } },
+      { method: 'transport.setLoop', params: { enabled: 'yes' } },
+      // The previously active track, with no clip selected: focus_clip takes a clip.
+      { method: 'ui.setSelection', params: { trackId: 2 } },
+    ]) {
+      expect(revertPlan(recipe).kind, JSON.stringify(recipe)).toBe('manual');
     }
   });
 

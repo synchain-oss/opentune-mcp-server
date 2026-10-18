@@ -8,6 +8,18 @@ versioned separately and has its own changelog.
 
 ## Unreleased
 
+### Added
+
+- Track, transport and window tools, built on the OTCP methods of the capabilities `tracks.v1`, `transport.v1` and
+  `ui.bridge`: `opentune_set_tracks` (mute, solo, volume, colour, reveal hidden tracks, duplicate a track),
+  `opentune_delete_track` (needs the user's consent, cannot be undone, lists the track ids that moved),
+  `opentune_transport` (play, pause, stop, seek, play from and return to the last start, tempo, time signature, loop)
+  and `opentune_manage_ui` (select a clip with a prediction of what selecting does besides selecting, close dialogs,
+  mark the first-run onboarding as shown). Results that cannot be undone say so in the first sentence and give the
+  call that restores the old values.
+- `BUSY` with reason `modal_open` now points to `opentune_manage_ui` instead of asking the user to close the
+  dialog by hand, and keeps the rule that a dialog which commits its value on close needs the user's agreement.
+
 ## [0.1.0] - 2026-10-17
 
 The first public version of OpenTune MCP Server (by Synchain). It implements OTCP specification `spec-v1.0.0-rc.3` and

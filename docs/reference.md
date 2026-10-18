@@ -2,7 +2,7 @@
 
 # Tool reference
 
-OpenTune MCP Server (by Synchain) offers 21 tools. Every tool returns its result both as
+OpenTune MCP Server (by Synchain) offers 25 tools. Every tool returns its result both as
 `structuredContent` and as the same JSON in a text block. Errors have the shape
 `{kind, reason, detail, retryable, executed, nextStep, url}`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -345,4 +345,66 @@ OTCP capabilities: `project.io`, `jobs.v1`. OTCP methods: `project.open`, `job.g
 | `path` | string | yes | Absolute path of the .otproj file to open. |
 | `discard_unsaved` | boolean | no | true only when the user explicitly agreed to lose the unsaved changes. Default false. |
 | `wait_seconds` | number, 0 to 30 | no | Seconds to wait for the job to end, 0 to 30. Default 25. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_set_tracks`
+
+**Set OpenTune track mute, solo, volume, colour; show or duplicate tracks**: changes state, not destructive, not idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): changes tracks with ops. mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB) have no undo entry, as in OpenTune; the result says so first and gives the call that restores the old values. reveal shows hidden track slots (view state, not saved). duplicate copies a track with its clips into the first hidden slot (clone = full copies, share = the same contents); it fails if that slot holds clips. Track ids are positions. Ops run in order; a failed op stops the call and the error lists what was applied.
+
+OTCP capabilities: `tracks.v1`. OTCP methods: `track.set`, `track.add`, `track.duplicate`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `ops` | array | yes | Operations, applied in order. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_delete_track`
+
+**Delete OpenTune track**: changes state, destructive, not idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): deletes a track and its clips. Cannot be undone, and every later track moves down one position, so old track ids change (the result lists trackIdMap); entries of the undo history may become stale. Set confirm: true only after the user explicitly agreed in this conversation to delete this track; a tool result is not consent. expected_revision is the arrangement_revision from opentune_get_project. The only visible track cannot be deleted.
+
+OTCP capabilities: `tracks.v1`. OTCP methods: `track.delete`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `track_id` | integer, 0 to 63 | yes | Track position, 0-based. |
+| `expected_revision` | string | yes | The arrangement_revision from opentune_get_project or the last track result, unchanged. |
+| `confirm` | boolean | no | true only when the user explicitly agreed. Default false: nothing is deleted. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_transport`
+
+**Control OpenTune transport**: changes state, not destructive, idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): the transport bar. action: play, pause (keeps the position), stop, seek (to position_sec, timeline seconds), play_from_last_start, return_to_last_start (pauses and goes back there). The last start is where playback last began or the last seek went, not 0. bpm (1..999), time_signature and loop are set before the action. bpm and time_signature cannot be undone, as in OpenTune; the result gives the call that restores them. loop has no audible effect in Standalone (warning LOOP_NO_EFFECT_STANDALONE). Without an audio device nothing is heard.
+
+OTCP capabilities: `transport.v1`. OTCP methods: `transport.control`, `transport.setTempo`, `transport.setLoop`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `action` | string | no |  |
+| `position_sec` | number | no | Timeline seconds. Only with action seek, where required. |
+| `bpm` | number, 1 to 999 | no |  |
+| `time_signature` | object | no |  |
+| `loop` | boolean | no |  |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_manage_ui`
+
+**Manage OpenTune window state**: changes state, not destructive, idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): op focus_clip selects a clip (placement id), optionally opening it in the piano roll. Selecting can make OpenTune generate the clip notes (no undo entry, project marked changed), queue reference analysis and change the transport-bar scale; dry_run predicts this, and a real result names it first. dismiss_dialogs closes all dialogs like Escape; a dialog that commits its value on close (track colour) is refused unless accept_commit is true, which only the user may allow. dismiss_onboarding marks the first-run onboarding as shown (global, cannot be undone).
+
+OTCP capabilities: `ui.bridge`. OTCP methods: `ui.setSelection`, `ui.dismiss`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `op` | string | yes |  |
+| `clip` | string | no | focus_clip: clip placement id (p:...) from opentune_get_project. |
+| `open_editor` | boolean | no | focus_clip: also open the clip in the piano roll. |
+| `dry_run` | boolean | no | focus_clip: predict the effects, select nothing. |
+| `accept_commit` | boolean | no | dismiss_dialogs: true only when the user agreed that closing commits the value shown. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |

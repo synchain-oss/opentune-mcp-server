@@ -10,6 +10,7 @@ import { redoTool, undoTool } from './history.js';
 import { cancelJobTool, getJobTool } from './jobs.js';
 import { exportAudioTool } from './export-audio.js';
 import { launchTool } from './launch.js';
+import { manageUiTool } from './manage-ui.js';
 import { getNotesTool } from './notes.js';
 import { openAudioTool } from './open-audio.js';
 import { getProjectTool } from './project.js';
@@ -19,6 +20,8 @@ import { setClipTool } from './set-clip.js';
 import { getSettingsTool } from './settings.js';
 import { getStatusTool } from './status.js';
 import { editTimingTool } from './timing.js';
+import { deleteTrackTool, setTracksTool } from './tracks.js';
+import { transportTool } from './transport.js';
 
 /** Every tool, in the order tools/list reports them. */
 export const TOOLS: readonly ToolDefinition[] = [
@@ -43,4 +46,8 @@ export const TOOLS: readonly ToolDefinition[] = [
   saveProjectTool,
   overwriteProjectTool,
   openProjectTool,
+  setTracksTool,
+  deleteTrackTool,
+  transportTool,
+  manageUiTool,
 ];

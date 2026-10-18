@@ -28,14 +28,17 @@ export type RevertPlan =
   | {
       readonly kind: 'tool';
       readonly call: RestoreCall;
-      /** The tool also takes expected_revision, the latest clip_revision of the clip. */
+      /** The tool also takes expected_revision: the latest clip_revision of the clip, or the arrangement_revision. */
       readonly needsRevision: boolean;
+      /** Which revision expected_revision is; meaningful when needsRevision is true. */
+      readonly revisionKind: 'clip' | 'arrangement';
       readonly consent: boolean;
     };
 
 interface Mapped {
   readonly call: RestoreCall;
   readonly needsRevision: boolean;
+  readonly revisionKind?: 'clip' | 'arrangement';
 }
 
 const isInt = (value: unknown, min: number, max: number): value is number =>
@@ -45,12 +48,52 @@ function setClip(params: Json, args: (p: Json) => Json | null): Mapped | null {
   const clip = token(params.contentId, 'contentId');
   const rest = args(params);
   if (clip === null || rest === null) return null;
-  return { call: { tool: 'opentune_set_clip', arguments: { clip, ...rest } }, needsRevision: true };
+  return {
+    call: { tool: 'opentune_set_clip', arguments: { clip, ...rest } },
+    needsRevision: true,
+    revisionKind: 'clip',
+  };
 }
 
 function history(tool: string, params: Json): Mapped | null {
   const undoId = token(params.expectedUndoId, 'undoId');
   return undoId === null ? null : { call: { tool, arguments: { undo_id: undoId } }, needsRevision: false };
+}
+
+const TRACK_ID_MAX = 63;
+const TRACK_OPS_MAX = 32;
+const COLOUR_RE = /^#[0-9A-Fa-f]{6}$/;
+const isNum = (value: unknown, min: number, max: number): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
+
+/** The opentune_set_tracks ops that set the values a track.set recipe names. */
+function trackOps(params: Json): Mapped | null {
+  const ops: Json[] = [];
+  for (const item of Array.isArray(params.tracks) ? (params.tracks as unknown[]) : []) {
+    if (!isObject(item) || !isInt(item.trackId, 0, TRACK_ID_MAX)) return null;
+    const track_id = item.trackId;
+    if (typeof item.muted === 'boolean') ops.push({ op: 'mute', track_id, on: item.muted });
+    if (typeof item.solo === 'boolean') ops.push({ op: 'solo', track_id, on: item.solo });
+    if (isNum(item.volumeDb, -120, 24)) ops.push({ op: 'volume', track_id, db: item.volumeDb });
+    else if (isNum(item.volumeLinear, 0, 4)) ops.push({ op: 'volume', track_id, linear: item.volumeLinear });
+    if (typeof item.colour === 'string' && COLOUR_RE.test(item.colour)) {
+      ops.push({ op: 'colour', track_id, colour: item.colour });
+    }
+  }
+  if (ops.length === 0 || ops.length > TRACK_OPS_MAX) return null;
+  return { call: { tool: 'opentune_set_tracks', arguments: { ops } }, needsRevision: false };
+}
+
+/** The opentune_transport call that sets the tempo and time signature a transport.setTempo recipe names. */
+function tempoCall(params: Json): Mapped | null {
+  const signature = isObject(params.timeSignature) ? params.timeSignature : {};
+  if (!isNum(params.bpm, 1, 999) || !isInt(signature.numerator, 1, 32)) return null;
+  if (![1, 2, 4, 8, 16, 32].includes(signature.denominator as number)) return null;
+  const time_signature = { numerator: signature.numerator, denominator: signature.denominator };
+  return {
+    call: { tool: 'opentune_transport', arguments: { bpm: params.bpm, time_signature } },
+    needsRevision: false,
+  };
 }
 
 /** The tool call for each OTCP method a tool of this server performs, or null for params it cannot take. */
@@ -72,6 +115,28 @@ const TOOL_FOR = table<(params: Json) => Mapped | null>({
     typeof params.path === 'string' && params.path.length >= 1 && params.path.length <= 4096
       ? { call: { tool: 'opentune_open_project', arguments: { path: params.path } }, needsRevision: false }
       : null,
+  'track.set': trackOps,
+  'track.delete': (params) => {
+    const track_id = params.trackId;
+    return isInt(track_id, 0, TRACK_ID_MAX)
+      ? {
+          call: { tool: 'opentune_delete_track', arguments: { track_id } },
+          needsRevision: true,
+          revisionKind: 'arrangement',
+        }
+      : null;
+  },
+  'transport.setTempo': tempoCall,
+  'transport.setLoop': (params) =>
+    typeof params.enabled === 'boolean'
+      ? { call: { tool: 'opentune_transport', arguments: { loop: params.enabled } }, needsRevision: false }
+      : null,
+  'ui.setSelection': (params) => {
+    const clip = token(params.placementId, 'placementId');
+    return clip === null
+      ? null
+      : { call: { tool: 'opentune_manage_ui', arguments: { op: 'focus_clip', clip } }, needsRevision: false };
+  },
   'edit.undo': (params) => history('opentune_undo', params),
   'edit.redo': (params) => history('opentune_redo', params),
 });
@@ -87,7 +152,13 @@ export function revertPlan(revert: unknown): RevertPlan {
   const consent = revert.requiresConsent === true;
   const mapped = TOOL_FOR[method]?.(isObject(revert.params) ? revert.params : {}) ?? null;
   if (mapped === null) return { kind: 'manual', consent };
-  return { kind: 'tool', call: mapped.call, needsRevision: mapped.needsRevision, consent };
+  return {
+    kind: 'tool',
+    call: mapped.call,
+    needsRevision: mapped.needsRevision,
+    revisionKind: mapped.revisionKind ?? 'clip',
+    consent,
+  };
 }
 
 /** The sentence of a revert line. */
@@ -103,9 +174,11 @@ export function revertText(plan: RevertPlan): string {
         `window.${plan.consent ? " It needs the user's explicit agreement." : ''}`
       );
     case 'tool': {
-      const revision = plan.needsRevision
-        ? ', adding expected_revision: the latest clip_revision you read for the clip'
-        : ', as they are';
+      const latest =
+        plan.revisionKind === 'arrangement'
+          ? 'arrangement_revision of opentune_get_project'
+          : 'clip_revision you read for the clip';
+      const revision = plan.needsRevision ? `, adding expected_revision: the latest ${latest}` : ', as they are';
       const call = `call ${plan.call.tool} with the arguments in restore${revision}`;
       return plan.consent ? `Only after the user explicitly agrees to restore it: ${call}.` : `Restore: ${call}.`;
     }

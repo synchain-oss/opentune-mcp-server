@@ -157,7 +157,9 @@ The target exists and replacing it was not allowed.
 
 OpenTune is in use: a dialog is open, the user is dragging, or an import, export or project operation runs. Finish it
 in OpenTune, then retry. With reason `modal_open` a modal dialog is open; the first one is usually the one-time welcome
-dialog, see [First launch dialog](#first-launch-dialog).
+dialog, see [First launch dialog](#first-launch-dialog). `opentune_manage_ui` with op `dismiss_dialogs` closes
+dialogs like the Escape key; a dialog that commits its value when closed (the track-colour dialog) is closed only
+with `accept_commit: true`, which needs the user's agreement.
 
 ### Error TIMEOUT
 
@@ -310,7 +312,9 @@ hexadecimal characters, so nothing could be checked: unpack the test build again
 The first time OpenTune starts with a fresh data folder it shows a one-time welcome (onboarding) dialog. A person has to
 answer it once in the OpenTune window. While it, or any other modal dialog, is open, every write operation fails with
 [BUSY](#error-busy) and reason `modal_open`. `opentune_get_settings` reports whether onboarding was shown. Ask the user
-to answer the dialog, then retry. The server never answers a dialog itself.
+to answer the dialog, then retry. `opentune_manage_ui` can close it like the Escape key (op `dismiss_dialogs`, or op
+`dismiss_onboarding` for the onboarding overlay, which also marks onboarding as shown: a global setting that cannot be
+undone, so ask the user first). The server never presses a button of a dialog.
 
 ## Hybrid mode
 

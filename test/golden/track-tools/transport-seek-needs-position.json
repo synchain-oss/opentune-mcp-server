@@ -1,0 +1,21 @@
+{
+  "description": "A seek without a position: nothing is sent.",
+  "tool": "opentune_transport",
+  "input": {
+    "action": "seek"
+  },
+  "result": {
+    "error": {
+      "kind": "INVALID_ARGUMENT",
+      "reason": "position_required",
+      "detail": "action seek needs position_sec, the timeline position in seconds",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "message": "The arguments were rejected; correct them as the detail says and call again."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-invalid_argument"
+    }
+  }
+}

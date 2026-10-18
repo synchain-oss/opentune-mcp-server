@@ -95,6 +95,45 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'INVALID_ARGUMENT/track_capacity': agent(
     'There are not enough free tracks for this layout. Use fewer files, another layout or a track that has room.',
   ),
+  'INVALID_ARGUMENT/dialog_commits_on_close': user(
+    'Closing a dialog that is open would commit the value it shows (the track-colour dialog commits its colour). ' +
+      'Ask the user whether to accept that; only after the user agrees, call opentune_manage_ui again with ' +
+      'accept_commit: true. Otherwise the user can cancel the dialog in the OpenTune window.',
+  ),
+  'INVALID_ARGUMENT/target_track_occupied': agent(
+    'The first hidden track slot already holds clips, so the copy has nowhere to go. Show that slot first with ' +
+      'opentune_set_tracks (op reveal); a shown track keeps its clips. Then duplicate again: the copy goes to the ' +
+      'next hidden slot.',
+  ),
+  'INVALID_ARGUMENT/track_limit': user(
+    'Every track slot is already visible, so no track can be added or duplicated. Tell the user; a track the user ' +
+      'no longer needs can be deleted with opentune_delete_track, only with explicit consent from the user.',
+  ),
+  'INVALID_ARGUMENT/last_track': agent('The only visible track cannot be deleted. Choose another track.'),
+  'INVALID_ARGUMENT/track_hidden': {
+    actor: 'agent',
+    tool: 'opentune_get_project',
+    message:
+      'The track is hidden. Only visible tracks can be deleted; read the project for the visible track ids ' +
+      '(track ids are positions and shift when a track is deleted).',
+  },
+  'REVISION_CONFLICT/arrangement_changed': {
+    actor: 'agent',
+    tool: 'opentune_get_project',
+    message:
+      'The arrangement changed since the arrangement_revision was read (clips or tracks moved, were added or ' +
+      'removed). Nothing was deleted. Read the project again, check that the track id still names the track ' +
+      'meant, then call again with the new arrangement_revision.',
+  },
+  'BUSY/modal_open': {
+    actor: 'agent',
+    tool: 'opentune_manage_ui',
+    args: { op: 'dismiss_dialogs' },
+    message:
+      'A dialog is open in OpenTune. Call opentune_manage_ui with op dismiss_dialogs, then retry. Closing a ' +
+      'dialog can commit the value it shows (the track-colour dialog commits its colour), so that tool refuses ' +
+      'unless the user agreed: ask the user first, and set accept_commit: true only after the user agrees.',
+  },
   'NOT_READY/export_wait_timeout': agent(
     'Analysis or rendering did not settle in time and nothing was written. Wait for OpenTune to finish, then export again.',
   ),

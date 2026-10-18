@@ -1,0 +1,190 @@
+{
+  "description": "Mute and volume: not undoable, with the way back.",
+  "tool": "opentune_set_tracks",
+  "input": {
+    "ops": [
+      {
+        "op": "mute",
+        "track_id": 1,
+        "on": true
+      },
+      {
+        "op": "volume",
+        "track_id": 1,
+        "db": -6
+      }
+    ]
+  },
+  "result": {
+    "summary": "opentune_set_tracks: changed 1 track (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "track",
+        "ref": {
+          "trackId": 1
+        },
+        "label": "Track 2",
+        "fields": {
+          "muted": {
+            "before": false,
+            "after": true,
+            "unit": null
+          },
+          "volumeDb": {
+            "before": 0,
+            "after": -6,
+            "unit": "db"
+          },
+          "volumeLinear": {
+            "before": 1,
+            "after": 0.5011872336272722,
+            "unit": "linear"
+          },
+          "audible": {
+            "before": true,
+            "after": false,
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": {
+        "before": "t2",
+        "after": "t12"
+      },
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "track.set",
+        "params": {
+          "tracks": [
+            {
+              "trackId": 1,
+              "muted": false,
+              "volumeDb": 0
+            }
+          ]
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "changed track",
+        "target": "track 1",
+        "visibleNow": true
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "track",
+          "label": "Track 2",
+          "ref": {
+            "trackId": 1
+          },
+          "fields": [
+            {
+              "field": "muted",
+              "before": false,
+              "after": true,
+              "unit": null
+            },
+            {
+              "field": "volumeDb",
+              "before": 0,
+              "after": -6,
+              "unit": "db"
+            },
+            {
+              "field": "volumeLinear",
+              "before": 1,
+              "after": 0.5011872336272722,
+              "unit": "linear"
+            },
+            {
+              "field": "audible",
+              "before": true,
+              "after": false,
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_tracks with the arguments in restore, as they are.",
+        "revert": {
+          "method": "track.set",
+          "params": {
+            "tracks": [
+              {
+                "trackId": 1,
+                "muted": false,
+                "volumeDb": 0
+              }
+            ]
+          }
+        },
+        "restore": {
+          "tool": "opentune_set_tracks",
+          "arguments": {
+            "ops": [
+              {
+                "op": "mute",
+                "track_id": 1,
+                "on": false
+              },
+              {
+                "op": "volume",
+                "track_id": 1,
+                "db": 0
+              }
+            ]
+          }
+        }
+      }
+    ]
+  }
+}
