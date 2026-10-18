@@ -246,6 +246,7 @@ describe('opentune_get_status', () => {
     [{ kind: 'SHUTTING_DOWN' }, 'NOT_READY', 'shutting_down'],
     [{ kind: 'BUSY', reason: 'session_limit' }, 'NOT_READY', 'session_limit'],
     [{ kind: 'PROTOCOL_MISMATCH' }, 'PROTOCOL_MISMATCH', 'hello_rejected'],
+    [{ kind: 'PROTOCOL_MISMATCH', reason: 'major_not_served' }, 'PROTOCOL_MISMATCH', 'major_not_served'],
   ])('maps a failed session (%j) to %s', async (data, state, reason) => {
     const ctx = fakeInstances([failing(data)]);
     expectState(await getStatus(ctx, undefined), state, reason);

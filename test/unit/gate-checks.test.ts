@@ -1071,7 +1071,9 @@ describe('audioKind / checkNoNewAudio', () => {
   });
 });
 
-describe('addedInHistory: audio added by one commit and removed by the next', () => {
+// These tests commit to a real repository with git, which is slow on Windows CI (the slowest seen
+// was about 5.9 s) against vitest's default of 5 s; 20 s is over three times that.
+describe('addedInHistory: audio added by one commit and removed by the next', { timeout: 20_000 }, () => {
   // A real repository in a temporary directory. Commits are made with plumbing (hash-object,
   // mktree, commit-tree), which runs no hooks, so the test does not depend on local hook setup.
   const dir = mkdtempSync(path.join(os.tmpdir(), 'ot-h2-history-'));

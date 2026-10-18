@@ -188,7 +188,10 @@ describe('OtcpSession against other listeners', () => {
     if (kind === null) {
       expect((await opened).hello.protocol).toBe(protocol);
     } else {
-      expect((await failure(opened)).data).toMatchObject({ kind, reason: 'major_not_served', executed: false });
+      const error = await failure(opened);
+      expect(error.data).toMatchObject({ kind, reason: 'major_not_served', executed: false });
+      // The detail names the major only; the instance's own protocol string is never echoed.
+      expect(error.data.detail).not.toContain(protocol);
     }
   });
 

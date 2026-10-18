@@ -42,7 +42,7 @@ wait for a yes. Never start the download on your own.
    - **NVIDIA GPU found** (the plan's note says so): recommend the **GPU install** it shows,
      Qwen3-ASR 1.7B with CUDA PyTorch, about **10 GB**, because the GPU is much faster (on a CPU
      the 0.6B model took about 6 to 8 minutes for an 8-track song).
-   - **No NVIDIA GPU**: Qwen3-ASR 0.6B with CPU PyTorch, about **4.7 GB**.
+   - **No NVIDIA GPU**: Qwen3-ASR 0.6B with CPU PyTorch, about **4.7 GB** (on macOS this is PyPI's standard build).
    - **The note says the NVIDIA driver is too old**: the plan is the CPU install; tell the user
      that a driver update makes the GPU usable (then run setup again with `--torch cuda`).
 3. Only after the user agrees, run the same command with `--yes` instead of `--plan`. Useful flags:
