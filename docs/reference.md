@@ -2,7 +2,7 @@
 
 # Tool reference
 
-OpenTune MCP Server (by Synchain) offers 25 tools. Every tool returns its result both as
+OpenTune MCP Server (by Synchain) offers 26 tools. Every tool returns its result both as
 `structuredContent` and as the same JSON in a text block. Errors have the shape
 `{kind, reason, detail, retryable, executed, nextStep, url}`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -345,6 +345,22 @@ OTCP capabilities: `project.io`, `jobs.v1`. OTCP methods: `project.open`, `job.g
 | `path` | string | yes | Absolute path of the .otproj file to open. |
 | `discard_unsaved` | boolean | no | true only when the user explicitly agreed to lose the unsaved changes. Default false. |
 | `wait_seconds` | number, 0 to 30 | no | Seconds to wait for the job to end, 0 to 30. Default 25. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_edit_arrangement`
+
+**Edit OpenTune clips on the timeline**: changes state, destructive, not idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade, set_reference (experimental) run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy).
+
+OTCP capabilities: `arrangement.v1`. OTCP methods: `arrangement.edit`, `arrangement.copy`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `expected_revision` | string | yes | arrangement_revision from opentune_get_project or the last result. |
+| `ops` | array | yes | Clip ids: placement ids (p:...). |
+| `dry_run` | boolean | no | Predict without applying. |
+| `confirm` | boolean | no | delete only: true only after the user explicitly agreed. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
 
 ### `opentune_set_tracks`

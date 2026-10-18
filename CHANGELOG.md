@@ -10,6 +10,16 @@ versioned separately and has its own changelog.
 
 ### Added
 
+- `opentune_edit_arrangement`: edits clips on the timeline as OpenTune's arrangement view does (OTCP
+  `arrangement.edit` and `arrangement.copy`). `move`, `trim`, `gain`, `fade` and `set_reference` run in order as one
+  undo step; `split`, `merge`, `delete` and `copy` each go in a call of their own. The first sentence of a split, merge
+  or delete result says that it cannot be undone (OpenTune frees objects its own undo entry needs) and to ask the user
+  first; `delete` needs `confirm: true`, given only with the user's consent, and the tool is marked destructive.
+  `dry_run` previews every op but `copy`. The tool takes and returns the `arrangement_revision`, so edits of notes,
+  keys or pitch never conflict with a clip edit, and lists the ids of new and removed clips in `clip_ids`. Revert
+  recipes that name `arrangement.edit` (the merge after a split, the removal of copies) are now given as calls of this
+  tool; a restore that splits, merges or deletes cannot be undone either, so its revert line asks for the user's
+  consent first.
 - Track, transport and window tools, built on the OTCP methods of the capabilities `tracks.v1`, `transport.v1` and
   `ui.bridge`: `opentune_set_tracks` (mute, solo, volume, colour, reveal hidden tracks, duplicate a track),
   `opentune_delete_track` (needs the user's consent, cannot be undone, lists the track ids that moved),

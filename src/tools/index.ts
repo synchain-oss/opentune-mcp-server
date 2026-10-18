@@ -4,6 +4,7 @@
 import { analyzePitchTool } from './analyze.js';
 import { autotuneTool } from './autotune.js';
 import { getClipDetailsTool } from './clip-details.js';
+import { editArrangementTool } from './edit-arrangement.js';
 import { editNotesTool } from './edit-notes.js';
 import { estimateKeyTool } from './estimate-key.js';
 import { redoTool, undoTool } from './history.js';
@@ -46,6 +47,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   saveProjectTool,
   overwriteProjectTool,
   openProjectTool,
+  editArrangementTool,
   setTracksTool,
   deleteTrackTool,
   transportTool,

@@ -8,7 +8,8 @@
 // state by hand in the OpenTune window. A test keeps every call below valid for its tool's schema.
 
 import type { Json } from '../otcp/client.js';
-import { isObject } from './changes.js';
+import { encodeArrangementRevision } from '../otcp/tokens.js';
+import { asList, isObject } from './changes.js';
 import { table, token } from './text.js';
 
 /** A tool call that restores the previous state. */
@@ -33,11 +34,16 @@ export type RevertPlan =
       /** Which revision expected_revision is; meaningful when needsRevision is true. */
       readonly revisionKind: 'clip' | 'arrangement';
       readonly consent: boolean;
+      /** The argument by which the tool takes the user's consent, added only once the user agreed. */
+      readonly consentArgument?: string;
     };
 
 interface Mapped {
   readonly call: RestoreCall;
   readonly needsRevision: boolean;
+  /** The call needs the user's consent whether or not the recipe says so. */
+  readonly consent?: true;
+  readonly consentArgument?: string;
   readonly revisionKind?: 'clip' | 'arrangement';
 }
 
@@ -58,6 +64,90 @@ function setClip(params: Json, args: (p: Json) => Json | null): Mapped | null {
 function history(tool: string, params: Json): Mapped | null {
   const undoId = token(params.expectedUndoId, 'undoId');
   return undoId === null ? null : { call: { tool, arguments: { undo_id: undoId } }, needsRevision: false };
+}
+
+const isSec = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+const clipOf = (value: unknown): string | null => token(value, 'placementId');
+
+/** One op of an arrangement.edit recipe as opentune_edit_arrangement takes it, or null. */
+function clipOp(op: unknown): Json | null {
+  if (!isObject(op)) return null;
+  const clip = clipOf(op.placementId);
+  const withClip = (rest: Json | null): Json | null => (clip === null || rest === null ? null : { clip, ...rest });
+  switch (op.op) {
+    case 'move': {
+      const track =
+        op.toTrackId === undefined ? undefined : isInt(op.toTrackId, 0, Number.MAX_SAFE_INTEGER) ? op.toTrackId : null;
+      const start =
+        op.startTimelineSec === undefined ? undefined : isSec(op.startTimelineSec) ? op.startTimelineSec : null;
+      if (track === null || start === null || (track === undefined && start === undefined)) return null;
+      return withClip({
+        op: 'move',
+        ...(track === undefined ? {} : { to_track_id: track }),
+        ...(start === undefined ? {} : { start_timeline_sec: start }),
+      });
+    }
+    case 'trim':
+      return (op.edge === 'start' || op.edge === 'end') && isSec(op.toTimelineSec)
+        ? withClip({ op: 'trim', edge: op.edge, to_timeline_sec: op.toTimelineSec })
+        : null;
+    case 'setGain':
+      // The tool takes the gain in dB only.
+      return typeof op.gainDb === 'number' && Number.isFinite(op.gainDb)
+        ? withClip({ op: 'gain', gain_db: op.gainDb })
+        : null;
+    case 'setFade': {
+      const fades: Json = {};
+      if (isSec(op.fadeInSec)) fades.fade_in_sec = op.fadeInSec;
+      if (isSec(op.fadeOutSec)) fades.fade_out_sec = op.fadeOutSec;
+      return Object.keys(fades).length === 0 ? null : withClip({ op: 'fade', ...fades });
+    }
+    case 'split':
+      return isSec(op.atTimelineSec) ? withClip({ op: 'split', at_timeline_sec: op.atTimelineSec }) : null;
+    case 'merge': {
+      const leading = clipOf(op.leadingPlacementId);
+      const trailing = clipOf(op.trailingPlacementId);
+      return leading === null || trailing === null
+        ? null
+        : { op: 'merge', leading_clip: leading, trailing_clip: trailing };
+    }
+    case 'delete': {
+      const clips = asList(op.placementIds).map(clipOf);
+      return clips.length === 0 || clips.length > 64 || clips.includes(null) ? null : { op: 'delete', clips };
+    }
+    case 'setReference': {
+      // The tool unbinds when reference_clip is left out.
+      if (op.referencePlacementId === null) return withClip({ op: 'set_reference' });
+      const reference = clipOf(op.referencePlacementId);
+      return reference === null ? null : withClip({ op: 'set_reference', reference_clip: reference });
+    }
+    default:
+      return null;
+  }
+}
+
+/** The ops OpenTune cannot undo (PROTOCOL.md section 15.4 rule 1). */
+const NOT_UNDOABLE = new Set(['split', 'merge', 'delete']);
+
+/**
+ * An arrangement.edit recipe as a call of opentune_edit_arrangement; its expected revision comes with it.
+ * A restore that splits, merges or deletes cannot be undone in turn, so it waits for the user's consent
+ * even when the recipe does not ask for it; a delete also takes that consent as confirm.
+ */
+function editArrangement(params: Json): Mapped | null {
+  const revision = token(params.expectedArrangementRevision, 'revision');
+  const ops = asList(params.ops).map(clipOp);
+  if (revision === null || ops.length === 0 || ops.length > 64 || ops.includes(null)) return null;
+  const kinds = ops.map((op) => String(op?.op));
+  return {
+    call: {
+      tool: 'opentune_edit_arrangement',
+      arguments: { expected_revision: encodeArrangementRevision(revision), ops },
+    },
+    needsRevision: false,
+    ...(kinds.some((kind) => NOT_UNDOABLE.has(kind)) ? { consent: true } : {}),
+    ...(kinds.includes('delete') ? { consentArgument: 'confirm' } : {}),
+  };
 }
 
 const TRACK_ID_MAX = 63;
@@ -139,6 +229,7 @@ const TOOL_FOR = table<(params: Json) => Mapped | null>({
   },
   'edit.undo': (params) => history('opentune_undo', params),
   'edit.redo': (params) => history('opentune_redo', params),
+  'arrangement.edit': editArrangement,
 });
 
 /** The OTCP methods a revert recipe can name and still be carried out by a tool call. */
@@ -156,8 +247,9 @@ export function revertPlan(revert: unknown): RevertPlan {
     kind: 'tool',
     call: mapped.call,
     needsRevision: mapped.needsRevision,
+    consent: consent || mapped.consent === true,
+    ...(mapped.consentArgument === undefined ? {} : { consentArgument: mapped.consentArgument }),
     revisionKind: mapped.revisionKind ?? 'clip',
-    consent,
   };
 }
 
@@ -180,7 +272,9 @@ export function revertText(plan: RevertPlan): string {
           : 'clip_revision you read for the clip';
       const revision = plan.needsRevision ? `, adding expected_revision: the latest ${latest}` : ', as they are';
       const call = `call ${plan.call.tool} with the arguments in restore${revision}`;
-      return plan.consent ? `Only after the user explicitly agrees to restore it: ${call}.` : `Restore: ${call}.`;
+      if (!plan.consent) return `Restore: ${call}.`;
+      const add = plan.consentArgument === undefined ? '' : `, adding ${plan.consentArgument}: true`;
+      return `Only after the user explicitly agrees to restore it: ${call}${add}.`;
     }
   }
 }

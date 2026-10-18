@@ -1,0 +1,121 @@
+{
+  "description": "A preview of a split: the first sentence says applying it cannot be undone.",
+  "input": {
+    "ops": [
+      {
+        "op": "split",
+        "clip": "p:01234567:0:3",
+        "at_timeline_sec": 11.504
+      }
+    ],
+    "dry_run": true,
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "summary": "opentune_edit_arrangement: dry run, nothing was changed; applying this split cannot be undone (OpenTune cannot undo a clip split, merge or delete), so apply it only after the user explicitly agreed. It would change 1 placement. Warnings: SPLIT_SNAPPED.",
+    "applied": false,
+    "noOp": false,
+    "dryRun": true,
+    "changes": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:3"
+        },
+        "label": "Clip 3 on Track 3",
+        "fields": {
+          "durationSec": {
+            "before": 3,
+            "after": 1.5,
+            "unit": "sec"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a35",
+      "contents": [],
+      "placements": [
+        {
+          "placementId": "p:01234567:0:3",
+          "geometryHash": "h29"
+        }
+      ]
+    },
+    "undo": null,
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 6
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "SPLIT_SNAPPED",
+        "subject": {
+          "placementId": "p:01234567:0:3"
+        },
+        "data": {
+          "requestedTimelineSec": 11.504,
+          "appliedTimelineSec": 11.5
+        }
+      }
+    ],
+    "job": null,
+    "uiEffects": [],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "placement",
+          "label": "Clip 3 on Track 3",
+          "ref": {
+            "placementId": "p:01234567:0:3"
+          },
+          "fields": [
+            {
+              "field": "durationSec",
+              "before": 3,
+              "after": 1.5,
+              "unit": "sec"
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "SPLIT_SNAPPED",
+        "text": "The split position was moved to the nearest analysis frame.",
+        "subject": {
+          "placementId": "p:01234567:0:3"
+        },
+        "data": {
+          "requestedTimelineSec": 11.504,
+          "appliedTimelineSec": 11.5
+        }
+      }
+    ],
+    "arrangement_revision": "ar1.YTM1",
+    "clip_ids": {
+      "created": [],
+      "removed": []
+    }
+  }
+}
