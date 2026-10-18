@@ -1,0 +1,134 @@
+{
+  "manifest_version": "0.3",
+  "name": "opentune-mcp",
+  "display_name": "OpenTune MCP Server (by Synchain)",
+  "version": "0.1.0",
+  "description": "Lets AI agents operate OpenTune Standalone, an editor for the pitch and timing of recorded vocals, and reports every result in a clear, structured form.",
+  "long_description": "OpenTune MCP Server (by Synchain) is a local MCP server. It talks to a build of OpenTune Standalone that has the control interface, over a loopback-only connection; it listens on no network port. Choose that OpenTune executable in the settings below. Run opentune-mcp doctor from a terminal if something does not work.",
+  "author": {
+    "name": "Synchain",
+    "email": "contact@synchain.ca",
+    "url": "https://www.synchain.ca"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/synchain-oss/opentune-mcp-server"
+  },
+  "homepage": "https://github.com/synchain-oss/opentune-mcp-server#readme",
+  "support": "https://github.com/synchain-oss/opentune-mcp-server/issues",
+  "license": "MIT",
+  "keywords": ["opentune", "vocal", "pitch-correction", "audio"],
+  "server": {
+    "type": "node",
+    "entry_point": "server/opentune-mcp.mjs",
+    "mcp_config": {
+      "command": "node",
+      "args": ["${__dirname}/server/opentune-mcp.mjs"],
+      "env": {
+        "OPENTUNE_MCP_OPENTUNE_PATH": "${user_config.opentune_path}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "opentune_get_status",
+      "description": "OpenTune (audio vocal pitch editor): reports whether this server can use OpenTune now, as one state (READY, NOT_READY, PROTOCOL_MISMATCH, STARTING, RUNNING_WITHOUT_API, NOT_RUNNING, NO_API_BUILD, NOT_INSTALLED, WSL_UNSUPPORTED_RUNTIME) with a nextStep saying who should do what. Call it first, and again whenever a tool error says so. Lists the running instances with their instance_id; when several run, ask the user which one to use. Read-only: it never starts, stops or changes OpenTune."
+    },
+    {
+      "name": "opentune_get_project",
+      "description": "OpenTune (audio vocal pitch editor): reads the open project: path and unsaved-changes flag, tracks (volume, mute, solo), clips with timeline start, end and source file, a summary of each clip content (analysis state, key, note count, pitch shift), the selection and the transport. Every clip carries a clip_revision and the result an arrangement_revision: pass them as expected_revision to write tools. track_ids limits the result to those tracks; include_history adds the undo and redo tops. Read-only."
+    },
+    {
+      "name": "opentune_get_notes",
+      "description": "OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (limit default 100, at most 200; fewer when the page would be large). Each note has its index, start and end seconds on the content clock (source audio) and, for a clip placement, on the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock says which clock from and to use; timeline needs a placement id. Read-only."
+    },
+    {
+      "name": "opentune_get_job",
+      "description": "OpenTune (audio vocal pitch editor): reports a long-running job (import, export, analysis, project open or save): state queued, running, succeeded, failed or cancelled, progress, and when it has ended its result or error. With wait_seconds it waits up to that long for the job to end. Finished jobs are kept for 30 minutes. Read-only."
+    },
+    {
+      "name": "opentune_cancel_job",
+      "description": "OpenTune (audio vocal pitch editor): asks OpenTune to stop a running job and reports the outcome. Work the job already committed stays: an import keeps the items imported so far, and the result lists them with how to revert each; an export never touches the target file. Project saves, preference changes and project opens past their preparation cannot be cancelled; the error then says so and the job continues."
+    },
+    {
+      "name": "opentune_launch",
+      "description": "OpenTune (audio vocal pitch editor): starts the OpenTune build configured for this server (OPENTUNE_MCP_OPENTUNE_PATH) with its control API and waits up to 30 seconds until it is ready, then reports the state like opentune_get_status, with a nextStep. Starts nothing when OpenTune already runs (alreadyRunning), may run without the control API, or no API build is configured; the result says why. Repeated or concurrent calls share one start. allow_second_instance needs the user's explicit consent; each call with it starts one more instance once earlier starts are done. Never closes OpenTune."
+    },
+    {
+      "name": "opentune_set_clip",
+      "description": "OpenTune (audio vocal pitch editor): sets the key (root and scale) and/or the pitch shift (whole semitones plus cents) of a clip. The key change cannot be undone (as in OpenTune); the result gives the opentune_set_clip call that restores the previous key. The pitch shift is one undo step; it does not transpose the key. With both, two requests run, key first, and the result reports each. Needs the clip_revision as expected_revision; only the key part of it is checked. The result returns the new clip_revision. Setting the current value changes nothing."
+    },
+    {
+      "name": "opentune_autotune_range",
+      "description": "OpenTune (audio vocal pitch editor): runs AUTO on a clip with an explicit mode. regenerate rebuilds notes in ranges from the sung pitch, snapped to scale; snapNotes moves existing note targets to scale; notesOnly replaces ALL notes, cannot be undone, needs replace_edited_notes true; reference aligns to the reference clip (needs reference.v1). Ranges: source-audio seconds, default whole clip, max 16, one undo step. Unset parameters use generator defaults, not window knobs. retune_speed 0..1: 0 keeps natural movement, 1 sounds mechanical."
+    },
+    {
+      "name": "opentune_edit_notes",
+      "description": "OpenTune (audio vocal pitch editor): edits existing notes of a clip as the piano roll does; never adds or removes notes. ops (1-32, in order, one undo step): setTargetPitch, shiftCents, snapToScale, setParams (retune_speed 0..1: 0 keeps the natural pitch movement, 1 sounds mechanical; vibrato; pitch_drift_scale). Each op selects notes; selections refer to the notes at expected_revision. dry_run previews."
+    },
+    {
+      "name": "opentune_undo",
+      "description": "OpenTune (audio vocal pitch editor): undoes the step on top of the undo history, but only if it is the step undo_id names; otherwise UNDO_CONFLICT, and then ask the user (the history has changed). Only edits that reported an undo id can be undone. A step that changes nothing still uses up the undo step and marks the project changed (UNDO_NO_EFFECT). Clip split, merge and delete cannot be undone safely in some builds (undo_unsafe_build). The result gives the opentune_redo call that takes this back."
+    },
+    {
+      "name": "opentune_redo",
+      "description": "OpenTune (audio vocal pitch editor): redoes the step on top of the redo history, but only if it is the step undo_id names (the id the undo result reported); otherwise UNDO_CONFLICT, and then ask the user. Any edit without an undo entry made after the undo clears the redo history. A step that changes nothing still uses up the redo step (UNDO_NO_EFFECT). The result gives the opentune_undo call that takes this back."
+    },
+    {
+      "name": "opentune_analyze_pitch",
+      "description": "OpenTune (audio vocal pitch editor): measures the pitch of a clip against its notes, in cents (positive = sharp). Plain fields are before the corrections (detected minus target); corrected* fields are after them (corrected minus target). Per note: median deviation, stability, onset, release; notes beyond threshold_cents (default 25) are flagged, before and after. Phrases split at silences over 0.4 s. detail summary (default): totals, worst notes, flagged note indexes (as in opentune_get_notes), clip_revision; phrases and notes are paged. from and to: seconds of the source audio. Read-only."
+    },
+    {
+      "name": "opentune_open_audio",
+      "description": "OpenTune (audio vocal pitch editor): imports audio files as new clips, as the window does, and waits up to wait_seconds (default 25, max 30); if the import job has not ended, the result names it for opentune_get_job. Give path or items (absolute paths; quotes, file://, ~ and /mnt/<drive>/ are accepted). layout: single, sequential (end to end) or separate_tracks. Not undoable; the result says how to revert. In the openDyne scheme the focused clip also gets notes (no undo entry). Repeating a call with the same files and target returns the earlier result unless allow_duplicate is true."
+    },
+    {
+      "name": "opentune_export_audio",
+      "description": "OpenTune (audio vocal pitch editor): writes a WAV file of a clip, a track or the master mix and waits up to wait_seconds (default 20, max 30); if the export job has not ended, the result names it for opentune_get_job. kind clip needs target.clip (placement id), track needs target.track, master takes none. path: absolute, ending in .wav; default <source folder>/<source name>.opentune.wav. Never overwrites: a taken name gets the next free one. Unanalysed contents are exported uncorrected (dryContents; allow_dry for failed analysis). Does not change the project."
+    },
+    {
+      "name": "opentune_edit_timing",
+      "description": "OpenTune (audio vocal pitch editor): edits the time handles of one clip; audio between handles stretches or compresses. OpenTune does not detect beats: handle positions come from the user, or from op seed, which places initial handles and cannot be undone. ops run in order: seed (a job), shift (handles in a start..end range, output or content clock, by delta_ms), move (named handles to output_sec). Limited moves are applied as far as allowed (CLAMPED). Handle ids come from time_grid_handles of the last result of this tool (seed gives them too)."
+    },
+    {
+      "name": "opentune_get_clip_details",
+      "description": "OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), the reference binding, and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only."
+    },
+    {
+      "name": "opentune_get_settings",
+      "description": "OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features, language, whether onboarding was shown), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only."
+    },
+    {
+      "name": "opentune_estimate_key",
+      "description": "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch (OpenTune's analysis) and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses), tonic_confidence, tuning offset in cents, local keys over time and keys per section (seconds; the mix and the clip's source audio start together). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only."
+    },
+    {
+      "name": "opentune_save_project",
+      "description": "OpenTune (audio vocal pitch editor): saves the project; OpenTune has no autosave, so unsaved work is lost when it closes. mode save writes the current project file (fails when the project was never saved); mode save_as takes an absolute .otproj path and makes it the project file. Refuses to replace a different existing file: use another path, or opentune_save_project_overwrite with the user's consent. Waits up to wait_seconds (default 25, max 30). Undo history is not stored."
+    },
+    {
+      "name": "opentune_save_project_overwrite",
+      "description": "OpenTune (audio vocal pitch editor): saves the project over a different, already existing project file (absolute .otproj path), destroying that file. Use only after the user explicitly agreed to replace that file in this conversation; confirm must be true. Otherwise save under a new path with opentune_save_project. Waits up to wait_seconds (default 25, max 30)."
+    },
+    {
+      "name": "opentune_open_project",
+      "description": "OpenTune (audio vocal pitch editor): opens an .otproj file (absolute path) and replaces the current project. Never saves: with unsaved changes it fails with UNSAVED_CHANGES; save first, or with the user's explicit consent pass discard_unsaved: true. Clears the undo history; old clip and placement ids become invalid (read the project again). Clips whose media file is missing are skipped and listed. Waits up to wait_seconds (default 25, max 30)."
+    }
+  ],
+  "tools_generated": false,
+  "user_config": {
+    "opentune_path": {
+      "type": "file",
+      "title": "OpenTune executable",
+      "description": "The OpenTune executable to start when needed. Choose a build of OpenTune Standalone that includes the control interface (the file opentune-control.json sits next to it). Leave empty to use only an OpenTune you have already started.",
+      "required": false,
+      "default": ""
+    }
+  },
+  "compatibility": {
+    "platforms": ["win32", "darwin"],
+    "runtimes": {
+      "node": ">=22"
+    }
+  }
+}

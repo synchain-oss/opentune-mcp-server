@@ -1,0 +1,168 @@
+{
+  "description": "Redo of the same step; the result gives the undo.",
+  "tool": "opentune_redo",
+  "input": {
+    "undo_id": "u:01234567:5"
+  },
+  "result": {
+    "summary": "opentune_redo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_undo, see the revert line; side effects: rendering of one or more contents was queued again).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "content",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1",
+        "fields": {
+          "revision": {
+            "before": "r32",
+            "after": "r36",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n30",
+              "after": "n34"
+            },
+            "pitch": {
+              "before": "p31",
+              "after": "p35"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r36",
+          "gridRevision": "g6",
+          "keyRevision": "k17"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "edit.undo",
+        "params": {
+          "expectedUndoId": "u:01234567:5"
+        }
+      }
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "entry": {
+      "undoId": "u:01234567:5",
+      "description": "Edit notes",
+      "origin": "control",
+      "possiblyStale": false,
+      "unsafe": false
+    },
+    "uiEffects": [
+      {
+        "surface": "piano roll",
+        "effect": "changed content",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      },
+      {
+        "surface": "background work",
+        "effect": "rendering queued again",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Playback and export use the new result once rendering is done."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "content",
+          "label": "Content 1",
+          "ref": {
+            "contentId": "c:01234567:0:1"
+          },
+          "fields": [
+            {
+              "field": "revision",
+              "before": "r32",
+              "after": "r36",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_undo with the arguments in restore, as they are.",
+        "revert": {
+          "method": "edit.undo",
+          "params": {
+            "expectedUndoId": "u:01234567:5"
+          }
+        },
+        "restore": {
+          "tool": "opentune_undo",
+          "arguments": {
+            "undo_id": "u:01234567:5"
+          }
+        }
+      }
+    ]
+  }
+}

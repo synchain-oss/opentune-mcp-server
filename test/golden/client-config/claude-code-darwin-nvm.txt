@@ -1,0 +1,7 @@
+Claude Code: run this once in a terminal.
+
+  claude mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=/Applications/OpenTune.app/Contents/MacOS/OpenTune -- npx -y @synchain/opentune-mcp
+
+--scope user makes the server available in every project; leave it out to register it for the current project only.
+
+Nothing was written; this command only prints.

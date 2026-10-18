@@ -1,0 +1,101 @@
+{
+  "description": "Setting the key the clip already has: a success that changed nothing.",
+  "tool": "opentune_set_clip",
+  "input": {
+    "applied": true,
+    "noOp": true,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r26",
+          "gridRevision": "g6",
+          "keyRevision": "k30"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "no_op",
+      "revert": null
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null
+  },
+  "rendered": {
+    "summary": "opentune_set_clip: nothing was changed, which is a success.",
+    "applied": true,
+    "noOp": true,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r26",
+          "gridRevision": "g6",
+          "keyRevision": "k30"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "no_op",
+      "revert": null
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "uiEffects": [],
+    "changeTable": {
+      "rows": [],
+      "omittedChangeCount": 0
+    },
+    "lines": []
+  }
+}

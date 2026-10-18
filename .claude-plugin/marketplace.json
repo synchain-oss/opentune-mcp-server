@@ -1,0 +1,30 @@
+{
+  "name": "synchain-opentune",
+  "description": "OpenTune MCP Server (by Synchain) as a Claude Code plugin: the MCP server and its skills, from the latest GitHub release of synchain-oss/opentune-mcp-server.",
+  "owner": {
+    "name": "Synchain",
+    "email": "contact@synchain.ca",
+    "url": "https://www.synchain.ca"
+  },
+  "plugins": [
+    {
+      "name": "opentune",
+      "displayName": "OpenTune MCP Server (by Synchain)",
+      "description": "Lets Claude operate OpenTune Standalone, an editor for the pitch and timing of recorded vocals, through MCP tools that report every result in a clear, structured form, with skills for the editing workflow.",
+      "author": {
+        "name": "Synchain",
+        "email": "contact@synchain.ca",
+        "url": "https://www.synchain.ca"
+      },
+      "homepage": "https://github.com/synchain-oss/opentune-mcp-server#readme",
+      "repository": "https://github.com/synchain-oss/opentune-mcp-server",
+      "license": "MIT",
+      "keywords": ["opentune", "vocal", "pitch-correction", "audio", "mcp"],
+      "category": "audio",
+      "source": {
+        "source": "archive",
+        "url": "https://github.com/synchain-oss/opentune-mcp-server/releases/latest/download/opentune-plugin.zip"
+      }
+    }
+  ]
+}

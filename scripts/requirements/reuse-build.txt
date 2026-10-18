@@ -1,0 +1,4 @@
+# Build backend for the reuse source distribution (see reuse.txt). Installed first, so that
+# reuse.txt can be built with --no-build-isolation and pip fetches no unpinned build dependency.
+poetry-core==2.5.0 \
+    --hash=sha256:98ee465b66f7e14bb9fbe68fb5e00d0cff184f036993ec94610ae4b5612f3add

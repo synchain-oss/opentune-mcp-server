@@ -1,0 +1,10 @@
+Claude Code: run this once in a terminal.
+
+  claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\user\Apps\OpenTune\OpenTune.exe -- cmd /c npx -y @synchain/opentune-mcp
+
+--scope user makes the server available in every project; leave it out to register it for the current project only.
+
+The command says claude.cmd on purpose: in PowerShell, claude runs claude.ps1, which swallows the -- and
+fails with "missing required argument". It works the same in cmd.
+
+Nothing was written; this command only prints.
