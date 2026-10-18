@@ -1,0 +1,138 @@
+{
+  "description": "A reference binding: experimental in OpenTune.",
+  "input": {
+    "ops": [
+      {
+        "op": "set_reference",
+        "clip": "p:01234567:0:1",
+        "reference_clip": "p:01234567:0:2"
+      }
+    ],
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "summary": "opentune_edit_arrangement: changed 1 placement. Undo it as one step with undoId u:01234567:2. Warnings: EXPERIMENTAL_FEATURE.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:1"
+        },
+        "label": "Clip 1 on Track 1",
+        "fields": {
+          "referencePlacementId": {
+            "before": null,
+            "after": "p:01234567:0:2",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a32",
+        "after": "a33"
+      },
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a33",
+      "contents": [],
+      "placements": [
+        {
+          "placementId": "p:01234567:0:1",
+          "geometryHash": "h11"
+        }
+      ]
+    },
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:2",
+      "description": "Set reference clip",
+      "innerActions": [
+        "setReference"
+      ],
+      "steps": 1
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 6
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "EXPERIMENTAL_FEATURE",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "changed placement",
+        "target": "p:01234567:0:1",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "placement",
+          "label": "Clip 1 on Track 1",
+          "ref": {
+            "placementId": "p:01234567:0:1"
+          },
+          "fields": [
+            {
+              "field": "referencePlacementId",
+              "before": null,
+              "after": "p:01234567:0:2",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "EXPERIMENTAL_FEATURE",
+        "text": "The feature used is experimental in OpenTune.",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:2.",
+        "undoId": "u:01234567:2",
+        "description": "Set reference clip"
+      }
+    ],
+    "arrangement_revision": "ar1.YTMz",
+    "clip_ids": {
+      "created": [],
+      "removed": []
+    }
+  }
+}

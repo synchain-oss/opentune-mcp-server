@@ -1,0 +1,236 @@
+{
+  "description": "Gain, fade and a move to a hidden track in one undo step.",
+  "input": {
+    "ops": [
+      {
+        "op": "gain",
+        "clip": "p:01234567:0:2",
+        "gain_db": -6
+      },
+      {
+        "op": "fade",
+        "clip": "p:01234567:0:2",
+        "fade_in_sec": 0.25
+      },
+      {
+        "op": "move",
+        "clip": "p:01234567:0:2",
+        "to_track_id": 5
+      }
+    ],
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "summary": "opentune_edit_arrangement: changed 1 placement (side effects: hidden tracks became visible). Undo it as one step with undoId u:01234567:1. Warnings: TRACK_AUTO_REVEALED, TRACK_AUTO_REVEALED.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:2"
+        },
+        "label": "Clip 2 on Track 6",
+        "fields": {
+          "trackId": {
+            "before": 1,
+            "after": 5,
+            "unit": null
+          },
+          "gainDb": {
+            "before": 0,
+            "after": -6,
+            "unit": "db"
+          },
+          "gainLinear": {
+            "before": 1,
+            "after": 0.5011872336272722,
+            "unit": "linear"
+          },
+          "fadeInSec": {
+            "before": 0,
+            "after": 0.25,
+            "unit": "sec"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a1",
+        "after": "a32"
+      },
+      "trackState": {
+        "before": "t2",
+        "after": "t30"
+      },
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a32",
+      "contents": [],
+      "placements": [
+        {
+          "placementId": "p:01234567:0:2",
+          "geometryHash": "h31"
+        }
+      ]
+    },
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:1",
+      "description": "Edit clips",
+      "innerActions": [
+        "setClipGain",
+        "setFade",
+        "moveClip"
+      ],
+      "steps": 1
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 6
+    },
+    "sideEffects": {
+      "tracksRevealed": {
+        "trackIds": [
+          4,
+          5
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "TRACK_AUTO_REVEALED",
+        "subject": {
+          "trackId": 4
+        },
+        "data": null
+      },
+      {
+        "code": "TRACK_AUTO_REVEALED",
+        "subject": {
+          "trackId": 5
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "changed placement",
+        "target": "p:01234567:0:2",
+        "visibleNow": true
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      },
+      {
+        "surface": "arrangement view",
+        "effect": "hidden tracks revealed",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "placement",
+          "label": "Clip 2 on Track 6",
+          "ref": {
+            "placementId": "p:01234567:0:2"
+          },
+          "fields": [
+            {
+              "field": "trackId",
+              "before": 1,
+              "after": 5,
+              "unit": null
+            },
+            {
+              "field": "gainDb",
+              "before": 0,
+              "after": -6,
+              "unit": "db"
+            },
+            {
+              "field": "gainLinear",
+              "before": 1,
+              "after": 0.5011872336272722,
+              "unit": "linear"
+            },
+            {
+              "field": "fadeInSec",
+              "before": 0,
+              "after": 0.25,
+              "unit": "sec"
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "TRACK_AUTO_REVEALED",
+        "text": "A hidden track was made visible because it now holds a clip.",
+        "subject": {
+          "trackId": 4
+        },
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "TRACK_AUTO_REVEALED",
+        "text": "A hidden track was made visible because it now holds a clip.",
+        "subject": {
+          "trackId": 5
+        },
+        "data": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "tracksRevealed",
+        "text": "Hidden tracks became visible.",
+        "details": {
+          "trackIds": [
+            4,
+            5
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
+        "undoId": "u:01234567:1",
+        "description": "Edit clips"
+      }
+    ],
+    "arrangement_revision": "ar1.YTMy",
+    "clip_ids": {
+      "created": [],
+      "removed": []
+    }
+  }
+}

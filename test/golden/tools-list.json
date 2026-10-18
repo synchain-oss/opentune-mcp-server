@@ -1955,5 +1955,311 @@
       },
       "additionalProperties": {}
     }
+  },
+  {
+    "name": "opentune_edit_arrangement",
+    "title": "Edit OpenTune clips on the timeline",
+    "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade, set_reference (experimental) run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy).",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "expected_revision": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "description": "arrangement_revision from opentune_get_project or the last result."
+        },
+        "ops": {
+          "minItems": 1,
+          "maxItems": 64,
+          "type": "array",
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "move"
+                  },
+                  "clip": {
+                    "type": "string"
+                  },
+                  "to_track_id": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "start_timeline_sec": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "trim"
+                  },
+                  "clip": {
+                    "type": "string"
+                  },
+                  "edge": {
+                    "type": "string",
+                    "enum": [
+                      "start",
+                      "end"
+                    ]
+                  },
+                  "to_timeline_sec": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip",
+                  "edge",
+                  "to_timeline_sec"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "gain"
+                  },
+                  "clip": {
+                    "type": "string"
+                  },
+                  "gain_db": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip",
+                  "gain_db"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "fade"
+                  },
+                  "clip": {
+                    "type": "string"
+                  },
+                  "fade_in_sec": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "fade_out_sec": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "split"
+                  },
+                  "clip": {
+                    "type": "string"
+                  },
+                  "at_timeline_sec": {
+                    "type": "number",
+                    "minimum": 0
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip",
+                  "at_timeline_sec"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "merge"
+                  },
+                  "leading_clip": {
+                    "type": "string"
+                  },
+                  "trailing_clip": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "leading_clip",
+                  "trailing_clip"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "delete"
+                  },
+                  "clips": {
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "required": [
+                  "op",
+                  "clips"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "set_reference"
+                  },
+                  "clip": {
+                    "type": "string"
+                  },
+                  "reference_clip": {
+                    "description": "An overlapping clip; leave out to unbind.",
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "op",
+                  "clip"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "const": "copy"
+                  },
+                  "clips": {
+                    "minItems": 1,
+                    "maxItems": 64,
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "window",
+                      "full"
+                    ],
+                    "description": "window: only the shown part; full: whole content."
+                  },
+                  "to_track_id": {
+                    "type": "number",
+                    "minimum": 0
+                  },
+                  "start_timeline_sec": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Start of the earliest copy."
+                  }
+                },
+                "required": [
+                  "op",
+                  "clips",
+                  "mode",
+                  "to_track_id",
+                  "start_timeline_sec"
+                ],
+                "additionalProperties": false
+              }
+            ]
+          },
+          "description": "Clip ids: placement ids (p:...)."
+        },
+        "dry_run": {
+          "description": "Predict without applying.",
+          "type": "boolean"
+        },
+        "confirm": {
+          "description": "delete only: true only after the user explicitly agreed.",
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "required": [
+        "expected_revision",
+        "ops"
+      ],
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": false,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
   }
 ]
