@@ -15,7 +15,7 @@ OpenTune MCP Server is an open-source project led by [Synchain](https://www.sync
 
 ## Status
 
-> **Pre-release.** The server, its tools and the protocol specification are in this repository, but no npm package, MCPB package or release is published yet; the install commands below work once the first release exists. Tool names and behaviour may still change before then.
+> **Early release (0.1.0).** The npm package [`@synchain/opentune-mcp`](https://www.npmjs.com/package/@synchain/opentune-mcp), the Claude Code plugin and the MCPB package are published; see [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases). Until the official OpenTune ships the control API, the server works only with the [unofficial test build](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.1) of OpenTune. Tool names are now fixed; a renamed tool keeps its old name, marked deprecated, for one minor version.
 
 | Setup | Status |
 | --- | --- |
