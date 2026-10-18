@@ -11,12 +11,12 @@ versioned separately and has its own changelog.
 ### Changed
 
 - Review bot moved from a direct DeepSeek endpoint to the OpenCode Go gateway
-  (`https://opencode.ai/zen/go`, model `deepseek-v4.1-flash`), and `pr-agent` now runs only on
-  PRs whose base is `dev`. Notes that carried over: the gateway only accepts the bare model id
-  (a `[1M]` suffix is rejected as "Model is unavailable", while the bare id already is the
-  1M-context model), it requires a session header, and PR-Agent v0.39.0 does not implement
-  `config.max_output_tokens`, so the output cap comes from `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS`
-  instead. (pending #63)
+  (`https://opencode.ai/zen/go`, model `deepseek-v4.1-flash`). Notes that carried over: the
+  gateway only accepts the bare model id (a `[1M]` suffix is rejected as "Model is unavailable",
+  while the bare id already is the 1M-context model), it requires a session header, and PR-Agent
+  v0.39.0 does not implement `config.max_output_tokens`, so the output cap comes from
+  `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS` instead. The `base == 'dev'` gate and the
+  `ENABLE_PR_AGENT` switch already existed and are unchanged by this PR. (#63)
 
 ## [0.1.0] - 2026-10-17
 
