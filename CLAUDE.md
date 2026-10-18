@@ -98,7 +98,7 @@ npm run gates
 - 版本:规范单独打 tag `spec-vMAJOR.MINOR.PATCH`(预发布 `-rc.N`),线上只传 `MAJOR.MINOR`;minor 只做追加,删除 / 改名 / 改语义或单位只能进新的 major。错误类别、告警码、原因码的注册表只追加,客户端必须接受未知代码。每个方法与向量标注 `capability` 与 `since`;方法 schema 用 JSON Schema 2020-12。
 - fork 在 `Tests/Control/spec/otcp/v1/` 放逐字节副本,并用 sha256 锁定(`.github/spec.lock`);不要直接改 fork 里的副本,由维护者同步。所以规范文件必须 LF 行尾、UTF-8、无 BOM。
 - 覆盖闭包:`spec/otcp/v1/methods/*.schema.json` 里的每个方法都必须出现在某个工具声明的 `otcpMethods` 里,或在带理由的「不暴露」清单中(单测强制)。
-- 工具面:名称匹配 `^opentune_[a-z0-9_]+$`,首个 npm 版本发布后冻结,改名先以 deprecated 形式保留一个 minor;描述 ≤ 600 字符、以 `OpenTune (audio vocal pitch editor): ` 开头;全部 `openWorldHint: false`;每个工具声明所需能力,缺失时返回可操作的错误;只有 `opentune_get_status` 设 `alwaysLoad`;`tools/list` 总量 ≤ 46 KB、单工具 ≤ 4 KB(`opentune_edit_notes` ≤ 9 KB)。返回写信封的工具共用一个宽松的 outputSchema(只列顶层键、无 enum、≤ 600 B),完整结构只在规范 schema 里,由 vitest 对 mock 与向量强制。
+- 工具面:名称匹配 `^opentune_[a-z0-9_]+$`,首个 npm 版本发布后冻结,改名先以 deprecated 形式保留一个 minor;描述 ≤ 600 字符、以 `OpenTune (audio vocal pitch editor): ` 开头;全部 `openWorldHint: false`;每个工具声明所需能力,缺失时返回可操作的错误;只有 `opentune_get_status` 设 `alwaysLoad`;`tools/list` 总量 ≤ 64 KB、单工具 ≤ 4 KB(`opentune_edit_notes` ≤ 9 KB)。返回写信封的工具共用一个宽松的 outputSchema(只列顶层键、无 enum、≤ 600 B),完整结构只在规范 schema 里,由 vitest 对 mock 与向量强制。
 
 ## 6. 环境与依赖
 
