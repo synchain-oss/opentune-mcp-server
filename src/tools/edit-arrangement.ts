@@ -56,7 +56,7 @@ const OP = z.discriminatedUnion('op', [
   z.strictObject({
     op: z.literal('set_reference'),
     clip: CLIP,
-    reference_clip: CLIP.nullable().describe('An overlapping clip; null unbinds.'),
+    reference_clip: CLIP.optional().describe('An overlapping clip; leave out to unbind.'),
   }),
   z.strictObject({
     op: z.literal('copy'),
@@ -122,7 +122,7 @@ function otcpOp(op: Exclude<ArrangementOp, { op: 'copy' }>, index: number): Json
       // OTCP takes each clip once.
       return { op: 'delete', placementIds: [...new Set(op.clips)] };
     case 'set_reference':
-      return { op: 'setReference', placementId: op.clip, referencePlacementId: op.reference_clip };
+      return { op: 'setReference', placementId: op.clip, referencePlacementId: op.reference_clip ?? null };
   }
 }
 
@@ -146,7 +146,7 @@ function clipsOf(op: ArrangementOp): [string, string][] {
     case 'copy':
       return op.clips.map((clip) => ['clips', clip]);
     case 'set_reference':
-      return op.reference_clip === null
+      return op.reference_clip === undefined
         ? [['clip', op.clip]]
         : [
             ['clip', op.clip],
@@ -271,7 +271,7 @@ export const ERROR_STEPS = table<NextStep>({
   ),
   'INVALID_ARGUMENT/reference_ineligible': agent(
     'A clip can refer only to another clip that overlaps it in time and does not refer back to it, directly or ' +
-      'through others. Choose another clip, or remove the binding with reference_clip null.',
+      'through others. Choose another clip, or remove the binding: set_reference without reference_clip.',
   ),
   'REVISION_CONFLICT/arrangement_changed': reread(
     'The clips changed since the arrangement_revision was read (in the OpenTune window or by another call). Read ' +

@@ -164,7 +164,7 @@ describe('every op against the mock', () => {
     );
     expect(codes(bound)).toEqual(['EXPERIMENTAL_FEATURE']);
     expect(env.mock.snapshot().placements[0]?.reference).toBe(id(env, 'b'));
-    body(await editNow(env, { ops: [{ op: 'set_reference', clip: id(env, 'a'), reference_clip: null }] }));
+    body(await editNow(env, { ops: [{ op: 'set_reference', clip: id(env, 'a') }] }));
     expect(env.mock.snapshot().placements[0]?.reference).toBeNull();
   });
 

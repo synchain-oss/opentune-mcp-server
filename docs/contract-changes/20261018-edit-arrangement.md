@@ -13,7 +13,7 @@ destructive, not idempotent. Times are on the timeline clock, in seconds.
 - `ops` (1 to 64, in order): `move` (`clip`, `to_track_id` and/or `start_timeline_sec`), `trim` (`clip`, `edge`,
   `to_timeline_sec`), `gain` (`clip`, `gain_db`), `fade` (`clip`, `fade_in_sec` and/or `fade_out_sec`), `split`
   (`clip`, `at_timeline_sec`), `merge` (`leading_clip`, `trailing_clip`), `delete` (`clips`), `set_reference` (`clip`,
-  `reference_clip` or null) and `copy` (`clips`, `mode` `window` or `full`, `to_track_id`, `start_timeline_sec`). Clip
+  `reference_clip`, left out to unbind) and `copy` (`clips`, `mode` `window` or `full`, `to_track_id`, `start_timeline_sec`). Clip
   ids are placement ids (`p:...`); the tool checks their form, the whole-number track ids and the parts each op needs
   before it sends anything, so the input schema can stay small (no pattern repeated in every op).
 - `move`, `trim`, `gain`, `fade` and `set_reference` are one `arrangement.edit` request and one undo step.
@@ -40,8 +40,9 @@ destructive, not idempotent. Times are on the timeline clock, in seconds.
   `confirm_required`, `arrangement_changed`, `unknown_handle`, `stale_handle` and `f0_not_ready` get next steps of
   their own.
 
-The tool fits the per-tool limit of 4 KB in `tools/list` (4,077 bytes). With it the catalog is about 49 KB of the
-64 KB total limit.
+The tool fits the per-tool limit of 4 KB in `tools/list` (4,058 bytes). With it the catalog is about 49 KB of the
+64 KB total limit. `reference_clip` is left out to unbind instead of taking `null`, so the input schema has no `type`
+array, which the Inspector's portability check (`--strict`) warns about.
 
 Revert recipes: `src/render/revert.ts` now turns a recipe whose method is `arrangement.edit` into a call of
 `opentune_edit_arrangement`, with the recipe's `expectedArrangementRevision` as `expected_revision` and every op in

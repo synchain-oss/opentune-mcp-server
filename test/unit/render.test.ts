@@ -381,7 +381,7 @@ describe('revert recipes as tool calls', () => {
       ],
       [
         { op: 'setReference', placementId: P, referencePlacementId: null },
-        { op: 'set_reference', clip: P, reference_clip: null },
+        { op: 'set_reference', clip: P },
       ],
     ];
     const tool = TOOLS.find((t) => t.name === 'opentune_edit_arrangement');

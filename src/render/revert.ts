@@ -107,10 +107,10 @@ function clipOp(op: unknown): Json | null {
       return clips.length === 0 || clips.length > 64 || clips.includes(null) ? null : { op: 'delete', clips };
     }
     case 'setReference': {
-      const reference = op.referencePlacementId === null ? null : clipOf(op.referencePlacementId);
-      return op.referencePlacementId !== null && reference === null
-        ? null
-        : withClip({ op: 'set_reference', reference_clip: reference });
+      // The tool unbinds when reference_clip is left out.
+      if (op.referencePlacementId === null) return withClip({ op: 'set_reference' });
+      const reference = clipOf(op.referencePlacementId);
+      return reference === null ? null : withClip({ op: 'set_reference', reference_clip: reference });
     }
     default:
       return null;

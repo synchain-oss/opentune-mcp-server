@@ -2153,17 +2153,13 @@
                     "type": "string"
                   },
                   "reference_clip": {
-                    "description": "An overlapping clip; null unbinds.",
-                    "type": [
-                      "string",
-                      "null"
-                    ]
+                    "description": "An overlapping clip; leave out to unbind.",
+                    "type": "string"
                   }
                 },
                 "required": [
                   "op",
-                  "clip",
-                  "reference_clip"
+                  "clip"
                 ],
                 "additionalProperties": false
               },
