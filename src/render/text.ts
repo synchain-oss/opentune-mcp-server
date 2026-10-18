@@ -18,6 +18,8 @@ export const FORMS = {
   jobId: /^j:[0-9a-f]{8}:[1-9][0-9]*$/,
   contentId: /^c:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/,
   placementId: /^p:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/,
+  /** An OTCP revision token (common.schema.json, revisionToken). */
+  revision: /^[A-Za-z0-9._:-]{1,128}$/,
 } as const;
 
 export const token = (value: unknown, form: keyof typeof FORMS): string | null => trustedToken(value, FORMS[form]);

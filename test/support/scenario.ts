@@ -96,6 +96,20 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
     ops: [{ op: 'shift', start_output_sec: 1.5, end_output_sec: 2.5, delta_ms: 100 }],
   });
 
+  const arrangement = async () => (await run('opentune_get_project', {})).arrangement_revision as string;
+  await run('opentune_edit_arrangement', {
+    expected_revision: await arrangement(),
+    ops: [{ op: 'gain', clip: f.placement, gain_db: -1 }],
+  });
+  await run(
+    'opentune_edit_arrangement',
+    {
+      expected_revision: await arrangement(),
+      ops: [{ op: 'delete', clips: [f.placement] }],
+    },
+    'error',
+  );
+
   await run('opentune_open_audio', { path: f.audioFile, wait_seconds: 10 });
   await run('opentune_open_audio', { path: 'relative/take1.wav' }, 'error');
   await run('opentune_export_audio', { kind: 'clip', target: { clip: f.placement }, wait_seconds: 10 });
