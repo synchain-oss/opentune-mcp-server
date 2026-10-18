@@ -297,6 +297,23 @@ describe('revert recipes as tool calls', () => {
       method: 'audio.set',
       params: { deviceType: 'Mock Audio', outputDevice: 'Mock Output', sampleRateHz: 48000, bufferSizeFrame: 256 },
     },
+    {
+      method: 'track.set',
+      params: {
+        tracks: [
+          { trackId: 1, muted: true, volumeDb: -6, colour: '#112233' },
+          { trackId: 2, solo: false, volumeLinear: 0 },
+        ],
+      },
+    },
+    {
+      method: 'track.delete',
+      params: { trackId: 4, expectedArrangementRevision: 'a1' },
+      requiresConsent: true,
+    },
+    { method: 'transport.setTempo', params: { bpm: 120, timeSignature: { numerator: 4, denominator: 4 } } },
+    { method: 'transport.setLoop', params: { enabled: false } },
+    { method: 'ui.setSelection', params: { placementId: 'p:01234567:0:1' } },
   ];
 
   it("turns every recipe a tool performs into a call that the tool's input schema accepts", () => {
@@ -319,6 +336,68 @@ describe('revert recipes as tool calls', () => {
       kind: 'tool',
       call: { tool: 'opentune_set_settings', arguments: { processing: { tuning_hz: 441.5 } } },
     });
+  });
+
+  it('asks for the arrangement_revision, and for consent, where the deletion of a track is the way back', () => {
+    const copy = {
+      method: 'track.delete',
+      params: { trackId: 4, expectedArrangementRevision: 'a1' },
+      requiresConsent: true,
+    };
+    const r = render({ changes: [change('track')], undo: { undoable: false, reason: 'ui_parity', revert: copy } });
+    expect(r.lines.at(-1)).toMatchObject({
+      text:
+        'Not undoable (OpenTune records no undo entry for this, as in its own interface). Only after the user ' +
+        'explicitly agrees to restore it: call opentune_delete_track with the arguments in restore, adding ' +
+        'expected_revision: the latest arrangement_revision of opentune_get_project.',
+      restore: { tool: 'opentune_delete_track', arguments: { track_id: 4 } },
+    });
+    expect(r.summary).toContain('can be restored with opentune_delete_track only after the user explicitly agrees');
+  });
+
+  it('leaves recipes of tracks, tempo and selection to the user when no tool call fits them', () => {
+    const many = Array.from({ length: 33 }, (_, i) => ({ trackId: i, muted: true }));
+    for (const recipe of [
+      { method: 'track.set', params: { tracks: [] } },
+      { method: 'track.set', params: { tracks: [{ trackId: 1 }] } },
+      { method: 'track.set', params: { tracks: [{ trackId: 1, colour: 'red' }] } },
+      { method: 'track.set', params: { tracks: [{ trackId: 'x', muted: true }] } },
+      { method: 'track.set', params: { tracks: many } },
+      { method: 'track.delete', params: { trackId: -1 } },
+      { method: 'transport.setTempo', params: { bpm: 0, timeSignature: { numerator: 4, denominator: 4 } } },
+      { method: 'transport.setTempo', params: { bpm: 100, timeSignature: { numerator: 4, denominator: 3 } } },
+      { method: 'transport.setLoop', params: { enabled: 'yes' } },
+      // The previously active track, with no clip selected: focus_clip takes a clip.
+      { method: 'ui.setSelection', params: { trackId: 2 } },
+    ]) {
+      expect(revertPlan(recipe).kind, JSON.stringify(recipe)).toBe('manual');
+    }
+  });
+
+  it('writes a volume outside the dB range back as the linear factor, and keeps the other members', () => {
+    const plan = revertPlan({ method: 'track.set', params: { tracks: [{ trackId: 1, muted: true, volumeDb: -200 }] } });
+    if (plan.kind !== 'tool') throw new Error('expected a tool call');
+    expect(plan.call.arguments).toEqual({
+      ops: [
+        { op: 'mute', track_id: 1, on: true },
+        { op: 'volume', track_id: 1, linear: 10 ** (-200 / 20) },
+      ],
+    });
+  });
+
+  it('degrades a track.set recipe with a member it cannot map to manual, never to a partial restore', () => {
+    for (const track of [
+      { trackId: 1, muted: true, colour: 'not-a-colour' },
+      { trackId: 1, muted: true, volumeDb: 60 },
+      { trackId: 1, muted: true, volumeLinear: 9 },
+      { trackId: 1, muted: true, pan: 0.5 },
+      { trackId: 1, muted: 'yes' },
+    ]) {
+      const recipe = { method: 'track.set', params: { tracks: [track] } };
+      expect(revertPlan(recipe).kind, JSON.stringify(track)).toBe('manual');
+      const r = render({ changes: [change('track')], undo: { undoable: false, reason: 'ui_parity', revert: recipe } });
+      expect(r.summary).not.toContain('opentune_set_tracks');
+    }
   });
 
   it('names the tool call in the line and the summary, and what to add to it', () => {

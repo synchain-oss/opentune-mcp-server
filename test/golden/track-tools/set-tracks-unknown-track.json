@@ -1,0 +1,28 @@
+{
+  "description": "A track id that names no slot.",
+  "tool": "opentune_set_tracks",
+  "input": {
+    "ops": [
+      {
+        "op": "mute",
+        "track_id": 40,
+        "on": true
+      }
+    ]
+  },
+  "result": {
+    "error": {
+      "kind": "NOT_FOUND",
+      "reason": "unknown_handle",
+      "detail": "trackId names no track slot",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "tool": "opentune_get_project",
+        "message": "No track slot has this id. Track ids are positions, 0-based, and shift when a track is deleted. Read the project with opentune_get_project and use the ids it lists."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-not_found"
+    }
+  }
+}

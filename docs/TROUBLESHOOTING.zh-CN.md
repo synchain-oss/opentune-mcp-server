@@ -112,7 +112,7 @@ OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`�
 
 ### Error BUSY
 
-OpenTune 正被使用:有对话框开着、用户正在拖动,或有导入、导出、工程操作在进行。请在 OpenTune 里完成它,再重试。原因为 `modal_open` 时有模态对话框开着;第一个通常就是一次性的首次引导对话框,见 [First launch dialog](#first-launch-dialog)。
+OpenTune 正被使用:有对话框开着、用户正在拖动,或有导入、导出、工程操作在进行。请在 OpenTune 里完成它,再重试。原因为 `modal_open` 时有模态对话框开着;第一个通常就是一次性的首次引导对话框,见 [First launch dialog](#first-launch-dialog)。`opentune_manage_ui` 的 `dismiss_dialogs` 可以像按 Esc 一样关掉对话框;关闭时会提交所示取值的对话框(轨道颜色对话框)只有带 `accept_commit: true` 才会关,而这需要用户同意。关掉确认框等于取消它询问的操作,所以关闭任何对话框之前都要先问用户。
 
 ### Error TIMEOUT
 
@@ -215,7 +215,7 @@ OpenTune 宣告运行中实例的目录必须可读。在带控制接口的 Open
 
 ## First launch dialog
 
-OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次引导(onboarding)对话框。需要有人在 OpenTune 窗口里回答一次。它(或任何其他模态对话框)开着时,所有写操作都会失败,返回 [BUSY](#error-busy),原因 `modal_open`。`opentune_get_settings` 会报告首次引导是否已经显示过。请让用户回答该对话框,然后重试。服务从不自己回答对话框。
+OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次引导(onboarding)对话框。需要有人在 OpenTune 窗口里回答一次。它(或任何其他模态对话框)开着时,所有写操作都会失败,返回 [BUSY](#error-busy),原因 `modal_open`。`opentune_get_settings` 会报告首次引导是否已经显示过。请让用户回答该对话框,然后重试。`opentune_manage_ui` 也能像按 Esc 一样把它关掉(`dismiss_dialogs`;首次引导覆盖层用 `dismiss_onboarding`,它同时把首次引导标记为已显示,这是撤销不了的全局设置,先问用户)。服务从不按对话框里的按钮。
 
 ## Hybrid mode
 

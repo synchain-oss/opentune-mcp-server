@@ -115,3 +115,18 @@ export function summarize(envelope: Json, tool: string): string {
     : `${tool}: ${didPhrase(envelope, false)}`;
   return `${lead}${inParens(flagsOf(envelope))}.${undoText}${tail}`;
 }
+
+/**
+ * The first-sentence flags of several results taken together (not undoable, destructive, side
+ * effects, a changed unsaved-changes mark), each once. A result that bundles several requests
+ * puts them in its first sentence, so that a reader of the first sentence misses none of them.
+ */
+export function leadFlags(envelopes: readonly Json[]): string[] {
+  const flags: string[] = [];
+  for (const envelope of envelopes) {
+    for (const flag of [...flagsOf(envelope), ...stateFlags(envelope, warningCodes(envelope))]) {
+      if (!flags.includes(flag)) flags.push(flag);
+    }
+  }
+  return flags;
+}

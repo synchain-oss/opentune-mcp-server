@@ -1,0 +1,21 @@
+{
+  "description": "A dialog commits its colour on close: refused without consent.",
+  "tool": "opentune_manage_ui",
+  "input": {
+    "op": "dismiss_dialogs"
+  },
+  "result": {
+    "error": {
+      "kind": "INVALID_ARGUMENT",
+      "reason": "dialog_commits_on_close",
+      "detail": "closing a dialog commits the value it shows; the end user must accept that, then the call carries confirm true",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "user",
+        "message": "A dialog that is open commits the value it shows when it is closed (the track-colour dialog commits its colour). Ask the user whether to accept that; only after the user agrees, call again with accept_commit: true. Otherwise the user can cancel the dialog in the OpenTune window."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-invalid_argument"
+    }
+  }
+}

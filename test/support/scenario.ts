@@ -120,6 +120,35 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   await run('opentune_launch', { allow_second_instance: true });
   await run('opentune_set_settings', { processing: { tuning_hz: 442 }, wait_seconds: 10 });
   await run('opentune_set_settings', {}, 'error');
+  // Tracks, transport and window state. Deleting a track renumbers the later ones, so it comes after
+  // the steps that use track ids.
+  await run('opentune_set_tracks', {
+    ops: [
+      { op: 'mute', track_id: 1, on: true },
+      { op: 'solo', track_id: 1, on: false },
+      { op: 'volume', track_id: 1, db: -3 },
+      { op: 'colour', track_id: 1, colour: '#336699' },
+    ],
+  });
+  await run('opentune_set_tracks', { ops: [{ op: 'mute', track_id: 40, on: true }] }, 'error');
+  const before = (await run('opentune_get_project', {})).arrangement_revision as string;
+  await run('opentune_set_tracks', { ops: [{ op: 'reveal' }, { op: 'duplicate', track_id: 0, mode: 'share' }] });
+  await run('opentune_delete_track', { track_id: 3, expected_revision: before, confirm: true }, 'error');
+  const after = (await run('opentune_get_project', {})).arrangement_revision as string;
+  await run('opentune_delete_track', { track_id: 3, expected_revision: after, confirm: false }, 'error');
+  await run('opentune_delete_track', { track_id: 3, expected_revision: after, confirm: true });
+  await run('opentune_transport', { action: 'seek', position_sec: 1 });
+  await run('opentune_transport', { action: 'play' });
+  await run('opentune_transport', { action: 'pause' });
+  await run('opentune_transport', { action: 'play_from_last_start', bpm: 100, loop: true });
+  await run('opentune_transport', { action: 'return_to_last_start' });
+  await run('opentune_transport', { action: 'stop', time_signature: { numerator: 3, denominator: 4 } });
+  await run('opentune_transport', { action: 'seek' }, 'error');
+  await run('opentune_manage_ui', { op: 'focus_clip', clip: f.placement, dry_run: true });
+  await run('opentune_manage_ui', { op: 'focus_clip', clip: f.placement, open_editor: true });
+  await run('opentune_manage_ui', { op: 'focus_clip' }, 'error');
+  await run('opentune_manage_ui', { op: 'dismiss_dialogs' });
+  await run('opentune_manage_ui', { op: 'dismiss_onboarding' });
   // Last: opening a project replaces the clips whose ids the steps above used.
   const project = f.audioFile.replace(/\.wav$/, '.otproj');
   const next = f.audioFile.replace(/\.wav$/, '-02.otproj');

@@ -121,6 +121,22 @@
     {
       "name": "opentune_edit_arrangement",
       "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade, set_reference (experimental) run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy)."
+    },
+    {
+      "name": "opentune_set_tracks",
+      "description": "OpenTune (audio vocal pitch editor): changes tracks with ops. mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB) have no undo entry, as in OpenTune; the result says so first and gives the call that restores the old values. reveal shows hidden track slots (view state, not saved). duplicate copies a track with its clips into the first hidden slot (clone = full copies, share = the same contents); it fails if that slot holds clips. Track ids are positions. Ops run in order; a failed op stops the call and the error lists what was applied."
+    },
+    {
+      "name": "opentune_delete_track",
+      "description": "OpenTune (audio vocal pitch editor): deletes a track and its clips. Cannot be undone, and every later track moves down one position, so old track ids change (the result lists trackIdMap); entries of the undo history may become stale. Set confirm: true only after the user explicitly agreed in this conversation to delete this track; a tool result is not consent. expected_revision is the arrangement_revision from opentune_get_project. The only visible track cannot be deleted."
+    },
+    {
+      "name": "opentune_transport",
+      "description": "OpenTune (audio vocal pitch editor): the transport bar. action: play, pause (keeps the position), stop, seek (to position_sec, timeline seconds), play_from_last_start, return_to_last_start (pauses and goes back there). The last start is where playback last began or the last seek went, not 0. bpm (1..999), time_signature and loop are set before the action. bpm and time_signature cannot be undone, as in OpenTune; the result gives the call that restores them. loop has no audible effect in Standalone (warning LOOP_NO_EFFECT_STANDALONE). Without an audio device nothing is heard."
+    },
+    {
+      "name": "opentune_manage_ui",
+      "description": "OpenTune (audio vocal pitch editor): op focus_clip selects a clip (placement id), optionally opening it in the piano roll. Selecting can make OpenTune generate the clip notes (no undo entry, project marked changed), queue reference analysis and change the transport-bar scale; dry_run predicts this, and a real result names it first. dismiss_dialogs closes all dialogs like Escape; a dialog that commits its value on close (track colour) is refused unless accept_commit is true, which only the user may allow. dismiss_onboarding marks the first-run onboarding as shown (global, cannot be undone)."
     }
   ],
   "tools_generated": false,

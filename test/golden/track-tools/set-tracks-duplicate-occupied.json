@@ -1,0 +1,26 @@
+{
+  "description": "The target slot holds clips: choose another target.",
+  "tool": "opentune_set_tracks",
+  "input": {
+    "ops": [
+      {
+        "op": "duplicate",
+        "track_id": 0
+      }
+    ]
+  },
+  "result": {
+    "error": {
+      "kind": "INVALID_ARGUMENT",
+      "reason": "target_track_occupied",
+      "detail": "the first hidden track slot holds clips",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "message": "The first hidden track slot already holds clips, so the copy has nowhere to go. Show that slot first with opentune_set_tracks (op reveal); a shown track keeps its clips. Then duplicate again: the copy goes to the next hidden slot."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-invalid_argument"
+    }
+  }
+}

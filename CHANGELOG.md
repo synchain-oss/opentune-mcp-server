@@ -20,6 +20,16 @@ versioned separately and has its own changelog.
   recipes that name `arrangement.edit` (the merge after a split, the removal of copies) are now given as calls of this
   tool; a restore that splits, merges or deletes cannot be undone either, so its revert line asks for the user's
   consent first.
+- Track, transport and window tools, built on the OTCP methods of the capabilities `tracks.v1`, `transport.v1` and
+  `ui.bridge`: `opentune_set_tracks` (mute, solo, volume, colour, reveal hidden tracks, duplicate a track),
+  `opentune_delete_track` (needs the user's consent, cannot be undone, lists the track ids that moved),
+  `opentune_transport` (play, pause, stop, seek, play from and return to the last start, tempo, time signature, loop)
+  and `opentune_manage_ui` (select a clip with a prediction of what selecting does besides selecting, close dialogs,
+  mark the first-run onboarding as shown). Results that cannot be undone say so in the first sentence and give the
+  call that restores the old values.
+- `BUSY` with reason `modal_open` now asks the user either to close the dialog in OpenTune or to agree explicitly
+  that the agent closes it with `opentune_manage_ui`; closing a confirmation box cancels the action it asked about,
+  and a dialog which commits its value on close needs the user's agreement (`accept_commit`).
 
 ## [0.1.0] - 2026-10-17
 
