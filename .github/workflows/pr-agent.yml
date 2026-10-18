@@ -3,7 +3,7 @@
 name: PR Agent
 
 # Qodo PR-Agent（DeepSeek，按量计费），结构取自 Synchain 其他仓库的同名 workflow。
-# - 默认关闭：只有仓库变量 ENABLE_PR_AGENT 为 'true' 时运行；开启前要先在仓库 secrets 里配好 DEEPSEEK_KEY。
+# - 默认关闭：只有仓库变量 ENABLE_PR_AGENT 为 'true' 时运行；开启前要先在仓库 secrets 里配好 OPENCODE_GO_API_KEY_FOR_REVIEW。
 #   它永远不是必需检查。
 # - 只审 base = dev 的 PR（PR → dev 的每次推送都会复审）；子 PR（base = feature/*）由 claude-review 审查。
 #   用 job 级 if: 判断 base，而不是触发器的 branches 过滤。
@@ -43,20 +43,41 @@ jobs:
         env:
           # ANTHROPIC.KEY / ANTHROPIC.API_BASE 是 pr-agent 自己的点号配置项：它会用自己 settings 里的 api_key
           # 覆盖 litellm 的环境变量，只设 ANTHROPIC_API_KEY 会被空值覆盖（DeepSeek 返回 "api key invalid"）。
-          ANTHROPIC.KEY: ${{ secrets.DEEPSEEK_KEY }}
-          ANTHROPIC.API_BASE: https://api.deepseek.com/anthropic
+          ANTHROPIC.KEY: ${{ secrets.OPENCODE_GO_API_KEY_FOR_REVIEW }}
+          ANTHROPIC.API_BASE: https://opencode.ai/zen/go
           # litellm 兜底：缺一同样会返回 "api key invalid"。
-          ANTHROPIC_API_KEY: ${{ secrets.DEEPSEEK_KEY }}
-          ANTHROPIC_API_BASE: https://api.deepseek.com/anthropic
+          ANTHROPIC_API_KEY: ${{ secrets.OPENCODE_GO_API_KEY_FOR_REVIEW }}
+          ANTHROPIC_API_BASE: https://opencode.ai/zen/go
+          # OpenCode Go 强制要求会话头,缺失会直接返回 MissingSessionID。pr-agent 的 litellm 调用
+          # 不会自带这个头,所以走 pr-agent v0.39.0 支持的 LITELLM.EXTRA_HEADERS(JSON 对象),
+          # 它会被塞进 litellm 的 extra_headers 传下去。
+          LITELLM.EXTRA_HEADERS: '{"x-opencode-session": "pr-agent-${{ github.run_id }}-${{ github.run_attempt }}"}'
+          # ── 输出上限的真正开关 ── pr-agent v0.39.0 里并没有 config.max_output_tokens 这个键
+          # (该键是上游后来才加的,写在配置里在这里是空操作),所以请求不带 max_tokens;
+          # 此时 litellm 的 Anthropic 适配器回落到 DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS,默认只有 4096,
+          # 带推理的模型会把它全用在 reasoning 上 → "Empty content in model response"、审查空跑但 job 报绿。
+          # 这个环境变量就是 litellm 那个默认值的开关,必须显式抬高(网关实测 max_tokens 上限 393216)。
+          # 出处(可核对):pr-agent v0.39.0 的 requirements.txt 钉 litellm==1.84.0。该版
+          # litellm/llms/anthropic/chat/transformation.py:162-182 在请求不带 max_tokens 时调用
+          # get_max_tokens_for_model();本模型 id 不在其内置表里 → 落到 constants.py:413 的
+          # DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS(默认 4096)。pr-agent 侧全文件唯一设置 max_tokens
+          # 的地方是 litellm_ai_handler.py:351,只在 enable_claude_extended_thinking=true 时执行
+          # (configuration.toml:68 默认 false,本仓未开)。
+          DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS: "131072"
           GITHUB.USER_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }} # action 入口读标准的 GITHUB_TOKEN
-          # litellm 不认 [1M] 这类括号后缀，模型一律写裸名。
-          config.model: anthropic/deepseek-flash
-          config.fallback_models: anthropic/deepseek-v4-flash
+          # 模型:2026-10-18 从 DeepSeek 直连迁到 OpenCode Go。该网关只认裸 id,
+          # "deepseek-v4.1-flash[1M]" 会返回 {"message":"Model is unavailable."};"[1M]" 是上下文标注、
+          # 不是 id 的一部分,而这个 id 本身就是 1M 上下文(实测约 96 万 token 输入通过、约 107 万被拒)。
+          config.model: anthropic/deepseek-v4.1-flash
+          config.fallback_models: anthropic/deepseek-v4-pro
           # 1M 上下文档：输入与输出共用窗口，max_model_tokens 给输出留出余量；换成不带 1M 上下文的模型时三项一起改。
           config.custom_model_max_tokens: 1000000
-          config.max_model_tokens: 850000
-          # 不设则请求不带输出上限；该模型开推理，上限太低时推理会吃光输出，留下空审查。按实际用量计费。
+          config.max_model_tokens: 800000
+          # 注意:v0.39.0 里并没有 max_output_tokens 这个键(上游后来才加),这一行在本版是空操作 ——
+          # 真正生效的是上面新加的 DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS(不抬高的话 litellm 只发 4096,
+          # 带推理的模型会把它全用在 reasoning 上 → "Empty content in model response"、审查空跑但 job 报绿)。
+          # 保留此行以便升级 pin 后自动接上。
           config.max_output_tokens: "131072"
           # 默认 120 s；输出上限高且带推理时，大 PR 单次生成可能超过 120 s，超时同样是「不出内容而 job 报绿」。
           config.ai_timeout: 300
