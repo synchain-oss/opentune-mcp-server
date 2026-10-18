@@ -99,6 +99,10 @@
       "description": "OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features, language, whether onboarding was shown), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only."
     },
     {
+      "name": "opentune_set_settings",
+      "description": "OpenTune (audio vocal pitch editor): changes the global settings of the OpenTune installation, not of the project. processing: tuning_hz (A4 in Hz, 400-500), editing_scheme (openTune or openDyne, applied by a job), hybrid_mode, experimental_features. audio_device: device_type, output_device, sample_rate_hz, buffer_size_frame, output_channel_pair, each one the instance offers. clear_recent: true empties the recent-project list, which nothing refills. OpenTune records no undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them."
+    },
+    {
       "name": "opentune_estimate_key",
       "description": "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch (OpenTune's analysis) and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses), tonic_confidence, tuning offset in cents, local keys over time and keys per section (seconds; the mix and the clip's source audio start together). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only."
     },

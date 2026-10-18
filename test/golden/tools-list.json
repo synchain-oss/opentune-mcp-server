@@ -1690,6 +1690,130 @@
     }
   },
   {
+    "name": "opentune_set_settings",
+    "title": "Set OpenTune settings",
+    "description": "OpenTune (audio vocal pitch editor): changes the global settings of the OpenTune installation, not of the project. processing: tuning_hz (A4 in Hz, 400-500), editing_scheme (openTune or openDyne, applied by a job), hybrid_mode, experimental_features. audio_device: device_type, output_device, sample_rate_hz, buffer_size_frame, output_channel_pair, each one the instance offers. clear_recent: true empties the recent-project list, which nothing refills. OpenTune records no undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "processing": {
+          "description": "Processing preferences to change; give at least one member.",
+          "type": "object",
+          "properties": {
+            "tuning_hz": {
+              "description": "Frequency of A4 in Hz, 400 to 500; applies to future analysis and rendering only.",
+              "type": "number",
+              "minimum": 400,
+              "maximum": 500
+            },
+            "editing_scheme": {
+              "description": "Editing scheme, applied by a job; openDyne may generate notes for the clip open in the piano roll.",
+              "type": "string",
+              "enum": [
+                "openTune",
+                "openDyne"
+              ]
+            },
+            "hybrid_mode": {
+              "description": "Hybrid mode: small corrections render as a pitch shift of the audio instead of the vocoder.",
+              "type": "boolean"
+            },
+            "experimental_features": {
+              "description": "Show or hide experimental features such as reference binding.",
+              "type": "boolean"
+            }
+          },
+          "additionalProperties": false
+        },
+        "audio_device": {
+          "description": "Audio device setup to change; give at least one member.",
+          "type": "object",
+          "properties": {
+            "device_type": {
+              "description": "Audio device type (driver model) the instance offers.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "output_device": {
+              "description": "Output device name the instance offers.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 256
+            },
+            "sample_rate_hz": {
+              "description": "Sample rate in Hz that the device offers.",
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "buffer_size_frame": {
+              "description": "Buffer size in frames that the device offers.",
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "output_channel_pair": {
+              "description": "Output channels as a pair: 0 = channels 1 and 2, 1 = channels 3 and 4.",
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "additionalProperties": false
+        },
+        "clear_recent": {
+          "description": "true clears the recent-projects list. No request of the protocol fills it again.",
+          "type": "boolean"
+        },
+        "wait_seconds": {
+          "description": "Seconds to wait for a settings job to end, 0 to 30. Default 25.",
+          "type": "number",
+          "minimum": 0,
+          "maximum": 30
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": false,
+      "idempotentHint": true,
+      "openWorldHint": false
+    },
+    "outputSchema": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "summary": {},
+        "applied": {},
+        "noOp": {},
+        "dryRun": {},
+        "changes": {},
+        "created": {},
+        "removed": {},
+        "idMap": {},
+        "revisionDiff": {},
+        "tokens": {},
+        "undo": {},
+        "dirty": {},
+        "ui": {},
+        "sideEffects": {},
+        "warnings": {},
+        "job": {},
+        "uiEffects": {},
+        "changeTable": {},
+        "lines": {}
+      },
+      "additionalProperties": {}
+    }
+  },
+  {
     "name": "opentune_estimate_key",
     "title": "Estimate the key of a song",
     "description": "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch (OpenTune's analysis) and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses), tonic_confidence, tuning offset in cents, local keys over time and keys per section (seconds; the mix and the clip's source audio start together). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only.",

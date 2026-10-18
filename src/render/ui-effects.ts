@@ -53,6 +53,7 @@ const BY_ENTITY = table<Where>({
   },
   pitchShift: HIDDEN('clip pitch shift', 'Select the clip and open its pitch-shift dialog.'),
   preference: HIDDEN('preferences', 'Open the preferences.'),
+  audioDevice: HIDDEN('audio settings', 'Open the audio settings page.'),
   project: HIDDEN('window title', 'Look at the window title.'),
   tempo: ALWAYS('transport bar'),
   transport: ALWAYS('transport bar'),

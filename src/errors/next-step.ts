@@ -92,6 +92,14 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'INVALID_ARGUMENT/target_is_loaded_media': agent(
     'The export path is a source or project media file, which an export never overwrites. Choose another file name.',
   ),
+  'INVALID_ARGUMENT/audio_setting_unavailable': agent(
+    'The instance does not offer this audio value (audio.get lists what it offers as available). Call ' +
+      'opentune_get_settings with sections audio_device to read available.available, then call again with one of its values.',
+  ),
+  'IO_ERROR/device_open_failed': user(
+    'OpenTune could not open the audio device with the new setup and restored the previous one, so nothing changed. ' +
+      'Ask the user to choose another output device or sample rate, or to close the program that holds the device, then retry.',
+  ),
   'INVALID_ARGUMENT/track_capacity': agent(
     'There are not enough free tracks for this layout. Use fewer files, another layout or a track that has room.',
   ),

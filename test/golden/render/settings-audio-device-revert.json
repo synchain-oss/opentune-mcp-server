@@ -1,0 +1,218 @@
+{
+  "description": "An audio device setup of the installation: the previous setup comes back as an opentune_set_settings call with audio_device.",
+  "tool": "opentune_set_settings",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "audioDevice",
+        "ref": {
+          "singleton": "audioDevice"
+        },
+        "label": "Audio device",
+        "fields": {
+          "sampleRateHz": {
+            "before": 44100,
+            "after": 48000,
+            "unit": "hz"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "audio.set",
+        "params": {
+          "sampleRateHz": 44100
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "GLOBAL_PREFERENCE",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "audioDevice"
+          ]
+        }
+      }
+    ],
+    "job": null,
+    "device": {
+      "running": true,
+      "deviceType": "Mock Audio",
+      "outputDevice": "Mock Output",
+      "sampleRateHz": 48000,
+      "bufferSizeFrame": 512,
+      "outputChannelPair": 0
+    }
+  },
+  "rendered": {
+    "summary": "opentune_set_settings: changed 1 audioDevice (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_settings, see the revert line). Warnings: GLOBAL_PREFERENCE.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "audioDevice",
+        "ref": {
+          "singleton": "audioDevice"
+        },
+        "label": "Audio device",
+        "fields": {
+          "sampleRateHz": {
+            "before": 44100,
+            "after": 48000,
+            "unit": "hz"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "audio.set",
+        "params": {
+          "sampleRateHz": 44100
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "GLOBAL_PREFERENCE",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "audioDevice"
+          ]
+        }
+      }
+    ],
+    "job": null,
+    "device": {
+      "running": true,
+      "deviceType": "Mock Audio",
+      "outputDevice": "Mock Output",
+      "sampleRateHz": 48000,
+      "bufferSizeFrame": 512,
+      "outputChannelPair": 0
+    },
+    "uiEffects": [
+      {
+        "surface": "audio settings",
+        "effect": "changed audioDevice",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Open the audio settings page."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "audioDevice",
+          "label": "Audio device",
+          "ref": {
+            "singleton": "audioDevice"
+          },
+          "fields": [
+            {
+              "field": "sampleRateHz",
+              "before": 44100,
+              "after": 48000,
+              "unit": "hz"
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "GLOBAL_PREFERENCE",
+        "text": "A user-global preference changed; it outlives the project and the session.",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "audioDevice"
+          ]
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_settings with the arguments in restore, as they are.",
+        "revert": {
+          "method": "audio.set",
+          "params": {
+            "sampleRateHz": 44100
+          }
+        },
+        "restore": {
+          "tool": "opentune_set_settings",
+          "arguments": {
+            "audio_device": {
+              "sample_rate_hz": 44100
+            }
+          }
+        }
+      }
+    ]
+  }
+}

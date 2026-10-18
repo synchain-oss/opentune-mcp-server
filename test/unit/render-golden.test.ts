@@ -148,6 +148,23 @@ async function fromMock(): Promise<Record<string, Scenario>> {
     envelope: same,
   };
 
+  // The user-global settings of the installation: no undo entry, the warning GLOBAL_PREFERENCE and
+  // the previous value as a call of opentune_set_settings.
+  out['settings-preference-revert'] = {
+    description:
+      'A processing preference of the installation: the first sentence says the change is global, and the revert recipe is an opentune_set_settings call with the previous value.',
+    tool: 'opentune_set_settings',
+    envelope: await ok('prefs.set', { tuningHz: 442 }),
+  };
+  const audioSession = await sessions.open({ instanceId: INSTANCE });
+  audioSession.mock.given({ audio: { running: true } });
+  out['settings-audio-device-revert'] = {
+    description:
+      'An audio device setup of the installation: the previous setup comes back as an opentune_set_settings call with audio_device.',
+    tool: 'opentune_set_settings',
+    envelope: await audioSession.ok('audio.set', { sampleRateHz: 48000 }),
+  };
+
   const replaced = await ok('content.autoTune', {
     contentId,
     mode: 'notesOnly',

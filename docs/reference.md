@@ -2,7 +2,7 @@
 
 # Tool reference
 
-OpenTune MCP Server (by Synchain) offers 21 tools. Every tool returns its result both as
+OpenTune MCP Server (by Synchain) offers 22 tools. Every tool returns its result both as
 `structuredContent` and as the same JSON in a text block. Errors have the shape
 `{kind, reason, detail, retryable, executed, nextStep, url}`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -285,6 +285,22 @@ OTCP capabilities: `session.v1`, `read.v1`, `audio.device`. OTCP methods: `sessi
 | --- | --- | --- | --- |
 | `sections` | array | no | Parts to return. Default: processing, audio_device, recent, export_caps. log must be asked for. |
 | `log_lines` | integer, 1 to 500 | no | Lines of the log to return, newest last, for the log section. Default 100, at most 500. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
+
+### `opentune_set_settings`
+
+**Set OpenTune settings**: changes state, not destructive, idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): changes the global settings of the OpenTune installation, not of the project. processing: tuning_hz (A4 in Hz, 400-500), editing_scheme (openTune or openDyne, applied by a job), hybrid_mode, experimental_features. audio_device: device_type, output_device, sample_rate_hz, buffer_size_frame, output_channel_pair, each one the instance offers. clear_recent: true empties the recent-project list, which nothing refills. OpenTune records no undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.
+
+OTCP capabilities: `prefs.write`, `audio.device`, `project.io`, `jobs.v1`. OTCP methods: `prefs.set`, `audio.set`, `project.clearRecent`, `job.get`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `processing` | object | no | Processing preferences to change; give at least one member. |
+| `audio_device` | object | no | Audio device setup to change; give at least one member. |
+| `clear_recent` | boolean | no | true clears the recent-projects list. No request of the protocol fills it again. |
+| `wait_seconds` | number, 0 to 30 | no | Seconds to wait for a settings job to end, 0 to 30. Default 25. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
 
 ### `opentune_estimate_key`
