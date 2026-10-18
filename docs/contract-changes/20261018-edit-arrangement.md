@@ -40,8 +40,8 @@ destructive, not idempotent. Times are on the timeline clock, in seconds.
   `confirm_required`, `arrangement_changed`, `unknown_handle`, `stale_handle` and `f0_not_ready` get next steps of
   their own.
 
-The tool fits the per-tool limit of 4 KB in `tools/list` (4,077 bytes). With it the catalog is about 49 KB, above the
-46 KB that the catalog check allowed before; the total limit is raised to 64 KB in a separate change.
+The tool fits the per-tool limit of 4 KB in `tools/list` (4,077 bytes). With it the catalog is about 49 KB of the
+64 KB total limit.
 
 Revert recipes: `src/render/revert.ts` now turns a recipe whose method is `arrangement.edit` into a call of
 `opentune_edit_arrangement`, with the recipe's `expectedArrangementRevision` as `expected_revision` and every op in
