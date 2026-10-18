@@ -1,0 +1,3 @@
+Claude Desktop is not available on this platform; use claude-code or cursor instead.
+
+Nothing was written; this command only prints.

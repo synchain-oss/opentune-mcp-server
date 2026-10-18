@@ -1,0 +1,10 @@
+{
+  "name": "opentune-mcp-mcpb-tool",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Pinned install of the MCPB command-line tool, used only to validate the manifest and the .mcpb package. Not part of the published package; the root npm audit does not cover it.",
+  "license": "MIT",
+  "dependencies": {
+    "@anthropic-ai/mcpb": "2.1.2"
+  }
+}

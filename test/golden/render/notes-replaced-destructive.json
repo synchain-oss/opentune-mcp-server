@@ -1,0 +1,1422 @@
+{
+  "description": "Regenerating all notes removes the old ones and cannot be undone or reverted.",
+  "tool": "opentune_autotune_range",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#0 E4 0.00-0.70s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#1 G4 0.80-1.15s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 2,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#2 G#4 1.18-1.50s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 3,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#3 A4 1.60-2.30s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 4,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#4 G4 2.40-2.76s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 5,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#5 G#4 2.79-3.10s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 6,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#6 F4 3.20-3.90s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 7,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#7 D4 4.00-4.35s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 8,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#8 E4 4.38-4.70s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 9,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#9 C4 4.80-5.50s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 10,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#10 E4 5.60-5.96s"
+      }
+    ],
+    "removed": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#0 C4 0.00-0.10s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#1 C#4 0.15-0.25s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 2,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#2 D4 0.30-0.40s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 3,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#3 D#4 0.45-0.55s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 4,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#4 E4 0.60-0.70s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 5,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#5 F4 0.75-0.85s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 6,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#6 F#4 0.90-1.00s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 7,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#7 G4 1.05-1.15s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 8,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#8 G#4 1.20-1.30s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 9,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#9 A4 1.35-1.45s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 10,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#10 A#4 1.50-1.60s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 11,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#11 B4 1.65-1.75s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 12,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#12 C4 1.80-1.90s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 13,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#13 C#4 1.95-2.05s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 14,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#14 D4 2.10-2.20s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 15,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#15 D#4 2.25-2.35s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 16,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#16 E4 2.40-2.50s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 17,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#17 F4 2.55-2.65s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 18,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#18 F#4 2.70-2.80s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 19,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#19 G4 2.85-2.95s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 20,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#20 G#4 3.00-3.10s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 21,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#21 A4 3.15-3.25s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 22,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#22 A#4 3.30-3.40s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 23,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#23 B4 3.45-3.55s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 24,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#24 C4 3.60-3.70s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 25,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#25 C#4 3.75-3.85s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 26,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#26 D4 3.90-4.00s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 27,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#27 D#4 4.05-4.15s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 28,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#28 E4 4.20-4.30s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 29,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#29 F4 4.35-4.45s"
+      }
+    ],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n24",
+              "after": "n31"
+            },
+            "pitch": {
+              "before": "p25",
+              "after": "p32"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r33",
+          "gridRevision": "g6",
+          "keyRevision": "k30"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": null
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "REPLACES_ALL_NOTES",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": {
+          "removedCount": 30,
+          "createdCount": 11
+        }
+      },
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "mode": "notesOnly",
+    "keyUsed": null,
+    "paramsUsed": {
+      "retuneSpeed": 0.5,
+      "vibratoDepth": 0,
+      "vibratoRateHz": 6,
+      "noteSplitCents": 100
+    },
+    "noteCount": {
+      "before": 30,
+      "after": 11
+    },
+    "omittedCount": {
+      "changes": 0,
+      "created": 0,
+      "removed": 0
+    }
+  },
+  "rendered": {
+    "summary": "opentune_autotune_range: created 11 notes, removed 30 notes (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; cannot be restored by any request; side effects: rendering of one or more contents was queued again). Warnings: REPLACES_ALL_NOTES, IRREVERSIBLE.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#0 E4 0.00-0.70s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#1 G4 0.80-1.15s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 2,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#2 G#4 1.18-1.50s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 3,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#3 A4 1.60-2.30s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 4,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#4 G4 2.40-2.76s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 5,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#5 G#4 2.79-3.10s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 6,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#6 F4 3.20-3.90s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 7,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#7 D4 4.00-4.35s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 8,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#8 E4 4.38-4.70s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 9,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#9 C4 4.80-5.50s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 10,
+            "atRevision": "r33"
+          }
+        },
+        "label": "#10 E4 5.60-5.96s"
+      }
+    ],
+    "removed": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#0 C4 0.00-0.10s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#1 C#4 0.15-0.25s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 2,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#2 D4 0.30-0.40s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 3,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#3 D#4 0.45-0.55s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 4,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#4 E4 0.60-0.70s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 5,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#5 F4 0.75-0.85s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 6,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#6 F#4 0.90-1.00s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 7,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#7 G4 1.05-1.15s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 8,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#8 G#4 1.20-1.30s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 9,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#9 A4 1.35-1.45s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 10,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#10 A#4 1.50-1.60s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 11,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#11 B4 1.65-1.75s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 12,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#12 C4 1.80-1.90s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 13,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#13 C#4 1.95-2.05s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 14,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#14 D4 2.10-2.20s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 15,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#15 D#4 2.25-2.35s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 16,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#16 E4 2.40-2.50s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 17,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#17 F4 2.55-2.65s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 18,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#18 F#4 2.70-2.80s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 19,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#19 G4 2.85-2.95s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 20,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#20 G#4 3.00-3.10s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 21,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#21 A4 3.15-3.25s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 22,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#22 A#4 3.30-3.40s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 23,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#23 B4 3.45-3.55s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 24,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#24 C4 3.60-3.70s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 25,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#25 C#4 3.75-3.85s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 26,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#26 D4 3.90-4.00s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 27,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#27 D#4 4.05-4.15s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 28,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#28 E4 4.20-4.30s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 29,
+            "atRevision": "r26"
+          }
+        },
+        "label": "#29 F4 4.35-4.45s"
+      }
+    ],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n24",
+              "after": "n31"
+            },
+            "pitch": {
+              "before": "p25",
+              "after": "p32"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r33",
+          "gridRevision": "g6",
+          "keyRevision": "k30"
+        }
+      ],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": null
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "REPLACES_ALL_NOTES",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": {
+          "removedCount": 30,
+          "createdCount": 11
+        }
+      },
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "mode": "notesOnly",
+    "keyUsed": null,
+    "paramsUsed": {
+      "retuneSpeed": 0.5,
+      "vibratoDepth": 0,
+      "vibratoRateHz": 6,
+      "noteSplitCents": 100
+    },
+    "noteCount": {
+      "before": 30,
+      "after": 11
+    },
+    "omittedCount": {
+      "changes": 0,
+      "created": 0,
+      "removed": 0
+    },
+    "uiEffects": [
+      {
+        "surface": "piano roll",
+        "effect": "created note",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      },
+      {
+        "surface": "piano roll",
+        "effect": "removed note",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      },
+      {
+        "surface": "background work",
+        "effect": "rendering queued again",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Playback and export use the new result once rendering is done."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#0 E4 0.00-0.70s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 0,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#1 G4 0.80-1.15s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 1,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#2 G#4 1.18-1.50s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 2,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#3 A4 1.60-2.30s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 3,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#4 G4 2.40-2.76s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 4,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#5 G#4 2.79-3.10s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 5,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#6 F4 3.20-3.90s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 6,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#7 D4 4.00-4.35s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 7,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#8 E4 4.38-4.70s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 8,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#9 C4 4.80-5.50s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 9,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "note",
+          "label": "#10 E4 5.60-5.96s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 10,
+              "atRevision": "r33"
+            }
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "note",
+          "label": "#0 C4 0.00-0.10s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 0,
+              "atRevision": "r26"
+            }
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "note",
+          "label": "#1 C#4 0.15-0.25s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 1,
+              "atRevision": "r26"
+            }
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "note",
+          "label": "#2 D4 0.30-0.40s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 2,
+              "atRevision": "r26"
+            }
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "note",
+          "label": "#3 D#4 0.45-0.55s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 3,
+              "atRevision": "r26"
+            }
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "note",
+          "label": "#4 E4 0.60-0.70s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 4,
+              "atRevision": "r26"
+            }
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "note",
+          "label": "#5 F4 0.75-0.85s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 5,
+              "atRevision": "r26"
+            }
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "note",
+          "label": "#6 F#4 0.90-1.00s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 6,
+              "atRevision": "r26"
+            }
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "note",
+          "label": "#7 G4 1.05-1.15s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 7,
+              "atRevision": "r26"
+            }
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "note",
+          "label": "#8 G#4 1.20-1.30s",
+          "ref": {
+            "contentId": "c:01234567:0:1",
+            "note": {
+              "index": 8,
+              "atRevision": "r26"
+            }
+          }
+        }
+      ],
+      "omittedChangeCount": 21
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "REPLACES_ALL_NOTES",
+        "text": "All existing notes of the content were replaced.",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": {
+          "removedCount": 30,
+          "createdCount": 11
+        }
+      },
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ]
+  }
+}

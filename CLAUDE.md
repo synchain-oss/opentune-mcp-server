@@ -53,7 +53,7 @@
 npm run gates
 ```
 
-依次覆盖(以 `package.json` 的 `gates` 脚本为准,只增不减):lint · `format:check` · typecheck · vitest 覆盖率 · build · 协议冒烟(stdio `tools/list`)· 契约向量(对 mock)· `tools/list` 体积门禁 · bundle 形状(无依赖、无脚本、精确文件清单)· `npm pack --dry-run` · `npm audit` · gitleaks · 隐私 · 署名与身份 · token 金丝雀 · 输出预算 · 文档一致性。输出一张带提交 SHA 的 PASS / FAIL / SKIP 表,贴进 PR。
+依次覆盖(以 `package.json` 的 `gates` 脚本为准,只增不减):lint · `format:check` · typecheck · vitest 覆盖率 · build · 协议冒烟(stdio `tools/list`)· 契约向量(对 mock)· `tools/list` 体积门禁 · bundle 形状(无依赖、无脚本、精确文件清单)· `npm pack --dry-run` · `npm audit` · gitleaks · 隐私 · 禁止新增音频文件 · 署名与身份 · token 金丝雀 · 输出预算 · 文档一致性。输出一张带提交 SHA 的 PASS / FAIL / SKIP 表,贴进 PR。
 
 - SKIP 必须写明原因;不得把 FAIL 改成 SKIP 来过关。
 - 新增的守卫要有「删掉它就会变红」的证明;不写恒真的判据。
@@ -75,11 +75,11 @@ npm run gates
 | --- | --- | --- |
 | `ci.yml` | PR → `dev` / `prod`(完整);PR → `feature/**`(轻量:单条 ubuntu 跑 lint / 类型检查 / 单测 / 合规 / 署名);push → `dev`、`feature/**`(完整) | `checks`(ubuntu × Node 22/24 + windows × Node 24;覆盖率在 ubuntu Node 24 上强制)、`protocol`(ubuntu + windows:stdio `tools/list` 对 golden、Inspector CLI `--strict`、契约向量对 mock、场景转录、instructions 快照、token 金丝雀、体积门禁、每个 op / 动作枚举值至少一个成功向量、规范方法闭包)、`package`(bundle 形状;空目录安装 tarball 后 `tools/list`;`mcpb validate`)、`audit`(含 devDependencies)、`compliance`(gitleaks、reuse lint、隐私、禁止新增音频文件、署名)、`docs`(README 中英结构一致、`docs/reference.md` 与生成结果一致、每个错误 kind / 状态 / doctor 检查 ID 都有 TROUBLESHOOTING 锚点);聚合 job `mcp-gate`(`if: always()`,唯一必需的 CI 检查) |
 | `branch-gate.yml` | PR → `dev` / `prod`(含 `edited`) | 分支命名(`dev` ← `feat/*` / `feature/*` / `dependabot/*`;`prod` ← `dev`)、fork 来源规则、DCO(豁免合并提交)、冻结契约守卫(§5)、PR 正文与提交的署名检查、same-repo PR 的提交身份白名单。job 名固定为 `branch-gate`,不加 `if:` |
-| 署名检查 | PR → `feature/**`(含 `edited`) | 只做署名检查,结果汇入 `mcp-gate` |
-| `claude-review.yml` | 所有 same-repo、非草稿 PR(dependabot 经 `allowed_bots`) | 无 `id-token`;action 锁定 release SHA;中文分级;MCP 专项:stdout 污染、schema 兼容、描述即 prompt、路径与覆盖、提示注入、回环与 token、错误可操作性、结果清晰约定;不给 `gh pr comment` 写通道;prompt 末尾带不可信数据声明 |
-| `review-dispatch.yml` | `issue_comment`:`/review`,评论者 ∈ {OWNER, MEMBER, COLLABORATOR} | fork PR 的人工触发 AI review;diff 碰到 `.github/workflows/` 即中止 |
-| `pr-agent.yml` | pull_request | 仓库变量 `ENABLE_PR_AGENT == 'true'` 才运行(默认关);永不设为必需 |
-| `release.yml` | push tag `v*`;`workflow_dispatch`(在分支上永远 dry-run) | build job(无 `id-token`):tag 与 `package.json` 一致且位于 `prod`、经 `workflow_call` 跑全套 gate、bundle / pack / sha256 / MCPB / `server.json`、生成的正文过署名检查、草稿 Release;publish job(唯一带 `environment: npm-publish` 与 `id-token: write` 的 job):`sha256sum -c`、幂等守卫、`npm publish --provenance`、Release 转正 |
+| 署名检查 | PR → `feature/**`(含 `edited`) | 在 `ci.yml` 轻量档的 `light` job 里检查提交与 PR 标题 / 正文,结果汇入 `mcp-gate` |
+| `claude-review.yml` | 所有 same-repo、非草稿 PR(dependabot 经 `allowed_bots`) | 无 `id-token`;action 锁定 release SHA;中文分级;MCP 专项:stdout 污染、schema 兼容、描述即 prompt、路径与覆盖、提示注入、回环与 token、错误可操作性、结果清晰约定;不给 `gh pr comment` 写通道;PR 含被 git 跟踪的符号链接时拒审,检查之后关掉 `core.symlinks`(action 再检出的提交里的链接只会是普通文件);prompt 末尾带不可信数据声明 |
+| `review-dispatch.yml` | `issue_comment`:`/review`,评论者 ∈ {OWNER, MEMBER, COLLABORATOR} | fork PR 的人工触发 AI review;固定 `/review` 时的 head SHA 并按它核对:diff 碰到 `.github/workflows/` 即中止、含符号链接即拒审;检出 PR 代码之前关掉 `core.symlinks`;action 之后核对模型读到的提交与 PR head 仍是该 SHA,否则回帖判作废;只有 `/review` 评论进入并发组;prompt、工具边界与前置步骤与 `claude-review.yml` 逐字一致(单测比对) |
+| `pr-agent.yml` | PR → `dev`(job 级 `if:`) | 仓库变量 `ENABLE_PR_AGENT == 'true'` 才运行(默认关);永不设为必需 |
+| `release.yml` | push tag `v*`;`workflow_dispatch`(在分支上永远 dry-run) | gate:经 `workflow_call` 跑全套 CI;build job(无 `id-token`、`contents: read`):校验 tag 与 `package.json` 一致且位于 `prod`,bundle、`npm pack`、MCPB、插件 zip、skills zip 及各自的 `.sha256`,生成的正文过署名检查;draft job(唯一有 `contents: write`,不检出代码)只建草稿 Release。转正与 npm 发布不在本 workflow 里,按 `docs/RELEASE.md` 由维护者手工进行。**规划中**:从 0.2.0 起由 CI 经 OIDC trusted publishing 发布 npm(带 provenance),以及 `server.json` 的生成与发布(MCP Registry,目前 build 不生成 `server.json`) |
 | `dependabot.yml` | – | actions 每月;npm 每月分组;每个生态同时最多一个分组 PR |
 
 - workflow 顶层默认 `permissions: contents: read`,需要更高权限的只在 job 级声明。

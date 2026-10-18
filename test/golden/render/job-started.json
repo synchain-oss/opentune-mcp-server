@@ -1,0 +1,103 @@
+{
+  "description": "Work handed to a job: nothing is committed yet.",
+  "tool": "opentune_edit_timing",
+  "input": {
+    "applied": false,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r33",
+          "gridRevision": "g6",
+          "keyRevision": "k30"
+        }
+      ],
+      "placements": []
+    },
+    "undo": null,
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": {
+      "jobId": "j:01234567:1",
+      "kind": "timeGridSeed",
+      "state": "queued"
+    },
+    "clamped": []
+  },
+  "rendered": {
+    "summary": "opentune_edit_timing: started job j:01234567:1 (timeGridSeed), queued; nothing is committed until it finishes. Follow it with opentune_get_job.",
+    "applied": false,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r33",
+          "gridRevision": "g6",
+          "keyRevision": "k30"
+        }
+      ],
+      "placements": []
+    },
+    "undo": null,
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": {
+      "jobId": "j:01234567:1",
+      "kind": "timeGridSeed",
+      "state": "queued"
+    },
+    "clamped": [],
+    "uiEffects": [],
+    "changeTable": {
+      "rows": [],
+      "omittedChangeCount": 0
+    },
+    "lines": []
+  }
+}

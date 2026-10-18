@@ -1,0 +1,83 @@
+{
+  "name": "@synchain/opentune-mcp",
+  "version": "0.1.0",
+  "description": "OpenTune MCP Server (by Synchain): a local MCP (stdio) server that lets AI agents operate OpenTune Standalone and reports every result in a clear, structured form.",
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "mcp-server",
+    "opentune",
+    "pitch-correction",
+    "vocal",
+    "audio",
+    "ai-agents"
+  ],
+  "homepage": "https://github.com/synchain-oss/opentune-mcp-server#readme",
+  "bugs": {
+    "url": "https://github.com/synchain-oss/opentune-mcp-server/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/synchain-oss/opentune-mcp-server.git"
+  },
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "opentune-mcp": "dist/opentune-mcp.mjs"
+  },
+  "files": [
+    "dist/opentune-mcp.mjs",
+    "README.md",
+    "README.zh-CN.md",
+    "LICENSE",
+    "THIRD-PARTY-NOTICES.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "notices": "node scripts/gen-notices.mjs",
+    "typecheck": "tsc -p tsconfig.json",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run --coverage",
+    "test:unit": "vitest run --coverage --project unit",
+    "test:stdio": "vitest run --project stdio",
+    "test:contract": "vitest run --project contract",
+    "test:protocol": "vitest run --project protocol",
+    "test:canary": "vitest run --project protocol test/protocol/canary.test.ts",
+    "test:inspector": "vitest run --project protocol test/protocol/inspector.test.ts",
+    "e2e:exe": "vitest run --project e2e",
+    "test:catalog": "vitest run --project unit test/unit/catalog.test.ts test/unit/render-golden.test.ts test/unit/audio-tools.test.ts",
+    "test:budget": "vitest run --project unit test/unit/output-budget.test.ts",
+    "catalog:update": "node scripts/update-catalog.mjs",
+    "mcpb:pack": "node scripts/mcpb.mjs pack",
+    "mcpb:validate": "node scripts/mcpb.mjs validate",
+    "plugin:build": "node scripts/plugin.mjs build",
+    "plugin:validate": "node scripts/plugin.mjs validate",
+    "skills:zip": "node scripts/skills-zip.mjs",
+    "gates": "node scripts/gates.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@modelcontextprotocol/inspector": "2.11.0",
+    "@modelcontextprotocol/server": "2.3.1",
+    "@types/node": "22.20.5",
+    "@vitest/coverage-v8": "5.0.3",
+    "ajv": "8.20.0",
+    "esbuild": "0.28.2",
+    "eslint": "10.12.0",
+    "globals": "17.13.0",
+    "prettier": "3.9.9",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.71.1",
+    "vite": "8.3.4",
+    "vitest": "5.0.3",
+    "zod": "4.6.5"
+  }
+}

@@ -1,0 +1,155 @@
+{
+  "description": "An undo step that changed nothing (UNDO_NO_EFFECT): a success, but the step is used up and the project is now marked as changed, and the first sentence says so.",
+  "tool": "opentune_undo",
+  "input": {
+    "applied": true,
+    "noOp": true,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "edit.redo",
+        "params": {
+          "expectedUndoId": "u:01234567:1"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "UNDO_NO_EFFECT",
+        "subject": null,
+        "data": null
+      }
+    ],
+    "job": null,
+    "entry": {
+      "undoId": "u:01234567:1",
+      "description": "Move clip",
+      "origin": "control",
+      "possiblyStale": false,
+      "unsafe": false
+    }
+  },
+  "rendered": {
+    "summary": "opentune_undo: nothing was changed, which is a success (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_redo, see the revert line; the undo or redo step is used up and the project is now marked as changed). Warnings: UNDO_NO_EFFECT.",
+    "applied": true,
+    "noOp": true,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "edit.redo",
+        "params": {
+          "expectedUndoId": "u:01234567:1"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": null,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "UNDO_NO_EFFECT",
+        "subject": null,
+        "data": null
+      }
+    ],
+    "job": null,
+    "entry": {
+      "undoId": "u:01234567:1",
+      "description": "Move clip",
+      "origin": "control",
+      "possiblyStale": false,
+      "unsafe": false
+    },
+    "uiEffects": [
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      }
+    ],
+    "changeTable": {
+      "rows": [],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "UNDO_NO_EFFECT",
+        "text": "The undo or redo step changed nothing, but the step is used up and the project is marked as changed.",
+        "subject": null,
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_redo with the arguments in restore, as they are.",
+        "revert": {
+          "method": "edit.redo",
+          "params": {
+            "expectedUndoId": "u:01234567:1"
+          }
+        },
+        "restore": {
+          "tool": "opentune_redo",
+          "arguments": {
+            "undo_id": "u:01234567:1"
+          }
+        }
+      }
+    ]
+  }
+}

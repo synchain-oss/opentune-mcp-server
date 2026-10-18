@@ -1,0 +1,126 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
+# SPDX-License-Identifier: MIT
+name: Release
+
+# 出包与草稿 Release。四个产物同一个版本（docs/RELEASE.md）：npm tarball、Claude Desktop 用的 MCPB、
+# Claude Code 插件 zip（marketplace 条目从最新 Release 下载它，见 docs/adr/0002-plugin-distribution.md）、
+# 给 claude.ai / Claude Desktop 上传的 skills zip；每个都带 .sha256。
+#
+# - push tag v*：tag 必须等于 v<package.json 的 version> 且位于 prod；全套 CI（经 workflow_call 调 ci.yml）
+#   通过后出包，正文过署名检查，最后只建草稿 Release。转正与 npm 发布不在本 workflow 里。
+# - workflow_dispatch：在任意分支上永远是演练（dry run）：同样跑全套 CI、出包、生成并检查正文，
+#   产物只作为本次运行的 artifact 上传（短保留期），不建 Release、不写仓库。
+#
+# 只有 draft job 有 contents: write，而且它不检出代码、不装依赖，只把 build job 的产物交给 gh release create。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# 同一个 ref 的发布排队执行，不互相取消。
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  gate:
+    name: gate
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  build:
+    name: build (packages, sha256, release notes)
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # 全历史：要核对 tag 的提交位于 origin/prod。
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: The tag names the package version and is on prod
+        if: github.event_name == 'push'
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          version=$(node -p 'require(process.argv[1]).version' "$PWD/package.json")
+          if [ "$TAG" != "v$version" ]; then
+            echo "::error::tag $TAG does not name the package.json version $version"
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/prod; then
+            echo "::error::tag $TAG is not on prod"
+            exit 1
+          fi
+      # 插件、MCPB、skills zip 由 scripts/release-assets.mjs 生成，并核对四个产物的版本与文件清单；
+      # 插件的 plugin.json、MCPB manifest 与 package.json 版本不一致时组装即失败。
+      - name: Build the packages
+        env:
+          ASSETS: ${{ runner.temp }}/release/assets
+        run: |
+          mkdir -p "$ASSETS"
+          npm run build
+          npm pack --ignore-scripts --pack-destination "$ASSETS"
+          node scripts/release-assets.mjs build --out "$ASSETS" | tee -a "$GITHUB_STEP_SUMMARY"
+          (cd "$ASSETS" && sha256sum -c ./*.sha256)
+      # 正文只由固定文字、版本号与 sha256 组成；照样过署名检查的正本。
+      - name: Release notes (attribution check)
+        env:
+          RELEASE: ${{ runner.temp }}/release
+        run: |
+          node scripts/release-assets.mjs notes --dir "$RELEASE/assets" > "$RELEASE/notes.md"
+          node scripts/check-attribution.mjs "$RELEASE/notes.md"
+          cat "$RELEASE/notes.md" >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release
+          path: ${{ runner.temp }}/release
+          if-no-files-found: error
+          retention-days: 7
+
+  draft:
+    name: draft release
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release
+          path: release
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          (cd release/assets && sha256sum -c ./*.sha256)
+          shopt -s nullglob
+          assets=(release/assets/*)
+          # A re-run or a second push of the same tag must not make a second draft.
+          if gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+            echo "::error::a release for $TAG already exists; delete it first if this run should replace it"
+            exit 1
+          fi
+          # A version with a hyphen (v1.2.0-rc.1) is a pre-release, which never becomes "latest".
+          flags=(--draft --verify-tag)
+          if [[ "$TAG" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$TAG" --repo "$REPO" "${flags[@]}" \
+            --title "OpenTune MCP Server (by Synchain) $TAG" --notes-file release/notes.md "${assets[@]}"
