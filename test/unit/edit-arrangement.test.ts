@@ -93,10 +93,11 @@ interface RevertLine {
 const revertLine = (out: Record<string, unknown>) => (out.lines as RevertLine[]).find((l) => l.kind === 'revert');
 
 describe('declaration', () => {
-  it('is a write tool that is neither read-only, destructive nor idempotent, on arrangement.v1', () => {
+  it('is a destructive write tool, neither read-only nor idempotent, on arrangement.v1', () => {
+    // Destructive: delete can be neither undone nor restored, split and merge cannot be undone.
     expect(editArrangementTool.annotations).toEqual({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: false,
       openWorldHint: false,
     });
@@ -175,6 +176,18 @@ describe('every op against the mock', () => {
     expect(created).toHaveLength(2);
     expect(split.clip_ids).toMatchObject({ removed: [id(env, 'b')] });
     expect(split.idMap).toMatchObject([{ relation: 'split', from: [{ placementId: id(env, 'b') }] }]);
+    // The way back is a merge, which cannot be undone either: the revert line and the summary wait for the
+    // user's consent, though the recipe of the mock does not ask for it.
+    expect((split.undo as { revert: Record<string, unknown> }).revert.requiresConsent).toBeUndefined();
+    const back = revertLine(split);
+    expect(back?.text).toContain(
+      'Only after the user explicitly agrees to restore it: call opentune_edit_arrangement with the arguments in ' +
+        'restore, as they are.',
+    );
+    expect(back?.restore?.arguments).toMatchObject({ ops: [{ op: 'merge', leading_clip: created[0] }] });
+    expect(split.summary).toContain(
+      'can be restored with opentune_edit_arrangement only after the user explicitly agrees',
+    );
     // The arrangement_revision of the result is the one the next call needs: no read in between.
     const merged = body(
       await edit(env, {
@@ -184,6 +197,11 @@ describe('every op against the mock', () => {
     );
     expect(merged.clip_ids).toMatchObject({ removed: created });
     expect(env.mock.snapshot().placements).toHaveLength(2);
+    // Its way back is a split, which waits for the user's consent the same way.
+    expect(revertLine(merged)).toMatchObject({
+      text: expect.stringContaining('Only after the user explicitly agrees to restore it') as string,
+      restore: { arguments: { ops: [{ op: 'split' }] } },
+    });
   });
 
   it('copies clips without an undo entry, and the copies go with the restore call once the user agreed', async () => {

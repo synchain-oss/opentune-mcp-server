@@ -7,8 +7,9 @@ but not move, trim, split, merge, delete or copy clips, which OpenTune's arrange
 tool on top of the OTCP methods `arrangement.edit` and `arrangement.copy` (capability `arrangement.v1`, already in the
 specification), and lets results whose revert recipe names `arrangement.edit` give it as a call of the new tool.
 
-`opentune_edit_arrangement` (`expected_revision`, `ops`, `dry_run`, `confirm`, `instance_id`): not read-only, not
-destructive, not idempotent. Times are on the timeline clock, in seconds.
+`opentune_edit_arrangement` (`expected_revision`, `ops`, `dry_run`, `confirm`, `instance_id`): not read-only,
+destructive (`destructiveHint: true`: a delete can be neither undone nor restored, and a split or merge cannot be
+undone), not idempotent. Times are on the timeline clock, in seconds.
 
 - `ops` (1 to 64, in order): `move` (`clip`, `to_track_id` and/or `start_timeline_sec`), `trim` (`clip`, `edge`,
   `to_timeline_sec`), `gain` (`clip`, `gain_db`), `fade` (`clip`, `fade_in_sec` and/or `fade_out_sec`), `split`
@@ -40,27 +41,29 @@ destructive, not idempotent. Times are on the timeline clock, in seconds.
   `confirm_required`, `arrangement_changed`, `unknown_handle`, `stale_handle` and `f0_not_ready` get next steps of
   their own.
 
-The tool fits the per-tool limit of 4 KB in `tools/list` (4,058 bytes). With it the catalog is about 49 KB of the
+The tool fits the per-tool limit of 4 KB in `tools/list` (4,057 bytes). With it the catalog is about 49 KB of the
 64 KB total limit. `reference_clip` is left out to unbind instead of taking `null`, so the input schema has no `type`
 array, which the Inspector's portability check (`--strict`) warns about.
 
 Revert recipes: `src/render/revert.ts` now turns a recipe whose method is `arrangement.edit` into a call of
 `opentune_edit_arrangement`, with the recipe's `expectedArrangementRevision` as `expected_revision` and every op in
-the tool's form. When the call deletes clips, the revert line adds that `confirm: true` must be added, and only once
-the user agreed. This applies to every result with such a recipe: the merge after a split, the removal of copies, and
-the removal of imported clips when an OpenTune build gives that recipe for `import.start` (the test mock gives none).
-A recipe that the tool cannot take (unknown op, malformed ids, no expected revision) stays a recipe the user carries
-out by hand, as before.
+the tool's form. This applies to every result with such a recipe: the merge after a split, the split after a merge,
+the removal of copies, and the removal of imported clips when an OpenTune build gives that recipe for `import.start`
+(the test mock gives none). A call that splits, merges or deletes cannot be undone in turn, so the revert line and the
+summary say to make it only after the user explicitly agreed, even when the recipe has no `requiresConsent` (the merge
+that restores a split and the split that restores a merge carry none); when it deletes clips, the line also says to
+add `confirm: true`. A recipe that the tool cannot take (unknown op, malformed ids, no expected revision) stays a
+recipe the user carries out by hand, as before.
 
 ## Files
 
-| File                                         | Change                                                                                                            |
-| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `test/golden/tools-list.json`                | Adds `opentune_edit_arrangement`.                                                                                 |
-| `test/golden/arrangement/*.json`             | New: the tool's results against the mock (each op kind, previews, the refused mix, the delete consent, errors).   |
-| `docs/reference.md`                          | Regenerated: the new tool.                                                                                        |
-| `mcpb/manifest.json`                         | Tools list synced from the golden catalog.                                                                        |
-| `src/render/revert.ts`, `src/render/text.ts` | `arrangement.edit` recipes as tool calls; the consent argument named in the revert line; the revision token form. |
+| File                                         | Change                                                                                                                             |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `test/golden/tools-list.json`                | Adds `opentune_edit_arrangement`.                                                                                                  |
+| `test/golden/arrangement/*.json`             | New: the tool's results against the mock (each op kind, previews, the refused mix, the delete consent, errors).                    |
+| `docs/reference.md`                          | Regenerated: the new tool.                                                                                                         |
+| `mcpb/manifest.json`                         | Tools list synced from the golden catalog.                                                                                         |
+| `src/render/revert.ts`, `src/render/text.ts` | `arrangement.edit` recipes as tool calls, a split, merge or delete only with consent (delete: `confirm`); the revision token form. |
 
 The instructions and the OTCP specification (`spec/otcp/v1/`) are not changed, and no existing golden snapshot
 changes.

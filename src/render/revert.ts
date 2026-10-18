@@ -39,6 +39,8 @@ export type RevertPlan =
 interface Mapped {
   readonly call: RestoreCall;
   readonly needsRevision: boolean;
+  /** The call needs the user's consent whether or not the recipe says so. */
+  readonly consent?: true;
   readonly consentArgument?: string;
 }
 
@@ -117,18 +119,27 @@ function clipOp(op: unknown): Json | null {
   }
 }
 
-/** An arrangement.edit recipe as a call of opentune_edit_arrangement; its expected revision comes with it. */
+/** The ops OpenTune cannot undo (PROTOCOL.md section 15.4 rule 1). */
+const NOT_UNDOABLE = new Set(['split', 'merge', 'delete']);
+
+/**
+ * An arrangement.edit recipe as a call of opentune_edit_arrangement; its expected revision comes with it.
+ * A restore that splits, merges or deletes cannot be undone in turn, so it waits for the user's consent
+ * even when the recipe does not ask for it; a delete also takes that consent as confirm.
+ */
 function editArrangement(params: Json): Mapped | null {
   const revision = token(params.expectedArrangementRevision, 'revision');
   const ops = asList(params.ops).map(clipOp);
   if (revision === null || ops.length === 0 || ops.length > 64 || ops.includes(null)) return null;
+  const kinds = ops.map((op) => String(op?.op));
   return {
     call: {
       tool: 'opentune_edit_arrangement',
       arguments: { expected_revision: encodeArrangementRevision(revision), ops },
     },
     needsRevision: false,
-    ...(ops.some((op) => op?.op === 'delete') ? { consentArgument: 'confirm' } : {}),
+    ...(kinds.some((kind) => NOT_UNDOABLE.has(kind)) ? { consent: true } : {}),
+    ...(kinds.includes('delete') ? { consentArgument: 'confirm' } : {}),
   };
 }
 
@@ -171,7 +182,7 @@ export function revertPlan(revert: unknown): RevertPlan {
     kind: 'tool',
     call: mapped.call,
     needsRevision: mapped.needsRevision,
-    consent,
+    consent: consent || mapped.consent === true,
     ...(mapped.consentArgument === undefined ? {} : { consentArgument: mapped.consentArgument }),
   };
 }

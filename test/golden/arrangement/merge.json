@@ -11,7 +11,7 @@
     "expected_revision": "<arrangement_revision>"
   },
   "result": {
-    "summary": "opentune_edit_arrangement: this merge cannot be undone: OpenTune frees objects its own undo entry needs, so undoing a merge makes its audio vanish from the timeline; opentune_undo refuses it, and the user should not undo it in the OpenTune window either. Ask the user before every split, merge or delete. Created 1 placement, removed 2 placements (destructive; not undoable: OpenTune cannot undo this reliably; can be restored with opentune_edit_arrangement, see the revert line). Warnings: UPSTREAM_UNDO_DEFECT.",
+    "summary": "opentune_edit_arrangement: this merge cannot be undone: OpenTune frees objects its own undo entry needs, so undoing a merge makes its audio vanish from the timeline; opentune_undo refuses it, and the user should not undo it in the OpenTune window either. Ask the user before every split, merge or delete. Created 1 placement, removed 2 placements (destructive; not undoable: OpenTune cannot undo this reliably; can be restored with opentune_edit_arrangement only after the user explicitly agrees). Warnings: UPSTREAM_UNDO_DEFECT.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -178,7 +178,7 @@
       },
       {
         "kind": "revert",
-        "text": "Not undoable (OpenTune cannot undo this reliably). Restore: call opentune_edit_arrangement with the arguments in restore, as they are.",
+        "text": "Not undoable (OpenTune cannot undo this reliably). Only after the user explicitly agrees to restore it: call opentune_edit_arrangement with the arguments in restore, as they are.",
         "revert": {
           "method": "arrangement.edit",
           "params": {

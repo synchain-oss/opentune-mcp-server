@@ -14,10 +14,12 @@ versioned separately and has its own changelog.
   `arrangement.edit` and `arrangement.copy`). `move`, `trim`, `gain`, `fade` and `set_reference` run in order as one
   undo step; `split`, `merge`, `delete` and `copy` each go in a call of their own. The first sentence of a split, merge
   or delete result says that it cannot be undone (OpenTune frees objects its own undo entry needs) and to ask the user
-  first; `delete` needs `confirm: true`, given only with the user's consent. `dry_run` previews every op but `copy`.
-  The tool takes and returns the `arrangement_revision`, so edits of notes, keys or pitch never conflict with a clip
-  edit, and lists the ids of new and removed clips in `clip_ids`. Revert recipes that name `arrangement.edit` (the
-  merge after a split, the removal of copies) are now given as calls of this tool.
+  first; `delete` needs `confirm: true`, given only with the user's consent, and the tool is marked destructive.
+  `dry_run` previews every op but `copy`. The tool takes and returns the `arrangement_revision`, so edits of notes,
+  keys or pitch never conflict with a clip edit, and lists the ids of new and removed clips in `clip_ids`. Revert
+  recipes that name `arrangement.edit` (the merge after a split, the removal of copies) are now given as calls of this
+  tool; a restore that splits, merges or deletes cannot be undone either, so its revert line asks for the user's
+  consent first.
 
 ## [0.1.0] - 2026-10-17
 

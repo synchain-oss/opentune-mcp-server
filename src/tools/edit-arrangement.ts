@@ -405,7 +405,8 @@ export const editArrangementTool = defineTool({
     instance_id: INSTANCE_FIELD,
   }),
   outputSchema: WRITE_RESULT_OUTPUT,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  // Destructive: delete can be neither undone nor restored, and split and merge cannot be undone either.
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   capabilities: ['arrangement.v1'],
   otcpMethods: ['arrangement.edit', 'arrangement.copy'],
   run: (args, ctx) => editArrangement(ctx, args),

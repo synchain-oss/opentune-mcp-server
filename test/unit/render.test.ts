@@ -421,6 +421,50 @@ describe('revert recipes as tool calls', () => {
     });
   });
 
+  it('waits for the user before a restore that splits, merges or deletes, though the recipe does not ask', () => {
+    const P = 'p:01234567:0:4';
+    const Q = 'p:01234567:0:5';
+    // None of these recipes carries requiresConsent: the restore cannot be undone either, so it needs consent.
+    const recipe = (op: Json) => ({
+      method: 'arrangement.edit',
+      params: { expectedArrangementRevision: 'a7', ops: [op] },
+    });
+    for (const op of [
+      { op: 'split', placementId: P, atTimelineSec: 3 },
+      { op: 'merge', leadingPlacementId: P, trailingPlacementId: Q },
+    ]) {
+      const plan = revertPlan(recipe(op));
+      expect(plan, op.op).toMatchObject({ kind: 'tool', consent: true });
+      expect(plan, op.op).not.toHaveProperty('consentArgument');
+      const r = render({ undo: { undoable: false, reason: 'upstream_undo_defect', revert: recipe(op) } });
+      expect(r.summary).toContain(
+        'can be restored with opentune_edit_arrangement only after the user explicitly agrees',
+      );
+      expect(r.lines.at(-1)).toMatchObject({
+        text:
+          'Not undoable (OpenTune cannot undo this reliably). Only after the user explicitly agrees to restore it: ' +
+          'call opentune_edit_arrangement with the arguments in restore, as they are.',
+      });
+    }
+    // A delete takes that consent as confirm.
+    const removal = recipe({ op: 'delete', placementIds: [P] });
+    expect(revertPlan(removal)).toMatchObject({ kind: 'tool', consent: true, consentArgument: 'confirm' });
+    expect(render({ undo: { undoable: false, reason: 'ui_parity', revert: removal } }).lines.at(-1)).toMatchObject({
+      text: expect.stringContaining(
+        'Only after the user explicitly agrees to restore it: call opentune_edit_arrangement with the arguments in ' +
+          'restore, as they are, adding confirm: true.',
+      ) as string,
+    });
+    // A restore of ops that one undo step takes back needs consent only when the recipe asks for it.
+    for (const op of [
+      { op: 'move', placementId: P, startTimelineSec: 1 },
+      { op: 'setGain', placementId: P, gainDb: -3 },
+    ]) {
+      expect(revertPlan(recipe(op)), op.op).toMatchObject({ kind: 'tool', consent: false });
+      expect(revertPlan({ ...recipe(op), requiresConsent: true }), op.op).toMatchObject({ consent: true });
+    }
+  });
+
   it('leaves an arrangement.edit recipe it cannot read to the user, by hand', () => {
     const P = 'p:01234567:0:4';
     const recipe = (params: Json) => revertPlan({ method: 'arrangement.edit', params });

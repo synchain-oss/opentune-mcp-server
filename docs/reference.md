@@ -349,7 +349,7 @@ OTCP capabilities: `project.io`, `jobs.v1`. OTCP methods: `project.open`, `job.g
 
 ### `opentune_edit_arrangement`
 
-**Edit OpenTune clips on the timeline**: changes state, not destructive, not idempotent, closed world.
+**Edit OpenTune clips on the timeline**: changes state, destructive, not idempotent, closed world.
 
 OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade, set_reference (experimental) run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy).
 
