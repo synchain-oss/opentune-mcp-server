@@ -126,7 +126,11 @@ export const STATUS_REASON_STEPS: Readonly<Record<string, NextStep>> = {
 /** The reason of a NOT_READY or PROTOCOL_MISMATCH instance, from the failure of its session. */
 function failureState(error: OtcpError): { state: StatusState; reason: string } {
   const { kind, reason } = error.data;
-  if (kind === 'PROTOCOL_MISMATCH') return { state: 'PROTOCOL_MISMATCH', reason: 'hello_rejected' };
+  if (kind === 'PROTOCOL_MISMATCH')
+    return {
+      state: 'PROTOCOL_MISMATCH',
+      reason: reason === 'major_not_served' ? 'major_not_served' : 'hello_rejected',
+    };
   if (kind === 'INSTANCE_UNVERIFIED') return { state: 'NOT_READY', reason: 'instance_unverified' };
   if (kind === 'AUTH_FAILED') return { state: 'NOT_READY', reason: 'auth_failed' };
   if (kind === 'SHUTTING_DOWN') return { state: 'NOT_READY', reason: 'shutting_down' };
