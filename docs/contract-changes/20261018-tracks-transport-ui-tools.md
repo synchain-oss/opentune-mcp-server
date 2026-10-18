@@ -25,8 +25,9 @@ specification is not changed.
   time signature are set first, then the loop flag, then the action. The last start is the position of the last play
   or seek, not 0. The tempo and time signature cannot be undone (as in OpenTune) and the result gives the call that
   restores them. The loop flag has no audible effect in the standalone (`LOOP_NO_EFFECT_STANDALONE`).
-- `opentune_manage_ui` (`op`, `clip`, `open_editor`, `dry_run`, `accept_commit`): not destructive, idempotent; needs
-  `ui.bridge`. `focus_clip` selects a clip (`ui.setSelection`); selecting can generate the clip's notes without an
+- `opentune_manage_ui` (`op`, `clip`, `open_editor`, `dry_run`, `accept_commit`): destructive, idempotent; needs
+  `ui.bridge`. It is marked destructive because selecting a clip can generate its notes with no undo entry and marking
+  the onboarding as shown cannot be undone; MCP clients use the hint to decide whether to ask first. `focus_clip` selects a clip (`ui.setSelection`); selecting can generate the clip's notes without an
   undo entry, queue reference analysis and change the scale shown in the transport bar, so `dry_run` predicts these
   effects and a real call names them in the first sentence. `dismiss_dialogs` (`ui.dismiss`, target `dialogs`) is
   refused while a dialog would commit its value (the track-colour dialog) unless `accept_commit` is true, which only

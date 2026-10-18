@@ -394,7 +394,7 @@ OTCP capabilities: `transport.v1`. OTCP methods: `transport.control`, `transport
 
 ### `opentune_manage_ui`
 
-**Manage OpenTune window state**: changes state, not destructive, idempotent, closed world.
+**Manage OpenTune window state**: changes state, destructive, idempotent, closed world.
 
 OpenTune (audio vocal pitch editor): op focus_clip selects a clip (placement id), optionally opening it in the piano roll. Selecting can make OpenTune generate the clip notes (no undo entry, project marked changed), queue reference analysis and change the transport-bar scale; dry_run predicts this, and a real result names it first. dismiss_dialogs closes all dialogs like Escape; a dialog that commits its value on close (track colour) is refused unless accept_commit is true, which only the user may allow. dismiss_onboarding marks the first-run onboarding as shown (global, cannot be undone).
 

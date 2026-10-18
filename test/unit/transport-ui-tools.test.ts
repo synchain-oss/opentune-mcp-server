@@ -392,7 +392,7 @@ describe('opentune_manage_ui: dismiss_dialogs and dismiss_onboarding', () => {
     expect(manageUiTool.description.length).toBeLessThanOrEqual(600);
     expect(manageUiTool.annotations).toMatchObject({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
     });
   });

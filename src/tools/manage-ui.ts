@@ -167,7 +167,7 @@ export const manageUiTool = defineTool({
     instance_id: INSTANCE_FIELD,
   }),
   outputSchema: WRITE_RESULT_OUTPUT,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   capabilities: ['ui.bridge'],
   otcpMethods: ['ui.setSelection', 'ui.dismiss'],
   run: (args, ctx) => manageUi(ctx, args),
