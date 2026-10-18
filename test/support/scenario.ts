@@ -104,6 +104,8 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   // executable, which is not configured for the bundle, so nothing starts and the result says why.
   await run('opentune_launch', {});
   await run('opentune_launch', { allow_second_instance: true });
+  await run('opentune_set_settings', { processing: { tuning_hz: 442 }, wait_seconds: 10 });
+  await run('opentune_set_settings', {}, 'error');
   // Last: opening a project replaces the clips whose ids the steps above used.
   const project = f.audioFile.replace(/\.wav$/, '.otproj');
   const next = f.audioFile.replace(/\.wav$/, '-02.otproj');

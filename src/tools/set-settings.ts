@@ -68,9 +68,7 @@ const processingSchema = z.strictObject({
   editing_scheme: z
     .enum(['openTune', 'openDyne'])
     .optional()
-    .describe(
-      'Editing scheme, applied by a job; openDyne may generate notes for the clip open in the piano roll.',
-    ),
+    .describe('Editing scheme, applied by a job; openDyne may generate notes for the clip open in the piano roll.'),
   hybrid_mode: z
     .boolean()
     .optional()
@@ -150,7 +148,9 @@ const withoutPrefix = (summary: string): string =>
  * OpenTune sent): a change whose recipe no tool can carry out says so instead of promising one.
  */
 function leadSentence(bodies: readonly Body[]): string {
-  const lines = bodies.flatMap((body) => (Array.isArray(body.lines) ? body.lines : []));
+  const lines = bodies.flatMap((body): readonly unknown[] =>
+    Array.isArray(body.lines) ? (body.lines as unknown[]) : [],
+  );
   const reverts = lines.filter((line) => isObject(line) && line.kind === 'revert');
   const restorable = reverts.some((line) => isObject(line) && line.restore !== null);
   const manual = reverts.some((line) => isObject(line) && line.restore === null);
@@ -177,7 +177,8 @@ const withLead = (body: Body, lead: string): Body => ({
 /** Combines the finished groups of one call, or renders the single one it made. */
 function combined(results: readonly Rendered[]): Outcome {
   const [only, second] = results;
-  if (only === undefined) return invalid('give processing, audio_device or clear_recent: true: there is nothing to set');
+  if (only === undefined)
+    return invalid('give processing, audio_device or clear_recent: true: there is nothing to set');
   if (second === undefined) {
     // A result that changed nothing says only that; the lead would promise a revert that does not exist.
     return { ok: true, body: only.body.noOp === true ? only.body : withLead(only.body, leadSentence([only.body])) };
@@ -232,7 +233,9 @@ async function runSteps(
       const remaining = steps.length - index - 1;
       const note =
         followText(waitFailed) +
-        (remaining > 0 ? ` The ${String(remaining)} later setting group(s) were not attempted; call again for them.` : '');
+        (remaining > 0
+          ? ` The ${String(remaining)} later setting group(s) were not attempted; call again for them.`
+          : '');
       return {
         ok: true,
         body: withLead({ ...outcome.body, summary: outcome.body.summary + note }, JOB_LEAD),

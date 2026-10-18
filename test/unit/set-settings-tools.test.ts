@@ -91,7 +91,11 @@ describe('opentune_set_settings', () => {
       /^opentune_set_settings: this changes user-global OpenTune settings, which belong to the installation and not to the project, and OpenTune records no undo entry for it: the revert line gives the opentune_set_settings call that puts the previous values back\./,
     );
     expect(out.changes).toMatchObject([
-      { entity: 'preference', ref: { preference: 'tuningHz' }, fields: { tuningHz: { before: 440, after: 442, unit: 'hz' } } },
+      {
+        entity: 'preference',
+        ref: { preference: 'tuningHz' },
+        fields: { tuningHz: { before: 440, after: 442, unit: 'hz' } },
+      },
       { entity: 'preference', ref: { preference: 'hybridMode' } },
     ]);
     expect(warningCodes(out)).toEqual(['GLOBAL_PREFERENCE', 'NOT_RETROACTIVE']);
