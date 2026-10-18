@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Json } from '../../src/otcp/client.js';
 import { writeBody } from '../../src/render/index.js';
 import { WRITE_RESULT_OUTPUT } from '../../src/tools/registry.js';
+import { settingsLead } from '../../src/tools/set-settings.js';
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
 import { otcpSpec } from '../support/otcp-spec.js';
 
@@ -163,6 +164,40 @@ async function fromMock(): Promise<Record<string, Scenario>> {
       'An audio device setup of the installation: the previous setup comes back as an opentune_set_settings call with audio_device.',
     tool: 'opentune_set_settings',
     envelope: await audioSession.ok('audio.set', { sampleRateHz: 48000 }),
+  };
+
+  // Clearing the recent-projects list and switching to openDyne: nothing takes either back, and the
+  // first sentence says so before any mention of a way back.
+  const recent = await sessions.open({ instanceId: INSTANCE });
+  recent.mock.given({
+    files: [{ bind: 'proj', kind: 'project', extension: '.otproj', durationSec: 3 }],
+    preferences: { recentProjects: ['proj'] },
+  });
+  out['settings-clear-recent-irreversible'] = {
+    description:
+      'Clearing the recent-projects list: no request can fill it again, so the first sentence says the previous values cannot be restored.',
+    tool: 'opentune_set_settings',
+    // The mock keeps the project in a temporary directory; the snapshot names a neutral path instead.
+    envelope: JSON.parse(
+      JSON.stringify(await recent.ok('project.clearRecent', {})).replace(
+        /"[^"]*ot-mock-files-[^"]*\.otproj"/g,
+        JSON.stringify('C:\\Music\\song.otproj'),
+      ),
+    ) as Json,
+  };
+  const scheme = await sessions.open({ instanceId: INSTANCE });
+  const schemeIds = scheme.mock.given({
+    clips: [{ bind: 'clip', trackId: 0, startTimelineSec: 0, durationSec: 6, analysis: 'ready' }],
+  });
+  await scheme.ok('ui.setSelection', { placementId: schemeIds['clip.placementId'], openEditor: true });
+  const schemeStarted = await scheme.ok('prefs.set', { editingScheme: 'openDyne' });
+  const schemeJob = (await scheme.ok('job.get', { jobId: (schemeStarted.job as Json).jobId, waitMs: 30_000 }))
+    .job as Json;
+  out['settings-scheme-generated-notes'] = {
+    description:
+      'The result of the prefsApply job after a switch to openDyne: the generated notes cannot be undone or reverted, and the first sentence says so before the revert line.',
+    tool: 'opentune_set_settings',
+    envelope: schemeJob.result as Json,
   };
 
   const replaced = await ok('content.autoTune', {
@@ -356,6 +391,12 @@ export async function scenarios(): Promise<Record<string, Scenario>> {
   return { ...(await fromMock()), ...written() };
 }
 
+/** The body of a scenario; the settings tool puts its own lead sentence in front of the renderer's summary. */
+const renderedOf = (s: Scenario) => {
+  const body = writeBody(s.envelope, { tool: s.tool });
+  return s.tool === 'opentune_set_settings' ? settingsLead(body) : body;
+};
+
 const text = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
 describe('write result rendering golden snapshots', () => {
@@ -363,7 +404,7 @@ describe('write result rendering golden snapshots', () => {
     const all = await scenarios();
     const files = Object.fromEntries(
       Object.entries(all).map(([id, s]) => {
-        const rendered = writeBody(s.envelope, { tool: s.tool });
+        const rendered = renderedOf(s);
         return [`${id}.json`, text({ description: s.description, tool: s.tool, input: s.envelope, rendered })];
       }),
     );
@@ -390,7 +431,7 @@ describe('write result rendering golden snapshots', () => {
         problems.filter((p) => !p.includes('unevaluated')),
         id,
       ).toEqual([]);
-      expect(WRITE_RESULT_OUTPUT.safeParse(writeBody(s.envelope, { tool: s.tool })).success, id).toBe(true);
+      expect(WRITE_RESULT_OUTPUT.safeParse(renderedOf(s)).success, id).toBe(true);
     }
   });
 

@@ -1708,7 +1708,7 @@
               "maximum": 500
             },
             "editing_scheme": {
-              "description": "Editing scheme, applied by a job; openDyne may generate notes for the clip open in the piano roll.",
+              "description": "Editing scheme, applied by a job; openDyne may generate notes for the open clip irreversibly, with no undo entry, and marks the project modified.",
               "type": "string",
               "enum": [
                 "openTune",
@@ -1782,7 +1782,7 @@
     },
     "annotations": {
       "readOnlyHint": false,
-      "destructiveHint": false,
+      "destructiveHint": true,
       "idempotentHint": true,
       "openWorldHint": false
     },

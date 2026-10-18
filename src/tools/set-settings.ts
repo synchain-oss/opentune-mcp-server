@@ -17,6 +17,7 @@ import type { Json, OtcpSession } from '../otcp/client.js';
 import { missingCapability } from '../otcp/instances.js';
 import { isObject } from '../render/changes.js';
 import { writeOutcome } from '../render/index.js';
+import { DESTRUCTIVE_WARNINGS, warningCodes } from '../render/summary.js';
 import {
   DEFAULT_WAIT_SECONDS,
   MAX_WAIT_SECONDS,
@@ -68,7 +69,9 @@ const processingSchema = z.strictObject({
   editing_scheme: z
     .enum(['openTune', 'openDyne'])
     .optional()
-    .describe('Editing scheme, applied by a job; openDyne may generate notes for the clip open in the piano roll.'),
+    .describe(
+      'Editing scheme, applied by a job; openDyne may generate notes for the open clip irreversibly, with no undo entry, and marks the project modified.',
+    ),
   hybrid_mode: z
     .boolean()
     .optional()
@@ -157,6 +160,21 @@ function leadSentence(bodies: readonly Body[]): string {
   const base =
     'this changes user-global OpenTune settings, which belong to the installation and not to the project, and ' +
     'OpenTune records no undo entry for it';
+  const generated = bodies.some(
+    (body) =>
+      warningCodes(body).includes('SCHEME_GENERATED_NOTES') ||
+      (isObject(body.sideEffects) && 'notesGenerated' in body.sideEffects),
+  );
+  const irreversible =
+    generated || bodies.some((body) => warningCodes(body).some((code) => DESTRUCTIVE_WARNINGS.has(code)));
+  // Part of the change that nothing can take back comes before any promise of a way back.
+  if (irreversible && restorable) {
+    const what = generated ? 'the notes it generated' : 'part of it';
+    return (
+      `${base}, and ${what} can be neither undone nor reverted: the revert line gives the ${TOOL} call that ` +
+      'puts back only the previous values it can, and the warnings say what stays.'
+    );
+  }
   if (restorable && !manual)
     return `${base}: the revert line gives the ${TOOL} call that puts the previous values back.`;
   if (restorable)
@@ -164,10 +182,16 @@ function leadSentence(bodies: readonly Body[]): string {
   return `${base}, and no request of the protocol can restore the previous values (see the revert line).`;
 }
 
+/** A single settings result with the lead sentence of its change; a result that changed nothing stays as it is. */
+export function settingsLead(body: Body): Body {
+  return body.noOp === true ? body : withLead(body, leadSentence([body]));
+}
+
 /** The body of a result that names a started job: it says what the change is before the job's own words. */
 const JOB_LEAD =
   'this changes user-global OpenTune settings, which belong to the installation and not to the project, and ' +
-  "OpenTune records no undo entry for it; the job's result holds the previous values and the way back.";
+  'OpenTune records no undo entry for it, and an editing-scheme change may generate notes that can be neither ' +
+  "undone nor reverted; the job's result holds the previous values and what can be restored.";
 
 const withLead = (body: Body, lead: string): Body => ({
   ...body,
@@ -181,7 +205,7 @@ function combined(results: readonly Rendered[]): Outcome {
     return invalid('give processing, audio_device or clear_recent: true: there is nothing to set');
   if (second === undefined) {
     // A result that changed nothing says only that; the lead would promise a revert that does not exist.
-    return { ok: true, body: only.body.noOp === true ? only.body : withLead(only.body, leadSentence([only.body])) };
+    return { ok: true, body: settingsLead(only.body) };
   }
   const parts = results.map((result) => `${result.label}: ${withoutPrefix(result.body.summary)}`);
   return {
@@ -231,14 +255,20 @@ async function runSteps(
       }
       // The job outlived the wait: the start envelope names it, and no later group is attempted.
       const remaining = steps.length - index - 1;
+      const earlier = results.map((result) => result.label);
       const note =
         followText(waitFailed) +
+        (earlier.length > 0 ? ` The earlier group(s) already applied: ${earlier.join(', ')}.` : '') +
         (remaining > 0
           ? ` The ${String(remaining)} later setting group(s) were not attempted; call again for them.`
           : '');
+      const pending = withLead({ ...outcome.body, summary: outcome.body.summary + note }, JOB_LEAD);
       return {
         ok: true,
-        body: withLead({ ...outcome.body, summary: outcome.body.summary + note }, JOB_LEAD),
+        body:
+          earlier.length === 0
+            ? pending
+            : { ...pending, applied_before_job: results.map((result) => ({ method: result.method, ...result.body })) },
       };
     }
     const state = jobState(job);
@@ -256,13 +286,13 @@ async function runSteps(
     }
     const result = isObject(job.result) ? job.result : null;
     if (result === null) {
-      return {
+      return stop({
         ok: false,
         error: toolError('INTERNAL', {
           detail: 'OpenTune finished the settings job without a result',
           executed: null,
         }),
-      };
+      });
     }
     const outcome = writeOutcome(result, { tool: TOOL });
     if (!outcome.ok) return stop(outcome);
@@ -334,7 +364,7 @@ export const setSettingsTool = defineTool({
       .describe('OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.'),
   }),
   outputSchema: WRITE_RESULT_OUTPUT,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
   capabilities: [...CAPABILITIES],
   otcpMethods: ['prefs.set', 'audio.set', 'project.clearRecent', 'job.get'],
   run: (args, ctx) => setSettings(ctx, args),

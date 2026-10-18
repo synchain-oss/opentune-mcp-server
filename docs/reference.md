@@ -289,7 +289,7 @@ OTCP capabilities: `session.v1`, `read.v1`, `audio.device`. OTCP methods: `sessi
 
 ### `opentune_set_settings`
 
-**Set OpenTune settings**: changes state, not destructive, idempotent, closed world.
+**Set OpenTune settings**: changes state, destructive, idempotent, closed world.
 
 OpenTune (audio vocal pitch editor): changes the global settings of the OpenTune installation, not of the project. processing: tuning_hz (A4 in Hz, 400-500), editing_scheme (openTune or openDyne, applied by a job), hybrid_mode, experimental_features. audio_device: device_type, output_device, sample_rate_hz, buffer_size_frame, output_channel_pair, each one the instance offers. clear_recent: true empties the recent-project list, which nothing refills. OpenTune records no undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.
 

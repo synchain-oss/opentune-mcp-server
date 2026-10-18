@@ -7,7 +7,10 @@ change adds `opentune_set_settings` on top of the OTCP methods `prefs.set` (capa
 (capability `audio.device`) and `project.clearRecent` (capability `project.io`), all already in the specification.
 
 - `opentune_set_settings` (`processing`, `audio_device`, `clear_recent`, `wait_seconds`, `instance_id`): not read-only,
-  not destructive, idempotent. At least one group is required, and a group must name at least one value.
+  destructive, idempotent. At least one group is required, and a group must name at least one value. It is marked
+  destructive (MCP: may perform destructive updates) because `clear_recent` cannot be undone or reverted, and a switch
+  to `openDyne` can generate notes for the open clip that cannot be undone or reverted either and marks the project
+  modified.
   - `processing` takes exactly the settable fields of `prefs.set`: `tuning_hz` (400 to 500), `editing_scheme`
     (`openTune` or `openDyne`), `hybrid_mode` and `experimental_features`.
   - `audio_device` takes the fields of `audio.set`: `device_type`, `output_device`, `sample_rate_hz`,
@@ -20,7 +23,9 @@ change adds `opentune_set_settings` on top of the OTCP methods `prefs.set` (capa
 - Each group checks only the capability it needs, so a build without `audio.device` can still change the processing
   preferences. A missing capability gives the usual `UNSUPPORTED(capability_missing)` error.
 - These settings belong to the installation, not to the project, and OpenTune records no undo entry for them. The
-  first sentence of every result says so and points to the revert line. The revert recipes of `prefs.set` and
+  first sentence of every result says so and points to the revert line; when part of the change cannot be undone or
+  reverted (the notes an `openDyne` switch generates, the recent list), it says that instead of promising a full
+  restore. The revert recipes of `prefs.set` and
   `audio.set` are now mapped to an `opentune_set_settings` call with the previous values, so the revert line gives a
   call that can be made as it is. A recipe value outside the tool's input schema is left out, and a recipe left with
   no value becomes a manual restore.
@@ -34,13 +39,15 @@ now and that list is empty.
 
 ## Files
 
-| File                                                   | Change                                                             |
-| ------------------------------------------------------ | ------------------------------------------------------------------ |
-| `test/golden/tools-list.json`                          | Adds `opentune_set_settings`.                                      |
-| `test/golden/render/settings-preference-revert.json`   | New: the rendering of a processing change with its revert call.    |
-| `test/golden/render/settings-audio-device-revert.json` | New: the rendering of an audio device change with its revert call. |
-| `docs/reference.md`                                    | Regenerated: the new tool.                                         |
-| `mcpb/manifest.json`                                   | Tools list synced from the golden catalog.                         |
+| File                                                         | Change                                                                  |
+| ------------------------------------------------------------ | ----------------------------------------------------------------------- |
+| `test/golden/tools-list.json`                                | Adds `opentune_set_settings`.                                           |
+| `test/golden/render/settings-preference-revert.json`         | New: the rendering of a processing change with its revert call.         |
+| `test/golden/render/settings-audio-device-revert.json`       | New: the rendering of an audio device change with its revert call.      |
+| `test/golden/render/settings-clear-recent-irreversible.json` | New: clearing the recent list, first sentence irreversible.             |
+| `test/golden/render/settings-scheme-generated-notes.json`    | New: the openDyne job result, first sentence names the generated notes. |
+| `docs/reference.md`                                          | Regenerated: the new tool.                                              |
+| `mcpb/manifest.json`                                         | Tools list synced from the golden catalog.                              |
 
 The OTCP specification (`spec/otcp/v1/`) and the instructions are not changed.
 

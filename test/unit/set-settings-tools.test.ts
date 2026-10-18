@@ -289,10 +289,68 @@ describe('opentune_set_settings', () => {
     expect((JSON.parse(wire) as { device: { outputDevice: string } }).device.outputDevice).toBe(HOSTILE);
   });
 
-  it('is declared as a non-destructive idempotent write tool of the settings area', () => {
+  it('says first that the notes an openDyne switch generated cannot be undone or reverted', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({
+      clips: [{ bind: 'clip', trackId: 0, startTimelineSec: 0, durationSec: 6, analysis: 'ready' }],
+    });
+    const session = await rawSession(ctx);
+    await session.call('ui.setSelection', { placementId: need(ids, 'clip.placementId'), openEditor: true }, 15_000);
+    const out = body(await setSettings(ctx, { processing: { editing_scheme: 'openDyne' } }));
+    expect(out.sideEffects).toMatchObject({ notesGenerated: { contentId: ids['clip.contentId'] } });
+    expect(warningCodes(out)).toContain('SCHEME_GENERATED_NOTES');
+    expect(out.summary).toMatch(
+      /^opentune_set_settings: this changes user-global[^.]*no undo entry for it, and the notes it generated can be neither undone nor reverted: /,
+    );
+    expect(out.summary).not.toMatch(/^[^:]*: [^.]*puts the previous values back\./);
+  });
+
+  it('keeps the groups already applied when a later job ends without a result', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()], audio: { running: true } });
+    await hookCalls(ctx, (method, result) => {
+      if (method !== 'audio.set') return;
+      result.job = { jobId: 'j:01234567:1', kind: 'prefsApply', state: 'succeeded' };
+    });
+    const outcome = await setSettings(ctx, {
+      processing: { tuning_hz: 442 },
+      audio_device: { sample_rate_hz: 48000 },
+      wait_seconds: 0,
+    });
+    const error = failure(outcome);
+    expect(error.kind).toBe('INTERNAL');
+    const applied = (outcome as { context?: { applied_before_error?: { method: string }[] } }).context
+      ?.applied_before_error;
+    expect(applied?.map((a) => a.method)).toEqual(['prefs.set']);
+    expect(
+      (await getSettings(ctx, { sections: ['processing'] }).then((o) => body(o).processing)) as Json,
+    ).toMatchObject({
+      tuningHz: 442,
+    });
+  });
+
+  it('lists the groups already applied when a later job outlives the wait', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()], audio: { running: true } });
+    await hookCalls(ctx, (method, result) => {
+      if (method !== 'audio.set') return;
+      result.job = { jobId: 'j:01234567:1', kind: 'prefsApply', state: 'running' };
+    });
+    const out = body(
+      await setSettings(ctx, {
+        processing: { tuning_hz: 442 },
+        audio_device: { sample_rate_hz: 48000 },
+        wait_seconds: 0,
+      }),
+    );
+    expect(out.summary).toContain('The earlier group(s) already applied: processing.');
+    expect(out.applied_before_job).toMatchObject([{ method: 'prefs.set', applied: true }]);
+  });
+
+  it('is declared as a destructive idempotent write tool of the settings area', () => {
     expect(setSettingsTool.annotations).toEqual({
       readOnlyHint: false,
-      destructiveHint: false,
+      destructiveHint: true,
       idempotentHint: true,
       openWorldHint: false,
     });
