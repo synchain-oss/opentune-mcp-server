@@ -282,16 +282,15 @@ describe('opentune_open_project', () => {
 });
 
 describe('coverage of the project methods', () => {
-  // Methods of the spec that no tool calls, with the reason.
-  const NOT_EXPOSED: Readonly<Record<string, string>> = {
-    'project.clearRecent':
-      'Clearing the recent-projects list is a global preference change that no editing workflow needs; the window offers it in a menu.',
-  };
+  // Methods of the spec that no tool calls, with the reason. None right now: project.clearRecent is
+  // exposed through opentune_set_settings.
+  const NOT_EXPOSED: Readonly<Record<string, string>> = {};
 
   it('has a tool or a reason for every project.* method', () => {
     const exposed = new Set(TOOLS.flatMap((t) => t.otcpMethods));
     const methods = [...otcpSpec().methods.keys()].filter((m) => m.startsWith('project.') && m !== 'project.get');
     expect(methods).toEqual(expect.arrayContaining(['project.save', 'project.saveAs', 'project.open']));
+    expect(exposed.has('project.clearRecent')).toBe(true);
     for (const method of methods) {
       expect(exposed.has(method) || method in NOT_EXPOSED, method).toBe(true);
     }

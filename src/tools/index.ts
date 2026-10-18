@@ -18,6 +18,7 @@ import { getProjectTool } from './project.js';
 import { openProjectTool, overwriteProjectTool, saveProjectTool } from './project-files.js';
 import type { ToolDefinition } from './registry.js';
 import { setClipTool } from './set-clip.js';
+import { setSettingsTool } from './set-settings.js';
 import { getSettingsTool } from './settings.js';
 import { getStatusTool } from './status.js';
 import { editTimingTool } from './timing.js';
@@ -43,6 +44,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   editTimingTool,
   getClipDetailsTool,
   getSettingsTool,
+  setSettingsTool,
   estimateKeyTool,
   saveProjectTool,
   overwriteProjectTool,

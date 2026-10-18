@@ -150,6 +150,49 @@ function editArrangement(params: Json): Mapped | null {
   };
 }
 
+/** A non-empty settings call, or null when the recipe holds no member the tool can take. */
+function settingsCall(group: string, members: Json): Mapped | null {
+  return Object.keys(members).length === 0
+    ? null
+    : { call: { tool: 'opentune_set_settings', arguments: { [group]: members } }, needsRevision: false };
+}
+
+/**
+ * The prefs.set recipe of a preference change: the previous values, which the tool takes in
+ * snake_case. A member whose value is not in the protocol's form (the instance is another program)
+ * is left out rather than sent on; a recipe that names none becomes a manual restore.
+ */
+function preferenceRevert(params: Json): Mapped | null {
+  const processing: Json = {};
+  // A number, not only an integer: prefs.set takes any frequency from 400 to 500 Hz.
+  if (typeof params.tuningHz === 'number' && params.tuningHz >= 400 && params.tuningHz <= 500)
+    processing.tuning_hz = params.tuningHz;
+  if (params.editingScheme === 'openTune' || params.editingScheme === 'openDyne')
+    processing.editing_scheme = params.editingScheme;
+  if (typeof params.hybridMode === 'boolean') processing.hybrid_mode = params.hybridMode;
+  if (typeof params.experimentalFeatures === 'boolean') processing.experimental_features = params.experimentalFeatures;
+  return settingsCall('processing', processing);
+}
+
+const textToken = (value: unknown, max: number): string | null =>
+  typeof value === 'string' && value.length > 0 && value.length <= max ? value : null;
+
+/** The audio.set recipe of a device change, in the snake_case the tool takes. */
+function audioRevert(params: Json): Mapped | null {
+  const audio_device: Json = {};
+  const deviceType = textToken(params.deviceType, 64);
+  const outputDevice = textToken(params.outputDevice, 256);
+  if (deviceType !== null) audio_device.device_type = deviceType;
+  if (outputDevice !== null) audio_device.output_device = outputDevice;
+  if (typeof params.sampleRateHz === 'number' && params.sampleRateHz > 0)
+    audio_device.sample_rate_hz = params.sampleRateHz;
+  if (isInt(params.bufferSizeFrame, 1, Number.MAX_SAFE_INTEGER))
+    audio_device.buffer_size_frame = params.bufferSizeFrame;
+  if (isInt(params.outputChannelPair, 0, Number.MAX_SAFE_INTEGER))
+    audio_device.output_channel_pair = params.outputChannelPair;
+  return settingsCall('audio_device', audio_device);
+}
+
 const TRACK_ID_MAX = 63;
 const TRACK_OPS_MAX = 32;
 const COLOUR_RE = /^#[0-9A-Fa-f]{6}$/;
@@ -253,6 +296,8 @@ const TOOL_FOR = table<(params: Json) => Mapped | null>({
   'edit.undo': (params) => history('opentune_undo', params),
   'edit.redo': (params) => history('opentune_redo', params),
   'arrangement.edit': editArrangement,
+  'prefs.set': preferenceRevert,
+  'audio.set': audioRevert,
 });
 
 /** The OTCP methods a revert recipe can name and still be carried out by a tool call. */
