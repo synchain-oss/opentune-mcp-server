@@ -39,7 +39,7 @@ jobs:
         with:
           fetch-depth: 1
           persist-credentials: false
-      - uses: qodo-ai/pr-agent@8e4d32e5497defd43c023a404f73560c62728961 # v0.39.0
+      - uses: qodo-ai/pr-agent@8e5a9295973b24af4b70cafd0b660a230811ef9e # v0.47.0
         env:
           # ANTHROPIC.KEY / ANTHROPIC.API_BASE 是 pr-agent 自己的点号配置项：它会用自己 settings 里的 api_key
           # 覆盖 litellm 的环境变量，只设 ANTHROPIC_API_KEY 会被空值覆盖（网关返回 "api key invalid"）。
