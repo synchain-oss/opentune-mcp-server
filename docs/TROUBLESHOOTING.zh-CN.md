@@ -112,7 +112,7 @@ OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`�
 
 ### Error BUSY
 
-OpenTune 正被使用:有对话框开着、用户正在拖动,或有导入、导出、工程操作在进行。请在 OpenTune 里完成它,再重试。原因为 `modal_open` 时有模态对话框开着;第一个通常就是一次性的首次引导对话框,见 [First launch dialog](#first-launch-dialog)。`opentune_manage_ui` 的 `dismiss_dialogs` 可以像按 Esc 一样关掉对话框;关闭时会提交所示取值的对话框(轨道颜色对话框)只有带 `accept_commit: true` 才会关,而这需要用户同意。
+OpenTune 正被使用:有对话框开着、用户正在拖动,或有导入、导出、工程操作在进行。请在 OpenTune 里完成它,再重试。原因为 `modal_open` 时有模态对话框开着;第一个通常就是一次性的首次引导对话框,见 [First launch dialog](#first-launch-dialog)。`opentune_manage_ui` 的 `dismiss_dialogs` 可以像按 Esc 一样关掉对话框;关闭时会提交所示取值的对话框(轨道颜色对话框)只有带 `accept_commit: true` 才会关,而这需要用户同意。关掉确认框等于取消它询问的操作,所以关闭任何对话框之前都要先问用户。
 
 ### Error TIMEOUT
 

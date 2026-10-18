@@ -27,8 +27,9 @@ versioned separately and has its own changelog.
   and `opentune_manage_ui` (select a clip with a prediction of what selecting does besides selecting, close dialogs,
   mark the first-run onboarding as shown). Results that cannot be undone say so in the first sentence and give the
   call that restores the old values.
-- `BUSY` with reason `modal_open` now points to `opentune_manage_ui` instead of asking the user to close the
-  dialog by hand, and keeps the rule that a dialog which commits its value on close needs the user's agreement.
+- `BUSY` with reason `modal_open` now asks the user either to close the dialog in OpenTune or to agree explicitly
+  that the agent closes it with `opentune_manage_ui`; closing a confirmation box cancels the action it asked about,
+  and a dialog which commits its value on close needs the user's agreement (`accept_commit`).
 
 ## [0.1.0] - 2026-10-17
 

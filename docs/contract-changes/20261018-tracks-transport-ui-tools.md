@@ -38,9 +38,10 @@ applied.
 
 Other changes that clients can see:
 
-- The error `BUSY` with reason `modal_open` has a next step of its own: call `opentune_manage_ui` with `op:
-dismiss_dialogs`, asking the user first because closing a dialog can commit its value. It replaced the general
-  "ask the user to finish" step for this reason only.
+- The error `BUSY` with reason `modal_open` has a next step of its own, for the user (no tool, no arguments): close
+  the dialog in OpenTune, or agree explicitly that the agent closes it with `opentune_manage_ui` and the op
+  `dismiss_dialogs`. Closing a confirmation box cancels the action it asked about; `accept_commit: true` only after
+  the user agrees. It replaced the general "ask the user to finish" step for this reason only.
 - New next steps for the reasons `dialog_commits_on_close`, `target_track_occupied`, `track_limit`, `last_track`,
   `track_hidden` and `arrangement_changed`.
 - Revert recipes of `track.set`, `track.delete`, `transport.setTempo`, `transport.setLoop` and `ui.setSelection` (when it
@@ -61,5 +62,5 @@ dismiss_dialogs`, asking the user first because closing a dialog can commit its 
 
 The catalog only grows: existing tools keep their names, descriptions and schemas. The instructions text is not
 changed. An OpenTune build without `tracks.v1`, `transport.v1` or `ui.bridge` still works for every other tool; the
-new tools answer `UNSUPPORTED(capability_missing)`. The size of `tools/list` is now about 54 KB, within the 64 KB limit;
-each new tool is below 4 KB.
+new tools answer `UNSUPPORTED(capability_missing)`. With 27 tools the size of `tools/list` is now about 62 KB, within
+the 64 KB limit; each new tool is below 4 KB.

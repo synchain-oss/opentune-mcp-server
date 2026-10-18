@@ -159,7 +159,8 @@ OpenTune is in use: a dialog is open, the user is dragging, or an import, export
 in OpenTune, then retry. With reason `modal_open` a modal dialog is open; the first one is usually the one-time welcome
 dialog, see [First launch dialog](#first-launch-dialog). `opentune_manage_ui` with op `dismiss_dialogs` closes
 dialogs like the Escape key; a dialog that commits its value when closed (the track-colour dialog) is closed only
-with `accept_commit: true`, which needs the user's agreement.
+with `accept_commit: true`, which needs the user's agreement. Closing a confirmation box cancels the action it asked
+about, so ask the user before closing any dialog.
 
 ### Error TIMEOUT
 
