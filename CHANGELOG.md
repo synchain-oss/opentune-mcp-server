@@ -10,6 +10,11 @@ versioned separately and has its own changelog.
 
 ### Added
 
+- A wave-B tour (`test/e2e/wave-b-tour.ts`, `npm run e2e:exe`) drives every OTCP method and every MCP tool that wave B
+  added once against a started OpenTune and checks the answers against the specification: result schemas, the read-back
+  state behind every `changes[].fields.*.after`, tokens, the undo or revert round trip, the promised warnings and the
+  first sentence of a result that cannot be undone, with the latency of every call in its report. Run against a
+  correct fake in `test/unit/exe-wave-b-tour.test.ts`; a fake with one defect fails exactly the check that notices it.
 - `opentune_edit_arrangement`: edits clips on the timeline as OpenTune's arrangement view does (OTCP
   `arrangement.edit` and `arrangement.copy`). `move`, `trim`, `gain`, `fade` and `set_reference` run in order as one
   undo step; `split`, `merge`, `delete` and `copy` each go in a call of their own. The first sentence of a split, merge
@@ -30,9 +35,14 @@ versioned separately and has its own changelog.
 - `BUSY` with reason `modal_open` now asks the user either to close the dialog in OpenTune or to agree explicitly
   that the agent closes it with `opentune_manage_ui`; closing a confirmation box cancels the action it asked about,
   and a dialog which commits its value on close needs the user's agreement (`accept_commit`).
+- An end-to-end arrangement effects scenario (`test/e2e/arrangement-effects.ts`) for a real OpenTune build: clip gain,
+  fade ramps, track mute/solo and a clip split must change the exported master mix exactly as their results report,
+  and nothing else; unit tests prove each check against a stand-in.
 
 ### Changed
 
+- The real-instance helper of the end-to-end scenarios now copies a data template with the rules the contract runner
+  uses and the documentation describes: the template's ready file and discovery folder are left out.
 - The shared review workflows are pinned to `v1.3.1`. The Claude Haiku PR-Agent runs at effort `high`
   instead of `max`, which produced 50–90k output tokens per call and repeatedly hit the 900 s timeout.
 - The review bots are now thin callers of the shared reusable workflows in `Synchain-oss/ci-workflows`,

@@ -572,7 +572,7 @@ async function readState(session: OtcpSession, contentId: string): Promise<ClipS
   };
 }
 
-const same = (a: unknown, b: unknown) =>
+export const same = (a: unknown, b: unknown) =>
   typeof a === 'number' && typeof b === 'number' ? Math.abs(a - b) <= READBACK_EPSILON : a === b;
 
 /** Report consistency of a write result against the state read right after it. */
@@ -727,7 +727,7 @@ const publicDelta = (d: NoteDelta) => ({
   frames: d.frames,
 });
 
-const round = (value: number, digits = 2) => Number(value.toFixed(digits));
+export const round = (value: number, digits = 2) => Number(value.toFixed(digits));
 
 /**
  * Text for the report: the given audio file (its path and its name) becomes <audio>, the folder of
@@ -966,7 +966,7 @@ export function edgeResidualOf(
 }
 
 /** The largest absolute sample of a file (all channels). */
-function peakOf(wav: DecodedWav): number {
+export function peakOf(wav: DecodedWav): number {
   let peak = 0;
   for (const channel of wav.channels) for (const v of channel) peak = Math.max(peak, Math.abs(v));
   return peak;
@@ -1026,6 +1026,23 @@ interface StepOptions {
 
 /** Thrown by a check whose clean-up could not put the clip back as it was: the checks after it would be unsound. */
 class Unrestored extends Error {}
+
+/**
+ * Waits until the pitch analysis of a content is ready (as the import of the effects scenario does),
+ * for at most `timeoutMs`; throws when the analysis failed, was not requested or did not become
+ * ready in time.
+ */
+export async function waitForAnalysis(session: OtcpSession, contentId: string, timeoutMs: number): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const details = await session.call('content.getDetails', { contentId }, 30_000);
+    const state = text(member(details, 'analysis', 'content details'), 'f0State', 'analysis');
+    if (state === 'ready') return;
+    if (state === 'failed' || state === 'notRequested') throw new Error(`the pitch analysis is ${state}`);
+    if (Date.now() >= deadline) throw new Error(`the pitch analysis was not ready within ${String(timeoutMs)} ms`);
+    await sleep(200);
+  }
+}
 
 export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}): Promise<EffectsReport> {
   const started = performance.now();
@@ -1315,15 +1332,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     const item: unknown = Array.isArray(items) ? (items as unknown[])[0] : undefined;
     if (!isObject(item) || item.imported !== true) throw new Error('the file was not imported');
     const id = text(item, 'contentId', 'the import item');
-    const deadline = Date.now() + timeoutMs;
-    for (;;) {
-      const details = await s.call('content.getDetails', { contentId: id }, 30_000);
-      const state = text(member(details, 'analysis', 'content details'), 'f0State', 'analysis');
-      if (state === 'ready') break;
-      if (state === 'failed' || state === 'notRequested') throw new Error(`the pitch analysis is ${state}`);
-      if (Date.now() >= deadline) throw new Error(`the pitch analysis was not ready within ${String(timeoutMs)} ms`);
-      await sleep(200);
-    }
+    await waitForAnalysis(s, id, timeoutMs);
     return {
       contentId: id,
       placementId: text(item, 'placementId', 'the import item'),

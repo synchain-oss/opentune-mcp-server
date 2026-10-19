@@ -9,13 +9,14 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { pidAlive, systemProbe } from '../../src/discovery/process.js';
+import { copyTemplate } from '../contract/exe-target.js';
 import { LineClient } from '../support/jsonrpc-lines.js';
 import { isObject } from './smoke.js';
 
@@ -203,7 +204,8 @@ export interface RealInstanceOptions {
  */
 export async function startRealInstance(options: RealInstanceOptions): Promise<RealInstance> {
   const dataDir = await mkdtemp(path.join(options.dataDirParent, 'inst-'));
-  if (options.dataTemplate !== undefined) await cp(options.dataTemplate, dataDir, { recursive: true });
+  // Same rules as the contract runner: the ready file and the discovery folder of the template are not copied.
+  if (options.dataTemplate !== undefined) await copyTemplate(options.dataTemplate, dataDir);
   await mkdir(options.discoveryDir, { recursive: true });
   const readyFile = path.join(dataDir, 'ready.json');
   const nonce = randomBytes(24).toString('base64url');

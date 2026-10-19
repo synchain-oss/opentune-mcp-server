@@ -11,12 +11,13 @@ themselves, in a temporary `OPENTUNE_DATA_DIR`, and stop it afterwards; your pre
 real discovery files are never touched. With `OTCP_TARGET_DATA_DIR` the data folders are kept
 instead, so the logs of the instance can be read afterwards (see below).
 
-| Command                 | What it runs                                                                                                                                                                                                       |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`).                                                                                                             |
-| `npm run e2e:exe`       | The end-to-end scenarios, one after the other, each with an instance of its own: the smoke scenario (import, analysis, AUTO, export, with timings), the [effects scenario] and the three boundary scenarios below. |
+| Command                 | What it runs                                                                                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`).                                                                                                                                                 |
+| `npm run e2e:exe`       | The end-to-end scenarios, one after the other, each with an instance of its own: the smoke scenario (import, analysis, AUTO, export, with timings), the [effects scenario], the [arrangement effects scenario] and the three boundary scenarios below. |
 
 [effects scenario]: #effects-scenario
+[arrangement effects scenario]: #arrangement-effects-scenario
 
 ## Prerequisites
 
@@ -33,19 +34,21 @@ instead, so the logs of the instance can be read afterwards (see below).
 
 ## Environment variables
 
-| Variable                         | Required | Meaning                                                                                                                                         |
-| -------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `OTCP_TARGET_EXE`                | yes      | Absolute path of the OpenTune executable. Without it both checks are skipped, with that reason.                                                 |
-| `OTCP_TARGET_ARGS`               | no       | JSON array of strings, the arguments to start it with. Default `["--control-api"]`.                                                             |
-| `OTCP_TARGET_TIMEOUT_MS`         | no       | How long to wait for the ready file, the hello and the exit. Default 30000.                                                                     |
-| `OTCP_E2E_REPORT`                | no       | Absolute path of the JSON report of the smoke scenario (folders are created).                                                                   |
-| `OTCP_E2E_EFFECTS_REPORT`        | no       | Absolute path of the JSON report of the effects scenario; default `effects.json` next to `OTCP_E2E_REPORT`, none without either.                |
-| `OTCP_E2E_EFFECTS_AUDIO`         | no       | Absolute path of a `.wav` file the effects scenario uses instead of its generated audio (see below).                                            |
-| `OTCP_E2E_EFFECTS_TIMING_SEC`    | no       | Lengths in seconds of the extra clips the effects scenario only times, comma-separated, or `none`. Default `60,240`.                            |
-| `OTCP_E2E_EFFECTS_DATA_TEMPLATE` | no       | Absolute path of an existing folder: the data template of the effects scenario's instance, in place of `OTCP_TARGET_DATA_TEMPLATE` (see below). |
-| `OTCP_E2E_STEP_TIMEOUT_MS`       | no       | How long one wait (analysis, a job, a not-yet-ready content, a render to settle) may take. Default 180000.                                      |
-| `OTCP_TARGET_DATA_DIR`           | no       | Absolute path of an existing folder; keeps the data folders of the launches (see below).                                                        |
-| `OTCP_TARGET_DATA_TEMPLATE`      | no       | Absolute path of an existing folder whose contents are copied into every launch's data folder.                                                  |
+| Variable                                     | Required | Meaning                                                                                                                                                  |
+| -------------------------------------------- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `OTCP_TARGET_EXE`                            | yes      | Absolute path of the OpenTune executable. Without it both checks are skipped, with that reason.                                                          |
+| `OTCP_TARGET_ARGS`                           | no       | JSON array of strings, the arguments to start it with. Default `["--control-api"]`.                                                                      |
+| `OTCP_TARGET_TIMEOUT_MS`                     | no       | How long to wait for the ready file, the hello and the exit. Default 30000.                                                                              |
+| `OTCP_E2E_REPORT`                            | no       | Absolute path of the JSON report of the smoke scenario (folders are created).                                                                            |
+| `OTCP_E2E_EFFECTS_REPORT`                    | no       | Absolute path of the JSON report of the effects scenario; default `effects.json` next to `OTCP_E2E_REPORT`, none without either.                         |
+| `OTCP_E2E_EFFECTS_AUDIO`                     | no       | Absolute path of a `.wav` file the effects scenario uses instead of its generated audio (see below).                                                     |
+| `OTCP_E2E_EFFECTS_TIMING_SEC`                | no       | Lengths in seconds of the extra clips the effects scenario only times, comma-separated, or `none`. Default `60,240`.                                     |
+| `OTCP_E2E_EFFECTS_DATA_TEMPLATE`             | no       | Absolute path of an existing folder: the data template of the effects scenario's instance, in place of `OTCP_TARGET_DATA_TEMPLATE` (see below).          |
+| `OTCP_E2E_ARRANGEMENT_EFFECTS_REPORT`        | no       | Absolute path of the JSON report of the arrangement effects scenario; default `arrangement-effects.json` next to `OTCP_E2E_REPORT`, none without either. |
+| `OTCP_E2E_ARRANGEMENT_EFFECTS_DATA_TEMPLATE` | no       | Absolute path of an existing folder: the data template of the arrangement effects scenario's instance, in place of `OTCP_TARGET_DATA_TEMPLATE`.          |
+| `OTCP_E2E_STEP_TIMEOUT_MS`                   | no       | How long one wait (analysis, a job, a not-yet-ready content, a render to settle) may take. Default 180000.                                               |
+| `OTCP_TARGET_DATA_DIR`                       | no       | Absolute path of an existing folder; keeps the data folders of the launches (see below).                                                                 |
+| `OTCP_TARGET_DATA_TEMPLATE`                  | no       | Absolute path of an existing folder whose contents are copied into every launch's data folder.                                                           |
 
 ```bash
 # PowerShell: $env:OTCP_TARGET_EXE = 'C:\path\to\OpenTune.exe'
@@ -369,3 +372,180 @@ and these:
 
 Like the smoke report it holds no absolute path and no token. Timeouts for clients are not derived
 here; the timings are recorded for that.
+
+## Arrangement effects scenario
+
+The arrangement effects scenario (`test/e2e/arrangement-effects.ts`) checks that an arrangement or
+track write changes the exported master mix exactly as its result says, and nothing else. It does
+not judge how the audio sounds. It starts its own instance like the smoke and effects scenarios, uses
+generated audio only, and exports the master mix only. It is meant for a real OpenTune build; the
+checks are proved by unit tests against a stand-in (`test/support/fake-arrangement.mjs`), so a run
+needs no prepared project.
+
+### Set-up
+
+- **Audio.** The seeded generator (test/support/harmonic-tone.ts) makes two clips of one sustained
+  harmonic note each: clip A at MIDI 60 (2.4 s of sound) and clip B at MIDI 67 (2.0 s), at different
+  pitches. No audio file is checked in.
+- **Tracks and timeline.** Clip A is imported on a new track at timeline 0 and clip B on a second new
+  track at least 1 s after clip A ends, so the master has two regions that can be compared on their
+  own. Each import asks for notes and waits until `content.getDetails` reports `analysis.f0State`
+  `ready`, as the effects scenario does.
+- **Trimming the silent tail.** The generator leaves 0.1 s of silence after the note. Once both
+  analyses are ready, the scenario trims each clip's end to its note with one `arrangement.edit` call
+  (`trim` op), so a 0.5 s fade-out ends where the sound ends. The trim is part of the set-up and is
+  not taken back. Without `arrangement.v1` the clips keep their tails and the checks that need a
+  fade or a split skip themselves.
+- **Baseline.** It exports the master once and reads the float32 WAV back (`export.start`, kind
+  `master`, `ifExists: error`). The export result's `processing` (hybrid mode, backend, vocoder
+  weight, tuning frequency) is recorded in the report; the top-level `hybridMode` is `true` when
+  `session.info` or any export reported it on.
+- **No assumed pan law or fade curve.** The master is compared with itself from other exports, so the
+  channel layout, the pan law and the fade curve do not have to be known. The only level model used
+  is a ratio of RMS values, and the two clips never overlap in time.
+
+### What it checks
+
+Each check writes, reads the project back, exports the master and compares it with the baseline. A
+result's `changes[].fields.after` must equal the value read back with `project.get`, and the result's
+`tokens` (arrangement revision, content tokens, placement geometry hashes) must equal a fresh read.
+Fields the scenario does not read back are listed in the report and are not a problem.
+
+| Step                                 | What must hold                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `clip gain -6 dB`                    | `arrangement.edit` op `setGain` takes clip A to its current gain - 6 dB. Over clip A's region the RMS level change is -6 dB +- 0.5 dB, and clip B's region is bit-identical. `edit.undo` with the returned `undoId` reads back the snapshot, and the master is bit-identical to the baseline again; a difference is reported with its largest sample difference.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `fades are ramps`                    | `setFade` on clip A with 0.5 s in and out (the applied values when the result carries `CLAMPED`). The wet/baseline level ratio of every 10 ms window starts (fade-in) or ends (fade-out) at most -24 dB below the baseline, changes in one direction with 3 dB of slack for the windowing, and is within 0.5 dB of unity just outside the fade. The part of clip A between the fades and all of clip B stay bit-identical. The ratio at 25, 50 and 75 % of each fade is written to the report as information, not checked. The undo is verified as in the gain check.                                                                                                                                                                                                                                              |
+| `mute and solo in the master export` | `track.set` mutes clip B's track, then solos clip A's track, then solos clip B's track. In each case the clip that should not be heard is silent (largest sample at most 1e-6; exact zeros expected) and the other clip is bit-identical. The call's revert recipe is sent exactly as given; the old mute/solo values must be read back and the master must equal the baseline bit for bit. A revert that does not restore stops the checks after it.                                                                                                                                                                                                                                                                                                                                                              |
+| `split boundary is seamless`         | Last, because a split cannot be undone (`upstream_undo_defect`). `split` cuts clip A strictly inside a voiced note; the request is deliberately a few milliseconds off the 10 ms analysis grid, so an instance that snaps it reports `SPLIT_SNAPPED` and the check uses `appliedTimelineSec`. The result's `created`, `removed` and `idMap` entries must agree with a fresh `project.get`: the old clip gone, two new clips that meet at the applied split and cover the old clip. The whole master must stay bit-identical to the baseline and have the same length; if not, the report holds the largest difference, its time and its distance from the split. The returned revert recipe (a merge) is then sent as given and its master must equal the baseline again. A refused merge is reported, not failed. |
+
+A check that fails does not stop the checks after it, because each undoable check puts the clip back
+with `edit.undo` and verifies the snapshot and the master even when its measurement failed. A check
+whose clean-up cannot restore the project, or a write that took effect without a usable `undoId`,
+stops the remaining checks with `SKIP` and the reason, like the effects scenario. A failed set-up step
+stops the run. The results are those of the smoke scenario (`PASS`, `FAIL`, `SKIP`, `FLAKY-SKIP`).
+
+The scenario needs `session.v1`, `jobs.v1`, `read.v1`, `import.v1` and `export.v1`. Each check skips
+itself when its methods' capabilities are missing: `arrangement.v1` for gain, fades and split,
+`history.v1` for the two undos, and `tracks.v1` for mute and solo. A missing base capability skips
+the whole run with the reason. The instance must start with an empty project: an existing clip would
+make the master regions ambiguous, so the set-up fails and says so.
+
+### Tolerances
+
+The constants are fixed in `test/e2e/arrangement-effects.ts`, each with its reason:
+
+- **Gain: 0.5 dB.** A clip gain is a multiplication, so the level change is exact up to the master's
+  summation; 0.5 dB still separates -6 dB from no change or half of it.
+- **Fade window: 10 ms** (2 % of a 0.5 s fade). The first audible fade-in window (the last audible
+  fade-out window when the clip ends in silence) must be at most -24 dB below the baseline: a linear
+  ramp measures about -38.8 dB there, so 14.8 dB are left for a renderer's smoothing or another
+  curve, while a fade that starts at unity measures 0 dB.
+- **Fade direction: 3 dB of slack per window.** A monotone 0.5 s ramp changes by about 0.17 dB per
+  10 ms window, so 3 dB leaves room for windowing and overlap; a dip of the size of the fade is
+  still caught. Just outside the fade the level must be within 0.5 dB of the baseline, which is the
+  same order as the gain tolerance.
+- **Silence: 1e-6 of full scale** (-120 dBFS). A muted or soloed-out track is expected to produce
+  exact zeros; the limit is above float32 rounding at the tone's level and far below the quietest
+  generated signal.
+- **Timeline: 1e-6 s.** Reads round timeline values to that precision. A split has no tolerance: the
+  whole file must be bit-identical, and the split request itself is only offset by 3 ms inside the
+  note so the `SPLIT_SNAPPED` path is exercised.
+
+### How to run
+
+`npm run e2e:exe` runs the scenario after the effects scenario, each with an instance of its own. It
+takes the variables above and its own report and data-template variables:
+
+```bash
+OTCP_TARGET_EXE=/path/to/OpenTune npm run e2e:exe
+OTCP_TARGET_EXE=/path/to/OpenTune \
+  OTCP_E2E_ARRANGEMENT_EFFECTS_REPORT=/tmp/arrangement-effects.json \
+  OTCP_E2E_ARRANGEMENT_EFFECTS_DATA_TEMPLATE=/path/to/known-state \
+  npx vitest run --project e2e test/e2e/exe-arrangement-effects.test.ts
+```
+
+Without `OTCP_TARGET_EXE` the test file is skipped as a whole and says why; it never reports `PASS`.
+`OTCP_TARGET_DATA_DIR` keeps the instance's data folder under that folder, as for every scenario.
+The scenario uses no external audio: there is no variable for it.
+
+### The report
+
+The step table goes to stderr. The JSON report (`OTCP_E2E_ARRANGEMENT_EFFECTS_REPORT`, else
+`arrangement-effects.json` next to `OTCP_E2E_REPORT`) has `schema`
+`opentune-mcp-e2e-arrangement-effects/1`, and:
+
+| Member                                              | Holds                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `result`, `counts`, `steps`, `startedAt`, `totalMs` | As in the smoke report; every step has `name`, `result`, `ms` and a `note`.                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `hybridMode`                                        | `true` when `session.info` or any export reported hybrid mode on, `false` when all reported it off, `null` when none reported it.                                                                                                                                                                                                                                                                                                                                                                                    |
+| `dataTemplateFrom`                                  | `OTCP_E2E_ARRANGEMENT_EFFECTS_DATA_TEMPLATE`, `OTCP_TARGET_DATA_TEMPLATE` or `null`.                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `instance`                                          | Protocol, app version and the capability list of the instance.                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `audio`                                             | `source` (`generated`), the length and pitch of both clips, and the gap between them. No file name or path.                                                                                                                                                                                                                                                                                                                                                                                                          |
+| `tolerances`                                        | The values listed above.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `checks`                                            | Per step: the measured gain, the fade windows' first/last level and their ratio at 25, 50 and 75 %, any monotonicity or silence problem, the unchanged spans, the three mute/solo cases with their revert results, the split's `requestedTimelineSec`, `appliedTimelineSec`, `snapped`, the largest difference with its time and distance from the split, and the merge result; also `processing` (per export: hybrid mode, backend, vocoder weight, tuning frequency), consistency problems and any `unreadFields`. |
+| `timings`                                           | Launch to ready, import to analysis ready for each clip, and the time of every export.                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `dataDir`, `templateSkipped`, `busyDiagnostics`     | As in the smoke report.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+
+Like the other reports it holds no absolute path and no token.
+
+## Wave-B tour
+
+The wave-B tour (`test/e2e/wave-b-tour.ts`) drives every OTCP method and every MCP tool that wave B
+added once against a started OpenTune, and checks that the answers agree with the specification and
+with what the tools tell the user. It is a tour, not a measurement: no audio is judged, only the
+structure and the state. It starts its own instance like the boundary scenarios (same variables,
+same data folders, its data folder below a scratch folder named `ot-e2e-wave-b-tour-*`), and it
+starts `dist/opentune-mcp.mjs` over stdio for the tool part, so `npm run build` must have run once.
+`OTCP_TARGET_DATA_DIR` does **not** apply to this scenario: its instance, discovery folder and data
+folder are its own scratch folder, removed at the end, also after a failure.
+
+Every step of the tour is one of the smoke scenario's four results. A step that needs a capability the
+instance does not report is `SKIP` with the capability named; a failed set-up step stops the scenario;
+a failed check does not stop the later checks, unless the state of the instance could not be put back
+(that stops them, since the later checks would judge the wrong state). The tour takes a few minutes
+because it follows jobs (import and the reference analysis).
+
+| Step                                                                         | What it checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prepare`                                                                    | About 6 s of generated audio (harmonic tones, 30 cents sharp) in the run's scratch folder.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `launch`                                                                     | The instance of this run (own data folder, data template from `OTCP_TARGET_DATA_TEMPLATE`, ready file and launch nonce checked by the runner).                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `hello`                                                                      | `session.hello` and the capabilities the tour needs at all (`session.v1`, `jobs.v1`, `read.v1`, `import.v1`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `ui.getState and ui.dismiss`                                                 | `ui.getState` is schema-valid. While a dialog is open that this scenario did not open, nothing is dismissed (`SKIP`); a first-run overlay that this run's own instance started is closed (that marks `onboardingShown`, an IRREVERSIBLE preference no request resets, in this run's data folder only). Otherwise `ui.dismiss` is a no-op and says so (`noOp`, reason `no_op`).                                                                                                                                                                                                                                 |
+| `import and analysis`                                                        | `import.start` with `generateNotes` and `focus: false`, the job followed, the pitch analysis ready and notes generated.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `ui.getState and ui.setSelection`                                            | A track and the clip are selected (`ui.setSelection`); the previous selection is put back through the recipe the result gives.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `track.set, track.add, track.duplicate and track.delete`                     | `track.set` muting track 0 and its revert recipe putting the mute back; `track.add` showing one more slot (warning `NOT_PERSISTED`, no revert because the visible-track count is view state; `track_limit` is a `SKIP`); `track.duplicate` of a track of this scenario, whose revert is a `track.delete` of the new track (consent added by the scenario, since it created the track).                                                                                                                                                                                                                         |
+| `transport.get, transport.setTempo, transport.setLoop and transport.control` | `transport.get` schema-valid; the tempo and the loop flag changed and put back through their recipes; then **every visible track is muted** (`track.set`), the transport seeks, plays and stops, and the mute, the position and the track values are put back and compared with the snapshot taken before. `LOOP_NO_EFFECT_STANDALONE` appears when the loop is turned on; `NO_AUDIO_DEVICE` when no device runs.                                                                                                                                                                                              |
+| `prefs.set`                                                                  | `tuningHz` changed (warning `GLOBAL_PREFERENCE` and `NOT_RETROACTIVE`), its revert recipe applied, the old value read back; the report lists the preference it touched.                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `audio.get and audio.set`                                                    | A buffer size or sample rate that `audio.get` lists for the **current** device is changed and put back (`GLOBAL_PREFERENCE`); another device or driver type is never selected, and without a running device the step is a `SKIP`.                                                                                                                                                                                                                                                                                                                                                                              |
+| `arrangement.edit: move, trim, gain and fade`                                | One call with the four ops on a clip of this scenario, as one undo step; the gain asks for an out-of-range value on purpose, so `CLAMPED` must be there and the applied value must be the limited one; `edit.undo` restores the geometry read back before the write.                                                                                                                                                                                                                                                                                                                                           |
+| `arrangement.copy and arrangement.edit op setReference`                      | `arrangement.copy` (mode `window`) creates a clip of this scenario; `setReference` binds it to the source clip (warning `EXPERIMENTAL_FEATURE`) and its undo puts the binding back; the binding is set again for the next step.                                                                                                                                                                                                                                                                                                                                                                                |
+| `content.analyzeReference and content.autoTune in mode reference`            | The reference job's result has the alignment data; `content.autoTune` in mode `reference` aligns the copy as one undo step, whose undo restores the notes.                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `the wave-B MCP tools`                                                       | `opentune_set_tracks` (duplicate a track of this scenario), `opentune_delete_track` (that track, with `confirm: true`), `opentune_transport` (the loop flag, put back through the revert line), `opentune_manage_ui` (select the clip), `opentune_set_settings` (`tuning_hz`, put back), `opentune_edit_arrangement` (a gain, undone with `opentune_undo`) and `opentune_autotune_range` in mode `reference` (a job handed over is followed): each result is not `isError`, passes the tool's output schema, says in its first sentence what cannot be undone, and its change is visible in a fresh OTCP read. |
+| `arrangement.edit: split, the merge that takes it back, and delete`          | The copy is removed through its revert recipe; when later writes have changed the arrangement since, the recipe first refuses with `REVISION_CONFLICT(arrangement_changed)` and is then sent with the current revision; the split carries `UPSTREAM_UNDO_DEFECT` and its revert merges the clips again; the delete (of a clip of this scenario, `confirm: true`) carries `UPSTREAM_UNDO_DEFECT` and `IRREVERSIBLE` and has no revert.                                                                                                                                                                          |
+| `shutdown`                                                                   | The MCP server and the instance this run started are ended, the scratch folder is removed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+
+Besides the schema of every result, each write of the tour is checked for the report consistency of
+`test/e2e/effects.ts`: every `changes[].fields.*.after` equals the value a read right after the write
+returns (`project.get`, `transport.get`, `prefs.get`, `audio.get`, `ui.getState`, `content.getDetails`,
+`content.getNotes`), and the returned `tokens` equal a fresh read. If `undo.undoable` is true, the
+`undoId` is used with `edit.undo` and the state read back must equal the snapshot read before the
+write; otherwise the revert recipe is sent as the result gives it (with the consent member the recipe
+withholds, only for tracks and clips this scenario created) and the state must come back. A result
+whose `revert` is null must carry its reason, and `IRREVERSIBLE` where the specification says so.
+
+The report is `wave-b-tour.json` next to `OTCP_E2E_REPORT`. It has the members of the smoke report
+(`schema`, `result`, `counts`, `startedAt`, `totalMs`, `steps[]`, `facts`, `manualChecks`) plus:
+
+| Member         | Holds                                                                                                                                                                                                                                 |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `instance`     | `protocol` and `appVersion` of `session.hello`; `null` when the scenario never got that far.                                                                                                                                          |
+| `capabilities` | The capabilities the instance reported.                                                                                                                                                                                               |
+| `calls`        | Every call of the tour with its latency: `step`, `method`, `kind` (`write`, `undo`, `revert`, `read`, `job`), `ms`, `outcome` (`ok` or `error`), `note`. Result reads of the checks are counted in the facts (`readCalls`, `readMs`). |
+| `tools`        | Every MCP tool call with `ms`, `outcome` (`ok`, `error`, `skip`) and a short note.                                                                                                                                                    |
+| `skipped`      | What could not be run and why (a missing capability, a missing track slot, a dialog this scenario did not open).                                                                                                                      |
+
+`facts` holds `sourceSeconds`, `notesGeneratedBy`, `openDialogs`, `onboarding`, `onboardingDismissed`
+(when the overlay of this run was closed), `trackAdd` (when it hit `track_limit`), `duplicatedTrack`,
+`preferencesTouched`, `audioSetting`, `readCalls`, `readMs`, `callCount` and `mcpToolCalls`. Like the
+other reports it holds no absolute path and no token. It also lists the manual check that a person
+may confirm nothing was heard: the tour mutes every track before it plays and puts the mute back.
