@@ -9,7 +9,7 @@
 // Usage:
 //   node beat-grid.mjs status
 //   node beat-grid.mjs install --model final|small [--yes]
-//   node beat-grid.mjs analyze <wav> [--model final|small] [--out <file>] [--summary]
+//   node beat-grid.mjs analyze <wav> [--model final|small] [--out <file>.json [--force]] [--summary]
 //   node beat-grid.mjs timing-plan --grid <grid.json> --notes <notes.json> --grid-offset-sec <s>
 //                                  [--threshold-ms 30] [--subdivision 1|2|4]
 //
@@ -55,9 +55,9 @@ const USAGE = `beat-grid: tempo and beat grid for OpenTune, from the opentune-be
       Without --yes: print what would be downloaded, its size and its licence, and change nothing.
       With --yes: download, verify every sha256, extract, install and check --version.
 
-  node beat-grid.mjs analyze <wav> [--model final|small] [--out <file>] [--summary]
+  node beat-grid.mjs analyze <wav> [--model final|small] [--out <file>.json [--force]] [--summary]
       Run the analyzer on a WAV file. Without --summary the analyzer's JSON is printed, or written
-      to --out with one line on stdout; with --summary the beat list is left out (segments, tempi,
+      to --out (a .json path that must not exist yet, unless --force) with one line on stdout; with --summary the beat list is left out (segments, tempi,
       confidence and warnings only).
 
   node beat-grid.mjs timing-plan --grid <grid.json> --notes <notes.json> --grid-offset-sec <s>
@@ -562,9 +562,10 @@ export function extractZip(buffer, dest) {
       throw new BeatGridError('ARCHIVE_INVALID', `the zip entry ${name} uses method ${method}`, EXIT.INSTALL_FAILED);
     if (data.length !== size)
       throw new BeatGridError('ARCHIVE_INVALID', `the zip entry ${name} has the wrong size`, EXIT.INSTALL_FAILED);
-    if (name === './' || name === '.') continue;
-    if (name.endsWith('/')) makeArchiveDir(dest, name.replace(/\/+$/, ''));
-    else writeArchiveEntry(dest, name, data, written, unixMode & 0o777);
+    if (name !== './' && name !== '.') {
+      if (name.endsWith('/')) makeArchiveDir(dest, name.replace(/\/+$/, ''));
+      else writeArchiveEntry(dest, name, data, written, unixMode & 0o777);
+    }
     at += 46 + nameLength + extraLength + commentLength;
   }
 }
@@ -689,6 +690,7 @@ export async function install({
   selfCheck = makeSelfCheck(),
   now = () => new Date().toISOString(),
   fetchImpl = globalThis.fetch,
+  fsImpl = fs,
 } = {}) {
   if (target === null || !TARGETS.includes(target))
     throw new BeatGridError(
@@ -795,15 +797,55 @@ export async function install({
     try {
       versionLine = selfCheck(path.join(dest, executableName(target)), manifest.version);
     } catch (error) {
-      fs.rmSync(dest, { recursive: true, force: true });
+      // Move the failed version out of the way, then put the previous one back. The backup is never
+      // deleted here: if either step fails it stays where it is and its location is reported.
+      let cleared = false;
+      try {
+        fsImpl.rmSync(dest, { recursive: true, force: true });
+        cleared = true;
+      } catch {
+        try {
+          fsImpl.renameSync(dest, path.join(bin, `${prefix}.failed-${token}`));
+          cleared = true;
+        } catch {
+          cleared = false;
+        }
+      }
       if (movedOld) {
-        fs.renameSync(backup, dest);
+        if (!cleared) {
+          movedOld = false;
+          throw new BeatGridError(
+            'ROLLBACK_FAILED',
+            `the new version failed its self-check (${error instanceof Error ? error.message : String(error)}) ` +
+              `and could not be removed or moved aside. The previous version is kept at ${backup}; stop any process ` +
+              `that uses ${dest}, delete it, then rename the previous version back to ${dest}.`,
+            EXIT.INSTALL_FAILED,
+          );
+        }
+        try {
+          fsImpl.renameSync(backup, dest);
+        } catch (restoreError) {
+          movedOld = false;
+          throw new BeatGridError(
+            'ROLLBACK_FAILED',
+            `the new version failed its self-check (${error instanceof Error ? error.message : String(error)}) ` +
+              `and the previous version could not be restored (${restoreError instanceof Error ? restoreError.message : String(restoreError)}). ` +
+              `The previous version is kept at ${backup}; rename it back to ${dest}.`,
+            EXIT.INSTALL_FAILED,
+          );
+        }
         movedOld = false;
       }
       throw error;
     }
     if (movedOld) {
-      fs.rmSync(backup, { recursive: true, force: true });
+      // The new version passed its self-check, so the backup is no longer needed; a failure to
+      // delete it is harmless and leaves it for the next install to ignore.
+      try {
+        fsImpl.rmSync(backup, { recursive: true, force: true });
+      } catch {
+        log(`  could not delete the previous version at ${backup}`);
+      }
       movedOld = false;
     }
     log(`  installed ${dest}`);
@@ -818,10 +860,9 @@ export async function install({
       replaced,
     };
   } catch (error) {
-    if (movedOld) {
-      if (!fs.existsSync(dest)) fs.renameSync(backup, dest);
-      else fs.rmSync(backup, { recursive: true, force: true });
-    }
+    // Only reached before the self-check (or after it passed): restore the previous version when
+    // the new one never made it into place. The backup is never deleted.
+    if (movedOld && !fs.existsSync(dest)) fs.renameSync(backup, dest);
     throw error;
   } finally {
     fs.rmSync(work, { recursive: true, force: true });
@@ -959,6 +1000,7 @@ export function analyze({
   input,
   model = 'final',
   out = null,
+  force = false,
   run = runProcess,
 } = {}) {
   if (target === null || !TARGETS.includes(target))
@@ -983,6 +1025,16 @@ export function analyze({
       `only .wav files are promised by the analyzer (found ${input})`,
       EXIT.USAGE,
     );
+  if (out !== null) {
+    if (path.extname(out).toLowerCase() !== '.json')
+      throw new BeatGridError('OUT_REFUSED', `--out takes a .json file path (found ${out})`, EXIT.USAGE);
+    if (!force && fs.existsSync(out))
+      throw new BeatGridError(
+        'OUT_EXISTS',
+        `${out} already exists; choose another name, or pass --force to replace it`,
+        EXIT.USAGE,
+      );
+  }
   const installed = currentInstallation(home, manifest, target);
   if (installed === null)
     throw new BeatGridError(
@@ -1016,7 +1068,7 @@ export function analyze({
   const text = `${raw}\n`;
   if (out !== null && result.status === 0 && json.error === undefined) {
     fs.mkdirSync(path.dirname(out), { recursive: true });
-    fs.writeFileSync(out, text);
+    fs.writeFileSync(out, text, { flag: force ? 'w' : 'wx' });
   }
   if (result.status !== 0 || json.error !== undefined) {
     // The analyzer distinguishes a missing model (3) and an unreadable input (4); keep that
@@ -1163,7 +1215,7 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
     warnings.push({
       code: 'MIXED_PLACEMENTS',
       detail:
-        'the saved notes come from more than one clip; the plan uses the last clip_revision and cannot name one clip',
+        'the saved notes come from more than one clip, so no ready call is given; read the notes of one clip and make a separate plan for each clip',
     });
   if (parsedNotes.mixedRevision)
     warnings.push({
@@ -1273,6 +1325,8 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
     const adjustedMs = deviationMs - (globalOffsetMs ?? 0);
     if (Math.abs(adjustedMs) < thresholdMs) continue;
     const deltaMs = -Math.round(adjustedMs);
+    // A shift that rounds to zero would only add an undo step that changes nothing.
+    if (deltaMs === 0) continue;
     if (Math.abs(deltaMs) > MAX_DELTA_MS) {
       deltaTooLarge += 1;
       continue;
@@ -1294,7 +1348,10 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
     const beat = beats[point.beatIndex];
     // opentune_edit_timing has no dry_run: this plan is the preview, and the call is made only
     // after the user agrees to it.
-    const editTiming = callable ? { clip, expected_revision: parsedNotes.clipRevision, ops: [op] } : null;
+    const editTiming =
+      callable && suggestions.length < MAX_OPS_PER_CALL
+        ? { clip, expected_revision: parsedNotes.clipRevision, ops: [op] }
+        : null;
     suggestions.push({
       noteIndex: isFiniteNumber(note.index) ? note.index : null,
       noteStartContentSec: round(startContentSec, 4),
@@ -1333,15 +1390,22 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
       detail: 'no note with both a timeline time inside the grid and a content time was found',
     });
 
+  // One call at a time: a write moves the notes and changes the revision, so every later
+  // suggestion is stale after the first call. Only the first call is given; the rest are listed
+  // without a call and are planned again from fresh notes.
   const calls = [];
-  if (callable) {
-    for (let at = 0; at < suggestions.length; at += MAX_OPS_PER_CALL) {
-      const ops = suggestions
-        .slice(at, at + MAX_OPS_PER_CALL)
-        .flatMap((suggestion) => (suggestion.editTiming === null ? [] : [suggestion.editTiming.ops[0]]));
-      calls.push({ clip, expected_revision: parsedNotes.clipRevision, ops });
-    }
+  if (callable && suggestions.length > 0) {
+    const ops = suggestions.slice(0, MAX_OPS_PER_CALL).map((suggestion) => suggestion.editTiming.ops[0]);
+    calls.push({ clip, expected_revision: parsedNotes.clipRevision, ops });
   }
+  const remainingSuggestions = callable ? Math.max(0, suggestions.length - MAX_OPS_PER_CALL) : 0;
+  if (remainingSuggestions > 0)
+    warnings.push({
+      code: 'REPLAN_AFTER_CALL',
+      detail:
+        `${String(remainingSuggestions)} more suggestion(s) are listed without a call. After the first call is applied ` +
+        'and the user has heard it, read the notes again with opentune_get_notes and run timing-plan again; do not reuse this plan for them.',
+    });
 
   return {
     schemaVersion: 1,
@@ -1377,13 +1441,14 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
       clipRevision: parsedNotes.clipRevision,
     },
     globalOffsetMs: globalOffsetMs === null ? null : round(globalOffsetMs, 1),
-    counts: { flagged: suggestions.length, calls: calls.length },
+    counts: { flagged: suggestions.length, calls: calls.length, remainingSuggestions },
     apply: {
       tool: 'opentune_edit_timing',
       maxOpsPerCall: MAX_OPS_PER_CALL,
       note:
         'opentune_edit_timing has no dry-run parameter: this plan is the preview. Show it to the user and get ' +
-        'their agreement before calling, then read clip_revision again before the next call. Each call is one ' +
+        'their agreement before calling. calls holds only the first call (at most maxOpsPerCall ops, with ' +
+        'expected_revision); after it, read the notes again and run timing-plan again for the rest. Each call is one ' +
         'undo step.',
     },
     suggestions,
@@ -1402,7 +1467,7 @@ function usageError(detail) {
 const COMMAND_OPTIONS = Object.freeze({
   status: {},
   install: { model: 'value', yes: 'flag' },
-  analyze: { model: 'value', out: 'value', summary: 'flag' },
+  analyze: { model: 'value', out: 'value', force: 'flag', summary: 'flag' },
   'timing-plan': {
     grid: 'value',
     notes: 'value',
@@ -1529,6 +1594,7 @@ export async function main(
         input: parsed.positionals[0],
         model,
         out: outFile,
+        force: parsed.options.force === true,
         run,
       });
       out(
@@ -1556,7 +1622,7 @@ export async function main(
       const subdivision = parseNumberOption(parsed.options, 'subdivision', { fallback: 1, min: 1, max: 4 });
       const readJson = (file, code) => {
         try {
-          return JSON.parse(fs.readFileSync(path.resolve(cwd, file), 'utf8'));
+          return JSON.parse(fs.readFileSync(path.resolve(cwd, file), 'utf8').replace(/^\uFEFF/, ''));
         } catch (error) {
           throw new BeatGridError(
             code,

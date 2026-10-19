@@ -62,8 +62,8 @@ interface TimingPlan {
   globalOffsetMs: number | null;
   suggestions: Suggestion[];
   calls: { ops: Json[] }[];
-  warnings: { code: string }[];
-  counts: { flagged: number; calls: number };
+  warnings: { code: string; detail?: string }[];
+  counts: { flagged: number; calls: number; remainingSuggestions: number };
 }
 interface InstallPlan {
   problems: string[];
@@ -538,6 +538,74 @@ describe('the installer', () => {
     expect(fs.readdirSync(path.join(home, 'bin'))).toEqual([path.basename(first.dir)]);
   });
 
+  describe('when removing the failed version fails', () => {
+    async function twoInstalls() {
+      const { home, sourceDir, manifest, target } = prepared();
+      const first = await install({
+        manifest,
+        home,
+        target,
+        model: 'final',
+        sourceDir,
+        selfCheck: () => 'opentune-beats 0.1.0',
+      });
+      fs.writeFileSync(path.join(first.dir, 'marker'), 'old');
+      const failSelfCheck = () => {
+        throw new BeatGridError('SELF_CHECK_FAILED', 'the new build does not start');
+      };
+      return { home, sourceDir, manifest, target, first, failSelfCheck };
+    }
+
+    it('moves the failed folder aside and restores the previous version', async () => {
+      const { home, sourceDir, manifest, target, first, failSelfCheck } = await twoInstalls();
+      const fsImpl = {
+        ...fs,
+        rmSync: (file: string, options: fs.RmOptions) => {
+          if (file === first.dir) throw new Error('EBUSY: resource busy or locked');
+          fs.rmSync(file, options);
+        },
+      };
+      await expect(
+        install({ manifest, home, target, model: 'small', sourceDir, selfCheck: failSelfCheck, fsImpl }),
+      ).rejects.toThrow(/does not start/);
+      expect(fs.readFileSync(path.join(first.dir, 'marker'), 'utf8')).toBe('old');
+      const left = fs.readdirSync(path.join(home, 'bin')).sort();
+      expect(left).toHaveLength(2);
+      expect(left.some((name) => name.includes('.failed-'))).toBe(true);
+      expect(left.some((name) => name.includes('.old-'))).toBe(false);
+    });
+
+    it('keeps the previous version and reports where it is when nothing can be moved', async () => {
+      const { home, sourceDir, manifest, target, first, failSelfCheck } = await twoInstalls();
+      const fsImpl = {
+        ...fs,
+        rmSync: (file: string, options: fs.RmOptions) => {
+          if (file === first.dir) throw new Error('EBUSY: resource busy or locked');
+          fs.rmSync(file, options);
+        },
+        renameSync: (from: string, to: string) => {
+          if (from === first.dir && to.includes('.failed-')) throw new Error('EBUSY: resource busy or locked');
+          fs.renameSync(from, to);
+        },
+      };
+      const error = (await install({
+        manifest,
+        home,
+        target,
+        model: 'small',
+        sourceDir,
+        selfCheck: failSelfCheck,
+        fsImpl,
+      }).catch((caught: unknown) => caught)) as { code: string; message: string };
+      expect(error).toBeInstanceOf(Error);
+      expect(error.code).toBe('ROLLBACK_FAILED');
+      const backup = fs.readdirSync(path.join(home, 'bin')).find((name) => name.includes('.old-'));
+      expect(backup).toBeDefined();
+      expect(error.message).toContain(path.join(home, 'bin', backup ?? ''));
+      expect(fs.readFileSync(path.join(home, 'bin', backup ?? '', 'marker'), 'utf8')).toBe('old');
+    });
+  });
+
   it('extracts a zip and a tar.gz without escaping the folder', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ot-extract-'));
     cleanup.push(() => {
@@ -573,6 +641,92 @@ describe('the installer', () => {
         path.join(dir, 'bad2'),
       );
     }).toThrow(/escapes the folder|unsafe archive path/);
+  });
+
+  it('extracts the entries after a ./ zip entry instead of stalling on it', () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ot-extract-dot-'));
+    cleanup.push(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+    extractZip(
+      zipStored([
+        { name: './', data: Buffer.alloc(0) },
+        { name: 'opentune-beats.exe', data: Buffer.from('x') },
+        { name: 'models/beat_this_final.onnx', data: Buffer.from('final') },
+      ]),
+      path.join(dir, 'zip'),
+    );
+    expect(fs.readFileSync(path.join(dir, 'zip', 'opentune-beats.exe'), 'utf8')).toBe('x');
+    expect(fs.readFileSync(path.join(dir, 'zip', 'models', 'beat_this_final.onnx'), 'utf8')).toBe('final');
+  });
+
+  describe('the archive guards', () => {
+    const extractInto = (extract: () => void) => {
+      expect(extract).toThrow(expect.objectContaining({ code: 'ARCHIVE_UNSAFE' }));
+    };
+    const folder = () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ot-guard-'));
+      cleanup.push(() => {
+        fs.rmSync(dir, { recursive: true, force: true });
+      });
+      return dir;
+    };
+
+    it('refuses a zip symbolic link', () => {
+      const zip = zipStored([{ name: 'link', data: Buffer.from('target') }]);
+      // The central directory record starts with PK\x01\x02; its external attributes sit at offset 38.
+      const central = zip.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+      zip.writeUInt32LE((0o120777 << 16) >>> 0, central + 38);
+      extractInto(() => {
+        extractZip(zip, folder());
+      });
+    });
+
+    it('refuses a tar hard link and a tar symbolic link', () => {
+      for (const type of ['1', '2']) {
+        const header = tarHeader('link', 0);
+        header.write(type, 156, 'utf8');
+        header.write('        ', 148, 'utf8');
+        let sum = 0;
+        for (const byte of header) sum += byte;
+        header.write(`${sum.toString(8).padStart(6, '0')}\0 `, 148, 'utf8');
+        extractInto(() => {
+          extractTarGz(gzipSync(Buffer.concat([header, Buffer.alloc(1024)])), folder());
+        });
+      }
+    });
+
+    it('refuses a drive letter or a colon in a path, in a zip and in a tar', () => {
+      for (const name of ['C:/escape.txt', 'C:escape.txt', 'a/b:stream', 'models/x:y']) {
+        extractInto(() => {
+          extractZip(zipStored([{ name, data: Buffer.from('x') }]), folder());
+        });
+        extractInto(() => {
+          extractTarGz(tarGz([{ name, data: Buffer.from('x') }]), folder());
+        });
+      }
+    });
+
+    it('refuses a duplicate entry, in a zip and in a tar', () => {
+      extractInto(() => {
+        extractZip(
+          zipStored([
+            { name: 'opentune-beats.exe', data: Buffer.from('one') },
+            { name: 'opentune-beats.exe', data: Buffer.from('two') },
+          ]),
+          folder(),
+        );
+      });
+      extractInto(() => {
+        extractTarGz(
+          tarGz([
+            { name: 'opentune-beats', data: Buffer.from('one') },
+            { name: 'opentune-beats', data: Buffer.from('two') },
+          ]),
+          folder(),
+        );
+      });
+    });
   });
 
   it('downloads through fetch, verifies the hash and discards a mismatch', async () => {
@@ -831,7 +985,7 @@ describe('the timing plan', () => {
     const plan = timingPlan({ grid, notes, gridOffsetSec: 0 });
     expect(plan.globalOffsetMs).toBeCloseTo(40, 1);
     expect(plan.suggestions).toEqual([]);
-    expect(plan.counts).toEqual({ flagged: 0, calls: 0 });
+    expect(plan.counts).toEqual({ flagged: 0, calls: 0, remainingSuggestions: 0 });
   });
 
   it('flags the notes that stay off after the global offset, and gives the shift', () => {
@@ -975,7 +1129,7 @@ describe('the timing plan', () => {
     expect(plan.suggestions.map((s) => s.noteIndex)).toEqual([0, 1]);
   });
 
-  it('groups the calls at most eight ops at a time', () => {
+  it('gives only the first call of at most eight ops and asks to plan again for the rest', () => {
     const longGrid: Json = {
       ...grid,
       beats: Array.from({ length: 11 }, (_, i) => ({
@@ -989,10 +1143,52 @@ describe('the timing plan', () => {
     const many = page(Array.from({ length: 10 }, (_, i) => note(i, i * 0.5 + (i % 2 === 0 ? 0.1 : -0.1), i * 0.5)));
     const plan = timingPlan({ grid: longGrid, notes: many, gridOffsetSec: 0, thresholdMs: 10 });
     expect(plan.suggestions).toHaveLength(10);
-    expect(plan.calls).toHaveLength(2);
+    expect(plan.calls).toHaveLength(1);
     expect(plan.calls[0]?.ops).toHaveLength(8);
-    expect(plan.calls[1]?.ops).toHaveLength(2);
+    expect(plan.calls[0]).toMatchObject({ expected_revision: 'r:1234abcd:1:1:abc' });
     expect(plan.calls[0]?.ops[0]).not.toHaveProperty('dry_run');
+    expect(plan.counts).toEqual({ flagged: 10, calls: 1, remainingSuggestions: 2 });
+    // The ninth and tenth suggestions are listed, but carry no call: they are stale after a write.
+    expect(plan.suggestions[7]?.editTiming).not.toBeNull();
+    expect(plan.suggestions[8]?.editTiming).toBeNull();
+    expect(plan.suggestions[9]?.editTiming).toBeNull();
+    const replan = plan.warnings.find((warning) => warning.code === 'REPLAN_AFTER_CALL') as { detail?: string };
+    expect(replan.detail ?? '').toContain('2 more suggestion(s)');
+    expect(replan.detail ?? '').toContain('run timing-plan again');
+  });
+
+  it('gives exactly one call and no re-plan warning for eight suggestions', () => {
+    const longGrid: Json = {
+      ...grid,
+      beats: Array.from({ length: 9 }, (_, i) => ({ index: i, timeSec: i * 0.5, isDownbeat: i % 4 === 0, segment: 0 })),
+      segments: [{ index: 0, startSec: 0, endSec: 4.5, bpm: 120, confidence: 0.9 }],
+    };
+    const eight = page(Array.from({ length: 8 }, (_, i) => note(i, i * 0.5 + (i % 2 === 0 ? 0.1 : -0.1), i * 0.5)));
+    const plan = timingPlan({ grid: longGrid, notes: eight, gridOffsetSec: 0, thresholdMs: 10 });
+    expect(plan.calls).toHaveLength(1);
+    expect(plan.calls[0]?.ops).toHaveLength(8);
+    expect(plan.counts.remainingSuggestions).toBe(0);
+    expect(plan.warnings.map((warning) => warning.code)).not.toContain('REPLAN_AFTER_CALL');
+  });
+
+  it('leaves out a note whose shift rounds to zero milliseconds', () => {
+    // Note 0 is 0.2 ms off and the threshold is 0: its shift would round to 0 and add an empty undo step.
+    const notes = page([note(0, 0.0002, 0.0002), note(1, 0.5, 0.5), note(2, 1.0, 1.0)]);
+    const plan = timingPlan({ grid, notes, gridOffsetSec: 0, thresholdMs: 0 });
+    expect(plan.suggestions).toEqual([]);
+    expect(plan.calls).toEqual([]);
+  });
+
+  it('says that a mixed-clip plan has no call and needs one plan per clip', () => {
+    const mixed = [
+      page([note(0, 0.6, 0.6)], { placementId: 'p:1234abcd:1:1' }),
+      page([note(1, 1.1, 1.1)], { placementId: 'p:1234abcd:2:1' }),
+    ];
+    const plan = timingPlan({ grid, notes: mixed, gridOffsetSec: 0 });
+    const warning = plan.warnings.find((entry) => entry.code === 'MIXED_PLACEMENTS') as { detail?: string };
+    expect(warning.detail ?? '').toContain('no ready call');
+    expect(warning.detail ?? '').not.toContain('uses the last');
+    expect(plan.calls).toEqual([]);
   });
 });
 
@@ -1124,6 +1320,67 @@ describe('the command line', () => {
     expect(result.code).toBe(EXIT.OK);
     expect(result.out).toContain(`Wrote ${outFile}`);
     expect((JSON.parse(fs.readFileSync(outFile, 'utf8')) as Json).beats).toHaveLength(3);
+  });
+
+  it('refuses --out for a non-.json path and for an existing file unless --force is given', async () => {
+    const home = tempHome();
+    cleanup.push(home.remove);
+    const manifest = loadManifest(MANIFEST_FILE);
+    fakeInstall(home.dir, manifest, 'win-x64', { grid: fakeGrid() });
+    const wav = path.join(home.dir, 'backing.wav');
+    fs.writeFileSync(wav, 'RIFF....WAVE');
+    const options = {
+      env: { OPENTUNE_BEATS_HOME: home.dir },
+      platform: 'win32',
+      arch: 'x64',
+      run: () => ({ status: 0, stdout: JSON.stringify(fakeGrid()), stderr: '', signal: null, error: null }),
+    };
+    const notJson = await run(['analyze', wav, '--out', path.join(home.dir, 'project.otproj')], options);
+    expect(notJson.code).toBe(EXIT.USAGE);
+    expect((notJson.json?.error as Json).code).toBe('OUT_REFUSED');
+    expect(fs.existsSync(path.join(home.dir, 'project.otproj'))).toBe(false);
+
+    const existing = path.join(home.dir, 'grid.json');
+    fs.writeFileSync(existing, 'keep me');
+    const refused = await run(['analyze', wav, '--out', existing], options);
+    expect(refused.code).toBe(EXIT.USAGE);
+    expect((refused.json?.error as Json).code).toBe('OUT_EXISTS');
+    expect(fs.readFileSync(existing, 'utf8')).toBe('keep me');
+
+    const forced = await run(['analyze', wav, '--out', existing, '--force'], options);
+    expect(forced.code).toBe(EXIT.OK);
+    expect((JSON.parse(fs.readFileSync(existing, 'utf8')) as Json).beats).toHaveLength(3);
+  });
+
+  it('reads JSON files that start with a byte-order mark', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ot-bom-'));
+    cleanup.push(() => {
+      fs.rmSync(dir, { recursive: true, force: true });
+    });
+    const gridFile = path.join(dir, 'grid.json');
+    const notesFile = path.join(dir, 'notes.json');
+    fs.writeFileSync(
+      gridFile,
+      `\uFEFF${JSON.stringify({
+        schemaVersion: 1,
+        beats: [
+          { index: 0, timeSec: 0, segment: 0 },
+          { index: 1, timeSec: 0.5, segment: 0 },
+          { index: 2, timeSec: 1, segment: 0 },
+        ],
+        segments: [{ index: 0, startSec: 0, endSec: 1.25, bpm: 120, confidence: 0.9 }],
+      })}`,
+    );
+    fs.writeFileSync(
+      notesFile,
+      `\uFEFF${JSON.stringify({
+        placementId: 'p:1234abcd:1:1',
+        clip_revision: 'r:1234abcd:1:1:abc',
+        notes: [{ index: 0, startTimelineSec: 0.9, startContentSec: 0.9, endContentSec: 1.1, voiced: true }],
+      })}`,
+    );
+    const result = await run(['timing-plan', '--grid', gridFile, '--notes', notesFile, '--grid-offset-sec', '0']);
+    expect(result.code).toBe(EXIT.OK);
   });
 
   it('builds a timing plan from the two files', async () => {

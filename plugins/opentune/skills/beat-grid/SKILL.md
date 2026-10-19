@@ -74,7 +74,9 @@ other versions or a checksum you guessed.
 2. **Analyze the whole song once.** Do not analyze section by section: short clips give worse tempi
    and have boundary effects.
    `node "${CLAUDE_SKILL_DIR}/scripts/beat-grid.mjs" analyze "C:/Music/backing.wav" --model final --out "$TEMP/grid.json" --summary`
-   `--out` writes the full JSON (thousands of beats) to a file and prints one line; with `--summary`
+   `--out` writes the full JSON (thousands of beats) to a `.json` file and prints one line. It refuses a
+   path that already exists; pick a new name, or add `--force` only when the user wants the old file
+   replaced. With `--summary`
    it prints only the input, the model, the parameters, the segments (start, end, BPM, time signature,
    confidence, octave note, fit residual), the tempo changes, the refinement and the warnings. Read the
    summary, then the full file only for the part that matters. `--model small` is faster and a little
@@ -112,7 +114,9 @@ other versions or a checksum you guessed.
    The plan removes the singer's overall lead or lag first (the median deviation), then lists every
    note that is still off by at least the threshold, with its deviation in ms, the nearest grid
    point, its segment (BPM and confidence) and, when the notes file has one clip and one revision, a
-   ready `opentune_edit_timing` call. The ranges use the content clock, the matching uses the
+   ready `opentune_edit_timing` call. `calls` holds at most one call: the first suggestions (up to 8
+   ops) with their `expected_revision`. The other suggestions are listed without a call, and
+   `counts.remainingSuggestions` and the `REPLAN_AFTER_CALL` warning say how many. The ranges use the content clock, the matching uses the
    timeline clock.
    - Start at `--threshold-ms 30`. Raising it corrects less; lowering it corrects more, including
      expressive timing. Ask the user which they want when the style is not obvious.
@@ -120,8 +124,8 @@ other versions or a checksum you guessed.
      the beats; say that the grid point is then a subdivision.
    - `--grid-offset-sec` takes a number of seconds. Never guess it.
    - If `calls` is empty and the warning names `NO_REVISION`, `REVISION_MISMATCH` or
-     `MIXED_PLACEMENTS`, do not guess a revision or a clip: clear the plan, read the notes of one
-     clip again, and make a plan per clip.
+     `MIXED_PLACEMENTS`, do not guess a revision or a clip: read the notes of one clip again and
+     make one plan per clip.
 4. **Show the plan, then ask.** Summarize: how many notes are off, the overall lead or lag, the
    worst notes with times (and the lyric line there, when a timeline exists), and the segments they
    are in. Do not paste the whole JSON into the conversation. When `globalOffsetMs` is above the
@@ -129,13 +133,15 @@ other versions or a checksum you guessed.
    to shift the whole range once (a separate edit) or to leave it as an expressive choice; do not
    report "on the beat".
 5. **Apply with `opentune_edit_timing`, one call at a time.** The tool has no dry run: the plan is
-   the preview. For each `calls[]` entry, tell the user what would move and by how much, wait for
-   their agreement, then call `opentune_edit_timing` with exactly that `clip`, `expected_revision`
-   and `ops`. The time grid must already have handles; without them the tool answers
-   `NOT_READY` (`grid_not_seeded`) and suggests `op seed`, which changes the grid and cannot be
-   undone: ask before seeding. After a call, read `clip_revision` again before the next one, and
-   never reuse a revision from before a write. On `REVISION_CONFLICT` (`grid_changed`), read the
-   project again and redo the plan for the remaining notes.
+   the preview. Tell the user what `calls[0]` would move and by how much, wait for their agreement,
+   then call `opentune_edit_timing` with exactly that `clip`, `expected_revision` and `ops`. The
+   time grid must already have handles; without them the tool answers `NOT_READY`
+   (`grid_not_seeded`) and suggests `op seed`, which changes the grid and cannot be undone: ask
+   before seeding. A write moves the notes and changes the revision, so the plan is stale after
+   it. When `counts.remainingSuggestions` is above 0, read the notes again with
+   `opentune_get_notes`, run `timing-plan` again, and show the new plan; never reuse the old
+   suggestions or a revision from before a write. On `REVISION_CONFLICT` (`grid_changed`), read the
+   project and the notes again and make a new plan.
 6. **Report** which notes moved, by how much, in which segments, and what the user should listen to.
    Timing edits change when a syllable starts, not how it sounds; say so when the user expects a
    pitch change.
