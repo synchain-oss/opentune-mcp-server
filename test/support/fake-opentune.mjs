@@ -19,7 +19,9 @@
 // has the shape the specification gives its result (the unit tests validate them).
 //
 // The `effects*` modes answer the calls of the end-to-end effects scenario with a small model of
-// clips, notes and exports (test/support/fake-effects.mjs).
+// clips, notes and exports (test/support/fake-effects.mjs). The `arrangement*` modes answer the
+// calls of the arrangement effects scenario with a small model of tracks, clips, their gain, fades
+// and mute/solo, and a master mix (test/support/fake-arrangement.mjs).
 //
 // Every copy that keeps running ends by itself once its OPENTUNE_DATA_DIR is gone, so a test that
 // fails cannot leave one behind; with `--marker=<file>` it first writes how it ended to that file.
@@ -31,6 +33,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { createArrangement } from './fake-arrangement.mjs';
 import { createEffects } from './fake-effects.mjs';
 
 const option = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -44,6 +47,7 @@ const dataDir = process.env.OPENTUNE_DATA_DIR;
 
 const smoke = mode.startsWith('smoke');
 const effects = mode.startsWith('effects') ? createEffects(mode) : undefined;
+const arrangement = mode.startsWith('arrangement') ? createArrangement(mode) : undefined;
 
 const endWith = (how, code) => {
   if (marker !== undefined) fs.writeFileSync(marker, how);
@@ -307,19 +311,23 @@ function serve() {
             ? smokeReply(request)
             : effects !== undefined && later
               ? effects.reply(request)
-              : ok
-                ? {
-                    jsonrpc: '2.0',
-                    id: request.id,
-                    result: {
-                      protocol: '1.0',
-                      instanceId,
-                      pid: process.pid,
-                      serverProof: mode === 'bad-proof' ? randomBytes(16).toString('hex') : serverProof,
-                      capabilities: smoke ? smokeCapabilities() : (effects?.capabilities ?? ['session.v1']),
-                    },
-                  }
-                : { jsonrpc: '2.0', id: request.id, error: { code: -32001, message: 'UNAUTHENTICATED', data: {} } };
+              : arrangement !== undefined && later
+                ? arrangement.reply(request)
+                : ok
+                  ? {
+                      jsonrpc: '2.0',
+                      id: request.id,
+                      result: {
+                        protocol: '1.0',
+                        instanceId,
+                        pid: process.pid,
+                        serverProof: mode === 'bad-proof' ? randomBytes(16).toString('hex') : serverProof,
+                        capabilities: smoke
+                          ? smokeCapabilities()
+                          : (effects?.capabilities ?? arrangement?.capabilities ?? ['session.v1']),
+                      },
+                    }
+                  : { jsonrpc: '2.0', id: request.id, error: { code: -32001, message: 'UNAUTHENTICATED', data: {} } };
         socket.write(`${JSON.stringify(reply)}\n`, () => {
           // Ends by itself, without removing its discovery file, as a crash would.
           if (mode === 'exit-after-hello') process.exit(5);

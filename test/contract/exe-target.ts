@@ -181,7 +181,7 @@ export function isRunnerPath(rel: readonly string[], platform: NodeJS.Platform =
  * The paths this runner uses itself (isRunnerPath: the ready file at the top, the discovery folder)
  * are not copied: a stale one would be taken for the new instance's. Returns whether any was skipped.
  */
-async function copyTemplate(from: string, to: string, rel: readonly string[] = []): Promise<boolean> {
+export async function copyTemplate(from: string, to: string, rel: readonly string[] = []): Promise<boolean> {
   let skipped = false;
   for (const entry of await readdir(from, { withFileTypes: true })) {
     const here = [...rel, entry.name];

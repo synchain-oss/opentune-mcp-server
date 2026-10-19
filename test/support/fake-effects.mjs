@@ -60,7 +60,7 @@ export function effectsCapabilities(mode) {
 }
 
 /** The samples of a 16-bit PCM or float32 WAV file, first channel, as numbers in -1..1. */
-function readSamples(file) {
+export function readSamples(file) {
   const bytes = fs.readFileSync(file);
   let at = 12;
   let format = 1;
