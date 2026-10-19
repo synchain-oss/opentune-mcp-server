@@ -1098,6 +1098,8 @@ describe('the command line', () => {
     fs.writeFileSync(wav, 'RIFF....WAVE');
     const result = await run(['analyze', wav, '--summary'], {
       env: { OPENTUNE_BEATS_HOME: home.dir },
+      platform: 'win32',
+      arch: 'x64',
       run: () => ({ status: 0, stdout: JSON.stringify(fakeGrid()), stderr: '', signal: null, error: null }),
     });
     expect(result.code).toBe(EXIT.OK);
@@ -1115,6 +1117,8 @@ describe('the command line', () => {
     const outFile = path.join(home.dir, 'grid.json');
     const result = await run(['analyze', wav, '--out', outFile], {
       env: { OPENTUNE_BEATS_HOME: home.dir },
+      platform: 'win32',
+      arch: 'x64',
       run: () => ({ status: 0, stdout: JSON.stringify(fakeGrid()), stderr: '', signal: null, error: null }),
     });
     expect(result.code).toBe(EXIT.OK);
