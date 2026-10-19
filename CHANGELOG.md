@@ -10,6 +10,10 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- The review workflows are named after the model they run: `Claude PR Review (Opus 5.5)`,
+  `PR Agent (DeepSeek V4.1 Flash)` and `PR Agent (Claude Haiku 5.5)`. The check names are unchanged.
+  The workflow test that requires every call of `Synchain-oss/ci-workflows` to pin the same commit now
+  also counts a call that spells the owner or repository in another case.
 - The shared review workflows are pinned to `v1.3.1`. The Claude Haiku PR-Agent runs at effort `high`
   instead of `max`, which produced 50–90k output tokens per call and repeatedly hit the 900 s timeout.
 - The review bots are now thin callers of the shared reusable workflows in `Synchain-oss/ci-workflows`,
