@@ -63,6 +63,10 @@ When the user points at a place in words ("the first line of the chorus", "that 
 - If the `lyrics-timeline` skill is available, use it to turn the words into a time range, then select the notes with `opentune_get_notes` (`clock: content`, `from`, `to`) or `opentune_edit_notes` (`select: {from_sec, to_sec}`).
 - If it is not available, ask the user for a time range, or list the phrases with `opentune_analyze_pitch` (`detail: phrases`) and let the user confirm which one they mean.
 
+## Timing against the beat
+
+When the user asks whether the vocal is early or late against the backing track, or wants it moved onto the beat, use the `beat-grid` skill if it is available: it measures the tempo and beat grid from the backing track or the original mix and turns the vocal notes into `opentune_edit_timing` suggestions. For pitch, stay in this skill.
+
 ## Working with a DAW
 
 OpenTune is handed audio only by file path: export the vocal from the DAW, tune it in OpenTune, export the result with `opentune_export_audio`, and import that file into the DAW. Do not try to drive the DAW or assume it can see OpenTune's project.

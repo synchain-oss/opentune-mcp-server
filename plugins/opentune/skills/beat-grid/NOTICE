@@ -1,0 +1,9 @@
+beat-grid — tempo and beat grid for the OpenTune MCP Server skills
+Copyright (c) 2026 Synchain
+SPDX-License-Identifier: MIT
+
+The scripts in this skill are MIT. The skill downloads and runs opentune-beats, a separate MIT
+program, and the beat_this model weights, also MIT, from the GitHub Releases of
+synchain-oss/opentune-beats. Part of the model's training data is copyrighted or under restricted
+CC licences; that repository's NOTICE lists them. This skill does not redistribute the program or
+the weights.

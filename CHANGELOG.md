@@ -10,6 +10,17 @@ versioned separately and has its own changelog.
 
 ### Added
 
+- The `beat-grid` skill (plugin only; it needs Node.js and a local download): measures the tempo and
+  beat grid of a song from its backing track or the original mix with `opentune-beats`, reports the
+  tempo of each constant-tempo section for the agent and the user to confirm, and turns the grid
+  plus the notes of a vocal clip into `opentune_edit_timing` suggestions with the singer's overall
+  lead or lag (the median) removed before the 30 ms threshold. The analyzer and its model are a
+  separate MIT project, downloaded only after the user agrees to about 85 to 90 MB (about 18 MB with
+  the small model); version, URLs and SHA-256 values are pinned in a manifest, the install is an
+  atomic rename with a `--version` self-check and rolls back to the previous version on failure, and
+  it refuses while no `opentune-beats` release is published. The skill never writes a per-section
+  tempo into the project: OpenTune has one BPM and one time signature, and setting them asks the
+  user which section to follow.
 - `opentune_edit_arrangement`: edits clips on the timeline as OpenTune's arrangement view does (OTCP
   `arrangement.edit` and `arrangement.copy`). `move`, `trim`, `gain`, `fade` and `set_reference` run in order as one
   undo step; `split`, `merge`, `delete` and `copy` each go in a call of their own. The first sentence of a split, merge
