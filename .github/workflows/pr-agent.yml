@@ -25,9 +25,12 @@ jobs:
       contents: read # 故意不给 contents: write，收窄爆炸半径
       issues: write
       pull-requests: write
-    uses: Synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@62556ec3f2b4e049c5b099ebd9c56c4a2888a0a9 # v1.1.0
+    uses: Synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@3b2ba21a872a2ff05771e37be22614ba7a715312 # v1.2.0
     with:
       provider: opencode-go
+      # review / improve 每次发新评论，不改上一条：pr-agent-claude.yml 在 PR → dev 上也发评论，而持久模式会改写
+      # 最新一条带 pr-agent 标记的评论（不管是哪个 PR-Agent 写的），会把它的评论覆盖掉（单测比对）。
+      persistent_comments: false
       # pr-agent 的 ignore.glob（fnmatch，* 也跨 /）：只排除锁文件与生成的 docs/reference.md；
       # spec/**、test/golden/**、docs/contract-changes/** 等冻结面不排除。与 pr-agent-claude.yml 逐字相同（单测比对）。
       ignore_globs: '["package-lock.json", "**/package-lock.json", "**/*.lock", "docs/reference.md"]'

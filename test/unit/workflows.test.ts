@@ -367,6 +367,12 @@ describe('the two PR-Agent stubs', () => {
     expect(JSON.parse(inputOf(haiku, 'secondary_on_bases') ?? 'null')).toEqual(goBases);
   });
 
+  // Persistent mode edits the newest comment that carries pr-agent's marker, whichever PR-Agent
+  // wrote it, so the primary run on dev would rewrite the Haiku run's review and suggestions.
+  it('pr-agent.yml posts new comments instead of editing the latest PR-Agent comment', () => {
+    expect(inputOf(go, 'persistent_comments')).toBe('false');
+  });
+
   // pr-agent matches ignore.glob with Python's fnmatch, where `*` also crosses `/`.
   const fnmatch = (glob: string) =>
     new RegExp(
