@@ -25,7 +25,7 @@ jobs:
       contents: read # 故意不给 contents: write，收窄爆炸半径
       issues: write
       pull-requests: write
-    uses: Synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@3b2ba21a872a2ff05771e37be22614ba7a715312 # v1.2.0
+    uses: Synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@8028e34628bc2276ca978d87ccfc364432742820 # v1.3.1
     with:
       provider: opencode-go
       # review / improve 每次发新评论，不改上一条：pr-agent-claude.yml 在 PR → dev 上也发评论，而持久模式会改写
