@@ -10,6 +10,17 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- The review bots are now thin callers of the shared reusable workflows in `Synchain-oss/ci-workflows`,
+  pinned to a commit. `claude-review.yml` passes only this repository's focus list and extra prompt;
+  `pr-agent.yml` (DeepSeek V4.1 Flash through OpenCode Go, pull requests into `dev`) passes its ignore
+  list (lock files and the generated `docs/reference.md`) and the untrusted-data declaration. A new
+  `pr-agent-claude.yml` runs a second PR-Agent on Claude Haiku 5.5 for pull requests into every base; on
+  `dev` it only adds review and suggestion comments. Both PR-Agents stay behind the `ENABLE_PR_AGENT`
+  switch. PR-Agent now runs a digest-pinned image, never falls back to another model, and waits up to
+  900 s per call without retrying. Pull requests from Dependabot and `dev` → `prod` promotions are no
+  longer reviewed automatically; a maintainer can still comment `/review`, which refuses pull requests
+  that touch `.github/workflows/`. `review-dispatch.yml` keeps its own steps and uses the shared prompt
+  layout with the same focus list and extra prompt. (#69)
 - Review bot moved from a direct DeepSeek endpoint to the OpenCode Go gateway
   (`https://opencode.ai/zen/go`, model `deepseek-v4.1-flash`). Notes that carried over: the
   gateway only accepts the bare model id (a `[1M]` suffix is rejected as "Model is unavailable",

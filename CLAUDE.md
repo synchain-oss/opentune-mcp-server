@@ -32,7 +32,8 @@
    (三支分别对应 `on:` 的块映射、行内标量 / flow 序列、块序列三种写法,都锚定行首,
    免得解释这条规则的注释自己成为命中。)
 5. 所有消费仓库外部文本的自动化(review bot、issue 分流、release notes 生成)的 prompt 末尾
-   必须带「不可信数据声明」(固定结尾,现行文本见 claude-review.yml 的 prompt 末尾)。
+   必须带「不可信数据声明」(固定结尾,现行文本见 claude-review.yml 的 `extra_prompt` 末尾;
+   中央 workflow 把 `extra_prompt` 放在 prompt 最后)。
 
 ## 1. 分支模型与工作流程
 
@@ -64,7 +65,7 @@ npm run gates
 - **处理完所有 comment,不止 bot 的**:行内评论、review 正文、总结里的条目,所有提交 SHA 上的都算。逐条回复、修改或说明不改的理由,然后 Resolve。bot 的意见不必照单全收,但必须回应。
 - 未解决的对话会阻止合并(`dev` / `prod` / `feature/v1` 都要求对话已解决)。
 - 一轮修复一次推送:把本轮接受的修改一起提交、跑 gates、只推一次,避免每条评论各推一次触发多轮 review。
-- 合并前置:head SHA 上的 Claude review 成功完成并发出总结;所有线程都已处置;该 SHA 的检查全绿。只有维护者能豁免 review。
+- 合并前置:head SHA 上的 Claude review 成功完成并发出总结;所有线程都已处置;该 SHA 的检查全绿。只有维护者能豁免 review。`dev` → `prod` 的晋升 PR 与 Dependabot 的 PR 不自动审(见 §4),需要时由维护者评论 `/review`(改动 `.github/workflows/` 的 PR 会被 `/review` 拒审,只能人工审)。
 - review 分级:【红旗】必须解决;【重要】逐条裁决;【建议】可顺手修或记账。
 
 ## 4. 各 Workflow 触发范围一览
@@ -76,15 +77,16 @@ npm run gates
 | `ci.yml` | PR → `dev` / `prod`(完整);PR → `feature/**`(轻量:单条 ubuntu 跑 lint / 类型检查 / 单测 / 合规 / 署名);push → `dev`、`feature/**`(完整) | `checks`(ubuntu × Node 22/24 + windows × Node 24;覆盖率在 ubuntu Node 24 上强制)、`protocol`(ubuntu + windows:stdio `tools/list` 对 golden、Inspector CLI `--strict`、契约向量对 mock、场景转录、instructions 快照、token 金丝雀、体积门禁、每个 op / 动作枚举值至少一个成功向量、规范方法闭包)、`package`(bundle 形状;空目录安装 tarball 后 `tools/list`;`mcpb validate`)、`audit`(含 devDependencies)、`compliance`(gitleaks、reuse lint、隐私、禁止新增音频文件、署名)、`docs`(README 中英结构一致、`docs/reference.md` 与生成结果一致、每个错误 kind / 状态 / doctor 检查 ID 都有 TROUBLESHOOTING 锚点);聚合 job `mcp-gate`(`if: always()`,唯一必需的 CI 检查) |
 | `branch-gate.yml` | PR → `dev` / `prod`(含 `edited`) | 分支命名(`dev` ← `feat/*` / `feature/*` / `dependabot/*`;`prod` ← `dev`)、fork 来源规则、DCO(豁免合并提交)、冻结契约守卫(§5)、PR 正文与提交的署名检查、same-repo PR 的提交身份白名单。job 名固定为 `branch-gate`,不加 `if:` |
 | 署名检查 | PR → `feature/**`(含 `edited`) | 在 `ci.yml` 轻量档的 `light` job 里检查提交与 PR 标题 / 正文,结果汇入 `mcp-gate` |
-| `claude-review.yml` | 所有 same-repo、非草稿 PR(dependabot 经 `allowed_bots`) | 无 `id-token`;action 锁定 release SHA;中文分级;MCP 专项:stdout 污染、schema 兼容、描述即 prompt、路径与覆盖、提示注入、回环与 token、错误可操作性、结果清晰约定;不给 `gh pr comment` 写通道;PR 含被 git 跟踪的符号链接时拒审,检查之后关掉 `core.symlinks`(action 再检出的提交里的链接只会是普通文件);prompt 末尾带不可信数据声明 |
-| `review-dispatch.yml` | `issue_comment`:`/review`,评论者 ∈ {OWNER, MEMBER, COLLABORATOR} | fork PR 的人工触发 AI review;固定 `/review` 时的 head SHA 并按它核对:diff 碰到 `.github/workflows/` 即中止、含符号链接即拒审;检出 PR 代码之前关掉 `core.symlinks`;action 之后核对模型读到的提交与 PR head 仍是该 SHA,否则回帖判作废;只有 `/review` 评论进入并发组;prompt、工具边界与前置步骤与 `claude-review.yml` 逐字一致(单测比对) |
-| `pr-agent.yml` | PR → `dev`(job 级 `if:`) | 仓库变量 `ENABLE_PR_AGENT == 'true'` 才运行(默认关);永不设为必需 |
+| `claude-review.yml` | 所有 same-repo、非草稿、非 Dependabot 的 PR;`dev` → `prod` 的晋升 PR 不审 | 薄调用方:调用 `Synchain-oss/ci-workflows` 的 `claude-review.yml`(钉 40 位 commit SHA,注释写 tag),本仓只传 `focus` 与 `extra_prompt`;检查名 `claude-pr-review / review`。中央 workflow:Claude Opus 5.5 走维护者订阅 OAuth token;评论用本 job 的 `GITHUB_TOKEN`(无 `id-token`,job 级 `contents: read`);模型无 shell,只有 Read / Glob / Grep 与行内评论工具,另有 deny 列表;PR 含被 git 跟踪的符号链接时拒审,检查之后关掉 `core.symlinks`(action 再检出的提交里的链接只会是普通文件);diff 预先写进 `.ot-review/`。中文分级;MCP 专项:stdout 污染、schema 兼容、描述即 prompt、路径与覆盖、提示注入、回环与 token、错误可操作性、结果清晰约定;`extra_prompt` 是 prompt 的最后一段,以不可信数据声明结尾 |
+| `review-dispatch.yml` | `issue_comment`:`/review`,评论者 ∈ {OWNER, MEMBER, COLLABORATOR} | fork PR 的人工触发 AI review(也可用于中央 workflow 不审的 Dependabot PR);固定 `/review` 时的 head SHA 并按它核对:diff 碰到 `.github/workflows/` 即中止、含符号链接即拒审;检出 PR 代码之前关掉 `core.symlinks`;action 之后核对模型读到的提交与 PR head 仍是该 SHA,否则回帖判作废;只有 `/review` 评论进入并发组。不调用中央 workflow(中央 claude-review 只接 `pull_request`,中央 deepseek-review 拒审 fork PR):prompt 骨架与工具边界照抄中央 `claude-review.yml`,`focus` 与 `extra_prompt` 逐字取自本仓 `claude-review.yml`(单测比对) |
+| `pr-agent.yml` | PR → `dev`(触发器 `branches: [dev]`) | 薄调用方:调用中央 `pr-agent.yml`(`provider: opencode-go`,DeepSeek V4.1 Flash,按量计费;模型、无 fallback、超时不重试、按 digest 锁定的镜像都在中央),检查名 `pr-agent / pr-agent`;仓库变量 `ENABLE_PR_AGENT == 'true'` 才运行(默认关);`persistent_comments: false`:review / improve 每次发新评论(`pr-agent-claude.yml` 在 PR → `dev` 上也发评论,持久模式会改写最新一条带 pr-agent 标记的评论,把它的评论覆盖掉);`ignore_globs` 只排除锁文件与生成的 `docs/reference.md`;`extra_instructions` 带不可信数据声明;永不设为必需 |
+| `pr-agent-claude.yml` | 所有 base 的 PR;`dev` → `prod` 的晋升 PR 不审 | 交叉验证的第二个 PR-Agent:调用中央 `pr-agent.yml`(`provider: anthropic`,Claude Haiku 5.5,组织 secret `CLAUDE_API_KEY_FOR_PR_REVIEW`,按量计费),检查名 `pr-agent-claude / pr-agent`;与 `pr-agent.yml` 共用 `ENABLE_PR_AGENT` 开关;PR → `dev` 上为次审(不改 PR 描述、评论不持久,免得两个 PR-Agent 互相覆盖);ignore 列表与声明同 `pr-agent.yml`(单测比对);永不设为必需 |
 | `release.yml` | push tag `v*`;`workflow_dispatch`(在分支上永远 dry-run) | gate:经 `workflow_call` 跑全套 CI;build job(无 `id-token`、`contents: read`):校验 tag 与 `package.json` 一致且位于 `prod`,bundle、`npm pack`、MCPB、插件 zip、skills zip 及各自的 `.sha256`,生成的正文过署名检查;draft job(唯一有 `contents: write`,不检出代码)只建草稿 Release。转正与 npm 发布不在本 workflow 里,按 `docs/RELEASE.md` 由维护者手工进行。**规划中**:从 0.2.0 起由 CI 经 OIDC trusted publishing 发布 npm(带 provenance),以及 `server.json` 的生成与发布(MCP Registry,目前 build 不生成 `server.json`) |
 | `dependabot.yml` | – | actions 每月;npm 每月分组;每个生态同时最多一个分组 PR |
 
-- workflow 顶层默认 `permissions: contents: read`,需要更高权限的只在 job 级声明。
+- workflow 顶层默认 `permissions: contents: read`,需要更高权限的只在 job 级声明;只调用中央 reusable workflow 的调用方顶层用更严的 `permissions: {}`,secret 逐个显式传入(不用 `secrets: inherit`)。
 - 必需检查的 job 不加 `paths:` 过滤、不加 `if:`;矩阵结果经聚合 job 汇总。
-- org 的 action 白名单只放行 GitHub 官方 action 与 `anthropics/claude-code-action`、`qodo-ai/pr-agent`、`softprops/action-gh-release`、`oven-sh/setup-bun`;用别的第三方 action 会让整个 run 直接 `startup_failure`(没有日志)。先考虑用 `run:` 步骤自己实现。
+- org 的 action 白名单只放行 GitHub 官方 action 与 `anthropics/claude-code-action`、`qodo-ai/pr-agent`、`softprops/action-gh-release`、`oven-sh/setup-bun`,以及 review bot 用的中央 reusable workflow `Synchain-oss/ci-workflows/.github/workflows/*@*`;用别的第三方 action 会让整个 run 直接 `startup_failure`(没有日志)。先考虑用 `run:` 步骤自己实现。
 - 二进制工具(gitleaks、mcp-publisher 等)用脚本下载,版本与 sha256 写在仓内钉版文件里,workflow 与脚本一律从文件读,不写版本号字面量。
 - 成本纪律:runner 就低不就高。
 
@@ -108,7 +110,7 @@ npm run gates
 | 打包 | esbuild → `dist/opentune-mcp.mjs`(ESM、`platform: node`、`target: node22`、带 shebang);发布包无依赖、无生命周期脚本;`THIRD-PARTY-NOTICES.md` 由 metafile 生成,缺项即红 |
 | 本地 gates | `npm run gates`(§2) |
 | 合规扫描 | gitleaks(版本见钉版文件,下载校验 sha256)、`reuse lint`、隐私检查、署名检查;都在 `npm run gates` 里 |
-| CI secrets | `CLAUDE_CODE_OAUTH_TOKEN`(review bot;Dependabot 另设一份)。npm 发布走 OIDC trusted publishing,不存 npm token |
+| CI secrets | `CLAUDE_CODE_OAUTH_TOKEN`(`claude-review.yml` 与 `review-dispatch.yml`;Dependabot 另设的那份已不再使用:中央 claude-review 不审 Dependabot 的 PR)、`OPENCODE_GO_API_KEY_FOR_REVIEW`(`pr-agent.yml`)、组织 secret `CLAUDE_API_KEY_FOR_PR_REVIEW`(`pr-agent-claude.yml`)。npm 发布走 OIDC trusted publishing,不存 npm token |
 | 测试数据目录 | 发现文件只写 `OPENTUNE_MCP_DISCOVERY_DIR`;E2E 用 `OPENTUNE_DATA_DIR` 临时目录;任何测试解析到真实 AppData 即失败 |
 
 ## 7. 安全铁律(MCP 专项)
