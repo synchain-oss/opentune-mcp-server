@@ -332,6 +332,45 @@ describe('arrangement effects scenario against the stand-in', () => {
   );
 
   it(
+    'puts the tracks back when an export fails after a mute took effect, so the split check is not misled',
+    async () => {
+      const report = await runArrangementEffects(config('arrangement-export-fails-in-mute'));
+      const r = results(report);
+      expect(r['mute and solo in the master export']).toBe('FAIL');
+      expect(noteOf(report, 'mute and solo in the master export')).toContain('mute track 2');
+      // The mute was reverted although the measurement failed: the split check meets the clean project.
+      expect(r['split boundary is seamless']).toBe('PASS');
+      expect(r.shutdown).toBe('PASS');
+    },
+    SLOW,
+  );
+
+  it(
+    'fails the split check, instead of calling the merge refused, when the export after an applied merge fails',
+    async () => {
+      const report = await runArrangementEffects(config('arrangement-export-fails-after-merge'));
+      expect(results(report)['split boundary is seamless']).toBe('FAIL');
+      expect(noteOf(report, 'split boundary is seamless')).toContain(
+        'the merge was applied, but checking its result failed',
+      );
+      const split = check<{ merge: { refused?: string; applied?: boolean } }>(report, 'split boundary is seamless');
+      expect(split.merge.refused).toBeUndefined();
+      expect(split.merge.applied).toBe(true);
+    },
+    SLOW,
+  );
+
+  it(
+    'fails the checks that export when the result names another file than the one asked for',
+    async () => {
+      const report = await runArrangementEffects(config('arrangement-export-other-path'));
+      expect(results(report)['baseline master export']).toBe('FAIL');
+      expect(noteOf(report, 'baseline master export')).toContain('another file than the one asked for');
+    },
+    SLOW,
+  );
+
+  it(
     'stops the checks when an undo does not put the clip back',
     async () => {
       const report = await runArrangementEffects(config('arrangement-undo-broken'));

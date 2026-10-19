@@ -914,6 +914,10 @@ const isTrackLimit = (error: unknown): boolean =>
 const isRevisionConflict = (error: unknown): boolean =>
   error instanceof OtcpError && error.data.kind === 'REVISION_CONFLICT';
 
+/** A recipe may be refused for its token only when the arrangement has moved on from the revision it names. */
+export const refusalIsDefect = (currentRevision: string, recipeRevision: unknown): boolean =>
+  currentRevision === recipeRevision;
+
 /** A step that could not put the state back; the scenario stops after it. */
 export class Unrestored extends Error {}
 
@@ -1333,7 +1337,13 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     const project = await t.reads.project();
     const tracks = visibleTracks(project);
     const tracksBefore = listOf(member(await t.reads.snapshot(['tracks']), 'tracks', 'the tracks snapshot'));
-    if (tracks.length > 0) {
+    // Playback starts only when the mute is in place: without tracks.v1, or when the mute was refused,
+    // not applied or not visible in a fresh read, the play, stop and seek calls are not sent.
+    const canMute = capabilities.includes('tracks.v1');
+    let playable = tracks.length === 0;
+    if (!canMute) {
+      skipped.push('transport.control play (needs tracks.v1 to mute every track first)');
+    } else if (tracks.length > 0) {
       const mutedAll = await t.writeKept({
         step: 'track.set (mute for playback)',
         method: 'track.set',
@@ -1341,63 +1351,66 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
         expect: { applied: true, undoable: false, undoReason: 'ui_parity', revert: 'present' },
       });
       collect('track.set (mute)', problems, mutedAll);
-      if (!visibleTracks(await t.reads.project()).every((track) => track.muted === true)) {
-        problems.push('a visible track is not muted before playback');
+      const allMuted = visibleTracks(await t.reads.project()).every((track) => track.muted === true);
+      if (!allMuted) problems.push('a visible track is not muted before playback');
+      if (mutedAll.problems.length === 0 && allMuted) playable = true;
+      else problems.push('not every visible track is muted; playback is not started');
+    }
+
+    if (playable) {
+      const seekTo = before.positionTimelineSec === 0 ? 0.5 : 0;
+      const seek = await t.writeKept({
+        step: 'transport.control (seek)',
+        method: 'transport.control',
+        params: { action: 'seek', positionTimelineSec: seekTo },
+        expect: {
+          applied: true,
+          noOp: false,
+          undoable: false,
+          undoReason: 'not_persisted_state',
+          revert: 'none',
+          absentWarnings: ['IRREVERSIBLE', 'NO_AUDIO_DEVICE'],
+        },
+      });
+      collect('transport.control (seek)', problems, seek);
+
+      const play = await t.writeKept({
+        step: 'transport.control (play)',
+        method: 'transport.control',
+        params: { action: 'play' },
+        expect: {
+          applied: true,
+          noOp: false,
+          undoable: false,
+          undoReason: 'not_persisted_state',
+          revert: 'none',
+          absentWarnings: ['IRREVERSIBLE'],
+          warnings: device ? [] : ['NO_AUDIO_DEVICE'],
+        },
+      });
+      collect('transport.control (play)', problems, play);
+      if (member(await t.reads.transportState(), 'playing', 'transport') !== true) {
+        problems.push('the transport does not play after action play');
       }
+
+      const stop = await t.writeKept({
+        step: 'transport.control (stop)',
+        method: 'transport.control',
+        params: { action: 'stop' },
+        expect: { applied: true, noOp: false, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
+      });
+      collect('transport.control (stop)', problems, stop);
+
+      const back = await t.writeKept({
+        step: 'transport.control (seek back)',
+        method: 'transport.control',
+        params: { action: 'seek', positionTimelineSec: before.positionTimelineSec },
+        expect: { applied: true, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
+      });
+      collect('transport.control (seek back)', problems, back);
     }
 
-    const seekTo = before.positionTimelineSec === 0 ? 0.5 : 0;
-    const seek = await t.writeKept({
-      step: 'transport.control (seek)',
-      method: 'transport.control',
-      params: { action: 'seek', positionTimelineSec: seekTo },
-      expect: {
-        applied: true,
-        noOp: false,
-        undoable: false,
-        undoReason: 'not_persisted_state',
-        revert: 'none',
-        absentWarnings: ['IRREVERSIBLE', 'NO_AUDIO_DEVICE'],
-      },
-    });
-    collect('transport.control (seek)', problems, seek);
-
-    const play = await t.writeKept({
-      step: 'transport.control (play)',
-      method: 'transport.control',
-      params: { action: 'play' },
-      expect: {
-        applied: true,
-        noOp: false,
-        undoable: false,
-        undoReason: 'not_persisted_state',
-        revert: 'none',
-        absentWarnings: ['IRREVERSIBLE'],
-        warnings: device ? [] : ['NO_AUDIO_DEVICE'],
-      },
-    });
-    collect('transport.control (play)', problems, play);
-    if (member(await t.reads.transportState(), 'playing', 'transport') !== true) {
-      problems.push('the transport does not play after action play');
-    }
-
-    const stop = await t.writeKept({
-      step: 'transport.control (stop)',
-      method: 'transport.control',
-      params: { action: 'stop' },
-      expect: { applied: true, noOp: false, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
-    });
-    collect('transport.control (stop)', problems, stop);
-
-    const back = await t.writeKept({
-      step: 'transport.control (seek back)',
-      method: 'transport.control',
-      params: { action: 'seek', positionTimelineSec: before.positionTimelineSec },
-      expect: { applied: true, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
-    });
-    collect('transport.control (seek back)', problems, back);
-
-    if (tracks.length > 0) {
+    if (canMute && tracks.length > 0) {
       const unmuted = await t.writeKept({
         step: 'track.set (restore the mute)',
         method: 'track.set',
@@ -1417,7 +1430,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       'transport.get, transport.setTempo, transport.setLoop and transport.control',
       problems,
       `tempo ${String(bpmBefore)} -> ${String(wantedBpm)} and back, loop toggled and back, ` +
-        `${tracks.length > 0 ? 'every track muted during' : 'no visible track to mute during'} play${device ? '' : ' (no audio device)'}`,
+        `${playable ? (tracks.length > 0 ? 'every track muted during' : 'no visible track to mute during') : 'playback not started during'} play${device ? '' : ' (no audio device)'}`,
     );
   });
 
@@ -1926,6 +1939,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       const asGiven = { ...params };
       if (copyRevert.requiresConsent === true) asGiven.confirm = true;
       let stale = false;
+      let cleanedWithCurrentRevision = false;
       try {
         const applied = await t.call('revert', method, asGiven);
         problems.push(...schemaProblems(schemaPath(method, 'result'), applied, 'the revert of arrangement.copy'));
@@ -1936,14 +1950,22 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       } catch (error) {
         if (!isRevisionConflict(error)) throw error;
         // The recipe carries the tokens of the state right after the copy (PROTOCOL.md section 15.2
-        // rule 3), so it refuses to overwrite the later writes: that is the promise, and the scenario
-        // sends it again with the current arrangement revision to finish the round trip.
+        // rule 3), so it refuses to overwrite later writes: that is the promise. Refusing while the
+        // arrangement is still the one the recipe names would be a defect of the recipe.
         stale = true;
       }
       if (stale) {
         // The MCP part changed the project from another session: read the revision fresh.
         t.reads.clear();
         const current = arrangementOf(await t.reads.project());
+        if (refusalIsDefect(current, params.expectedArrangementRevision)) {
+          problems.push(
+            'the revert recipe of the copy was refused with REVISION_CONFLICT although the arrangement still has the revision it names',
+          );
+        }
+        // Only the clean-up of the scenario's own clip: the recipe was refused as given, so this call
+        // is not counted as a successful round trip of the recipe.
+        cleanedWithCurrentRevision = true;
         try {
           const removed = await t.call('revert', method, {
             ...params,
@@ -1965,6 +1987,9 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
         }
         t.reads.clear();
       }
+      scenario.facts.copyRevert = cleanedWithCurrentRevision
+        ? 'refused as given by its token guard; the clip was removed by a clean-up call with the current revision'
+        : 'accepted as given';
       if (placementById(await t.reads.project(), copyId) !== undefined) problems.push('the copy is still there');
       const restored = await t.reads.snapshot(['geometry']);
       const found = differences(geometryBeforeCopy ?? {}, restored);
@@ -2083,7 +2108,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     return finish(
       'arrangement.edit: split, the merge that takes it back, and delete',
       problems,
-      'the copy was taken back through its revert recipe; the split was taken back by its merge recipe; the clip was deleted',
+      'the copy was removed (the recipe refused to run against later writes, as promised, or ran as given: see facts.copyRevert); the split was taken back by its merge recipe; the clip was deleted',
     );
   });
 

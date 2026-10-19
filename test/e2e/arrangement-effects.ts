@@ -1316,7 +1316,10 @@ export async function runArrangementEffects(
     );
     exportTimes.push({ label, ms: Math.round(performance.now() - at) });
     recordProcessing(label, result);
-    const wav = decodeWav(await readFile(text(result, 'path', 'the export result')));
+    const exportedPath = text(result, 'path', 'the export result');
+    if (path.resolve(exportedPath).toLowerCase() !== path.resolve(file).toLowerCase())
+      throw new Error(`the ${label} export result names another file than the one asked for`);
+    const wav = decodeWav(await readFile(exportedPath));
     const reportedRate = num(result, 'sampleRateHz', 'the export result');
     const reportedChannels = num(result, 'channelCount', 'the export result');
     const reportedDuration = num(result, 'durationSec', 'the export result');
@@ -1845,24 +1848,33 @@ export async function runArrangementEffects(
       ) => {
         const { result, state, consistency } = await write('track.set', setting);
         problems.push(...consistency.problems.map((p) => `${label}: ${p}`));
-        for (const trackId of expected.muted) {
-          if (!trackOf(state, trackId).muted) problems.push(`${label}: track ${String(trackId)} is not muted`);
-        }
-        for (const trackId of expected.solo) {
-          if (!trackOf(state, trackId).solo) problems.push(`${label}: track ${String(trackId)} is not soloed`);
-        }
-        const wet = await exportMaster(label);
-        const silentRegion = silenceOf(wet.wav, silent);
-        if (silentRegion.maxAbs > SILENCE_MAX_ABS) {
-          problems.push(
-            `${label}: the clip that should be silent still reaches ${silentRegion.maxAbs.toExponential(2)}`,
-          );
-        }
-        const other = compareSamples(base, wet.wav, [identical]);
-        if (other.bitIdentical !== 1) {
-          problems.push(
-            `${label}: the remaining clip differs from the baseline by up to ${other.maxAbsDiff.toExponential(2)}`,
-          );
+        // The write took effect: whatever goes wrong while measuring, the revert below still runs, so
+        // that a later check does not meet muted or soloed tracks.
+        let measureFailure: unknown;
+        let silentRegion: ReturnType<typeof silenceOf> | undefined;
+        let other: ReturnType<typeof compareSamples> | undefined;
+        try {
+          for (const trackId of expected.muted) {
+            if (!trackOf(state, trackId).muted) problems.push(`${label}: track ${String(trackId)} is not muted`);
+          }
+          for (const trackId of expected.solo) {
+            if (!trackOf(state, trackId).solo) problems.push(`${label}: track ${String(trackId)} is not soloed`);
+          }
+          const wet = await exportMaster(label);
+          silentRegion = silenceOf(wet.wav, silent);
+          if (silentRegion.maxAbs > SILENCE_MAX_ABS) {
+            problems.push(
+              `${label}: the clip that should be silent still reaches ${silentRegion.maxAbs.toExponential(2)}`,
+            );
+          }
+          other = compareSamples(base, wet.wav, [identical]);
+          if (other.bitIdentical !== 1) {
+            problems.push(
+              `${label}: the remaining clip differs from the baseline by up to ${other.maxAbsDiff.toExponential(2)}`,
+            );
+          }
+        } catch (error) {
+          measureFailure = error;
         }
         const revert = revertOf(result);
         if (revert === undefined) {
@@ -1891,6 +1903,10 @@ export async function runArrangementEffects(
           trackOf(afterRevert, trackB).solo
         ) {
           throw new Unrestored(`${label}: after the revert the old mute/solo values are not back`);
+        }
+        if (measureFailure !== undefined || silentRegion === undefined || other === undefined) {
+          // Restored; the failure is the check's own, so the later checks still run.
+          throw new Error(`${label}: ${messageOf(measureFailure)}`, { cause: measureFailure });
         }
         const afterMaster = await compareWithBaseline(
           `after ${label} revert`,
@@ -1978,17 +1994,27 @@ export async function runArrangementEffects(
         );
       }
       const revert = revertOf(result);
-      let merge: Record<string, unknown>;
+      let merge: Record<string, unknown> | undefined;
       if (revert === undefined) {
         merge = { refused: 'the result gives no revert recipe' };
       } else if (revert.requiresConsent) {
         merge = { refused: 'the revert recipe needs consent' };
       } else {
+        let reply: Json | undefined;
         try {
-          const reply = await s.call(revert.method, revert.params, 60_000);
-          if (reply.applied === false || reply.dryRun === true) {
-            merge = { refused: 'the merge was not applied' };
-          } else {
+          reply = await s.call(revert.method, revert.params, 60_000);
+        } catch (error) {
+          // A merge the instance refuses is information, not a failure: the split is the last check.
+          merge = { refused: classify(error).note };
+        }
+        if (reply === undefined) {
+          merge ??= { refused: 'the merge call failed' };
+        } else if (reply.applied === false || reply.dryRun === true) {
+          merge = { refused: 'the merge was not applied' };
+        } else {
+          // From here the merge took effect: a read or an export that fails is a failure of the check,
+          // not a refused merge.
+          try {
             const afterMerge = await readProject(s);
             const splitParts = splitPartsOf(state, oldClip);
             if (splitParts === undefined) {
@@ -2018,10 +2044,10 @@ export async function runArrangementEffects(
                 consistency: mergeConsistencyProblems,
               };
             }
+          } catch (error) {
+            problems.push(`the merge was applied, but checking its result failed: ${messageOf(error)}`);
+            merge = { applied: true, method: revert.method, checkFailed: messageOf(error) };
           }
-        } catch (error) {
-          // A merge the instance refuses is information, not a failure: the split is the last check.
-          merge = { refused: classify(error).note };
         }
       }
       checks['split boundary is seamless'] = {

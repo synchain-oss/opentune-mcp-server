@@ -14,7 +14,7 @@ import { startMock, type OtcpMock } from '../../mock/server.js';
 import { OtcpSession, type Json } from '../../src/otcp/client.js';
 import type { McpProcess, RealInstance, RealInstanceOptions, ToolOutcome } from '../e2e/real-support.js';
 import type { SmokeConfig } from '../e2e/smoke.js';
-import { runWaveBTour, type WaveBTourHooks, type WaveBTourReport } from '../e2e/wave-b-tour.js';
+import { refusalIsDefect, runWaveBTour, type WaveBTourHooks, type WaveBTourReport } from '../e2e/wave-b-tour.js';
 import { INITIALIZE, mcpClient, testContext, type TestContext } from '../support/context.js';
 
 const cleanup: (() => unknown)[] = [];
@@ -370,4 +370,111 @@ describe('a defective fake fails the check that notices it', () => {
     expect(step?.result).toBe('FAIL');
     expect(step?.note).toContain('does not pass the output schema of opentune_transport');
   }, 120_000);
+});
+
+describe('nothing is played unless every visible track is muted', () => {
+  const playCalls = (report: WaveBTourReport) =>
+    report.calls.filter((call) => call.method === 'transport.control').map((call) => call.method);
+
+  it('sends play when the mute is in place (the guard has something to hold back)', async () => {
+    const { hooks } = fixture({ prepare: withAudio });
+    const report = await runWaveBTour(config, hooks);
+    expect(playCalls(report).length).toBeGreaterThanOrEqual(3);
+  }, 120_000);
+
+  it('a mute that the instance reports as not applied stops the play, the stop and the seek', async () => {
+    const { hooks, mocks } = fixture({
+      prepare: withAudio,
+      reply: (method, result, params) => {
+        const tracks = Array.isArray(params.tracks) ? params.tracks.filter(isObject) : [];
+        if (method !== 'track.set' || tracks.length < 2 || !tracks.every((track) => track.muted === true)) {
+          return undefined;
+        }
+        result.applied = false;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, 'transport.get, transport.setTempo');
+    expect(step?.result).toBe('FAIL');
+    expect(playCalls(report)).toEqual([]);
+    // The mute that did take effect was put back.
+    expect(mocks[0]?.snapshot().tracks.every((track) => !track.muted)).toBe(true);
+  }, 120_000);
+
+  it('an instance without tracks.v1 cannot mute, so nothing is played and the step says why', async () => {
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        mock.given({ audio: { running: true } });
+        mock.given({ withoutCapabilities: ['tracks.v1'] });
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    expect(playCalls(report)).toEqual([]);
+    expect(report.skipped.join(' ')).toContain('needs tracks.v1');
+  }, 120_000);
+});
+
+describe('the checks behind the findings of the real runs turn red on a defective fake', () => {
+  it('an out-of-range gain that is applied unchanged, without CLAMPED, fails the arrangement step', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result, params) => {
+        const ops = Array.isArray(params.ops) ? params.ops.filter(isObject) : [];
+        if (method !== 'arrangement.edit' || !ops.some((op) => op.op === 'setGain')) return undefined;
+        result.warnings = Array.isArray(result.warnings)
+          ? result.warnings.filter((warning) => !isObject(warning) || warning.code !== 'CLAMPED')
+          : [];
+        for (const change of Array.isArray(result.changes) ? result.changes.filter(isObject) : []) {
+          const fields = isObject(change.fields) ? change.fields : {};
+          if (isObject(fields.gainDb)) fields.gainDb.after = 200;
+        }
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, 'arrangement.edit: move, trim, gain and fade');
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('no CLAMPED warning');
+  }, 120_000);
+
+  it('a reference analysis job that ends without alignment data fails the analysis step', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        if (method !== 'job.get' || !isObject(result.job) || !isObject(result.job.result)) return undefined;
+        if (!('alignmentReady' in result.job.result)) return undefined;
+        result.job.result.alignmentReady = false;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, 'content.analyzeReference and content.autoTune');
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('alignment');
+  }, 120_000);
+
+  it('a reference analysis job that names another binding fails the analysis step', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        if (method !== 'job.get' || !isObject(result.job) || !isObject(result.job.result)) return undefined;
+        if (!('alignmentReady' in result.job.result)) return undefined;
+        result.job.result.referencePlacementId = 'p:0:0:0';
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, 'content.analyzeReference and content.autoTune');
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('another binding');
+  }, 120_000);
+});
+
+describe('a revert recipe refused for its token', () => {
+  it('is a defect only while the arrangement still has the revision the recipe names', () => {
+    expect(refusalIsDefect('a1', 'a1')).toBe(true);
+    expect(refusalIsDefect('a2', 'a1')).toBe(false);
+    expect(refusalIsDefect('a2', undefined)).toBe(false);
+  });
 });

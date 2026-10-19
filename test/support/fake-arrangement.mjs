@@ -16,6 +16,9 @@
 // (the revert), `arrangement-undo-broken` answers edit.undo without restoring anything,
 // `arrangement-undo-missing` says a setGain cannot be undone, `arrangement-split-gap` drops one
 // sample at the split, and `arrangement-split-misreport` leaves the trailing clip out of `created`.
+// `arrangement-export-fails-in-mute` fails the export of the first mute case and
+// `arrangement-export-fails-after-merge` the export after the merge of the split check.
+// `arrangement-export-other-path` reports another file than the one asked for.
 // `arrangement-no-arrangement`, `arrangement-no-tracks` and `arrangement-no-history` do not report
 // the capability of that name; `arrangement-backend` fails the import with an unavailable inference
 // backend; `arrangement-hybrid` reports hybrid mode on. Its "analysis" reads the truth file the tone
@@ -80,6 +83,7 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 const clonePlacements = (placements) => new Map([...placements].map(([id, p]) => [id, clone(p)]));
 
 export function createArrangement(mode) {
+  let exportsStarted = 0;
   const contents = new Map();
   const placements = new Map();
   const tracks = new Map([
@@ -701,10 +705,12 @@ export function createArrangement(mode) {
         right[at] = (right[at] ?? 0) + sample * g;
       }
     }
-    fs.writeFileSync(job.path, stereoWav(left, right));
+    // `arrangement-export-other-path` writes the file next to the one asked for and reports that one.
+    const written = mode === 'arrangement-export-other-path' ? `${job.path}.other.wav` : job.path;
+    fs.writeFileSync(written, stereoWav(left, right));
     return {
       result: {
-        path: job.path,
+        path: written,
         sampleRateHz: RATE,
         channelCount: 2,
         sampleFormat: 'float32',
@@ -855,6 +861,14 @@ export function createArrangement(mode) {
     if (method === 'export.start') {
       if (params.kind !== 'master') return fail(id, 'UNSUPPORTED', 'capability_missing');
       if (fs.existsSync(params.path)) return fail(id, 'ALREADY_EXISTS', 'target_exists');
+      exportsStarted += 1;
+      // The sixth export is the one of the first mute case; the thirteenth is the one after the merge.
+      if (mode === 'arrangement-export-fails-in-mute' && exportsStarted === 6) {
+        return fail(id, 'INTERNAL', 'export_failed');
+      }
+      if (mode === 'arrangement-export-fails-after-merge' && exportsStarted === 13) {
+        return fail(id, 'INTERNAL', 'export_failed');
+      }
       const job = startJob('export', () => finishExport({ path: params.path }), 0);
       return ok(id, { ...envelope({ applied: false, undo: null }), job });
     }
