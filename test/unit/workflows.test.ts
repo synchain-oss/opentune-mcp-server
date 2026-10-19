@@ -280,9 +280,10 @@ const CENTRAL_CALL =
 
 // Every call of a workflow of Synchain-oss/ci-workflows, with the ref it is pinned to. GitHub owner and
 // repository names are case-insensitive, so `synchain-oss/ci-workflows` calls the same workflows and is
-// counted too; otherwise a caller written in another case could pin a different commit unnoticed.
+// counted too, as is a quoted `uses:` value or extra spaces after the colon; otherwise such a caller could
+// pin a different commit unnoticed.
 function centralRefs(text: string): string[] {
-  return [...text.matchAll(/uses: synchain-oss\/ci-workflows\/[^@\s]+@(\S+)/gi)].map((m) => m[1] ?? '');
+  return [...text.matchAll(/uses:\s*["']?synchain-oss\/ci-workflows\/[^@\s"']+@([^\s"']+)/gi)].map((m) => m[1] ?? '');
 }
 
 const STUBS = [
@@ -346,6 +347,14 @@ describe('the review bots are stubs that call Synchain-oss/ci-workflows', () => 
     const pin = '0123456789abcdef0123456789abcdef01234567';
     const call = `    uses: synchain-oss/CI-Workflows/.github/workflows/pr-agent.yml@${pin} # v1.3.1\n`;
     expect(centralRefs(call)).toEqual([pin]);
+  });
+
+  it('counts a quoted call, or one with extra spaces after uses:', () => {
+    const pin = '0123456789abcdef0123456789abcdef01234567';
+    const quoted = `    uses: "Synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@${pin}" # v1.3.1\n`;
+    const spaced = `    uses:   synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@${pin} # v1.3.1\n`;
+    expect(centralRefs(quoted)).toEqual([pin]);
+    expect(centralRefs(spaced)).toEqual([pin]);
   });
 });
 
