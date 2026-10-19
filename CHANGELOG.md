@@ -20,7 +20,7 @@ versioned separately and has its own changelog.
   900 s per call without retrying. Pull requests from Dependabot and `dev` → `prod` promotions are no
   longer reviewed automatically; a maintainer can still comment `/review`, which refuses pull requests
   that touch `.github/workflows/`. `review-dispatch.yml` keeps its own steps and uses the shared prompt
-  layout with the same focus list and extra prompt.
+  layout with the same focus list and extra prompt. (#69)
 - Review bot moved from a direct DeepSeek endpoint to the OpenCode Go gateway
   (`https://opencode.ai/zen/go`, model `deepseek-v4.1-flash`). Notes that carried over: the
   gateway only accepts the bare model id (a `[1M]` suffix is rejected as "Model is unavailable",
