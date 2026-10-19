@@ -278,6 +278,14 @@ function inputOf(text: string, name: string): string | undefined {
 const CENTRAL_CALL =
   /^ {4}uses: Synchain-oss\/ci-workflows\/\.github\/workflows\/([\w-]+\.yml)@[0-9a-f]{40} # v\d+(?:\.\d+)*$/m;
 
+// Every call of a workflow of Synchain-oss/ci-workflows, with the ref it is pinned to. GitHub owner and
+// repository names are case-insensitive, so `synchain-oss/ci-workflows` calls the same workflows and is
+// counted too, as is a quoted `uses:` value or extra spaces after the colon; otherwise such a caller could
+// pin a different commit unnoticed.
+function centralRefs(text: string): string[] {
+  return [...text.matchAll(/uses:\s*["']?synchain-oss\/ci-workflows\/[^@\s"']+@([^\s"']+)/gi)].map((m) => m[1] ?? '');
+}
+
 const STUBS = [
   {
     file: 'claude-review.yml',
@@ -330,11 +338,23 @@ describe('the review bots are stubs that call Synchain-oss/ci-workflows', () => 
   });
 
   it('calls one and the same commit of Synchain-oss/ci-workflows everywhere', () => {
-    const refs = WORKFLOWS.flatMap(({ text }) =>
-      [...text.matchAll(/uses: Synchain-oss\/ci-workflows\/[^@\s]+@(\S+)/g)].map((m) => m[1]),
-    );
+    const refs = WORKFLOWS.flatMap(({ text }) => centralRefs(text));
     expect(refs).toHaveLength(STUBS.length);
     expect(new Set(refs).size).toBe(1);
+  });
+
+  it('counts a call of Synchain-oss/ci-workflows written in any case', () => {
+    const pin = '0123456789abcdef0123456789abcdef01234567';
+    const call = `    uses: synchain-oss/CI-Workflows/.github/workflows/pr-agent.yml@${pin} # v1.3.1\n`;
+    expect(centralRefs(call)).toEqual([pin]);
+  });
+
+  it('counts a quoted call, or one with extra spaces after uses:', () => {
+    const pin = '0123456789abcdef0123456789abcdef01234567';
+    const quoted = `    uses: "Synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@${pin}" # v1.3.1\n`;
+    const spaced = `    uses:   synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@${pin} # v1.3.1\n`;
+    expect(centralRefs(quoted)).toEqual([pin]);
+    expect(centralRefs(spaced)).toEqual([pin]);
   });
 });
 
