@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "tool": "opentune-beats",
+  "repository": "synchain-oss/opentune-beats",
+  "version": "0.1.0",
+  "releaseTag": "v0.1.0",
+  "released": false,
+  "license": "MIT",
+  "licenseNote": "The program and the beat_this model weights are MIT. Part of the model's training data is copyrighted or under restricted CC licences; the release's NOTICE lists them.",
+  "platforms": {
+    "win-x64": {
+      "asset": "opentune-beats-0.1.0-win-x64.zip",
+      "format": "zip",
+      "url": "https://github.com/synchain-oss/opentune-beats/releases/download/v0.1.0/opentune-beats-0.1.0-win-x64.zip",
+      "sha256": "",
+      "approxBytes": 8000000
+    },
+    "macos-universal2": {
+      "asset": "opentune-beats-0.1.0-macos-universal2.tar.gz",
+      "format": "tar.gz",
+      "url": "https://github.com/synchain-oss/opentune-beats/releases/download/v0.1.0/opentune-beats-0.1.0-macos-universal2.tar.gz",
+      "sha256": "",
+      "approxBytes": 10000000
+    }
+  },
+  "models": {
+    "mel": {
+      "asset": "mel_spectrogram.onnx",
+      "url": "https://github.com/synchain-oss/opentune-beats/releases/download/v0.1.0/mel_spectrogram.onnx",
+      "sha256": "",
+      "approxBytes": 120000
+    },
+    "final": {
+      "asset": "beat_this_final.onnx",
+      "url": "https://github.com/synchain-oss/opentune-beats/releases/download/v0.1.0/beat_this_final.onnx",
+      "sha256": "",
+      "approxBytes": 79000000
+    },
+    "small": {
+      "asset": "beat_this_small.onnx",
+      "url": "https://github.com/synchain-oss/opentune-beats/releases/download/v0.1.0/beat_this_small.onnx",
+      "sha256": "",
+      "approxBytes": 10000000
+    }
+  }
+}

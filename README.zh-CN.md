@@ -46,7 +46,7 @@ OpenTune 在全新数据目录下首次启动时,会弹出一次「首次引导�
 
 **Claude Desktop(首推):MCPB 包。** 从 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases) 页面下载 `opentune-mcp-<version>.mcpb` 与对应的 `.sha256` 文件,核对校验和,打开 `.mcpb` 文件(或拖进 设置 > 扩展)并选择安装。在扩展设置里把「OpenTune executable」设为测试版的 `OpenTune.exe`。详见 [docs/install.md](docs/install.md)。进阶:用 `opentune-mcp doctor --client claude-desktop` 手动注册 npm 包。
 
-**Claude Desktop:skills。** Claude Desktop 的聊天不会运行 Claude Code 插件里的 MCP 服务,所以它的工具来自上面的 MCPB 包。工作流程指引另行提供:从同一个 Release 解压 `opentune-skills-<version>.zip`,把里面的每个 zip 分别作为 skill 上传到 Claude 的设置里。这些 skill 只是说明,实际操作要经 MCP 工具完成,所以在装了 MCPB 包的地方才有用;浏览器里的 claude.ai 没有本机工具。
+**Claude Desktop:skills。** Claude Desktop 的聊天不会运行 Claude Code 插件里的 MCP 服务,所以它的工具来自上面的 MCPB 包。工作流程指引另行提供:从同一个 Release 解压 `opentune-skills-<version>.zip`,把里面的每个 zip 分别作为 skill 上传到 Claude 的设置里。这些 skill 只是说明,实际操作要经 MCP 工具完成,所以在装了 MCPB 包的地方才有用;浏览器里的 claude.ai 没有本机工具。需要本机工具的 skill(`lyrics-timeline` 的 Python 运行时、`beat-grid` 下载的分析器)只随插件提供。
 
 **Claude Code(首推):插件。** 插件包含 MCP 服务和指导修音流程的 skill,需要 `PATH` 上有 Node.js 22 或更新版本。在终端里运行下面两条命令一次(PowerShell 里写法相同)。`--config` 把「OpenTune executable」选项设为测试版的 `OpenTune.exe`;不写的话,可以之后在 `/config` 里设置,或者只使用你自己启动的 OpenTune。
 
@@ -115,7 +115,7 @@ OpenTune 会分析录好的人声,把它显示为音符与音高曲线,并用神
 - **导入与导出:** 打开音频文件,把片段、轨道或整个混音导出为 WAV。
 - **读取分析结果:** 音符、音高曲线、检测到的调性、分析与渲染状态,以及每个乐句的音高摘要,便于 agent 推理。
 - **自动修音与音符编辑:** 对指定时间范围运行 OpenTune 的 AUTO 修正;设置音符的目标音高、按音分平移、吸附到音阶、调整回调速度、颤音与漂移;设置片段的调性与移调。
-- **时间:** 把一段提前或延后,以及移动时间柄。
+- **时间:** 把一段提前或延后,以及移动时间柄。`beat-grid` skill 会从伴奏或原曲混音测出速度与节拍网格,并据此规划这些时间修改;它的分析器要经用户同意后才下载(默认模型约 85 到 90 MB)。
 - **撤销与重做:** 经接口做出的改动会进入 OpenTune 自己的撤销历史(OpenTune 支持撤销的地方)。某个操作无法撤销时(OpenTune 本身就有些操作不能撤销),结果会写明,并尽可能给出还原的办法。
 
 每次改动都返回结构化结果:改了什么(带单位的前后值)、副作用、警告、能否撤销,以及不能撤销时如何还原。目标不是判断人声「听起来对不对」,而是把 OpenTune 已有的操作提供给 agent,并清楚地报告其效果。
