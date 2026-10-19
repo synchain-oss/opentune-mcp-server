@@ -10,6 +10,8 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- The shared review workflows are pinned to `v1.3.1`. The Claude Haiku PR-Agent runs at effort `high`
+  instead of `max`, which produced 50–90k output tokens per call and repeatedly hit the 900 s timeout.
 - The review bots are now thin callers of the shared reusable workflows in `Synchain-oss/ci-workflows`,
   pinned to a commit. `claude-review.yml` passes only this repository's focus list and extra prompt;
   `pr-agent.yml` (DeepSeek V4.1 Flash through OpenCode Go, pull requests into `dev`) passes its ignore
