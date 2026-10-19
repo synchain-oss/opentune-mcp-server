@@ -29,7 +29,8 @@ Every file comes with a `.sha256` file, and the release notes list the same dige
 - **The skills zip** (`opentune-skills-<version>.zip`) holds the instruction-only skills (`tuning-workflow`,
   `check-results`) as one zip per skill: the outer file contains `<skill>.zip` for each skill, and each of those has
   the skill's folder at its top level. The user uploads the inner `<skill>.zip` in Claude's settings (one skill per
-  upload), not the outer file. Skills that need local tools (for example Python) are only in the plugin.
+  upload), not the outer file. Skills that need local tools (for example Python, or the `beat-grid` Node script and
+  the analyzer it downloads) are only in the plugin: `lyrics-timeline` and `beat-grid`.
 
 ## Making a release
 
