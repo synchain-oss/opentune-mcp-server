@@ -31,8 +31,30 @@ export function requireReadyPair(placement: PlacementRec, reference: PlacementRe
   requireReady(reference.content);
 }
 
+/**
+ * The ways in which OpenTune's reference analysis does not complete (reasons reference_analysis_stalled,
+ * reference_analysis_timeout and reference_analysis_failed of registry/reasons.json).
+ */
+function analysisFault(fault: NonNullable<World['referenceFault']>): MockError {
+  switch (fault) {
+    case 'stalled':
+      return new MockError({
+        kind: 'NOT_READY',
+        reason: 'reference_analysis_stalled',
+        detail: 'OpenTune completes one reference analysis per session; restart OpenTune to analyse again',
+        retryable: false,
+      });
+    case 'timeout':
+      return refuse('NOT_READY', 'reference_analysis_timeout', 'the reference analysis did not finish in time');
+    case 'failed':
+      return refuse('ANALYSIS_FAILED', 'reference_analysis_failed', 'the reference analysis failed');
+  }
+}
+
 /** Stores the alignment data of the clip and of the clip it refers to. */
 export function computeAlignment(world: World, placement: PlacementRec, reference: PlacementRec): void {
+  const missing = [placement.content, reference.content].some((content) => !content.alignmentReady);
+  if (missing && world.referenceFault !== null) throw analysisFault(world.referenceFault);
   for (const content of new Set([placement.content, reference.content])) {
     if (content.alignmentReady) continue;
     content.alignmentReady = true;

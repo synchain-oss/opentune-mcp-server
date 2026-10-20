@@ -19,11 +19,6 @@
         },
         "label": "Selection",
         "fields": {
-          "activeTrackId": {
-            "before": null,
-            "after": 0,
-            "unit": null
-          },
           "selectedPlacementIds": {
             "before": [],
             "after": [
@@ -55,7 +50,7 @@
     "ui": {
       "workspace": "arrangement",
       "pianoRollContentId": null,
-      "activeTrackId": null,
+      "activeTrackId": 0,
       "selectedPlacementIds": [],
       "visibleTrackCount": 4
     },
@@ -105,12 +100,6 @@
             "singleton": "selection"
           },
           "fields": [
-            {
-              "field": "activeTrackId",
-              "before": null,
-              "after": 0,
-              "unit": null
-            },
             {
               "field": "selectedPlacementIds",
               "before": [],

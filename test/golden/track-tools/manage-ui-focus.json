@@ -19,11 +19,6 @@
         },
         "label": "Selection",
         "fields": {
-          "activeTrackId": {
-            "before": null,
-            "after": 0,
-            "unit": null
-          },
           "selectedPlacementIds": {
             "before": [],
             "after": [
@@ -64,7 +59,12 @@
     "undo": {
       "undoable": false,
       "reason": "not_persisted_state",
-      "revert": null
+      "revert": {
+        "method": "ui.setSelection",
+        "params": {
+          "trackId": 0
+        }
+      }
     },
     "dirty": {
       "before": true,
@@ -158,12 +158,6 @@
           },
           "fields": [
             {
-              "field": "activeTrackId",
-              "before": null,
-              "after": 0,
-              "unit": null
-            },
-            {
               "field": "selectedPlacementIds",
               "before": [],
               "after": [
@@ -236,8 +230,13 @@
       },
       {
         "kind": "revert",
-        "text": "Not undoable (the state is not kept in the project). No request of the protocol can restore the previous state.",
-        "revert": null,
+        "text": "Not undoable (the state is not kept in the project). No tool of this server can carry out this restore yet; the user can restore it by hand in the OpenTune window.",
+        "revert": {
+          "method": "ui.setSelection",
+          "params": {
+            "trackId": 0
+          }
+        },
         "restore": null
       }
     ]

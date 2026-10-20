@@ -52,6 +52,10 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- OTCP specification `1.0.0-rc.4` (unreleased): the reasons `reference_analysis_stalled`,
+  `reference_analysis_timeout` and `reference_analysis_failed` for the reference analysis jobs, and corrections of
+  the selection, track deletion, split and merge text and vectors to what OpenTune does. The mock follows (fault
+  mode `setReferenceFault`).
 - The real-instance helper of the end-to-end scenarios now copies a data template with the rules the contract runner
   uses and the documentation describes: the template's ready file and discovery folder are left out.
 - The shared review workflows are pinned to `v1.3.1`. The Claude Haiku PR-Agent runs at effort `high`

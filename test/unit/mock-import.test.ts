@@ -121,8 +121,12 @@ describe('where clips go', () => {
     session.mock.given({ clips: [clip({ trackId: 0 }), clip({ bind: 'other', trackId: 1 })] });
     const first = await run(session, clock, { items: [{ path: audio('a.wav') }], layout: 'single', newTrack: true });
     expect(first.result?.items[0]?.trackId).toBe(2);
+    // The import focused its clip, which made track 2 the active track.
     const second = await run(session, clock, { items: [{ path: audio('b.wav') }], layout: 'single' });
-    expect(second.result?.items[0]?.trackId).toBe(0);
+    expect(second.result?.items[0]?.trackId).toBe(2);
+    await session.ok('ui.setSelection', { trackId: 0 });
+    const third = await run(session, clock, { items: [{ path: audio('c.wav') }], layout: 'single' });
+    expect(third.result?.items[0]?.trackId).toBe(0);
   });
 
   it('refuses newTrack when every track holds a clip, and an unknown track in every layout', async () => {
@@ -149,6 +153,15 @@ describe('where clips go', () => {
     expect(job.result?.warnings.map((w) => w.code)).toContain('TRACK_AUTO_REVEALED');
     expect(job.result?.revisionDiff.trackState).not.toBeNull();
     expect(await session.ok('project.get')).toMatchObject({ visibleTrackCount: 7 });
+  });
+});
+
+describe('the focused clip', () => {
+  it('is selected and its track becomes the active track', async () => {
+    const { clock, session, audio } = await open();
+    expect(((await session.ok('ui.getState')).ui as { activeTrackId: number }).activeTrackId).toBe(0);
+    await run(session, clock, { items: [{ path: audio('a.wav') }], layout: 'single', trackId: 2 });
+    expect((await session.ok('ui.getState')).ui).toMatchObject({ activeTrackId: 2 });
   });
 });
 

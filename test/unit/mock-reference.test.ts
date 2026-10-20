@@ -318,3 +318,89 @@ describe('content.autoTune in mode reference', () => {
     expect(targets(session, 1)).toEqual(before);
   });
 });
+
+describe('a reference analysis that does not complete', () => {
+  const faults = [
+    ['stalled', 'NOT_READY', 'reference_analysis_stalled', false],
+    ['timeout', 'NOT_READY', 'reference_analysis_timeout', true],
+    ['failed', 'ANALYSIS_FAILED', 'reference_analysis_failed', false],
+  ] as const;
+
+  it.each(faults)(
+    'ends content.analyzeReference with the reason of the %s fault and stores nothing',
+    async (fault, kind, reason, retryable) => {
+      const clock = new ManualClock();
+      const { session, ids } = await setup(clock);
+      session.mock.setReferenceFault(fault);
+      const started = await session.ok('content.analyzeReference', { placementId: ids['clip.placementId'] });
+      clock.advance(5000);
+      const { job } = (await session.ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+        job: { state: string; error: { data: Record<string, unknown> } | null };
+      };
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({ kind, reason, retryable, executed: false });
+      const details = await session.ok('content.getDetails', { contentId: ids['clip.contentId'] });
+      expect(field(details, 'reference', 'alignmentReady')).toBe(false);
+    },
+  );
+
+  it.each(faults)(
+    'fails content.autoTune in mode reference with the %s fault and changes no note',
+    async (fault, kind, reason) => {
+      const clock = new ManualClock();
+      const { session, ids } = await setup(clock);
+      const before = targets(session, 1);
+      session.mock.setReferenceFault(fault);
+      const revision = (
+        (await session.ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
+          contents: { revision: string }[];
+        }
+      ).contents[0]?.revision;
+      const started = await session.ok('content.autoTune', {
+        contentId: ids['clip.contentId'],
+        mode: 'reference',
+        placementId: ids['clip.placementId'],
+        expectedRevision: revision,
+      });
+      clock.advance(5000);
+      const { job } = (await session.ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+        job: { state: string; error: { data: Record<string, unknown> } | null };
+      };
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({ kind, reason, executed: false });
+      expect(targets(session, 1)).toEqual(before);
+    },
+  );
+
+  it('does not touch data that exists, and the job of content.autoTune compares the revision before it writes', async () => {
+    const clock = new ManualClock();
+    const { session, ids } = await setup(clock);
+    const { ok } = session;
+    const revision = (
+      (await ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
+        contents: { revision: string }[];
+      }
+    ).contents[0]?.revision;
+    const started = await ok('content.autoTune', {
+      contentId: ids['clip.contentId'],
+      mode: 'reference',
+      placementId: ids['clip.placementId'],
+      expectedRevision: revision,
+    });
+    const before = targets(session, 1);
+    await ok('content.editNotes', {
+      contentId: ids['clip.contentId'],
+      expectedRevision: revision,
+      ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents: 10 }],
+    });
+    const edited = targets(session, 1);
+    clock.advance(5000);
+    const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+      job: { state: string; error: { data: Record<string, unknown> } | null };
+    };
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'content_changed', executed: false });
+    expect(targets(session, 1)).toEqual(edited);
+    expect(before).toBeDefined();
+  });
+});

@@ -42,13 +42,17 @@ describe('ui.setSelection', () => {
       {
         entity: 'selection',
         fields: {
-          activeTrackId: { before: null, after: 1 },
+          activeTrackId: { before: 0, after: 1 },
           selectedPlacementIds: { before: [], after: [expect.any(String)] },
         },
       },
     ]);
-    // No track was active, so there is nothing to select again.
-    expect(first.undo).toMatchObject({ undoable: false, reason: 'not_persisted_state', revert: null });
+    // Track 0 was active and no clip was selected: the recipe selects the track again.
+    expect(first.undo).toMatchObject({
+      undoable: false,
+      reason: 'not_persisted_state',
+      revert: { method: 'ui.setSelection', params: { trackId: 0 } },
+    });
     const second = await ok('ui.setSelection', { placementId: ids['b.placementId'] });
     expect(await state(session)).toMatchObject({ activeTrackId: 2, selectedPlacementIds: [ids['b.placementId']] });
 

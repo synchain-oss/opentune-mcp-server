@@ -182,7 +182,6 @@ function dismissOnboarding(context: MethodContext) {
     // A user-global preference that no request of this protocol resets.
     undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
     dirtyBefore,
-    sideEffects: showing ? { onboardingClosed: { revert: null } } : {},
     warnings: [warning('IRREVERSIBLE', { preference: 'onboardingShown' })],
   });
 }
@@ -228,7 +227,10 @@ const setSelection: Handler = (context) => {
     content !== undefined && world.editingScheme === 'openDyne' && needsGeneratedNotes(content) ? content : undefined;
   const referenceClip = placement?.reference ?? null;
   const queued =
-    placement !== undefined && referenceClip !== null && world.prefs.experimentalFeatures
+    placement !== undefined &&
+    referenceClip !== null &&
+    world.prefs.experimentalFeatures &&
+    world.editingScheme !== 'openDyne'
       ? [placement.content, referenceClip.content]
       : [];
   const shownKey = content === undefined ? null : keyShown(content);
@@ -299,7 +301,11 @@ const setSelection: Handler = (context) => {
   if (generating !== undefined) effect(generateNotes(world, generating));
   if (queued.length > 0) {
     queuedEffect();
-    for (const c of queued) world.queueAlignment(c);
+    for (const c of queued) {
+      // Queueing already changes the reference component; the data arrives when the analysis settles.
+      world.touch(c, 'reference');
+      world.queueAlignment(c);
+    }
   }
   if (scaleChanged) scaleEffect();
   if (shownKey !== null) world.uiScale = { root: shownKey.root, scale: shownKey.scale };

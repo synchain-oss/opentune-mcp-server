@@ -622,6 +622,10 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
     ? clampFades(origin.fadeInSec, origin.fadeOutSec, duration)
     : { fadeInSec: leading.fadeInSec, fadeOutSec: trailing.fadeOutSec };
   const boundary = trailing.startTimelineSec;
+  // A split lands on an analysis frame, so the recipe cuts the merged clip back at the former boundary only
+  // where that boundary lies on one (PROTOCOL.md section 15.2 rule 8).
+  const boundaryFrames = trailing.clipInContentSec / HOP_SEC;
+  const splitsBack = Math.abs(boundaryFrames - Math.round(boundaryFrames)) < 1e-6;
   const dirtyBefore = world.project.dirty;
   if (dryRun) {
     return envelope(world, {
@@ -693,16 +697,21 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
     undo: {
       undoable: false,
       reason: 'upstream_undo_defect',
-      revert: {
-        method: 'arrangement.edit',
-        params: {
-          expectedArrangementRevision: world.arrangement,
-          ops: [{ op: 'split', placementId: merged.id, atTimelineSec: boundary }],
-        },
-      },
+      revert: splitsBack
+        ? {
+            method: 'arrangement.edit',
+            params: {
+              expectedArrangementRevision: world.arrangement,
+              ops: [{ op: 'split', placementId: merged.id, atTimelineSec: boundary }],
+            },
+          }
+        : null,
     },
     dirtyBefore,
-    warnings: [warning('UPSTREAM_UNDO_DEFECT', subjectOf(leading))],
+    warnings: [
+      warning('UPSTREAM_UNDO_DEFECT', subjectOf(leading)),
+      ...(splitsBack ? [] : [warning('IRREVERSIBLE', subjectOf(leading))]),
+    ],
   });
 }
 

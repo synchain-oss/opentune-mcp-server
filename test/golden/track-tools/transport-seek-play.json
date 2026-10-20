@@ -81,7 +81,7 @@
         "ui": {
           "workspace": "arrangement",
           "pianoRollContentId": null,
-          "activeTrackId": null,
+          "activeTrackId": 0,
           "selectedPlacementIds": [],
           "visibleTrackCount": 4
         },
@@ -222,7 +222,7 @@
         "ui": {
           "workspace": "arrangement",
           "pianoRollContentId": null,
-          "activeTrackId": null,
+          "activeTrackId": 0,
           "selectedPlacementIds": [],
           "visibleTrackCount": 4
         },
@@ -371,7 +371,7 @@
         "ui": {
           "workspace": "arrangement",
           "pianoRollContentId": null,
-          "activeTrackId": null,
+          "activeTrackId": 0,
           "selectedPlacementIds": [],
           "visibleTrackCount": 4
         },
