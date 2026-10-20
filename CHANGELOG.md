@@ -52,6 +52,10 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- The shared review workflows are pinned to `v1.3.3`. The PR-Agent input budget (`max_model_tokens`) now depends on
+  the provider: 500000 for the Claude provider (was 800000), unchanged at 800000 for the others. PR-Agent counts the
+  prompt with an OpenAI tokenizer that undercounts Claude tokens, so on a large PR the Claude PR-Agent sent a prompt
+  over the 1M-token window and failed with no review. The step summary now lists the input budget.
 - The shared review workflows are pinned to `v1.3.2`, and `review-dispatch.yml` moves from `claude-code-action`
   `v1.0.245` to `v1.0.253`, the version `dev` and the shared workflows use. The shared Claude review now also
   denies reading `/github` (the container-job layout), and `review-dispatch.yml` carries the same deny rule. The
