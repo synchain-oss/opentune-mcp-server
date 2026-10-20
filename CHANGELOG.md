@@ -10,6 +10,10 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- The shared review workflows are pinned to `v1.3.2`, and `review-dispatch.yml` uses `claude-code-action` `v1.0.253`
+  (it only bumps the bundled Claude Code CLI). The shared Claude review now also denies reading `/github`
+  (the container-job layout), and `review-dispatch.yml` carries the same deny rule. The shared workflows
+  also record the commit that ran in the step summary.
 - The review workflows are named after the model they run: `Claude PR Review (Opus 5.5)`,
   `PR Agent (DeepSeek V4.1 Flash)` and `PR Agent (Claude Haiku 5.5)`. The check names are unchanged.
   The workflow test that requires every call of `Synchain-oss/ci-workflows` to pin the same commit now
