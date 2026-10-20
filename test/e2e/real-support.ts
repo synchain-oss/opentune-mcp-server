@@ -280,7 +280,18 @@ export async function startRealInstance(options: RealInstanceOptions): Promise<R
     };
   } catch (error) {
     await kill();
-    throw error;
+    // The guard is finished here as well: the data folder is compared and put back, and what it found goes into the error.
+    let problems: readonly string[];
+    try {
+      problems = await settings.finish();
+    } catch (finishError) {
+      problems = [
+        `the settings could not be checked: ${finishError instanceof Error ? finishError.message : String(finishError)}`,
+      ];
+    }
+    if (problems.length === 0) throw error;
+    const why = error instanceof Error ? error.message : String(error);
+    throw new Error(`${why}; ${problems.join('; ')}`, { cause: error });
   }
 }
 

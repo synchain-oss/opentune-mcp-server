@@ -39,4 +39,10 @@ export function diffStats(
   before: Readonly<Record<string, FileStat>>,
   after: Readonly<Record<string, FileStat>>,
 ): string[];
-export function userSettingsDir(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, home?: string): string | undefined;
+export function userSettingsDirs(env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, home?: string): string[];
+export function unsafeSnapshotKey(name: string): string | undefined;
+export function restoreTargetProblem(
+  dir: string,
+  userDirs?: readonly string[],
+  platform?: NodeJS.Platform,
+): string | undefined;

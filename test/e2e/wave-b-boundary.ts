@@ -28,7 +28,7 @@
 // back as they were, and the user-settings watch of the test proves the real ones were not touched.
 // Only generated audio is used.
 
-import { copyFile, mkdir, readdir, rename, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { parseDiscoveryFile } from '../../src/discovery/file.js';
@@ -349,7 +349,6 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
     async () => {
       const started = instance;
       if (started === undefined) throw new Error('no instance');
-      const { readFile } = await import('node:fs/promises');
       const entry = parseDiscoveryFile(`${String(started.pid)}.json`, await readFile(started.discoveryFile));
       if (!entry.ok) throw new Error(`the discovery file is not valid: ${entry.problem}`);
       session = await OtcpSession.open(entry.entry, START_HELLO_TIMEOUT_MS);
@@ -580,13 +579,14 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
         .join(',');
       scenario.facts.schemeSwitchWarnings = warningCodes(envelope).sort().join(',');
       if ((await processingOf()).editingScheme !== wanted) problems.push('a fresh read does not show the new scheme');
+      // A dialog the switch opened would refuse the revert below.
+      problems.push(...(await leftOverDialogProblems('the scheme switch')));
     } finally {
       const recipe = revertOf(envelope);
       await sendRevert(recipe);
     }
     const back = await processingOf();
     if (back.editingScheme !== original.editingScheme) problems.push('the revert recipe did not put the scheme back');
-    problems.push(...(await leftOverDialogProblems('the scheme switch')));
     return finish('editing scheme', problems, `${String(original.editingScheme)} -> ${wanted} and back by the recipe`);
   });
 
@@ -653,7 +653,14 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
       const bareClip = clipOf(bare);
       // Moves the selection off the new clip: a selected clip is the one that gets notes in openDyne.
       const others = (await readProject(need())).placements.filter((p) => p.placementId !== bareClip.placementId);
-      await call('ui.setSelection', { placementId: others[0]?.placementId ?? '' });
+      const elsewhere = others[0];
+      if (elsewhere === undefined) {
+        throw new StepSkip(
+          'SKIP',
+          'no other clip than the new one to move the selection to, so no clip can be unselected',
+        );
+      }
+      await call('ui.setSelection', { placementId: elsewhere.placementId });
       // Bounded poll of the count (the analysis is ready; a note count of a clip nobody selected stays 0).
       for (let i = 0; i < 6; i++) {
         if ((await noteCountOf(bareClip.contentId)) !== 0) {
@@ -671,7 +678,8 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
         await new Promise((r) => setTimeout(r, 250));
       }
       // Move the selection off the new clip first: selecting a clip that already is selected generates nothing.
-      await call('ui.setSelection', { placementId: (await readProject(need())).placements[0]?.placementId ?? '' });
+      // `elsewhere` was taken before the switch and is still a clip of the project; it is never the new clip.
+      await call('ui.setSelection', { placementId: elsewhere.placementId });
       const notesBefore = await noteCountOf(bareClip.contentId);
       const selected = await call('ui.setSelection', { placementId: bareClip.placementId });
       if (!warningCodes(selected).includes('SELECTION_GENERATED_NOTES')) {
@@ -718,20 +726,23 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
   // ---------------------------------------------------------------------------------------------
   // 7. and 8. save as over another project, and a project whose media is gone
 
-  await check('save as over another project, and a project with missing media', async () => {
+  // The two steps share the project that the first one leaves saved and loaded.
+  const folder = path.join(root, 'projects');
+  const media = path.join(root, 'media');
+  const copy = path.join(media, 'copied-take.wav');
+  const moved = path.join(media, 'moved-take.wav');
+  const first = path.join(folder, 'first.otproj');
+  const second = path.join(folder, 'second.otproj');
+  let placedCount = 0;
+
+  await check('save as over another project', async () => {
     requireCapabilities(['project.io']);
     const problems: string[] = [];
-    const folder = path.join(root, 'projects');
-    const media = path.join(root, 'media');
     await mkdir(folder, { recursive: true });
     await mkdir(media, { recursive: true });
-    const copy = path.join(media, 'copied-take.wav');
-    const moved = path.join(media, 'moved-take.wav');
     await copyFile(toneFile, copy);
     await importClip(copy, { generateNotes: false, focus: false });
-    const placed = (await readProject(need())).placements;
-    const first = path.join(folder, 'first.otproj');
-    const second = path.join(folder, 'second.otproj');
+    placedCount = (await readProject(need())).placements.length;
     const save = (target: string, extra: Json = {}) =>
       runJob(need(), 'project.saveAs', { path: target, ...extra }, 'project save', timeoutMs);
     const plain = await save(first);
@@ -757,60 +768,60 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
     if (!isObject(overwritten) || !warningCodes(overwritten).includes('OVERWROTE_OTHER_PROJECT')) {
       problems.push('saving over another project with confirm carries no OVERWROTE_OTHER_PROJECT warning');
     }
+    return finish('save as', problems, 'overwrite refused, then confirmed with its warning');
+  });
+
+  await check('a project with missing media', async () => {
+    requireCapabilities(['project.io']);
+    if (placedCount === 0) throw new StepSkip('SKIP', 'the save-as step did not leave a saved project to open');
+    const problems: string[] = [];
     // The project is saved now; take the media of the copied clip away and open the file again.
-    let renamed = false;
     try {
       await rename(copy, moved);
-      renamed = true;
     } catch (error) {
       scenario.manualChecks.push(
         `MISSING MEDIA was not run: the media file could not be renamed while OpenTune held it (${messageOf(error)}); ` +
           'rename it by hand, then open the project.',
       );
+      throw new StepSkip('SKIP', `the media file could not be renamed while OpenTune held it: ${messageOf(error)}`);
     }
     // OpenTune keeps a copy of the media in a folder next to the project file; that copy is taken away too.
     const away: string[] = [];
-    if (renamed) {
-      try {
-        for (const entry of await readdir(folder, { withFileTypes: true })) {
-          if (!entry.isDirectory()) continue;
-          await rename(path.join(folder, entry.name), path.join(folder, `${entry.name}.away`));
-          away.push(entry.name);
-        }
-        scenario.facts.mediaCopyFolders = away.length;
-        const opened = await runJob(need(), 'project.open', { path: first }, 'project open', timeoutMs);
-        if (!isObject(opened)) throw new Error('project.open ended without a result object');
-        if (!warningCodes(opened).includes('MEDIA_MISSING')) problems.push('opening carries no MEDIA_MISSING warning');
-        const skipped = member(opened, 'skipped', 'the open result');
-        const missing = isObject(skipped) ? listOf(skipped.media) : [];
-        if (missing.length !== 1 || missing[0]?.reason !== 'missing') {
-          problems.push(`skipped.media lists ${String(missing.length)} file(s), expected the one renamed`);
-        }
-        if (isObject(skipped) && skipped.placementCount !== 1) {
-          problems.push(`skipped.placementCount is ${String(skipped.placementCount)}, not 1`);
-        }
-        const restored = member(opened, 'restored', 'the open result');
-        if (isObject(restored) && restored.placementCount !== placed.length - 1) {
-          problems.push(
-            `restored.placementCount is ${String(restored.placementCount)}, not ${String(placed.length - 1)}`,
-          );
-        }
-        const after = await readProject(need());
-        if (after.placements.length !== placed.length - 1) {
-          problems.push(
-            `a fresh read shows ${String(after.placements.length)} clip(s), not ${String(placed.length - 1)}`,
-          );
-        }
-        scenario.facts.missingMediaWarnings = warningCodes(opened).sort().join(',');
-      } finally {
-        await rename(moved, copy);
-        for (const name of away) await rename(path.join(folder, `${name}.away`), path.join(folder, name));
+    try {
+      for (const entry of await readdir(folder, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
+        await rename(path.join(folder, entry.name), path.join(folder, `${entry.name}.away`));
+        away.push(entry.name);
       }
+      scenario.facts.mediaCopyFolders = away.length;
+      const opened = await runJob(need(), 'project.open', { path: first }, 'project open', timeoutMs);
+      if (!isObject(opened)) throw new Error('project.open ended without a result object');
+      if (!warningCodes(opened).includes('MEDIA_MISSING')) problems.push('opening carries no MEDIA_MISSING warning');
+      const skipped = member(opened, 'skipped', 'the open result');
+      const missing = isObject(skipped) ? listOf(skipped.media) : [];
+      if (missing.length !== 1 || missing[0]?.reason !== 'missing') {
+        problems.push(`skipped.media lists ${String(missing.length)} file(s), expected the one renamed`);
+      }
+      if (isObject(skipped) && skipped.placementCount !== 1) {
+        problems.push(`skipped.placementCount is ${String(skipped.placementCount)}, not 1`);
+      }
+      const restored = member(opened, 'restored', 'the open result');
+      if (isObject(restored) && restored.placementCount !== placedCount - 1) {
+        problems.push(`restored.placementCount is ${String(restored.placementCount)}, not ${String(placedCount - 1)}`);
+      }
+      const after = await readProject(need());
+      if (after.placements.length !== placedCount - 1) {
+        problems.push(`a fresh read shows ${String(after.placements.length)} clip(s), not ${String(placedCount - 1)}`);
+      }
+      scenario.facts.missingMediaWarnings = warningCodes(opened).sort().join(',');
+    } finally {
+      await rename(moved, copy);
+      for (const name of away) await rename(path.join(folder, `${name}.away`), path.join(folder, name));
     }
     return finish(
-      'save as and missing media',
+      'missing media',
       problems,
-      'overwrite refused, then confirmed with its warning; missing media reported',
+      'the project opened without the missing file, and MEDIA_MISSING was reported',
     );
   });
 
@@ -831,7 +842,7 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
       if (discoveryDir !== '') notes.push(...(await endAllConfirmed(discoveryDir)).notes);
       // The settings of the instance's data folder must be back as they were before it started.
       notes.push(...(await instanceSettingsProblems([instance])));
-      scenario.facts.settingsKeysAddedByOpenTune = instance?.settings?.appeared.length ?? 0;
+      scenario.facts.settingsFilesWithAddedKeys = instance?.settings?.appeared.length ?? 0;
       if (root !== '') {
         try {
           await removeDir(root);

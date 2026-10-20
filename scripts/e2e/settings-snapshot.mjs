@@ -14,6 +14,11 @@
 //   node scripts/e2e/settings-snapshot.mjs snapshot <dir> <snapshot.json>
 //   node scripts/e2e/settings-snapshot.mjs diff <dir> <snapshot.json>      (exit 1 when they differ)
 //   node scripts/e2e/settings-snapshot.mjs restore <dir> <snapshot.json>   (exit 1 when it cannot be restored)
+//
+// WARNING: `restore` DELETES every `*.settings` file below <dir> that the snapshot does not have and
+// OVERWRITES the others with the saved bytes. Point it only at a scratch data folder. It refuses a snapshot
+// with a key that is not a relative path inside <dir> (`..`, absolute, drive letter), and it refuses a <dir>
+// that is, contains or lies inside a real user settings folder (userSettingsDirs).
 
 import { createHash } from 'node:crypto';
 import { mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
@@ -114,12 +119,52 @@ export function diffSnapshots(before, after) {
   return [...changed, ...appeared].slice(0, MAX_LISTED);
 }
 
+/** Why a snapshot key is not a plain relative path inside the folder (forward slashes, no `..`); undefined when it is. */
+export function unsafeSnapshotKey(name) {
+  if (typeof name !== 'string' || name === '') return 'empty';
+  if (name.includes('\0')) return 'NUL character';
+  if (name.includes('\\')) return 'backslash';
+  if (name.startsWith('/')) return 'absolute path';
+  if (/^[a-zA-Z]:/.test(name)) return 'drive letter';
+  if (name.split('/').some((part) => part === '' || part === '.' || part === '..')) return 'empty, `.` or `..` segment';
+  return undefined;
+}
+
+/**
+ * Why `restore` must not run on `dir`: it is, contains or lies inside one of `userDirs` (the real user
+ * settings folders). Undefined when the folder is fine.
+ */
+export function restoreTargetProblem(dir, userDirs = userSettingsDirs(), platform = process.platform) {
+  const pathApi = platform === 'win32' ? path.win32 : path.posix;
+  const norm = (value) => {
+    const resolved = pathApi.resolve(value);
+    return platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  const target = norm(dir);
+  const inside = (outer, inner) => {
+    const rel = pathApi.relative(outer, inner);
+    return rel === '' || (!rel.startsWith('..') && !pathApi.isAbsolute(rel));
+  };
+  for (const user of userDirs) {
+    const real = norm(user);
+    if (inside(target, real) || inside(real, target)) {
+      return 'it is, contains or lies inside the settings folder of the real OpenTune; restore deletes and overwrites files';
+    }
+  }
+  return undefined;
+}
+
 /**
  * Puts the settings files of `dir` back as the snapshot has them: files are rewritten with their exact
  * bytes, files that appeared since are removed. Returns what it did, as lines; empty when nothing was
  * different.
  */
 export async function restoreSnapshot(dir, snapshot) {
+  // Every key is checked before anything is deleted or written.
+  for (const name of Object.keys(snapshot.files)) {
+    const why = unsafeSnapshotKey(name);
+    if (why !== undefined) throw new Error(`the snapshot has an unsafe file name (${why}): ${JSON.stringify(name)}`);
+  }
   const actions = [];
   const current = await listSettingsFiles(dir);
   for (const name of current) {
@@ -147,14 +192,17 @@ export async function restoreSnapshot(dir, snapshot) {
 /**
  * The whole round: compare the settings files of `dir` with the snapshot, restore them, and check that
  * the restore worked. `differences` is what the run changed (a FAIL for the run); `problems` is what
- * could not be put back; `appeared` is what OpenTune added to the folder (keys and files that were not there),
+ * could not be put back; `appeared` is what OpenTune added to the folder since the snapshot (keys and files that were not there, also those written while it started),
  * which is reported but not a FAIL: it writes its defaults while it runs and when it ends. `baseline` is what the differences are measured against (default: the snapshot):
  * the state once the instance had started, because OpenTune writes its defaults into a fresh data folder
  * while it starts, and that is not something the run's own requests changed. The restore goes back to
  * the snapshot either way.
  */
 export async function settleSnapshot(dir, snapshot, baseline = snapshot) {
-  const { changed: differences, appeared } = compareSnapshots(baseline, await takeSnapshot(dir));
+  const end = await takeSnapshot(dir);
+  const { changed: differences } = compareSnapshots(baseline, end);
+  // What OpenTune added since before the start, including what it wrote while it started.
+  const { appeared } = compareSnapshots(snapshot, end);
   const problems = [];
   try {
     await restoreSnapshot(dir, snapshot);
@@ -193,16 +241,26 @@ export function diffStats(before, after) {
   return lines.slice(0, MAX_LISTED);
 }
 
-/** Where OpenTune keeps the settings of the real user on this machine (never written by a test). */
-export function userSettingsDir(env = process.env, platform = process.platform, home = env.HOME ?? env.USERPROFILE) {
+/**
+ * Where OpenTune keeps the settings of the real user on this machine (never written by a test). The
+ * preferences and the JUCE settings are in JUCE's userApplicationDataDirectory/OpenTune (Windows: %APPDATA%,
+ * i.e. Roaming; Source/Utils/AppPreferences.cpp, resolveSettingsDirectory); the control-API discovery folder
+ * lives in the per-user state folder (Windows: %LOCALAPPDATA%\OpenTune\control). Both folders are returned,
+ * so that a wrong guess about one of them cannot make the watch empty.
+ */
+export function userSettingsDirs(env = process.env, platform = process.platform, home = env.HOME ?? env.USERPROFILE) {
+  const dirs = [];
   if (platform === 'win32') {
-    const appData = env.APPDATA ?? (home === undefined ? undefined : path.win32.join(home, 'AppData', 'Roaming'));
-    return appData === undefined ? undefined : path.win32.join(appData, 'OpenTune');
+    const roaming = env.APPDATA ?? (home === undefined ? undefined : path.win32.join(home, 'AppData', 'Roaming'));
+    const local = env.LOCALAPPDATA ?? (home === undefined ? undefined : path.win32.join(home, 'AppData', 'Local'));
+    for (const base of [roaming, local]) if (base !== undefined) dirs.push(path.win32.join(base, 'OpenTune'));
+    return dirs;
   }
-  if (home === undefined) return undefined;
-  return platform === 'darwin'
-    ? path.posix.join(home, 'Library', 'Application Support', 'OpenTune')
-    : path.posix.join(home, '.config', 'OpenTune');
+  if (home === undefined) return dirs;
+  if (platform === 'darwin') return [path.posix.join(home, 'Library', 'Application Support', 'OpenTune')];
+  dirs.push(path.posix.join(env.XDG_CONFIG_HOME ?? path.posix.join(home, '.config'), 'OpenTune'));
+  dirs.push(path.posix.join(env.XDG_STATE_HOME ?? path.posix.join(home, '.local', 'state'), 'OpenTune'));
+  return dirs;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -221,6 +279,14 @@ async function main(argv) {
   }
   const snapshot = JSON.parse(await readFile(file, 'utf8'));
   if (snapshot.schema !== SNAPSHOT_SCHEMA) throw new Error('not a settings snapshot');
+  if (command === 'restore') {
+    const refused = restoreTargetProblem(dir);
+    if (refused !== undefined) {
+      process.stderr.write(`refused: ${refused}
+`);
+      return 2;
+    }
+  }
   if (command === 'diff') {
     const lines = diffSnapshots(snapshot, await takeSnapshot(dir));
     process.stderr.write(lines.length === 0 ? 'same\n' : `${lines.join('\n')}\n`);

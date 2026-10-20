@@ -16,7 +16,7 @@ import {
   diffStats,
   settleSnapshot,
   takeSnapshot,
-  userSettingsDir,
+  userSettingsDirs,
   watchStats,
   type SettingsSnapshot,
 } from '../../scripts/e2e/settings-snapshot.mjs';
@@ -61,15 +61,39 @@ export async function guardDataDir(dataDir: string): Promise<SettingsGuard> {
   };
 }
 
-/** Reads the settings files of the real user's folder (size and modification time only) and later compares. */
+/** One watched folder of the real user and how many settings files it had at the start. */
+export interface WatchedFolder {
+  readonly dir: string;
+  readonly files: number;
+}
+
+export interface UserSettingsWatch {
+  /** The folders that are compared and the settings files each one had before the run (0 everywhere: nothing is checked). */
+  readonly watched: readonly WatchedFolder[];
+  /** The total of `watched`. */
+  readonly files: number;
+  finish(): Promise<readonly string[]>;
+}
+
+/**
+ * Reads the settings files of the real user's folders (size and modification time only) and later compares.
+ * Both places where OpenTune keeps per-user files are watched (see userSettingsDirs); `dirs` replaces them in tests.
+ */
 export async function watchUserSettings(
-  dir: string | undefined = userSettingsDir(),
-): Promise<{ finish(): Promise<readonly string[]> }> {
-  const before = dir === undefined ? {} : await watchStats(dir);
+  dirs: string | readonly string[] = userSettingsDirs(),
+): Promise<UserSettingsWatch> {
+  const list = typeof dirs === 'string' ? [dirs] : dirs;
+  const before = await Promise.all(list.map((dir) => watchStats(dir)));
+  const watched = list.map((dir, i) => ({ dir, files: Object.keys(before[i] ?? {}).length }));
   return {
+    watched,
+    files: watched.reduce((sum, folder) => sum + folder.files, 0),
     async finish() {
-      if (dir === undefined) return [];
-      const changes = diffStats(before, await watchStats(dir));
+      const changes: string[] = [];
+      for (const [i, dir] of list.entries()) {
+        const lines = diffStats(before[i] ?? {}, await watchStats(dir));
+        changes.push(...lines.map((line) => (list.length === 1 ? line : `${dir}: ${line}`)));
+      }
       return changes.length === 0
         ? []
         : [`the settings files of the real OpenTune folder changed during the run: ${changes.join('; ')}`];
