@@ -345,14 +345,14 @@ describe('the review bots are stubs that call Synchain-oss/ci-workflows', () => 
 
   it('counts a call of Synchain-oss/ci-workflows written in any case', () => {
     const pin = '0123456789abcdef0123456789abcdef01234567';
-    const call = `    uses: synchain-oss/CI-Workflows/.github/workflows/pr-agent.yml@${pin} # v1.3.2\n`;
+    const call = `    uses: synchain-oss/CI-Workflows/.github/workflows/pr-agent.yml@${pin} # v1.3.3\n`;
     expect(centralRefs(call)).toEqual([pin]);
   });
 
   it('counts a quoted call, or one with extra spaces after uses:', () => {
     const pin = '0123456789abcdef0123456789abcdef01234567';
-    const quoted = `    uses: "Synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@${pin}" # v1.3.2\n`;
-    const spaced = `    uses:   synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@${pin} # v1.3.2\n`;
+    const quoted = `    uses: "Synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@${pin}" # v1.3.3\n`;
+    const spaced = `    uses:   synchain-oss/ci-workflows/.github/workflows/pr-agent.yml@${pin} # v1.3.3\n`;
     expect(centralRefs(quoted)).toEqual([pin]);
     expect(centralRefs(spaced)).toEqual([pin]);
   });
