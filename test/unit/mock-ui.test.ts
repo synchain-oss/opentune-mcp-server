@@ -6,6 +6,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { ManualClock } from '../../mock/clock.js';
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
 
 const sessions = new Sessions();
@@ -140,6 +141,79 @@ describe('ui.setSelection', () => {
     await ok('prefs.set', { experimentalFeatures: false });
     const off = await ok('ui.setSelection', { placementId: ids['ref.placementId'] });
     expect(off.sideEffects).toEqual({});
+  });
+
+  describe('queues the reference analysis only for contents without alignment data', () => {
+    const queuedIds = (result: Record<string, unknown>) =>
+      field(result, 'sideEffects', 'referenceAnalysisQueued', 'contentIds');
+    const codes = (result: Record<string, unknown>) => (result.warnings as { code: string }[]).map((w) => w.code);
+
+    /** Runs content.analyzeReference for a placement to its end, which makes the data of both clips. */
+    async function align(session: TestSession, clock: ManualClock, placementId: string | undefined) {
+      const started = await session.ok('content.analyzeReference', { placementId });
+      clock.advance(1000);
+      const { job } = (await session.ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+        job: { state: string };
+      };
+      expect(job.state).toBe('succeeded');
+    }
+
+    it('lists only the clip when the reference clip is aligned already', async () => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock });
+      const ids = session.mock.given({
+        preferences: { experimentalFeatures: true },
+        clips: [
+          clip({ bind: 'ref', startTimelineSec: 0 }),
+          clip({ bind: 'one', startTimelineSec: 0, trackId: 1, referenceClip: 'ref' }),
+          clip({ bind: 'two', startTimelineSec: 0, trackId: 2, referenceClip: 'ref' }),
+        ],
+      });
+      await align(session, clock, ids['one.placementId']);
+      const selected = await session.ok('ui.setSelection', { placementId: ids['two.placementId'] });
+      expect(queuedIds(selected)).toEqual([ids['two.contentId']]);
+      expect(codes(selected)).toEqual(['REFERENCE_ANALYSIS_QUEUED']);
+    });
+
+    it('reports nothing and touches no reference component when both clips are aligned', async () => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock });
+      const ids = session.mock.given({
+        preferences: { experimentalFeatures: true },
+        clips: [
+          clip({ bind: 'ref', startTimelineSec: 0 }),
+          clip({ bind: 'clip', startTimelineSec: 0, trackId: 1, referenceClip: 'ref' }),
+        ],
+      });
+      await align(session, clock, ids['clip.placementId']);
+      const selected = await session.ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+      expect(selected.sideEffects).toEqual({});
+      expect(codes(selected)).toEqual([]);
+      expect(field(selected, 'revisionDiff', 'contents')).toEqual([]);
+    });
+
+    it('lists a content once when both clips show it', async () => {
+      const session = await sessions.open();
+      const ids = session.mock.given({
+        preferences: { experimentalFeatures: true },
+        clips: [clip({ bind: 'clip', startTimelineSec: 0 })],
+      });
+      const copied = await session.ok('track.duplicate', { trackId: 0, mode: 'share' });
+      const copy = field(copied, 'idMap') as { to: { placementId: string }[] }[];
+      const asOf = (await session.ok('project.get')).asOf as { arrangementRevision: string };
+      await session.ok('arrangement.edit', {
+        expectedArrangementRevision: asOf.arrangementRevision,
+        ops: [
+          {
+            op: 'setReference',
+            placementId: ids['clip.placementId'],
+            referencePlacementId: copy[0]?.to[0]?.placementId,
+          },
+        ],
+      });
+      const selected = await session.ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+      expect(queuedIds(selected)).toEqual([ids['clip.contentId']]);
+    });
   });
 });
 

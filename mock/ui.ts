@@ -226,12 +226,13 @@ const setSelection: Handler = (context) => {
   const generating =
     content !== undefined && world.editingScheme === 'openDyne' && needsGeneratedNotes(content) ? content : undefined;
   const referenceClip = placement?.reference ?? null;
+  // Only the contents that have no alignment data yet are queued, and one that both clips show once.
   const queued =
     placement !== undefined &&
     referenceClip !== null &&
     world.prefs.experimentalFeatures &&
     world.editingScheme !== 'openDyne'
-      ? [placement.content, referenceClip.content]
+      ? [...new Set([placement.content, referenceClip.content])].filter((c) => !c.alignmentReady)
       : [];
   const shownKey = content === undefined ? null : keyShown(content);
   const scaleChanged =

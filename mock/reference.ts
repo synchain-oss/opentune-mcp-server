@@ -17,6 +17,9 @@ import { requireReady } from './writes.js';
 /** Time the mock takes to compute the alignment data of a clip and the clip it refers to. */
 export const ALIGNMENT_STEP_MS = 40;
 
+/** The wait limit of a referenceAnalysis job of the mock (PROTOCOL.md section 12.6): an analysis still running ends the job then. */
+export const REFERENCE_WAIT_LIMIT_MS = 30_000;
+
 /** A clip that has a reference binding, and the clip it refers to. */
 export function boundReference(placement: PlacementRec): PlacementRec {
   if (placement.reference === null) {
@@ -51,9 +54,14 @@ function analysisFault(fault: NonNullable<World['referenceFault']>): MockError {
   }
 }
 
+/** Whether the clip or the clip it refers to has no alignment data yet. */
+function isMissing(placement: PlacementRec, reference: PlacementRec): boolean {
+  return [placement.content, reference.content].some((content) => !content.alignmentReady);
+}
+
 /** Stores the alignment data of the clip and of the clip it refers to. */
 export function computeAlignment(world: World, placement: PlacementRec, reference: PlacementRec): void {
-  const missing = [placement.content, reference.content].some((content) => !content.alignmentReady);
+  const missing = isMissing(placement, reference);
   if (missing && world.referenceFault !== null) throw analysisFault(world.referenceFault);
   for (const content of new Set([placement.content, reference.content])) {
     if (content.alignmentReady) continue;
@@ -110,15 +118,33 @@ export function alignedNotes(world: World, placement: PlacementRec, reference: P
  * A driver that computes the alignment data in two steps (so that the job is running for a
  * moment and can be cancelled before it stores anything), then calls `commit`, whose result ends
  * the job. A job cancelled before the second step discards the analysis (section 12.3).
+ *
+ * Section 12.6 rule 2: where the mock knows that the analysis cannot complete (fault `stalled`) the
+ * job ends at once, without waiting; where the analysis is still running (fault `timeout`) the job
+ * waits for the wait limit before it ends.
  */
-export function alignmentDriver(commit: () => Record<string, unknown>): JobDriver {
+export function alignmentDriver(
+  world: World,
+  pair: () => readonly [PlacementRec, PlacementRec | null],
+  commit: () => Record<string, unknown>,
+): JobDriver {
   let started = false;
+  let waited = false;
+  const faulty = (fault: World['referenceFault']): boolean => {
+    const [placement, reference] = pair();
+    if (reference === null) return false;
+    return world.referenceFault === fault && isMissing(placement, reference);
+  };
   return (control) => {
     if (control.cancelRequested) return { done: { state: 'cancelled' } };
     if (!started) {
       started = true;
       control.progress({ fraction: 0.5, phase: 'alignment' });
-      return { next: ALIGNMENT_STEP_MS };
+      return { next: faulty('stalled') ? 0 : ALIGNMENT_STEP_MS };
+    }
+    if (!waited && faulty('timeout')) {
+      waited = true;
+      return { next: REFERENCE_WAIT_LIMIT_MS - ALIGNMENT_STEP_MS };
     }
     try {
       return { done: { state: 'succeeded', result: commit() } };
@@ -155,15 +181,19 @@ const analyzeReference: Handler = ({ world, params, jobs }) => {
   const epoch = world.epoch;
   const job = jobs.start(
     { kind: 'referenceAnalysis' },
-    alignmentDriver(() => {
-      recheckPair(world, placement, reference, epoch);
-      computeAlignment(world, placement, reference);
-      return {
-        placementId: placement.id,
-        referencePlacementId: reference.id,
-        alignmentReady: placement.content.alignmentReady && reference.content.alignmentReady,
-      };
-    }),
+    alignmentDriver(
+      world,
+      () => [placement, reference],
+      () => {
+        recheckPair(world, placement, reference, epoch);
+        computeAlignment(world, placement, reference);
+        return {
+          placementId: placement.id,
+          referencePlacementId: reference.id,
+          alignmentReady: placement.content.alignmentReady && reference.content.alignmentReady,
+        };
+      },
+    ),
   );
   world.referenceJobs.set(placement.id, job.jobId);
   return { job: { jobId: job.jobId, kind: job.kind, state: job.state } };

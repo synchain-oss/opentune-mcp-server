@@ -21,11 +21,11 @@ Fourth release candidate of protocol major 1, the last planned before 1.0.0. It 
 - The vectors that start from a selection state say so: `import.start` selects the last imported clip and activates its track, so such a vector assumes no clip selected and track 0 active.
 - `track.delete` and PROTOCOL.md: OpenTune moves only the visible tracks behind the deleted one. A hidden track slot keeps its position, its settings and its clips, and `trackIdMap` lists only the deleted track and the later visible tracks.
 - PROTOCOL.md section 14.4 rule 6: a split or a merge replaces clips that show the same content, so `removed` and `created` list placements only; the content is listed only when it leaves the project or enters it.
+- PROTOCOL.md section 15.2 rule 8 (new): the recipe of a merge splits the merged clip at the former boundary, which restores the clips only where the boundary lies on a frame of the analysis. Otherwise the merge has `revert` null and the warning `IRREVERSIBLE`.
 
 ### Clarified
 
 - PROTOCOL.md section 15.2 rule 7 (new): a revert recipe is one request, and `arrangement.edit` refuses `split`, `merge` and `delete` combined with other ops, so a recipe never mixes them.
-- PROTOCOL.md section 15.2 rule 8 (new): the recipe of a merge splits the merged clip at the former boundary, which restores the clips only where the boundary lies on a frame of the analysis. Otherwise the merge has `revert` null and the warning `IRREVERSIBLE`.
 - `ui.dismiss`: with the onboarding overlay closed, the result reports the closed overlay in `changes` only where the preference changed; there is no `sideEffects.onboardingClosed` member (section 14.6 never listed it).
 
 ## [1.0.0-rc.3] - 2026-10-17

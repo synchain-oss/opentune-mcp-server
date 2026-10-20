@@ -407,28 +407,33 @@ function autoTuneReference(context: MethodContext, content: ContentRec) {
   const epoch = world.epoch;
   const job = context.jobs.start(
     { kind: 'referenceAnalysis' },
-    alignmentDriver(() => {
-      // What the call checked can have changed while the job ran: check again, in the same order.
-      if (world.epoch !== epoch || world.placements.get(placement.serial) !== placement) {
-        throw refuse('NOT_FOUND', 'unknown_handle', 'the placement was removed before the job ran');
-      }
-      checkNotBusy(context);
-      requireReady(content);
-      const bound = boundReference(placement);
-      requireReadyPair(placement, bound);
-      computeAlignment(world, placement, bound);
-      // Just before it aligns, the job compares the token the call checked with the content's current one, as an
-      // export does before it renames (PROTOCOL.md section 12.6 rule 5). Computing the alignment data is no change.
-      expectRevision(content, params.expectedRevision);
-      const notes = alignedNotes(world, placement, bound);
-      const plan: Plan = { notes, changed: changesOf(content.notes, notes), removed: [], created: [], warnings: [] };
-      const before = content.notes.length;
-      return writeNotes(context, content, plan, {
-        dryRun: false,
-        undo: AUTO_TUNE,
-        extra: (omitted) => members({ before, after: notes.length }, omitted),
-      });
-    }),
+    alignmentDriver(
+      world,
+      () => [placement, placement.reference],
+      () => {
+        // What the call checked can have changed while the job ran: check again, in the same order.
+        if (world.epoch !== epoch || world.placements.get(placement.serial) !== placement) {
+          throw refuse('NOT_FOUND', 'unknown_handle', 'the placement was removed before the job ran');
+        }
+        checkNotBusy(context);
+        requireReady(content);
+        const bound = boundReference(placement);
+        requireReadyPair(placement, bound);
+        // Just before it aligns, the job compares the token the call checked with the content's current one, as an
+        // export does before it renames (PROTOCOL.md section 12.6 rule 5), and before it stores alignment data:
+        // a job that fails stores none (rule 4).
+        expectRevision(content, params.expectedRevision);
+        computeAlignment(world, placement, bound);
+        const notes = alignedNotes(world, placement, bound);
+        const plan: Plan = { notes, changed: changesOf(content.notes, notes), removed: [], created: [], warnings: [] };
+        const before = content.notes.length;
+        return writeNotes(context, content, plan, {
+          dryRun: false,
+          undo: AUTO_TUNE,
+          extra: (omitted) => members({ before, after: notes.length }, omitted),
+        });
+      },
+    ),
   );
   return jobStartedResult(world, job, members(null, { changes: 0, created: 0, removed: 0 }));
 }

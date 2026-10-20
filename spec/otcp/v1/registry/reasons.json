@@ -607,7 +607,7 @@
       "code": "reference_analysis_stalled",
       "scope": "NOT_READY",
       "since": "1.0",
-      "description": "The reference analysis of a clip cannot complete: OpenTune completes only one reference analysis in a session (a known defect of OpenTune, PROTOCOL.md section 15.4 rule 8), and a later analysis never finishes. The referenceAnalysis job ends at once instead of waiting for the wait limit. Not retryable: the same request fails again until OpenTune is restarted, which also discards the unsaved state of the session."
+      "description": "The reference analysis of a clip cannot complete: OpenTune completes only one reference analysis in a session (a known defect of OpenTune, PROTOCOL.md section 15.4 rule 8), and a later analysis never finishes. Where the server already knows that the session cannot complete another analysis, the referenceAnalysis job ends at once instead of waiting for the wait limit; otherwise it ends with this reason when the wait limit passes and the analysis is queued but OpenTune is not processing it (an analysis that is still running ends with reference_analysis_timeout). Not retryable: the same request fails again until OpenTune is restarted, which also discards the unsaved state of the session."
     },
     {
       "code": "reference_analysis_timeout",

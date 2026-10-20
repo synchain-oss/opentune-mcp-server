@@ -10,9 +10,7 @@
   "given": {
     "dirty": false,
     "editingScheme": "openTune",
-    "preferences": {
-      "experimentalFeatures": true
-    },
+    "preferences": { "experimentalFeatures": true },
     "clips": [
       {
         "bind": "clip",
@@ -35,11 +33,7 @@
     "jsonrpc": "2.0",
     "id": 1,
     "method": "ui.setSelection",
-    "params": {
-      "placementId": {
-        "$ref": "clip.placementId"
-      }
-    }
+    "params": { "placementId": { "$ref": "clip.placementId" } }
   },
   "response": {
     "jsonrpc": "2.0",
@@ -51,20 +45,12 @@
       "changes": [
         {
           "entity": "selection",
-          "ref": {
-            "singleton": "selection"
-          },
-          "label": {
-            "$any": true
-          },
+          "ref": { "singleton": "selection" },
+          "label": { "$any": true },
           "fields": {
             "selectedPlacementIds": {
               "before": [],
-              "after": [
-                {
-                  "$ref": "clip.placementId"
-                }
-              ],
+              "after": [{ "$ref": "clip.placementId" }],
               "unit": null
             }
           }
@@ -78,66 +64,38 @@
         "trackState": null,
         "contents": [
           {
-            "contentId": {
-              "$ref": "clip.contentId"
-            },
+            "contentId": { "$ref": "clip.contentId" },
             "changed": {
               "reference": {
-                "before": {
-                  "$any": "string"
-                },
-                "after": {
-                  "$any": "string"
-                }
+                "before": { "$any": "string" },
+                "after": { "$any": "string" }
               }
             }
           },
           {
-            "contentId": {
-              "$ref": "ref.contentId"
-            },
+            "contentId": { "$ref": "ref.contentId" },
             "changed": {
               "reference": {
-                "before": {
-                  "$any": "string"
-                },
-                "after": {
-                  "$any": "string"
-                }
+                "before": { "$any": "string" },
+                "after": { "$any": "string" }
               }
             }
           }
         ]
       },
-      "tokens": {
-        "$any": "object"
-      },
+      "tokens": { "$any": "object" },
       "undo": {
         "undoable": false,
         "reason": "not_persisted_state",
-        "revert": {
-          "method": "ui.setSelection",
-          "params": {
-            "trackId": 0
-          }
-        }
+        "revert": { "method": "ui.setSelection", "params": { "trackId": 0 } }
       },
-      "dirty": {
-        "before": false,
-        "after": false
-      },
-      "ui": {
-        "$any": true
-      },
+      "dirty": { "before": false, "after": false },
+      "ui": { "$any": true },
       "sideEffects": {
         "referenceAnalysisQueued": {
           "contentIds": [
-            {
-              "$ref": "clip.contentId"
-            },
-            {
-              "$ref": "ref.contentId"
-            }
+            { "$ref": "clip.contentId" },
+            { "$ref": "ref.contentId" }
           ],
           "revert": null
         }
@@ -145,11 +103,7 @@
       "warnings": [
         {
           "code": "REFERENCE_ANALYSIS_QUEUED",
-          "subject": {
-            "placementId": {
-              "$ref": "clip.placementId"
-            }
-          },
+          "subject": { "placementId": { "$ref": "clip.placementId" } },
           "data": null
         }
       ],
