@@ -563,6 +563,7 @@ describe('review-dispatch.yml gives the review of claude-review.yml behind a she
         'Read(//home/runner/actions-runner/**)',
         'Read(//home/runner/.*/**)',
         'Read(//home/runner/.*)',
+        'Read(//github/**)',
       ]),
     );
   });
