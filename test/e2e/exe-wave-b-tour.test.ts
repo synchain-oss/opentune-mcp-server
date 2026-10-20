@@ -7,6 +7,7 @@
 
 import { describe, it } from 'vitest';
 
+import { withUserSettingsWatch } from './settings-guard.js';
 import { formatScenarioTable, scenarioReportPath, writeScenarioReport } from './scenario.js';
 import { smokeSetupFromEnv } from './smoke.js';
 import { runWaveBTour, SCENARIO_NAME } from './wave-b-tour.js';
@@ -30,7 +31,7 @@ describe('wave-B tour against the exe', () => {
   const { config } = setup;
 
   it('drives every wave-B method and tool once and checks the answers against the specification', async (ctx) => {
-    const report = await runWaveBTour(config);
+    const report = await withUserSettingsWatch(() => runWaveBTour(config));
     process.stderr.write(`\n${formatScenarioTable(report)}\n`);
     const file = scenarioReportPath(config.reportPath, SCENARIO_NAME);
     if (file !== undefined) writeScenarioReport(file, report);

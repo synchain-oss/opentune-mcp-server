@@ -11,14 +11,15 @@ themselves, in a temporary `OPENTUNE_DATA_DIR`, and stop it afterwards; your pre
 real discovery files are never touched. With `OTCP_TARGET_DATA_DIR` the data folders are kept
 instead, so the logs of the instance can be read afterwards (see below).
 
-| Command                 | What it runs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`).                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `npm run e2e:exe`       | The end-to-end scenarios, one after the other, each with an instance of its own: the smoke scenario (import, analysis, AUTO, export, with timings), the [effects scenario], the [arrangement effects scenario], the [wave-B tour] and the three boundary scenarios below. The wave-B tour fails until the build under test fixes the defects it found (an out-of-range clip gain that is not limited and gives no `CLAMPED` warning, and a reference analysis that never finishes), so a red `e2e:exe` with only the tour failing is not a regression. |
+| Command                 | What it runs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `npm run e2e:exe`       | The end-to-end scenarios, one after the other, each with an instance of its own: the smoke scenario (import, analysis, AUTO, export, with timings), the [effects scenario], the [arrangement effects scenario], the [wave-B tour], the [wave-B boundary scenario] and the three boundary scenarios below. The wave-B tour fails until the build under test fixes the defects it found (an out-of-range clip gain that is not limited and gives no `CLAMPED` warning, and a reference analysis that never finishes), so a red `e2e:exe` with only the tour failing is not a regression. |
 
 [effects scenario]: #effects-scenario
 [arrangement effects scenario]: #arrangement-effects-scenario
 [wave-B tour]: #wave-b-tour
+[wave-B boundary scenario]: #wave-b-boundary-scenario
 
 ## Prerequisites
 
@@ -550,3 +551,61 @@ The report is `wave-b-tour.json` next to `OTCP_E2E_REPORT`. It has the members o
 `preferencesTouched`, `audioSetting`, `readCalls`, `readMs`, `callCount` and `mcpToolCalls`. Like the
 other reports it holds no absolute path and no token. It also lists the manual check that a person
 may confirm nothing was heard: the tour mutes every track before it plays and puts the mute back.
+
+## Wave-B boundary scenario
+
+The wave-B boundary scenario (`test/e2e/wave-b-boundary.ts`, `test/e2e/exe-wave-b-boundary.test.ts`) drives the
+cases at the edge of what a wave-B write promises, and checks that the answer, the history and a fresh read
+agree. The tour and the arrangement effects scenario drive every method once; this one does not repeat them. It
+starts its own instance like the tour (same variables, its scratch folder named `ot-e2e-wave-b-boundary-*`,
+`OTCP_TARGET_DATA_DIR` does not apply) and uses only generated audio. Select it alone with
+`npm run e2e:exe -- test/e2e/exe-wave-b-boundary.test.ts`. A failed check does not stop the later ones; an
+instance that reports no capability a check needs gives a `SKIP` that names it.
+
+| Step                                                                     | What it checks                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `import four clips on four tracks`                                       | Set-up: four generated clips with notes, one per track; a failure here stops the scenario.                                                                                                                                                                                                                                                                                                                                                                                              |
+| `trim shorter than the fades, and its undo`                              | Fades are set, then the clip is trimmed to less than the two fades together: `FADES_RECLAMPED` is reported and the fades read back are shorter; `edit.undo` restores the length and the fades.                                                                                                                                                                                                                                                                                          |
+| `delete a middle track, then undo an older step`                         | `track.delete` (with `confirm`) reports `trackIdMap`, which equals where a fresh read finds each clip; the older undo entry is possibly stale and is refused with `UNDO_CONFLICT(stale_entry)` without `force`; with `force` the answer is `UNDO_NO_EFFECT` or the change is visible in a fresh read, and the two agree.                                                                                                                                                                |
+| `split, merge and delete report the undo defect`                         | Each result says `undo {undoable: false, reason: upstream_undo_defect}` with the warning `UPSTREAM_UNDO_DEFECT`; the entry on top of the history is flagged unsafe and `edit.undo` refuses it (`UNSUPPORTED`, `undo_unsafe_build`) without changing anything. A delete without `confirm` is refused (`confirm_required`).                                                                                                                                                               |
+| `switch the editing scheme and put it back`                              | `prefs.set` of `editingScheme` reports `GLOBAL_PREFERENCE` and `undo {undoable: false, reason: ui_parity}`; the revert recipe, sent as given, puts the scheme back. A dialog that stays open afterwards is reported and closed.                                                                                                                                                                                                                                                         |
+| `every processing preference changes once and is put back by its recipe` | `tuningHz`, `hybridMode` and `experimentalFeatures` are changed one by one (`GLOBAL_PREFERENCE`), each revert recipe is sent as given, and `prefs.get` returns exactly the values it returned before.                                                                                                                                                                                                                                                                                   |
+| `openDyne: import focus and selection generate notes`                    | With the `openDyne` scheme (put back at the end): selecting a clip that has no notes reports `SELECTION_GENERATED_NOTES`, names the clip in `sideEffects.notesGenerated`, marks the project changed, and `ui.getState` and a fresh read show the selection and the notes; an import with `focus` reports `notesGenerated` and `notesGeneratedBy: focus`.                                                                                                                                |
+| `save as over another project, and a project with missing media`         | `project.saveAs` onto another existing project is refused with `confirm_required` and leaves that file untouched; with `confirm` it succeeds and reports `OVERWROTE_OTHER_PROJECT`. Then the media of the project (the imported file and the copy OpenTune keeps next to the project) is moved away and the project is opened: `MEDIA_MISSING`, `skipped.media` lists the file, and the clip is not restored. The files are moved back afterwards. Everything is in the scratch folder. |
+
+Manual checks (listed in `manualChecks` of the report; nothing in the interface can drive them):
+
+- **Track colour dialog.** Open the colour dialog of a track in the OpenTune window and close it by the close
+  button and by Escape; the track keeps its colour. No request opens this dialog (`ui.dismiss` only closes one
+  and `ui.getState` only lists it). The headless tests of the build under test cover dismissing a listed dialog.
+- **Write during a modal.** With a dialog open in the OpenTune window, send a write (for example `track.set`);
+  it must fail with `BUSY(modal_open)` and change nothing. No request opens a modal dialog. The headless tests
+  of the build under test cover the `BUSY` answer with a test bridge.
+
+The report is `wave-b-boundary.json` next to `OTCP_E2E_REPORT`, with the members of the smoke report. Its `facts`
+name what the scenario saw (for example `schemeSwitchSideEffects`, `staleUndo`, `overwriteRefusal`,
+`missingMediaWarnings`, `settingsKeysAddedByOpenTune`).
+
+## Settings snapshot
+
+A run against a real OpenTune must leave the settings as it found them. Every scenario that starts an instance
+(smoke, effects, boundary, instances, launch, arrangement effects, tour, wave-B boundary) and the contract runner
+against the exe do the following with `scripts/e2e/settings-snapshot.mjs`:
+
+1. After the data template has been copied into the instance's data folder and before it starts, the settings
+   files of that folder are snapshotted: every `*.settings` file (the preferences with `onboardingShown`, and the
+   JUCE settings with the audio device), byte for byte. Log and discovery folders are not part of it.
+2. Once the instance answers, a second snapshot is taken. OpenTune writes its defaults into a fresh folder while it
+   starts, so the keys and files it adds are not a difference (the scenario reports how many as
+   `settingsKeysAddedByOpenTune`); a value that was there and changed is.
+3. When the run is over, whatever its outcome, the folder is compared with the second snapshot, put back to the
+   first one byte for byte, and checked again. A difference is a `FAIL` that lists it (values are clipped), and so is
+   a restore that did not work.
+
+A second guard compares the settings files of the **real** OpenTune folder of the user, by size and modification
+time only: they are never opened or written, and the log folder is not compared. Any change fails the run
+(`real user settings untouched`), which proves the run did not touch the real settings.
+
+The script can also be used by hand: `node scripts/e2e/settings-snapshot.mjs snapshot <dir> <snapshot.json>`,
+then `diff <dir> <snapshot.json>` (exit 1 when they differ) and `restore <dir> <snapshot.json>`. The unit tests
+(`test/unit/settings-snapshot.test.ts`) run on temporary folders and never touch a real one.

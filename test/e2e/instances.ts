@@ -13,6 +13,7 @@ import path from 'node:path';
 
 import { generateTone } from '../support/harmonic-tone.js';
 import {
+  instanceSettingsProblems,
   removeDir,
   scratchDir,
   startMcp,
@@ -148,6 +149,7 @@ export async function runInstances(config: SmokeConfig): Promise<ScenarioReport>
           notes.push(error instanceof Error ? error.message : String(error));
         }
       }
+      notes.push(...(await instanceSettingsProblems(instances)));
       if (root !== '') {
         try {
           await removeDir(root);

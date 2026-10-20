@@ -204,7 +204,7 @@ describe('arrangement effects scenario against the stand-in', () => {
       expect(fades.undoRestored).toBe(true);
       // Mute and solo: three cases, each silencing one clip and leaving the other exact; each revert restored all.
       const mute = check<MuteCheck>(report, 'mute and solo in the master export');
-      expect(mute.cases.map((c) => c.case)).toEqual(['mute track 2', 'solo track 1', 'solo track 2']);
+      expect(mute.cases.map((c) => c.case)).toEqual(['mute track 1', 'solo track 0', 'solo track 1']);
       for (const c of mute.cases) {
         expect(c.silent.maxAbs, c.case).toBeLessThanOrEqual(SILENCE_MAX_ABS);
         expect(c.silent.nonZeroSamples, c.case).toBe(0);
@@ -272,7 +272,7 @@ describe('arrangement effects scenario against the stand-in', () => {
       const report = await runArrangementEffects(config('arrangement-mute-leak'));
       expect(results(report)['mute and solo in the master export']).toBe('FAIL');
       expect(noteOf(report, 'mute and solo in the master export')).toMatch(
-        /mute track 2: the clip that should be silent still reaches/,
+        /mute track 1: the clip that should be silent still reaches/,
       );
       const mute = check<MuteCheck>(report, 'mute and solo in the master export');
       expect(mute.cases[0]?.silent.maxAbs ?? 0).toBeGreaterThan(SILENCE_MAX_ABS);
@@ -288,10 +288,10 @@ describe('arrangement effects scenario against the stand-in', () => {
       const report = await runArrangementEffects(config('arrangement-solo-broken'));
       expect(results(report)['mute and solo in the master export']).toBe('FAIL');
       expect(noteOf(report, 'mute and solo in the master export')).toMatch(
-        /solo track 1: the clip that should be silent/,
+        /solo track 0: the clip that should be silent/,
       );
       expect(noteOf(report, 'mute and solo in the master export')).toMatch(
-        /solo track 2: the clip that should be silent/,
+        /solo track 1: the clip that should be silent/,
       );
       const mute = check<MuteCheck>(report, 'mute and solo in the master export');
       expect(mute.cases).toHaveLength(3);
@@ -337,7 +337,7 @@ describe('arrangement effects scenario against the stand-in', () => {
       const report = await runArrangementEffects(config('arrangement-export-fails-in-mute'));
       const r = results(report);
       expect(r['mute and solo in the master export']).toBe('FAIL');
-      expect(noteOf(report, 'mute and solo in the master export')).toContain('mute track 2');
+      expect(noteOf(report, 'mute and solo in the master export')).toContain('mute track 1');
       // The mute was reverted although the measurement failed: the split check meets the clean project.
       expect(r['split boundary is seamless']).toBe('PASS');
       expect(r.shutdown).toBe('PASS');

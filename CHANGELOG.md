@@ -10,6 +10,16 @@ versioned separately and has its own changelog.
 
 ### Added
 
+- A wave-B boundary scenario (`test/e2e/wave-b-boundary.ts`, `npm run e2e:exe`) drives the edge cases of the wave-B
+  writes against a started OpenTune: structural edits that cannot be undone, trimming below the fades and its undo,
+  the id map and a stale undo entry after a track delete, the `openDyne` side effects of focus and selection, the
+  editing scheme and every processing preference put back by their revert recipes, saving over another project, and
+  opening a project whose media is gone. The two checks no request can drive (the track colour dialog, a write during
+  a modal) are listed as manual checks.
+- Every real-OpenTune run now snapshots the settings files of the instance's data folder (preferences and JUCE
+  settings) before it starts and puts them back byte for byte afterwards, also after a failure, and fails when a
+  value changed or the restore did not work (`scripts/e2e/settings-snapshot.mjs`). A second guard compares the
+  settings files of the real user folder by size and modification time only and fails the run when they changed.
 - A wave-B tour (`test/e2e/wave-b-tour.ts`, `npm run e2e:exe`) drives every OTCP method and every MCP tool that wave B
   added once against a started OpenTune and checks the answers against the specification: result schemas, the read-back
   state behind every `changes[].fields.*.after`, tokens, the undo or revert round trip, the promised warnings and the
