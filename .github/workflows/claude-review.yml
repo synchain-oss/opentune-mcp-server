@@ -31,7 +31,7 @@ jobs:
       pull-requests: write
       issues: write
       actions: read # action 挂只读的 mcp__github_ci__* 工具（查 CI 状态与 run 详情），不构成写出口
-    uses: Synchain-oss/ci-workflows/.github/workflows/claude-review.yml@5c5defd08f79a320261700a5c1d8696af5a20ec0 # v1.3.2
+    uses: Synchain-oss/ci-workflows/.github/workflows/claude-review.yml@070537914c9af4c2742b8fc5c7f63e06daef82ae # v1.3.3
     with:
       # 插在中央 prompt 的「重点关注:」之下，按优先级排列。
       focus: |
