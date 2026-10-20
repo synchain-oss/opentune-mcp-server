@@ -166,7 +166,7 @@ jobs:
           gh pr view "$PR_NUMBER" -R "$REPO" --json number,title,body,baseRefName,headRefName,headRefOid,commits,files > .ot-review/pr.json
           wc -c .ot-review/*
 
-      - uses: anthropics/claude-code-action@6fed3ca145920b639991cb756090506e1bcaf515 # v1.0.245
+      - uses: anthropics/claude-code-action@f27be6b65a4652f08a2ba3cff79114829b588967 # v1.0.252
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ secrets.GITHUB_TOKEN }}
