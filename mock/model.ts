@@ -250,7 +250,8 @@ export class World {
   readonly busy: BusyState = { pointerDown: false, modalOpen: false, importInProgress: false, projectOperation: false };
   readonly tracks: TrackRec[];
   visibleTrackCount = INITIAL_VISIBLE_TRACKS;
-  activeTrackId: number | null = null;
+  /** OpenTune always has an active track; track 0 until something selects another. */
+  activeTrackId: number | null = 0;
   workspace: 'arrangement' | 'pianoRoll' = 'arrangement';
   pianoRollContent: ContentRec | null = null;
   /** The dialogs open, from the bottom of the stack to the top. */
@@ -297,6 +298,8 @@ export class World {
   readonly logLines: string[] = [];
   /** The reference analysis job of each placement (by placementId), so that a repeated call joins it. */
   readonly referenceJobs = new Map<string, string>();
+  /** How a reference analysis that has to compute alignment data ends, or null when it completes. */
+  referenceFault: 'stalled' | 'timeout' | 'failed' | null = null;
   #tick = 0;
   #contentSeq = 0;
   #placementSeq = 0;
@@ -473,7 +476,7 @@ export class World {
     this.placements.clear();
     this.epoch++;
     this.selectedPlacementIds = [];
-    this.activeTrackId = null;
+    this.activeTrackId = 0;
     this.workspace = 'arrangement';
     this.pianoRollContent = null;
     this.undoStack = [];

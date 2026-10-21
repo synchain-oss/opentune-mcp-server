@@ -282,16 +282,18 @@ const duplicate: Handler = (context) => {
  * Section 15.3 rule 6: an entry recorded before a track was deleted may address a track that has
  * moved since. An entry from the UI cannot be inspected, so every one is possibly stale; one made
  * through the API is when it addressed the deleted track or a later one. The tracks and clip
- * states it holds are then renumbered to the positions after the deletion.
+ * states it holds are then renumbered to the positions after the deletion. Only the visible tracks
+ * behind the deleted one move; hidden slots keep their position and their clips.
  */
-function markBarrier(world: World, deleted: number): { undo: number; redo: number } {
+function markBarrier(world: World, deleted: number, visible: number): { undo: number; redo: number } {
+  const moves = (t: number): boolean => t > deleted && t < visible;
   const renumber = (entry: HistoryEntry): void => {
-    entry.tracks = (entry.tracks ?? []).filter((t) => t !== deleted).map((t) => (t > deleted ? t - 1 : t));
+    entry.tracks = (entry.tracks ?? []).filter((t) => t !== deleted).map((t) => (moves(t) ? t - 1 : t));
     for (const patch of [entry.undoPatch, entry.redoPatch]) {
       for (const { state } of patch?.placements ?? []) {
         if (state.trackId === undefined) continue;
         if (state.trackId === deleted) delete state.trackId;
-        else if (state.trackId > deleted) state.trackId -= 1;
+        else if (moves(state.trackId)) state.trackId -= 1;
       }
     }
   };
@@ -336,11 +338,11 @@ const remove: Handler = (context) => {
   const dirtyBefore = world.project.dirty;
   const stateBefore = world.capture();
   const all = [...world.placements.values()];
-  const holdsClips = (id: number) => all.some((p) => p.trackId === id);
+  const visible = world.visibleTrackCount;
+  // OpenTune moves only the shown tracks behind the deleted one; hidden slots keep their place and their clips.
+  const moves = (id: number): boolean => id > trackId && id < visible;
   const trackIdMap: { before: number; after: number | null }[] = [{ before: trackId, after: null }];
-  for (let id = trackId + 1; id < TRACK_SLOTS; id++) {
-    if (world.tracks[id]?.visible === true || holdsClips(id)) trackIdMap.push({ before: id, after: id - 1 });
-  }
+  for (let id = trackId + 1; id < visible; id++) trackIdMap.push({ before: id, after: id - 1 });
   const doomed = all.filter((p) => p.trackId === trackId);
   // The settings of the tracks behind the deleted one move down a slot; trackIdMap and the moved clips'
   // `changes` describe that shift, so it is not listed again here. `removed` lists the clips and, after
@@ -361,7 +363,7 @@ const remove: Handler = (context) => {
     if (doomed.includes(placement)) continue;
     const fields: Record<string, unknown> = {};
     const from = placement.trackId;
-    if (from > trackId) fields.trackId = { before: from, after: from - 1, unit: null };
+    if (moves(from)) fields.trackId = { before: from, after: from - 1, unit: null };
     const dropped = placement.reference !== null && doomed.includes(placement.reference);
     if (dropped) {
       fields.referencePlacementId = { before: placement.reference?.id ?? null, after: null, unit: null };
@@ -370,12 +372,12 @@ const remove: Handler = (context) => {
       changes.push({
         entity: 'placement',
         ref: { placementId: placement.id },
-        label: clipLabel(placement.serial, from > trackId ? from - 1 : from),
+        label: clipLabel(placement.serial, moves(from) ? from - 1 : from),
         fields,
       });
     }
   }
-  const moved = all.filter((p) => p.trackId > trackId);
+  const moved = all.filter((p) => moves(p.trackId));
   for (const placement of doomed) world.removePlacement(placement);
   for (const placement of all) {
     if (placement.reference !== null && doomed.includes(placement.reference)) placement.reference = null;
@@ -384,20 +386,20 @@ const remove: Handler = (context) => {
     placement.trackId -= 1;
     world.touchGeometry(placement);
   }
-  for (let id = trackId; id < TRACK_SLOTS - 1; id++) {
+  for (let id = trackId; id < visible - 1; id++) {
     const into = world.tracks[id];
     const from = world.tracks[id + 1];
     if (into !== undefined && from !== undefined) {
       Object.assign(into, { muted: from.muted, solo: from.solo, volumeLinear: from.volumeLinear, colour: from.colour });
     }
   }
-  const last = world.tracks[TRACK_SLOTS - 1];
+  const last = world.tracks[visible - 1];
   if (last !== undefined) {
     Object.assign(last, {
       muted: false,
       solo: false,
       volumeLinear: 1,
-      colour: COLOURS[(TRACK_SLOTS - 1) % COLOURS.length] ?? '#888888',
+      colour: COLOURS[(visible - 1) % COLOURS.length] ?? '#888888',
     });
   }
   world.setVisibleTrackCount(world.visibleTrackCount - 1);
@@ -408,7 +410,7 @@ const remove: Handler = (context) => {
   world.touchArrangement();
   world.touchTrackState();
   world.markDirty();
-  const stale = markBarrier(world, trackId);
+  const stale = markBarrier(world, trackId, visible);
   const warnings = [warning('IRREVERSIBLE', { trackId })];
   if (stale.undo + stale.redo > 0) warnings.push(warning('UNDO_HISTORY_POSSIBLY_STALE', null, stale));
   return envelope(world, {

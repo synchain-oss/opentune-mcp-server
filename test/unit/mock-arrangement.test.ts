@@ -179,6 +179,53 @@ describe('arrangement.edit', () => {
     expect(mock.snapshot().placements[0]).toMatchObject({ fadeInSec: 3, fadeOutSec: 0.6 });
   });
 
+  it('gives no merge recipe and warns of an irreversible merge when the former boundary is not on an analysis frame', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ clips: [clip({ startTimelineSec: 0, durationSec: 4 })] });
+    const split = await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'split', placementId: ids['clip.placementId'], atTimelineSec: 1 }],
+    });
+    const [left, right] = (field(split, 'idMap') as { to: { placementId: string }[] }[])[0]?.to ?? [];
+    const merge = async () => ({
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'merge', leadingPlacementId: left?.placementId, trailingPlacementId: right?.placementId }],
+    });
+    // Move the boundary off the frame grid: the right part starts later, the left part reaches there.
+    await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'trim', placementId: right?.placementId, edge: 'start', toTimelineSec: 1.003 }],
+    });
+    await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'trim', placementId: left?.placementId, edge: 'end', toTimelineSec: 1.003 }],
+    });
+    const merged = await ok('arrangement.edit', await merge());
+    expect(codes(merged)).toEqual(['UPSTREAM_UNDO_DEFECT', 'IRREVERSIBLE']);
+    expect(merged.undo).toEqual({ undoable: false, reason: 'upstream_undo_defect', revert: null });
+    expect(mock.snapshot().placements).toHaveLength(1);
+  });
+
+  it('moves only the visible tracks behind a deleted track and leaves hidden slots in place', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({
+      visibleTrackCount: 3,
+      clips: [clip({ bind: 'a', trackId: 1 }), clip({ bind: 'b', trackId: 2 }), clip({ bind: 'hidden', trackId: 5 })],
+    });
+    const deleted = await ok('track.delete', {
+      trackId: 1,
+      expectedArrangementRevision: await arrangementRevision(session),
+      confirm: true,
+    });
+    expect(deleted.trackIdMap).toEqual([
+      { before: 1, after: null },
+      { before: 2, after: 1 },
+    ]);
+    expect(mock.snapshot().placements.map((p) => p.trackId)).toEqual([1, 5]);
+  });
+
   it('does not give the fades of a split back when a part was trimmed since', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;

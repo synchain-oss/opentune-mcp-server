@@ -158,6 +158,8 @@ export interface OtcpMock {
   removeClip(placementId: string): void;
   /** The next `times` attempts to render a content fail, so that an export of it fails (PROTOCOL.md section 19 rule 6). */
   failRender(contentId: string, times?: number): void;
+  /** A reference analysis that has to compute alignment data ends as `fault` says (null: it completes). */
+  setReferenceFault(fault: 'stalled' | 'timeout' | 'failed' | null): void;
   /** The pitch analysis of the next `count` imported clips fails. */
   failNextAnalysis(count?: number): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
@@ -708,6 +710,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     failRender(contentId, times = 2) {
       exporter.failRender(world.content(contentId), times);
+    },
+    setReferenceFault(fault) {
+      world.referenceFault = fault;
     },
     failNextAnalysis(count = 1) {
       importer.failNextAnalysis(count);

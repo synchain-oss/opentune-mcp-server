@@ -8,6 +8,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
+import { REFERENCE_WAIT_LIMIT_MS } from '../../mock/reference.js';
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
 
 const sessions = new Sessions();
@@ -146,7 +147,7 @@ describe('content.analyzeReference', () => {
         const started = await session.ok('content.analyzeReference', { placementId: ids['clip.placementId'] });
         const jobId = String(field(started, 'job', 'jobId'));
         await change(session, ids);
-        clock.advance(5000);
+        clock.advance(REFERENCE_WAIT_LIMIT_MS);
         const { job } = (await session.ok('job.get', { jobId })) as {
           job: { state: string; error: { data: Record<string, unknown> } | null };
         };
@@ -316,5 +317,175 @@ describe('content.autoTune in mode reference', () => {
     expect(job.state).toBe('failed');
     expect(job.error?.data).toMatchObject({ kind: 'BUSY', reason: 'modal_open' });
     expect(targets(session, 1)).toEqual(before);
+  });
+});
+
+describe('a reference analysis that does not complete', () => {
+  const faults = [
+    ['stalled', 'NOT_READY', 'reference_analysis_stalled', false],
+    ['timeout', 'NOT_READY', 'reference_analysis_timeout', true],
+    ['failed', 'ANALYSIS_FAILED', 'reference_analysis_failed', false],
+  ] as const;
+
+  it.each(faults)(
+    'ends content.analyzeReference with the reason of the %s fault and stores nothing',
+    async (fault, kind, reason, retryable) => {
+      const clock = new ManualClock();
+      const { session, ids } = await setup(clock);
+      session.mock.setReferenceFault(fault);
+      const started = await session.ok('content.analyzeReference', { placementId: ids['clip.placementId'] });
+      clock.advance(REFERENCE_WAIT_LIMIT_MS);
+      const { job } = (await session.ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+        job: { state: string; error: { data: Record<string, unknown> } | null };
+      };
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({ kind, reason, retryable, executed: false });
+      const details = await session.ok('content.getDetails', { contentId: ids['clip.contentId'] });
+      expect(field(details, 'reference', 'alignmentReady')).toBe(false);
+    },
+  );
+
+  it.each(faults)(
+    'fails content.autoTune in mode reference with the %s fault and changes no note',
+    async (fault, kind, reason) => {
+      const clock = new ManualClock();
+      const { session, ids } = await setup(clock);
+      const before = targets(session, 1);
+      session.mock.setReferenceFault(fault);
+      const revision = (
+        (await session.ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
+          contents: { revision: string }[];
+        }
+      ).contents[0]?.revision;
+      const started = await session.ok('content.autoTune', {
+        contentId: ids['clip.contentId'],
+        mode: 'reference',
+        placementId: ids['clip.placementId'],
+        expectedRevision: revision,
+      });
+      clock.advance(REFERENCE_WAIT_LIMIT_MS);
+      const { job } = (await session.ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+        job: { state: string; error: { data: Record<string, unknown> } | null };
+      };
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({ kind, reason, executed: false });
+      expect(targets(session, 1)).toEqual(before);
+    },
+  );
+
+  it('does not touch data that exists, and the job of content.autoTune compares the revision before it writes', async () => {
+    const clock = new ManualClock();
+    const { session, ids } = await setup(clock);
+    const { ok } = session;
+    const revision = (
+      (await ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
+        contents: { revision: string }[];
+      }
+    ).contents[0]?.revision;
+    const started = await ok('content.autoTune', {
+      contentId: ids['clip.contentId'],
+      mode: 'reference',
+      placementId: ids['clip.placementId'],
+      expectedRevision: revision,
+    });
+    await ok('content.editNotes', {
+      contentId: ids['clip.contentId'],
+      expectedRevision: revision,
+      ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents: 10 }],
+    });
+    const edited = targets(session, 1);
+    clock.advance(REFERENCE_WAIT_LIMIT_MS);
+    const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+      job: { state: string; error: { data: Record<string, unknown> } | null };
+    };
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'content_changed', executed: false });
+    expect(targets(session, 1)).toEqual(edited);
+    // The job failed before it stored anything: the alignment data is not there (section 12.6 rule 4).
+    const details = await ok('content.getDetails', { contentId: ids['clip.contentId'] });
+    expect(field(details, 'reference', 'alignmentReady')).toBe(false);
+  });
+
+  it('does not touch alignment data that exists: content.autoTune still succeeds under the stalled fault', async () => {
+    const clock = new ManualClock();
+    const { session, ids } = await setup(clock);
+    const { ok } = session;
+    const analysis = await ok('content.analyzeReference', { placementId: ids['clip.placementId'] });
+    clock.advance(1000);
+    const done = (await ok('job.get', { jobId: field(analysis, 'job', 'jobId') })) as { job: { state: string } };
+    expect(done.job.state).toBe('succeeded');
+    session.mock.setReferenceFault('stalled');
+    const revision = (
+      (await ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
+        contents: { revision: string }[];
+      }
+    ).contents[0]?.revision;
+    const started = await ok('content.autoTune', {
+      contentId: ids['clip.contentId'],
+      mode: 'reference',
+      placementId: ids['clip.placementId'],
+      expectedRevision: revision,
+    });
+    clock.advance(1000);
+    const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })) as { job: { state: string } };
+    expect(job.state).toBe('succeeded');
+    expect(targets(session, 1)).toEqual([60, 62]);
+  });
+
+  it('ends the job at once under the stalled fault, and only at the wait limit under the timeout fault', async () => {
+    for (const [fault, reason, ends] of [
+      ['stalled', 'reference_analysis_stalled', 0],
+      ['timeout', 'reference_analysis_timeout', REFERENCE_WAIT_LIMIT_MS],
+    ] as const) {
+      const clock = new ManualClock();
+      const { session, ids } = await setup(clock);
+      session.mock.setReferenceFault(fault);
+      const started = await session.ok('content.analyzeReference', { placementId: ids['clip.placementId'] });
+      const jobId = field(started, 'job', 'jobId');
+      interface Polled {
+        job: { state: string; error: { data: Record<string, unknown> } | null };
+      }
+      const poll = async () => ((await session.ok('job.get', { jobId })) as unknown as Polled).job;
+      if (ends > 0) {
+        clock.advance(ends - 1);
+        expect((await poll()).state).toBe('running');
+        clock.advance(1);
+      } else {
+        clock.advance(0);
+      }
+      const job = await poll();
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({ reason });
+    }
+  });
+
+  it('fails the job of content.autoTune with REVISION_CONFLICT when the revision changed while it waited, and stores no alignment data', async () => {
+    const clock = new ManualClock();
+    const { session, ids } = await setup(clock);
+    const { ok } = session;
+    const revision = (
+      (await ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
+        contents: { revision: string }[];
+      }
+    ).contents[0]?.revision;
+    const started = await ok('content.autoTune', {
+      contentId: ids['clip.contentId'],
+      mode: 'reference',
+      placementId: ids['clip.placementId'],
+      expectedRevision: revision,
+    });
+    await ok('content.editNotes', {
+      contentId: ids['clip.contentId'],
+      expectedRevision: revision,
+      ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents: 10 }],
+    });
+    clock.advance(1000);
+    const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+      job: { state: string; error: { data: Record<string, unknown> } | null };
+    };
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'content_changed' });
+    const details = await ok('content.getDetails', { contentId: ids['clip.contentId'] });
+    expect(field(details, 'reference', 'alignmentReady')).toBe(false);
   });
 });

@@ -602,6 +602,24 @@
       "scope": "NOT_READY",
       "since": "1.0",
       "description": "OpenTune's timing analysis of the content did not finish within the wait limit of the timeGridSeed job, so no handle was placed. Retryable: a new seed waits for the analysis again."
+    },
+    {
+      "code": "reference_analysis_stalled",
+      "scope": "NOT_READY",
+      "since": "1.0",
+      "description": "The reference analysis of a clip cannot complete: OpenTune completes only one reference analysis in a session (a known defect of OpenTune, PROTOCOL.md section 15.4 rule 8), and a later analysis never finishes. Where the server already knows that the session cannot complete another analysis, the referenceAnalysis job ends at once instead of waiting for the wait limit; otherwise it ends with this reason when the wait limit passes and the analysis is queued but OpenTune is not processing it (an analysis that is still running ends with reference_analysis_timeout). Not retryable: the same request fails again until OpenTune is restarted, which also discards the unsaved state of the session."
+    },
+    {
+      "code": "reference_analysis_timeout",
+      "scope": "NOT_READY",
+      "since": "1.0",
+      "description": "The reference analysis of a clip did not finish within the wait limit of the referenceAnalysis job, so no alignment data was stored. The analysis may still be running in OpenTune. Retryable: a new request waits for the analysis again."
+    },
+    {
+      "code": "reference_analysis_failed",
+      "scope": "ANALYSIS_FAILED",
+      "since": "1.0",
+      "description": "OpenTune's reference analysis of the clip failed, so no alignment data was stored and nothing was written. Not retryable."
     }
   ]
 }

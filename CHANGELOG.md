@@ -52,6 +52,10 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- OTCP specification `1.0.0-rc.4` (unreleased): the reasons `reference_analysis_stalled`,
+  `reference_analysis_timeout` and `reference_analysis_failed` for the reference analysis jobs, and corrections of
+  the selection, track deletion, split and merge text and vectors to what OpenTune does. The mock follows (fault
+  mode `setReferenceFault`).
 - The shared review workflows are pinned to `v1.3.3`. The PR-Agent input budget (`max_model_tokens`) now depends on
   the provider: 500000 for the Claude provider (was 800000), unchanged at 800000 for the others. PR-Agent counts the
   prompt with an OpenAI tokenizer that undercounts Claude tokens, so on a large PR the Claude PR-Agent sent a prompt

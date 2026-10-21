@@ -182,7 +182,6 @@ function dismissOnboarding(context: MethodContext) {
     // A user-global preference that no request of this protocol resets.
     undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
     dirtyBefore,
-    sideEffects: showing ? { onboardingClosed: { revert: null } } : {},
     warnings: [warning('IRREVERSIBLE', { preference: 'onboardingShown' })],
   });
 }
@@ -227,9 +226,13 @@ const setSelection: Handler = (context) => {
   const generating =
     content !== undefined && world.editingScheme === 'openDyne' && needsGeneratedNotes(content) ? content : undefined;
   const referenceClip = placement?.reference ?? null;
+  // Only the contents that have no alignment data yet are queued, and one that both clips show once.
   const queued =
-    placement !== undefined && referenceClip !== null && world.prefs.experimentalFeatures
-      ? [placement.content, referenceClip.content]
+    placement !== undefined &&
+    referenceClip !== null &&
+    world.prefs.experimentalFeatures &&
+    world.editingScheme !== 'openDyne'
+      ? [...new Set([placement.content, referenceClip.content])].filter((c) => !c.alignmentReady)
       : [];
   const shownKey = content === undefined ? null : keyShown(content);
   const scaleChanged =
@@ -299,7 +302,11 @@ const setSelection: Handler = (context) => {
   if (generating !== undefined) effect(generateNotes(world, generating));
   if (queued.length > 0) {
     queuedEffect();
-    for (const c of queued) world.queueAlignment(c);
+    for (const c of queued) {
+      // Queueing already changes the reference component; the data arrives when the analysis settles.
+      world.touch(c, 'reference');
+      world.queueAlignment(c);
+    }
   }
   if (scaleChanged) scaleEffect();
   if (shownKey !== null) world.uiScale = { root: shownKey.root, scale: shownKey.scale };
