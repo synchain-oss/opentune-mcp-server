@@ -143,7 +143,7 @@ export function restoreTargetProblem(dir, userDirs = userSettingsDirs(), platfor
   const target = norm(dir);
   const inside = (outer, inner) => {
     const rel = pathApi.relative(outer, inner);
-    return rel === '' || (!rel.startsWith('..') && !pathApi.isAbsolute(rel));
+    return rel === '' || !(rel === '..' || rel.startsWith('..' + pathApi.sep) || pathApi.isAbsolute(rel));
   };
   for (const user of userDirs) {
     const real = norm(user);

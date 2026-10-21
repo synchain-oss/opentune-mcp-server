@@ -3,7 +3,7 @@
 
 // Runs a scenario with the watch of the real user's settings files (test/support/settings-guard.ts) around it.
 
-import { watchUserSettings } from '../support/settings-guard.js';
+import { labelOf, watchUserSettings } from '../support/settings-guard.js';
 import { summarise, type StepReport } from './smoke.js';
 
 export const USER_SETTINGS_STEP = 'real user settings untouched';
@@ -11,14 +11,6 @@ export const USER_SETTINGS_STEP = 'real user settings untouched';
 interface Summarised {
   readonly steps: readonly StepReport[];
 }
-
-/** `Roaming/OpenTune`-style label of a folder: the last two segments, so that the user's name never shows. */
-const labelOf = (dir: string): string =>
-  dir
-    .split(/[\\/]+/)
-    .filter(Boolean)
-    .slice(-2)
-    .join('/');
 
 /**
  * Runs a scenario with the real-user settings watch around it. The watch adds one more step to the report:

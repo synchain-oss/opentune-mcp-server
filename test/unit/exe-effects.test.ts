@@ -37,6 +37,7 @@ import {
   type EffectsConfig,
   type EffectsReport,
 } from '../e2e/effects.js';
+import { fakeUserSettingsEnv } from '../support/fake-user-settings.js';
 import { generateTone, writeToneFiles } from '../support/harmonic-tone.js';
 import { decodeWav } from '../support/wav-decode.js';
 import { wavFile } from '../support/wav-file.js';
@@ -924,6 +925,7 @@ describe('the effects scenario as a test file', () => {
       const dir = await tmp();
       const template = await tmp();
       const run = runTestFile({
+        ...(await fakeUserSettingsEnv(dir)),
         OTCP_TARGET_EXE: process.execPath,
         OTCP_TARGET_ARGS: JSON.stringify([FAKE, '--mode=effects-hybrid']),
         OTCP_E2E_REPORT: path.join(dir, 'report.json'),
@@ -934,6 +936,7 @@ describe('the effects scenario as a test file', () => {
       const output = `${run.stdout}\n${run.stderr}`;
       expect(run.status, output).toBe(0);
       expect(output).toMatch(/\| shiftTiming \+30 ms \| PASS \|/);
+      expect(output).toMatch(/real user settings untouched \| PASS \|.*watched 1 files/);
       // The notice comes before the table.
       expect(output).toContain(`NOTE: ${HYBRID_MODE_NOTICE}\n| step | result | time | note |`);
       const written = JSON.parse(await readFile(path.join(dir, 'effects.json'), 'utf8')) as EffectsReport;

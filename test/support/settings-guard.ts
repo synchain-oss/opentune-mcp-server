@@ -61,6 +61,14 @@ export async function guardDataDir(dataDir: string): Promise<SettingsGuard> {
   };
 }
 
+/** `Roaming/OpenTune`-style label of a folder: the last two segments, so that the user's name never shows. */
+export const labelOf = (dir: string): string =>
+  dir
+    .split(/[\\/]+/)
+    .filter(Boolean)
+    .slice(-2)
+    .join('/');
+
 /** One watched folder of the real user and how many settings files it had at the start. */
 export interface WatchedFolder {
   readonly dir: string;
@@ -92,7 +100,7 @@ export async function watchUserSettings(
       const changes: string[] = [];
       for (const [i, dir] of list.entries()) {
         const lines = diffStats(before[i] ?? {}, await watchStats(dir));
-        changes.push(...lines.map((line) => (list.length === 1 ? line : `${dir}: ${line}`)));
+        changes.push(...lines.map((line) => (list.length === 1 ? line : `${labelOf(dir)}: ${line}`)));
       }
       return changes.length === 0
         ? []

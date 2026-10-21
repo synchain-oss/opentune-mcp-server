@@ -49,6 +49,7 @@ import {
   type PlacementRead,
   type ProjectState,
 } from '../e2e/arrangement-effects.js';
+import { fakeUserSettingsEnv } from '../support/fake-user-settings.js';
 import { generateTone } from '../support/harmonic-tone.js';
 import { decodeWav, type DecodedWav } from '../support/wav-decode.js';
 
@@ -881,6 +882,7 @@ describe('the arrangement effects scenario as a test file', () => {
       const dir = await tmp();
       const template = await tmp();
       const run = runTestFile({
+        ...(await fakeUserSettingsEnv(dir)),
         OTCP_TARGET_EXE: process.execPath,
         OTCP_TARGET_ARGS: JSON.stringify([FAKE, '--mode=arrangement-hybrid']),
         OTCP_E2E_REPORT: path.join(dir, 'report.json'),
@@ -889,6 +891,7 @@ describe('the arrangement effects scenario as a test file', () => {
       });
       expect(run.status, run.output).toBe(0);
       expect(run.output).toMatch(/\| split boundary is seamless \| PASS \|/);
+      expect(run.output).toMatch(/real user settings untouched \| PASS \|.*watched 1 files/);
       const written = JSON.parse(
         await readFile(path.join(dir, 'arrangement-effects.json'), 'utf8'),
       ) as ArrangementEffectsReport;

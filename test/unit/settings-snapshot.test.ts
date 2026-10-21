@@ -290,6 +290,23 @@ describe('the read-only watch of the real user folder', () => {
     expect(problems[0]).toContain('late.settings: appeared');
   });
 
+  it('names the folders in a failure by their last two segments, never by the full path', async () => {
+    const root = await tempDir();
+    const roaming = path.join(root, 'Users', 'someone', 'AppData', 'Roaming', 'OpenTune');
+    const local = path.join(root, 'Users', 'someone', 'AppData', 'Local', 'OpenTune');
+    await mkdir(roaming, { recursive: true });
+    await mkdir(local, { recursive: true });
+    await writeFile(path.join(roaming, 'app-preferences.settings'), 'one');
+    await writeFile(path.join(local, 'other.settings'), 'two');
+    const watch = await watchUserSettings([roaming, local]);
+    await writeFile(path.join(roaming, 'app-preferences.settings'), 'changed, longer');
+    const problems = await watch.finish();
+    expect(problems).toHaveLength(1);
+    expect(problems[0]).toContain('Roaming/OpenTune:');
+    expect(problems[0]).not.toContain(root);
+    expect(problems[0]).not.toContain('someone');
+  });
+
   it('a missing folder or an unknown location is quiet', async () => {
     const dir = await tempDir();
     expect(await (await watchUserSettings(path.join(dir, 'missing'))).finish()).toEqual([]);
@@ -417,5 +434,17 @@ describe('restore refuses what could do harm', () => {
     expect(restoreTargetProblem('D:\\Scratch\\run1', real, 'win32')).toBeUndefined();
     expect(restoreTargetProblem('/srv/h/.config', ['/srv/h/.config/OpenTune'], 'linux')).toBeDefined();
     expect(restoreTargetProblem('/srv/h/.config/OpenTune2', ['/srv/h/.config/OpenTune'], 'linux')).toBeUndefined();
+  });
+
+  it('a sibling whose name merely starts with two dots is not outside', () => {
+    // relative('/srv/h/..cache', '/srv/h/..cache/OpenTune') is 'OpenTune'; relative('/srv/h/..cache/OpenTune',
+    // '/srv/h/..cache') is '..'; a folder named '..cache' below the user folder is a child, not a parent.
+    expect(restoreTargetProblem('/srv/h/..cache', ['/srv/h/..cache/OpenTune'], 'linux')).toBeDefined();
+    expect(restoreTargetProblem('/srv/h/OpenTune/..cache', ['/srv/h/OpenTune'], 'linux')).toBeDefined();
+    expect(restoreTargetProblem('/srv/h', ['/srv/h/..cache/OpenTune'], 'linux')).toBeDefined();
+    expect(restoreTargetProblem('/srv/h/..cache', ['/srv/h/OpenTune'], 'linux')).toBeUndefined();
+    expect(restoreTargetProblem('D:\\Home\\h\\..cache', ['D:\\Home\\h\\OpenTune'], 'win32')).toBeUndefined();
+    // Another drive is outside as well.
+    expect(restoreTargetProblem('E:\\Scratch', ['D:\\Home\\h\\OpenTune'], 'win32')).toBeUndefined();
   });
 });
