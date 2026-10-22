@@ -19,6 +19,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import { exeTarget } from '../contract/exe-target.js';
 import { OtcpSession, type Json } from '../../src/otcp/client.js';
 import { parseDiscoveryFile } from '../../src/discovery/file.js';
+import { fakeUserSettingsEnv } from '../support/fake-user-settings.js';
 import { otcpSpec } from '../support/otcp-spec.js';
 import { OtcpError } from '../../src/errors/tool-error.js';
 import {
@@ -435,6 +436,7 @@ describe('the scenario as a test file', () => {
       const dir = await tmp();
       const report = path.join(dir, 'report.json');
       const run = runTestFile({
+        ...(await fakeUserSettingsEnv(dir)),
         OTCP_TARGET_EXE: process.execPath,
         OTCP_TARGET_ARGS: JSON.stringify([FAKE, '--mode=smoke']),
         OTCP_E2E_REPORT: report,
@@ -443,6 +445,7 @@ describe('the scenario as a test file', () => {
       const output = `${run.stdout}\n${run.stderr}`;
       expect(run.status, output).toBe(0);
       expect(output).toMatch(/\| export \| PASS \|/);
+      expect(output).toMatch(/real user settings untouched \| PASS \|.*watched 1 files/);
       const written = JSON.parse(await readFile(report, 'utf8')) as SmokeReport;
       expect(written).toMatchObject({ schema: 'opentune-mcp-e2e-exe/1', result: 'PASS' });
     },

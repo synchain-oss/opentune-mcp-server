@@ -19,6 +19,7 @@ import { systemInstallDetector } from '../../src/launch/install.js';
 import { CONTROL_MANIFEST } from '../../src/launch/config.js';
 import { OtcpSession } from '../../src/otcp/client.js';
 import { generateTone } from '../support/harmonic-tone.js';
+import { guardDataDir, type SettingsGuard } from '../support/settings-guard.js';
 import {
   endAllConfirmed,
   openTunePids,
@@ -55,6 +56,7 @@ export async function runLaunchReal(config: SmokeConfig): Promise<ScenarioReport
   let launchedPid = 0;
   let launchedId = '';
   let discoveryFile = '';
+  let settings: SettingsGuard | undefined;
 
   const server = async (env: Record<string, string>): Promise<McpProcess> => {
     const started = await startMcp({ OPENTUNE_DATA_DIR: dataDir, ...env });
@@ -91,6 +93,7 @@ export async function runLaunchReal(config: SmokeConfig): Promise<ScenarioReport
       instancesDir = path.join(dataDir, 'control', 'instances');
       await mkdir(dataDir, { recursive: true });
       if (config.exe.dataTemplate !== undefined) await cp(config.exe.dataTemplate, dataDir, { recursive: true });
+      settings = await guardDataDir(dataDir);
       const tone = generateTone({
         seed: 20260401,
         notes: [0, 2].map((step) => ({ midi: 57 + step, cents: 30, durationSec: 1.1 })),
@@ -148,6 +151,7 @@ export async function runLaunchReal(config: SmokeConfig): Promise<ScenarioReport
     launchedPid = one.pid;
     launchedId = one.instanceId;
     discoveryFile = path.join(instancesDir, `${String(launchedPid)}.json`);
+    await settings?.settle();
     const running = await openTunePids();
     if (running.length !== 1 || running[0] !== launchedPid) {
       throw new Error(`${String(running.length)} OpenTune processes run after two concurrent launches`);
@@ -233,6 +237,7 @@ export async function runLaunchReal(config: SmokeConfig): Promise<ScenarioReport
       // Every discovery file in this scenario's own folder, whatever step failed: each is checked
       // against the start time of its process before that process is ended.
       if (instancesDir !== '') notes.push(...(await endAllConfirmed(instancesDir)).notes);
+      notes.push(...((await settings?.finish()) ?? []));
       if (root !== '') {
         try {
           await removeDir(root);

@@ -9,6 +9,7 @@
 import { describe, it } from 'vitest';
 
 import { effectsSetupFromEnv, runEffects } from './effects.js';
+import { withUserSettingsWatch } from './settings-guard.js';
 import { formatTable, writeReport } from './smoke.js';
 
 describe('end-to-end effects against the exe', () => {
@@ -30,7 +31,7 @@ describe('end-to-end effects against the exe', () => {
   const { config } = setup;
 
   it('changes in the exported audio what each write reports, and nothing else', async (ctx) => {
-    const report = await runEffects(config);
+    const report = await withUserSettingsWatch(() => runEffects(config));
     // What a reader must know first (hybrid mode on, for one) goes above the table.
     const notices = report.notices.map((n) => `NOTE: ${n}\n`).join('');
     process.stderr.write(`\n${notices}${formatTable(report)}\n`);

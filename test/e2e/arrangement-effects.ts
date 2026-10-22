@@ -1164,6 +1164,10 @@ export function splitConsistency(
   return problems.slice(0, 8);
 }
 
+/** Compares two paths the way the platform does: without regard to case on Windows only. */
+const samePath = (a: string, b: string): boolean =>
+  process.platform === 'win32' ? a.toLowerCase() === b.toLowerCase() : a === b;
+
 /** The two clips a split left on the track of the old clip, leading first; undefined unless exactly two. */
 export function splitPartsOf(
   state: ProjectState,
@@ -1317,7 +1321,7 @@ export async function runArrangementEffects(
     exportTimes.push({ label, ms: Math.round(performance.now() - at) });
     recordProcessing(label, result);
     const exportedPath = text(result, 'path', 'the export result');
-    if (path.resolve(exportedPath).toLowerCase() !== path.resolve(file).toLowerCase())
+    if (!samePath(path.resolve(exportedPath), path.resolve(file)))
       throw new Error(`the ${label} export result names another file than the one asked for`);
     const wav = decodeWav(await readFile(exportedPath));
     const reportedRate = num(result, 'sampleRateHz', 'the export result');
@@ -1927,15 +1931,15 @@ export async function runArrangementEffects(
         });
       };
 
-      await runCase('mute track 2', { tracks: [{ trackId: trackB, muted: true }] }, regionB, regionA, {
+      await runCase(`mute track ${String(trackB)}`, { tracks: [{ trackId: trackB, muted: true }] }, regionB, regionA, {
         muted: [trackB],
         solo: [],
       });
-      await runCase('solo track 1', { tracks: [{ trackId: trackA, solo: true }] }, regionB, regionA, {
+      await runCase(`solo track ${String(trackA)}`, { tracks: [{ trackId: trackA, solo: true }] }, regionB, regionA, {
         muted: [],
         solo: [trackA],
       });
-      await runCase('solo track 2', { tracks: [{ trackId: trackB, solo: true }] }, regionA, regionB, {
+      await runCase(`solo track ${String(trackB)}`, { tracks: [{ trackId: trackB, solo: true }] }, regionA, regionB, {
         muted: [],
         solo: [trackB],
       });
@@ -2018,7 +2022,10 @@ export async function runArrangementEffects(
             const afterMerge = await readProject(s);
             const splitParts = splitPartsOf(state, oldClip);
             if (splitParts === undefined) {
-              merge = { refused: 'the two split clips cannot be found for the merge check' };
+              // The merge took effect, so a check that cannot run is a failure of the check, not a refused merge.
+              const why = 'the two split clips cannot be found for the merge check';
+              problems.push(`the merge was applied, but checking its result failed: ${why}`);
+              merge = { applied: true, method: revert.method, checkFailed: why };
             } else {
               // The merge is the clean-up of a split, not a check of its own: how it reports itself
               // is written to the report, while only the audio it restores can fail the check.
