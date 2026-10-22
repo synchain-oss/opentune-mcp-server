@@ -160,6 +160,8 @@ export interface OtcpMock {
   failRender(contentId: string, times?: number): void;
   /** A reference analysis that has to compute alignment data ends as `fault` says (null: it completes). */
   setReferenceFault(fault: 'stalled' | 'timeout' | 'failed' | null): void;
+  /** The alignment data of every content is gone, so that a reference analysis has to compute it again. */
+  forgetAlignment(): void;
   /**
    * The first-run overlay starts, as OpenTune starts it while onboarding is not marked as shown. With
    * `choiceShown` the overlay has shown its choice, which marks onboarding as shown, as OpenTune does.
@@ -718,6 +720,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     setReferenceFault(fault) {
       world.referenceFault = fault;
+    },
+    forgetAlignment() {
+      for (const content of world.contents.values()) content.alignmentReady = false;
     },
     showOnboarding(choiceShown) {
       world.onboardingShowing = true;

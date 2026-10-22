@@ -102,6 +102,37 @@ versioned separately and has its own changelog.
   `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS` instead. The `base == 'dev'` gate and the
   `ENABLE_PR_AGENT` switch already existed and are unchanged by this PR. (#63)
 
+### Fixed
+
+- Revert lines now ask for the user's agreement where the way back is itself irreversible: restoring a deleted track
+  says to add `confirm: true` only after the user agrees, and a restore that would split, merge or delete together
+  with other clip edits is left to the user in the OpenTune window instead of being offered as a call the tool would
+  refuse.
+- A restore that can only put part of a change back says so: values of the recipe outside the range a tool accepts
+  are named as omitted in the revert line and in the first sentence of the result, so a partial restore is never
+  mistaken for a full one.
+- Every irreversible clip split, merge or delete says so in the first sentence of its result, also when OpenTune does
+  not report its undo defect for that call.
+- The first sentence of a structural edit and its revert line read the revert recipe the same way: a recipe that is
+  not in the protocol's form is no way back, so the first sentence no longer promises a restore that the revert line
+  does not.
+- `opentune_edit_arrangement` copies a clip that `clips` names twice only once, and the summary of a call with several
+  requests no longer repeats "not undoable" once per request.
+- `opentune_transport` is no longer marked idempotent: `play_from_last_start` seeks back to the last start on every
+  call, also while playback runs.
+- The `tuning-workflow` skill covers the arrangement, track, transport, window and settings tools, including who has
+  to agree before a clip split, merge or delete and that a changed global setting is restored when the step is done.
+- The `beat-grid` skill installs the analyzer only when the download stays on GitHub release hosts (the checksum
+  remains the trust anchor), exposes `--no-refine` and `--min-segment-beats`, gives each timing suggestion as a single
+  op instead of a call that would reuse a stale revision, explains what to do when the user rejects a plan, and sorts
+  installed analyzer versions by version rather than by text.
+- The errors of a reference analysis that does not complete tell what to do next: `reference_analysis_stalled` (not
+  retryable) asks the user to save the project and restart OpenTune, `reference_analysis_timeout` (retryable) says to
+  wait a little and call again, and `reference_analysis_failed` says to choose another reference clip or have the
+  reference audio checked.
+- A tool error for an instance that does not serve this server's protocol major (`PROTOCOL_MISMATCH`) now lists the majors
+  the instance's discovery file announces, in the optional member `protocolMajors`, as the status already did.
+
 ## [0.1.0] - 2026-10-17
 
 The first public version of OpenTune MCP Server (by Synchain). It implements OTCP specification `spec-v1.0.0-rc.3` and

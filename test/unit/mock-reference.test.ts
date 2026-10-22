@@ -8,6 +8,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
+import { ALIGNMENT_SETTLE_MS } from '../../mock/model.js';
 import { REFERENCE_WAIT_LIMIT_MS } from '../../mock/reference.js';
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
 
@@ -398,6 +399,36 @@ describe('a reference analysis that does not complete', () => {
     expect(job.state).toBe('succeeded');
     expect(targets(session, 1)).toEqual([60, 62]);
   });
+
+  it.each(faults)(
+    'does not store alignment data when selecting the clip queues the analysis under the %s fault',
+    async (fault, kind, reason) => {
+      const clock = new ManualClock();
+      const { session, ids } = await setup(clock);
+      const { ok } = session;
+      session.mock.setReferenceFault(fault);
+      await ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+      clock.advance(ALIGNMENT_SETTLE_MS * 10);
+      const details = await ok('content.getDetails', { contentId: ids['clip.contentId'] });
+      expect(field(details, 'reference', 'alignmentReady')).toBe(false);
+
+      const revision = (details.asOf as { contents: { revision: string }[] }).contents[0]?.revision;
+      const before = targets(session, 1);
+      const started = await ok('content.autoTune', {
+        contentId: ids['clip.contentId'],
+        mode: 'reference',
+        placementId: ids['clip.placementId'],
+        expectedRevision: revision,
+      });
+      clock.advance(REFERENCE_WAIT_LIMIT_MS);
+      const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+        job: { state: string; error: { data: Record<string, unknown> } | null };
+      };
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({ kind, reason });
+      expect(targets(session, 1)).toEqual(before);
+    },
+  );
 
   it('ends the job at once under the stalled fault, and only at the wait limit under the timeout fault', async () => {
     for (const [fault, reason, ends] of [

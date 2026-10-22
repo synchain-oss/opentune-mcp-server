@@ -12,6 +12,7 @@ import {
   OtcpError,
   errorDataFrom,
   fromOtcpError,
+  protocolMajorsOf,
   toolError,
 } from '../../src/errors/tool-error.js';
 import { cleanDetail, serializeResult, trustedToken } from '../../src/sanitize/untrusted.js';
@@ -41,6 +42,22 @@ describe('error kinds', () => {
     expect(kindStep('INVALID_ARGUMENT', 'some_future_reason').nextStep).toEqual(
       kindStep('INVALID_ARGUMENT', null).nextStep,
     );
+  });
+
+  it('gives the reference analysis reasons their own step, actor and retryability', () => {
+    const stalled = kindStep('NOT_READY', 'reference_analysis_stalled');
+    expect(stalled.retryable).toBe(false);
+    expect(stalled.nextStep.actor).toBe('user');
+    expect(stalled.nextStep.message).toMatch(/save the project and restart OpenTune/);
+    const timeout = kindStep('NOT_READY', 'reference_analysis_timeout');
+    expect(timeout.retryable).toBe(true);
+    expect(timeout.nextStep.actor).toBe('agent');
+    expect(timeout.nextStep.message).toMatch(/call again/);
+    expect(timeout.nextStep.message).not.toMatch(/opentune_get_job/);
+    const failed = kindStep('ANALYSIS_FAILED', 'reference_analysis_failed');
+    expect(failed.retryable).toBe(false);
+    expect(failed.nextStep.actor).toBe('agent');
+    expect(failed.nextStep.message).toMatch(/another reference clip/);
   });
 
   it('handles unknown kinds like INTERNAL but keeps the kind', () => {
@@ -96,6 +113,35 @@ describe('error kinds', () => {
     });
     expect(new OtcpError(data).message).toBe('BUSY(modal_open)');
     expect(new OtcpError({ ...data, reason: null }).message).toBe('BUSY');
+  });
+
+  it('carries the protocol majors of a refusal, keeping only positive integers', () => {
+    expect(protocolMajorsOf([2, 2, 3, 0, -1, 1.5, 'x', 4])).toEqual([2, 3, 4]);
+    expect(protocolMajorsOf(['2'])).toEqual([]);
+    expect(protocolMajorsOf(undefined)).toEqual([]);
+    expect(protocolMajorsOf(Array.from({ length: 40 }, (_, i) => i + 1))).toHaveLength(16);
+    const data = {
+      kind: 'PROTOCOL_MISMATCH',
+      reason: 'major_not_served',
+      retryable: false,
+      detail: 'unsupported protocol major version',
+      executed: false,
+      protocolMajors: [2, 3, 4],
+    };
+    expect(fromOtcpError(data)).toMatchObject({ kind: 'PROTOCOL_MISMATCH', protocolMajors: [2, 3, 4] });
+    expect(toolError('PROTOCOL_MISMATCH', { detail: 'x', protocolMajors: [1] })).toMatchObject({
+      protocolMajors: [1],
+    });
+    // What an instance sends is never read: the member comes from the discovery file only.
+    expect(errorDataFrom({ data: { ...data } })).not.toHaveProperty('protocolMajors');
+    expect(errorDataFrom({ data: { kind: 'PROTOCOL_MISMATCH', protocolMajors: ['2'] } })).not.toHaveProperty(
+      'protocolMajors',
+    );
+    // None that can be a major leaves the member out rather than sending an empty list on.
+    expect(toolError('PROTOCOL_MISMATCH', { detail: 'x' })).not.toHaveProperty('protocolMajors');
+    expect(toolError('PROTOCOL_MISMATCH', { detail: 'x', protocolMajors: [0, -2] })).not.toHaveProperty(
+      'protocolMajors',
+    );
   });
 });
 

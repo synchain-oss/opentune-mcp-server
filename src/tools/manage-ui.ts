@@ -16,7 +16,7 @@ import { isObject } from '../render/changes.js';
 import { writeBody } from '../render/index.js';
 import { warningCodes } from '../render/summary.js';
 import { INSTANCE_FIELD, invalid } from './clip-write.js';
-import { runWrites, type ErrorStep, type WriteCall, type WriteResult } from './multi-write.js';
+import { runWrites, type WriteCall, type WriteResult } from './multi-write.js';
 import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
 
 const TOOL = 'opentune_manage_ui';
@@ -76,17 +76,6 @@ export function focusSummary(envelope: Json): string {
     : `${TOOL}: ${done}, and ALSO, which nobody asked for: ${unasked.join('; ')}.${tail}`;
 }
 
-const commitStep: ErrorStep = (data) =>
-  data.kind === 'INVALID_ARGUMENT' && data.reason === 'dialog_commits_on_close'
-    ? {
-        actor: 'user',
-        message:
-          'A dialog that is open commits the value it shows when it is closed (the track-colour dialog commits ' +
-          'its colour). Ask the user whether to accept that; only after the user agrees, call again with ' +
-          'accept_commit: true. Otherwise the user can cancel the dialog in the OpenTune window.',
-      }
-    : undefined;
-
 /** The error of dismissing an overlay that is showing, on an instance that cannot close it. */
 function onboardingUnsupported(outcome: Outcome): Outcome {
   if (outcome.ok || outcome.error.kind !== 'UNSUPPORTED') return outcome;
@@ -134,7 +123,9 @@ export async function manageUi(ctx: ToolContext, args: ManageUiArgs): Promise<Ou
     }
   }
   return withInstance(ctx, { instanceId: args.instance_id }, ['ui.bridge'], async (session) => {
-    const run = await runWrites(session, TOOL, [call], args.op === 'dismiss_dialogs' ? commitStep : undefined);
+    // A dialog that commits on close is refused by the instance; the next step for
+    // INVALID_ARGUMENT(dialog_commits_on_close) is the one in errors/next-step.ts.
+    const run = await runWrites(session, TOOL, [call]);
     if ('stopped' in run) return args.op === 'dismiss_onboarding' ? onboardingUnsupported(run.stopped) : run.stopped;
     const [result] = run.results as readonly [WriteResult];
     const rendered = writeBody(result.envelope, { tool: TOOL });

@@ -10,6 +10,7 @@
 //   node beat-grid.mjs status
 //   node beat-grid.mjs install --model final|small [--yes]
 //   node beat-grid.mjs analyze <wav> [--model final|small] [--out <file>.json [--force]] [--summary]
+//                                  [--no-refine] [--min-segment-beats <n>]
 //   node beat-grid.mjs timing-plan --grid <grid.json> --notes <notes.json> --grid-offset-sec <s>
 //                                  [--threshold-ms 30] [--subdivision 1|2|4]
 //
@@ -31,6 +32,16 @@ export const HOME_ENV = Object.freeze(['CLAUDE_PLUGIN_DATA', 'OPENTUNE_BEATS_HOM
 export const MODELS = Object.freeze(['final', 'small']);
 export const TARGETS = Object.freeze(['win-x64', 'macos-universal2']);
 export const SUBDIVISIONS = Object.freeze([1, 2, 4]);
+// GitHub serves release assets from github.com and redirects them to a signed URL on one of these
+// hosts (objects.githubusercontent.com, or release-assets.githubusercontent.com for newer
+// releases). A final URL on any other host means the download left GitHub, so it is refused even
+// when the sha256 matches: the pinned hash says which bytes are wanted, not that these bytes are
+// the ones the release published.
+export const DOWNLOAD_HOSTS = Object.freeze([
+  'github.com',
+  'objects.githubusercontent.com',
+  'release-assets.githubusercontent.com',
+]);
 export const DEFAULT_THRESHOLD_MS = 30;
 export const MAX_OPS_PER_CALL = 8;
 export const MAX_DELTA_MS = 10_000;
@@ -56,9 +67,12 @@ const USAGE = `beat-grid: tempo and beat grid for OpenTune, from the opentune-be
       With --yes: download, verify every sha256, extract, install and check --version.
 
   node beat-grid.mjs analyze <wav> [--model final|small] [--out <file>.json [--force]] [--summary]
+                                 [--no-refine] [--min-segment-beats <n>]
       Run the analyzer on a WAV file. Without --summary the analyzer's JSON is printed, or written
       to --out (a .json path that must not exist yet, unless --force) with one line on stdout; with --summary the beat list is left out (segments, tempi,
-      confidence and warnings only).
+      confidence and warnings only). --no-refine turns off the analyzer's beat refinement;
+      --min-segment-beats sets the shortest constant-tempo segment it reports (an integer of 1 or
+      more).
 
   node beat-grid.mjs timing-plan --grid <grid.json> --notes <notes.json> --grid-offset-sec <s>
                                  [--threshold-ms 30] [--subdivision 1|2|4]
@@ -427,6 +441,23 @@ export async function downloadAsset(url, dest, expected, what, { fetchImpl = glo
   }
   if (!response.ok || response.body === null) {
     throw new BeatGridError('DOWNLOAD_FAILED', `cannot download ${url}: HTTP ${response.status}`, EXIT.INSTALL_FAILED);
+  }
+  // The redirect is followed, so `response.url` is where the bytes really came from. Check it
+  // before the destination file is opened: a download that left GitHub writes nothing at all.
+  const finalUrl = typeof response.url === 'string' ? response.url.trim() : '';
+  let parsedUrl;
+  try {
+    parsedUrl = finalUrl === '' ? null : new URL(finalUrl);
+  } catch {
+    parsedUrl = null;
+  }
+  if (parsedUrl === null || parsedUrl.protocol !== 'https:' || !DOWNLOAD_HOSTS.includes(parsedUrl.hostname)) {
+    throw new BeatGridError(
+      'DOWNLOAD_HOST',
+      `${what}: the download of ${url} ended at ${finalUrl === '' ? '(no URL)' : finalUrl}, which is not an https ` +
+        `URL on a GitHub release host (${DOWNLOAD_HOSTS.join(', ')}); nothing was written`,
+      EXIT.INSTALL_FAILED,
+    );
   }
   const hash = createHash('sha256');
   const fd = fs.openSync(dest, 'w');
@@ -872,6 +903,61 @@ export async function install({
 // ---------------------------------------------------------------------------------------------
 // status
 
+/** Splits `major.minor.patch[-prerelease]`; null when the folder name does not have that shape. */
+function parseVersion(version) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(version);
+  if (match === null) return null;
+  return {
+    numbers: [Number(match[1]), Number(match[2]), Number(match[3])],
+    prerelease: match[4] === undefined ? [] : match[4].split('.'),
+  };
+}
+
+/** Compares two numeric prerelease identifiers of any length without losing precision. */
+function compareNumericIdentifiers(a, b) {
+  const left = a.replace(/^0+(?=\d)/, '');
+  const right = b.replace(/^0+(?=\d)/, '');
+  if (left.length !== right.length) return left.length - right.length;
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+/**
+ * Semantic-version order (semver 2.0.0 item 11): negative when `a` is older than `b`, zero when
+ * they are equal. A version without a prerelease is greater; prerelease identifiers are compared
+ * numerically when both are numeric, lexically otherwise, and a numeric identifier is lower than
+ * an alphanumeric one. A name that is not a version falls back to a plain string comparison.
+ */
+export function compareVersions(a, b) {
+  const left = parseVersion(String(a));
+  const right = parseVersion(String(b));
+  if (left === null || right === null) return String(a) < String(b) ? -1 : String(a) > String(b) ? 1 : 0;
+  for (let i = 0; i < 3; i++) {
+    if (left.numbers[i] !== right.numbers[i]) return left.numbers[i] - right.numbers[i];
+  }
+  // A prerelease is lower than the release it leads to.
+  if (left.prerelease.length === 0 || right.prerelease.length === 0)
+    return right.prerelease.length - left.prerelease.length;
+  const length = Math.max(left.prerelease.length, right.prerelease.length);
+  for (let i = 0; i < length; i++) {
+    const one = left.prerelease[i];
+    const other = right.prerelease[i];
+    // A shorter set of identifiers is lower when all the shared ones are equal.
+    if (one === undefined) return -1;
+    if (other === undefined) return 1;
+    const oneNumeric = /^\d+$/.test(one);
+    const otherNumeric = /^\d+$/.test(other);
+    if (oneNumeric && otherNumeric) {
+      const order = compareNumericIdentifiers(one, other);
+      if (order !== 0) return order;
+    } else if (oneNumeric !== otherNumeric) {
+      return oneNumeric ? -1 : 1;
+    } else if (one !== other) {
+      return one < other ? -1 : 1;
+    }
+  }
+  return 0;
+}
+
 /** Whether the analyzer is installed, which version and target, and which models are present. */
 export function status({
   manifest = loadManifest(),
@@ -945,9 +1031,7 @@ export function status({
       installedAt: typeof metadata?.installedAt === 'string' ? metadata.installedAt : null,
     });
   }
-  base.installations.sort((a, b) =>
-    a.version === b.version ? a.target.localeCompare(b.target) : b.version.localeCompare(a.version),
-  );
+  base.installations.sort((a, b) => compareVersions(b.version, a.version) || a.target.localeCompare(b.target));
   const current = base.installations.find(
     (entry) => entry.version === manifest.version && entry.target === target && entry.executable,
   );
@@ -1001,6 +1085,8 @@ export function analyze({
   model = 'final',
   out = null,
   force = false,
+  refine = true,
+  minSegmentBeats = null,
   run = runProcess,
 } = {}) {
   if (target === null || !TARGETS.includes(target))
@@ -1011,6 +1097,16 @@ export function analyze({
     );
   if (!MODELS.includes(model))
     throw new BeatGridError('USAGE', `--model must be final or small (found ${String(model)})`, EXIT.USAGE);
+  if (
+    minSegmentBeats !== null &&
+    minSegmentBeats !== undefined &&
+    (!Number.isInteger(minSegmentBeats) || minSegmentBeats < 1)
+  )
+    throw new BeatGridError(
+      'USAGE',
+      `--min-segment-beats must be an integer of 1 or more (found ${String(minSegmentBeats)})`,
+      EXIT.USAGE,
+    );
   if (typeof input !== 'string' || input === '')
     throw new BeatGridError('USAGE', 'analyze needs the path of a WAV file', EXIT.USAGE);
   const inputPath = path.resolve(input);
@@ -1042,11 +1138,11 @@ export function analyze({
       `opentune-beats ${manifest.version} is not installed for ${target}; run the install step first`,
       EXIT.NOT_INSTALLED,
     );
-  const result = run(
-    installed.executable,
-    ['analyze', inputPath, '--model', model, '--models-dir', path.join(installed.dir, 'models')],
-    { timeoutMs: 30 * 60_000 },
-  );
+  const args = ['analyze', inputPath, '--model', model, '--models-dir', path.join(installed.dir, 'models')];
+  if (refine === false) args.push('--no-refine');
+  if (minSegmentBeats !== null && minSegmentBeats !== undefined)
+    args.push('--min-segment-beats', String(minSegmentBeats));
+  const result = run(installed.executable, args, { timeoutMs: 30 * 60_000 });
   const raw = result.stdout.trim();
   let json;
   try {
@@ -1346,12 +1442,10 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
     const end = round(Math.max(endContentSec ?? startContentSec + 0.001, start + 0.001), 4);
     const op = { op: 'shift', start_content_sec: start, end_content_sec: end, delta_ms: deltaMs };
     const beat = beats[point.beatIndex];
-    // opentune_edit_timing has no dry_run: this plan is the preview, and the call is made only
-    // after the user agrees to it.
-    const editTiming =
-      callable && suggestions.length < MAX_OPS_PER_CALL
-        ? { clip, expected_revision: parsedNotes.clipRevision, ops: [op] }
-        : null;
+    // opentune_edit_timing has no dry_run: this plan is the preview. A suggestion carries only its
+    // op, never a ready call: the one call in `calls` below is what may be applied, so an agent
+    // cannot read a call out of every suggestion and issue one call per suggestion. A plan that
+    // cannot make a call (no single clip and revision) carries no op either.
     suggestions.push({
       noteIndex: isFiniteNumber(note.index) ? note.index : null,
       noteStartContentSec: round(startContentSec, 4),
@@ -1376,7 +1470,7 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
               timeSignature: segment.timeSignature,
               confidence: segment.confidence,
             },
-      editTiming,
+      op: callable ? op : null,
     });
   }
   if (deltaTooLarge > 0)
@@ -1391,11 +1485,11 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
     });
 
   // One call at a time: a write moves the notes and changes the revision, so every later
-  // suggestion is stale after the first call. Only the first call is given; the rest are listed
-  // without a call and are planned again from fresh notes.
+  // suggestion is stale after the first call. Only the first call is given (its ops are the first
+  // suggestions' ops); the rest are listed as data and are planned again from fresh notes.
   const calls = [];
   if (callable && suggestions.length > 0) {
-    const ops = suggestions.slice(0, MAX_OPS_PER_CALL).map((suggestion) => suggestion.editTiming.ops[0]);
+    const ops = suggestions.slice(0, MAX_OPS_PER_CALL).map((suggestion) => suggestion.op);
     calls.push({ clip, expected_revision: parsedNotes.clipRevision, ops });
   }
   const remainingSuggestions = callable ? Math.max(0, suggestions.length - MAX_OPS_PER_CALL) : 0;
@@ -1447,9 +1541,10 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
       maxOpsPerCall: MAX_OPS_PER_CALL,
       note:
         'opentune_edit_timing has no dry-run parameter: this plan is the preview. Show it to the user and get ' +
-        'their agreement before calling. calls holds only the first call (at most maxOpsPerCall ops, with ' +
-        'expected_revision); after it, read the notes again and run timing-plan again for the rest. Each call is one ' +
-        'undo step.',
+        'their agreement before calling. Each suggestion carries only its op, and null when no call can be made; ' +
+        'calls holds the one call that may be applied (at most maxOpsPerCall ops, built from the first suggestions, ' +
+        'with expected_revision). After it, read the notes again and run timing-plan again for the rest. Each call is ' +
+        'one undo step.',
     },
     suggestions,
     calls,
@@ -1467,7 +1562,14 @@ function usageError(detail) {
 const COMMAND_OPTIONS = Object.freeze({
   status: {},
   install: { model: 'value', yes: 'flag' },
-  analyze: { model: 'value', out: 'value', force: 'flag', summary: 'flag' },
+  analyze: {
+    model: 'value',
+    out: 'value',
+    force: 'flag',
+    summary: 'flag',
+    'no-refine': 'flag',
+    'min-segment-beats': 'value',
+  },
   'timing-plan': {
     grid: 'value',
     notes: 'value',
@@ -1525,6 +1627,15 @@ function parseNumberOption(options, name, { fallback = null, min = 0, max = Numb
   return value;
 }
 
+function parseIntegerOption(options, name, { min = 1, max = Number.POSITIVE_INFINITY } = {}) {
+  const value = Number(options[name]);
+  if (!Number.isInteger(value) || value < min || value > max)
+    throw usageError(
+      `--${name} must be an integer from ${String(min)} to ${String(max)} (found ${String(options[name])})`,
+    );
+  return value;
+}
+
 function writeJson(out, value) {
   out(`${JSON.stringify(value, null, 2)}\n`);
 }
@@ -1541,8 +1652,13 @@ export async function main(
     err = (text) => process.stderr.write(text),
     run = runProcess,
     selfCheck,
+    manifest = null,
+    fetchImpl = globalThis.fetch,
   } = {},
 ) {
+  // The manifest and the fetcher are injectable so a test can drive a whole command without
+  // touching the shipped manifest file or the network. Both default to the real thing.
+  const currentManifest = () => manifest ?? loadManifest();
   try {
     const parsed = parseArgs(argv);
     if (parsed.command === 'help') {
@@ -1550,11 +1666,11 @@ export async function main(
       return EXIT.OK;
     }
     if (parsed.command === 'status') {
-      writeJson(out, status({ manifest: loadManifest(), env, platform, arch }));
+      writeJson(out, status({ manifest: currentManifest(), env, platform, arch }));
       return EXIT.OK;
     }
     if (parsed.command === 'install') {
-      const manifest = loadManifest();
+      const loadedManifest = currentManifest();
       const model = parsed.options.model ?? 'final';
       if (!MODELS.includes(model)) throw usageError(`--model must be final or small (found ${String(model)})`);
       const target = detectTarget(platform, arch);
@@ -1564,7 +1680,7 @@ export async function main(
       } catch {
         home = null;
       }
-      const plan = installPlan({ manifest, target, model, home });
+      const plan = installPlan({ manifest: loadedManifest, target, model, home });
       if (parsed.options.yes !== true) {
         out(formatPlan(plan));
         return EXIT.OK;
@@ -1573,10 +1689,11 @@ export async function main(
       if (plan.problems.length > 0)
         throw new BeatGridError('INSTALL_REFUSED', plan.problems.join('; '), EXIT.INSTALL_FAILED);
       const result = await install({
-        manifest,
+        manifest: loadedManifest,
         home: resolved.home,
         target,
         model,
+        fetchImpl,
         log: (line) => err(`${line}\n`),
         ...(selfCheck === undefined ? {} : { selfCheck }),
       });
@@ -1584,17 +1701,23 @@ export async function main(
       return EXIT.OK;
     }
     if (parsed.command === 'analyze') {
-      const manifest = loadManifest();
+      const loadedManifest = currentManifest();
       const model = parsed.options.model ?? 'final';
       const outFile = parsed.options.out === undefined ? null : path.resolve(cwd, parsed.options.out);
+      const minSegmentBeats =
+        parsed.options['min-segment-beats'] === undefined
+          ? null
+          : parseIntegerOption(parsed.options, 'min-segment-beats', { min: 1 });
       const result = analyze({
-        manifest,
+        manifest: loadedManifest,
         home: dataHome(env).home,
         target: detectTarget(platform, arch),
         input: parsed.positionals[0],
         model,
         out: outFile,
         force: parsed.options.force === true,
+        refine: parsed.options['no-refine'] !== true,
+        minSegmentBeats,
         run,
       });
       out(
