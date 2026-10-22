@@ -162,6 +162,11 @@ export interface OtcpMock {
   setReferenceFault(fault: 'stalled' | 'timeout' | 'failed' | null): void;
   /** The alignment data of every content is gone, so that a reference analysis has to compute it again. */
   forgetAlignment(): void;
+  /**
+   * The first-run overlay starts, as OpenTune starts it while onboarding is not marked as shown. With
+   * `choiceShown` the overlay has shown its choice, which marks onboarding as shown, as OpenTune does.
+   */
+  showOnboarding(choiceShown: boolean): void;
   /** The pitch analysis of the next `count` imported clips fails. */
   failNextAnalysis(count?: number): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
@@ -718,6 +723,10 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     forgetAlignment() {
       for (const content of world.contents.values()) content.alignmentReady = false;
+    },
+    showOnboarding(choiceShown) {
+      world.onboardingShowing = true;
+      if (choiceShown) world.prefs.onboardingShown = true;
     },
     failNextAnalysis(count = 1) {
       importer.failNextAnalysis(count);

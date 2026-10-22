@@ -185,7 +185,7 @@ read-only the export fails and the server does not choose another folder. Call `
 ### Error UNSUPPORTED
 
 OpenTune or this build does not offer the operation. With reason `capability_missing`, `detail` names the missing
-capability; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`.
+capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`.
 
 ### Error INTERNAL
 

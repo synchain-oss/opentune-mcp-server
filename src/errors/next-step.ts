@@ -175,6 +175,9 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'UNSUPPORTED/capability_missing': user(
     'This OpenTune build lacks the feature (see detail). Ask the user to update to a build that has it.',
   ),
+  'UNSUPPORTED/no_editor_window': user(
+    'OpenTune is running without an editor window. Ask the user to start OpenTune Standalone with its window and try again.',
+  ),
   'UNDO_CONFLICT/history_empty': user('There is nothing to undo or redo here. Tell the user.'),
   'UNSUPPORTED/undo_unsafe_build': user(
     'This OpenTune build cannot undo or redo the top step safely (a clip split, merge or delete). Tell the user; ' +

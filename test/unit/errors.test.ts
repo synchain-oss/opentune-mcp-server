@@ -60,6 +60,14 @@ describe('error kinds', () => {
     expect(failed.nextStep.message).toMatch(/another reference clip/);
   });
 
+  it('tells the user to start OpenTune with its window for no_editor_window', () => {
+    const noWindow = kindStep('UNSUPPORTED', 'no_editor_window');
+    expect(noWindow.nextStep.actor).toBe('user');
+    expect(noWindow.nextStep.message).toMatch(/with its window/);
+    expect(noWindow.nextStep).not.toEqual(kindStep('UNSUPPORTED', 'capability_missing').nextStep);
+    expect(noWindow.retryable).toBe(false);
+  });
+
   it('handles unknown kinds like INTERNAL but keeps the kind', () => {
     const error = toolError('SOMETHING_NEW', { detail: 'x' });
     expect(error.kind).toBe('SOMETHING_NEW');
