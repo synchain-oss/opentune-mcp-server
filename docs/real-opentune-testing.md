@@ -677,8 +677,8 @@ The guard (see [Settings snapshot](#settings-snapshot)) reports in two places:
 - **In the scenario.** The last, clean-up step of the scenario (`shutdown` in the smoke scenario and in the tour) is a
   `FAIL` when a settings file of the instance's own data folder changed in value, or could not be put back to the
   first snapshot byte for byte. Its note lists the files and the changed keys, values clipped. Keys and files that
-  OpenTune added while it started are not a difference; the number of files that gained keys is the fact
-  `settingsFilesWithAddedKeys`.
+  OpenTune added while it started are not a difference. In the wave-B boundary scenario only, the number of files that
+  gained keys is reported as the fact `settingsFilesWithAddedKeys`.
 - **Around the scenario.** The step `real user settings untouched` compares the settings files in the real user folders
   by size and modification time and fails on any change. It names the file that changed. One possible cause is another
   OpenTune that was open on the same machine; find out what touched the file before you run again.
