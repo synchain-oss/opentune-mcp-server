@@ -36,7 +36,6 @@ const notSeeded = () =>
     kind: 'NOT_READY',
     reason: 'grid_not_seeded',
     detail: 'the time grid has no handles; seed it with content.editTimeGrid first',
-    retryable: false,
   });
 
 /** The common start of a time-grid write: handle, busy state and readiness gate (section 13.1 rule 4). */

@@ -14,7 +14,7 @@
     ]
   },
   "result": {
-    "summary": "opentune_set_tracks: 2 requests ran in this order (not undoable: the state is not kept in the project; cannot be restored by any request; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line), reported separately in results. 1. changed 1 track (not undoable: the state is not kept in the project; cannot be restored by any request). Warnings: NOT_PERSISTED. 2. changed 4 tracks (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line).",
+    "summary": "opentune_set_tracks: 2 requests ran in this order (not undoable: the state is not kept in the project; cannot be restored by any request; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line), reported separately in results. 1. changed 1 track. Warnings: NOT_PERSISTED. 2. changed 4 tracks.",
     "results": [
       {
         "method": "track.add",

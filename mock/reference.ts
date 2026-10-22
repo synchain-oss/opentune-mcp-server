@@ -41,12 +41,11 @@ export function requireReadyPair(placement: PlacementRec, reference: PlacementRe
 function analysisFault(fault: NonNullable<World['referenceFault']>): MockError {
   switch (fault) {
     case 'stalled':
-      return new MockError({
-        kind: 'NOT_READY',
-        reason: 'reference_analysis_stalled',
-        detail: 'OpenTune completes one reference analysis per session; restart OpenTune to analyse again',
-        retryable: false,
-      });
+      return refuse(
+        'NOT_READY',
+        'reference_analysis_stalled',
+        'OpenTune completes one reference analysis per session; restart OpenTune to analyse again',
+      );
     case 'timeout':
       return refuse('NOT_READY', 'reference_analysis_timeout', 'the reference analysis did not finish in time');
     case 'failed':

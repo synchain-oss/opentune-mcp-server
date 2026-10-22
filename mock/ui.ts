@@ -165,6 +165,17 @@ function dismissOnboarding(context: MethodContext) {
     );
   }
   world.onboardingShowing = false;
+  if (world.prefs.onboardingShown) {
+    // OpenTune marks onboarding as shown once the overlay shows its choice: closing it then changes the view only.
+    return envelope(world, {
+      applied: true,
+      noOp: false,
+      diff: EMPTY_DIFF,
+      contents: [],
+      undo: viewOnly,
+      dirtyBefore,
+    });
+  }
   world.prefs.onboardingShown = true;
   return envelope(world, {
     applied: true,

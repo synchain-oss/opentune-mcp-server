@@ -12,7 +12,7 @@
     "loop": true
   },
   "result": {
-    "summary": "opentune_transport: 3 requests ran in this order (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_transport, see the revert line; the project is now marked as changed; not undoable: the state is not kept in the project; cannot be restored by any request), reported separately in results. 1. changed 1 tempo (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_transport, see the revert line). 2. changed 1 transport (not undoable: the state is not kept in the project; can be restored with opentune_transport, see the revert line). Warnings: LOOP_NO_EFFECT_STANDALONE, NOT_PERSISTED. 3. changed 1 transport (not undoable: the state is not kept in the project; cannot be restored by any request).",
+    "summary": "opentune_transport: 3 requests ran in this order (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_transport, see the revert line; the project is now marked as changed; not undoable: the state is not kept in the project; cannot be restored by any request), reported separately in results. 1. changed 1 tempo. 2. changed 1 transport. Warnings: LOOP_NO_EFFECT_STANDALONE, NOT_PERSISTED. 3. changed 1 transport.",
     "results": [
       {
         "method": "transport.setTempo",

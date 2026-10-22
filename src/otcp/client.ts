@@ -10,7 +10,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import net from 'node:net';
 
-import { OtcpError, errorDataFrom, type ErrorData } from '../errors/tool-error.js';
+import { OtcpError, errorDataFrom, protocolMajorsOf, type ErrorData } from '../errors/tool-error.js';
 import type { DiscoveryEntry } from '../discovery/file.js';
 import { SERVER_NAME, VERSION } from '../version.js';
 import { LineSplitter, decodeLine, encodeLine } from './framing.js';
@@ -46,8 +46,22 @@ export type Json = Record<string, unknown>;
 
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-const local = (kind: string, reason: string | null, detail: string, executed: boolean | null, retryable = true) =>
-  new OtcpError({ kind, reason, retryable, detail, executed } satisfies ErrorData);
+const local = (
+  kind: string,
+  reason: string | null,
+  detail: string,
+  executed: boolean | null,
+  retryable = true,
+  protocolMajors: readonly number[] = [],
+) =>
+  new OtcpError({
+    kind,
+    reason,
+    retryable,
+    detail,
+    executed,
+    ...(protocolMajors.length === 0 ? {} : { protocolMajors }),
+  } satisfies ErrorData);
 
 function sameSecret(a: string, b: string): boolean {
   const x = Buffer.from(a, 'utf8');
@@ -158,7 +172,17 @@ export class OtcpSession {
             ),
           );
         } else if (message.error !== undefined) {
-          finish(new OtcpError({ ...errorDataFrom(message.error), executed: false }));
+          const data = errorDataFrom(message.error);
+          // The fixed PROTOCOL_MISMATCH response of Appendix A cannot repeat the majors the instance
+          // serves; the discovery file holds them. Nothing else on the wire supplies this member.
+          const majors = data.kind === 'PROTOCOL_MISMATCH' ? protocolMajorsOf(entry.protocolMajors) : [];
+          finish(
+            new OtcpError({
+              ...data,
+              executed: false,
+              ...(majors.length === 0 ? {} : { protocolMajors: majors }),
+            }),
+          );
         } else {
           const hello = verifyHello(message.result, entry);
           if (hello === null) {
@@ -172,6 +196,8 @@ export class OtcpSession {
               ),
             );
           } else if (majorOf(hello.protocol) !== SUPPORTED_MAJOR) {
+            // The response cannot repeat the majors (PROTOCOL.md Appendix A); the discovery file
+            // holds them, so the error carries the same list the status of a mismatch reports.
             finish(
               local(
                 'PROTOCOL_MISMATCH',
@@ -179,6 +205,7 @@ export class OtcpSession {
                 `the instance speaks ${protocolName(hello.protocol)}; this server speaks major ${String(SUPPORTED_MAJOR)}`,
                 false,
                 false,
+                protocolMajorsOf(entry.protocolMajors),
               ),
             );
           } else {

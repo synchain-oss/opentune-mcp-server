@@ -409,7 +409,7 @@ OTCP capabilities: `tracks.v1`. OTCP methods: `track.delete`.
 
 ### `opentune_transport`
 
-**Control OpenTune transport**: changes state, not destructive, idempotent, closed world.
+**Control OpenTune transport**: changes state, not destructive, not idempotent, closed world.
 
 OpenTune (audio vocal pitch editor): the transport bar. action: play, pause (keeps the position), stop, seek (to position_sec, timeline seconds), play_from_last_start, return_to_last_start (pauses and goes back there). The last start is where playback last began or the last seek went, not 0. bpm (1..999), time_signature and loop are set before the action. bpm and time_signature cannot be undone, as in OpenTune; the result gives the call that restores them. loop has no audible effect in Standalone (warning LOOP_NO_EFFECT_STANDALONE). Without an audio device nothing is heard.
 

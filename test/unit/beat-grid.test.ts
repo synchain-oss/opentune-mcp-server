@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { gzipSync } from 'node:zlib';
 
 import { zipStored } from '../../scripts/mcpb.mjs';
@@ -54,7 +54,7 @@ interface Suggestion {
   deltaMs: number;
   gridPoint: { kind: string; division: number; timelineSec: number };
   segment: Segment | null;
-  editTiming: Json | null;
+  op: Json | null;
 }
 interface TimingPlan {
   clock: { gridToTimeline: string; placementOffsetSec: number | null };
@@ -96,6 +96,7 @@ interface AnalyzeResult {
 interface StatusResult {
   installed: boolean;
   current: { version: string; target: string; dir: string } | null;
+  installations: { version: string; target: string; dir: string }[];
   models: { mel: boolean; final: boolean; small: boolean };
   home: string | null;
   homeSource: string | null;
@@ -107,8 +108,10 @@ interface StatusResult {
 interface BeatGridModule {
   BeatGridError: new (code: string, detail: string, exitCode?: number) => Error & { code: string; detail: string };
   DEFAULT_THRESHOLD_MS: number;
+  DOWNLOAD_HOSTS: readonly string[];
   EXIT: { OK: number; USAGE: number; NOT_INSTALLED: number; INSTALL_FAILED: number; ANALYSIS_FAILED: number };
   analyze: (options: Json) => AnalyzeResult;
+  compareVersions: (a: string, b: string) => number;
   currentInstallation: (home: string, manifest: Manifest, target: string) => { dir: string; executable: string } | null;
   dataHome: (env: Record<string, string | undefined>) => { home: string; source: string };
   detectTarget: (platform?: string, arch?: string) => string | null;
@@ -133,8 +136,10 @@ interface BeatGridModule {
 const {
   BeatGridError,
   DEFAULT_THRESHOLD_MS,
+  DOWNLOAD_HOSTS,
   EXIT,
   analyze,
+  compareVersions,
   currentInstallation,
   dataHome,
   detectTarget,
@@ -177,6 +182,29 @@ function firstSuggestion(plan: TimingPlan): Suggestion {
   const value = plan.suggestions[0];
   if (value === undefined) throw new Error('the plan has no suggestion');
   return value;
+}
+
+/** A fake fetch response with an async-iterable body and whatever final URL the test wants. */
+function fakeFetchResponse(bytes: Buffer | string, url: unknown) {
+  const chunk = Buffer.from(bytes);
+  return {
+    ok: true,
+    status: 200,
+    url,
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(chunk);
+        controller.close();
+      },
+    }),
+  };
+}
+
+/** The code of the BeatGridError a download throws. */
+async function downloadErrorCode(promise: Promise<unknown>): Promise<string> {
+  const caught = await promise.catch((error: unknown) => error);
+  expect(caught).toBeInstanceOf(BeatGridError);
+  return (caught as { code: string }).code;
 }
 
 /** A released copy of the manifest with every asset pinned to bytes this test controls. */
@@ -735,27 +763,169 @@ describe('the installer', () => {
       fs.rmSync(dir, { recursive: true, force: true });
     });
     const bytes = Buffer.from('asset bytes');
-    const fetchImpl = () => Promise.resolve(new Response(bytes, { status: 200 }));
+    const url = 'https://github.com/synchain-oss/opentune-beats/releases/download/v0.1.0/a.bin';
+    const fetchImpl = () => Promise.resolve(fakeFetchResponse(bytes, url));
     const file = path.join(dir, 'a.bin');
-    await downloadAsset('https://example.com/a.bin', file, sha256(bytes), 'asset a', { fetchImpl });
+    await downloadAsset(url, file, sha256(bytes), 'asset a', { fetchImpl });
     expect(fs.readFileSync(file)).toEqual(bytes);
 
     const bad = path.join(dir, 'b.bin');
-    await expect(
-      downloadAsset('https://example.com/b.bin', bad, 'e'.repeat(64), 'asset b', { fetchImpl }),
-    ).rejects.toThrow(/does not match the pinned/);
+    await expect(downloadAsset(url, bad, 'e'.repeat(64), 'asset b', { fetchImpl })).rejects.toThrow(
+      /does not match the pinned/,
+    );
     expect(fs.existsSync(bad)).toBe(false);
 
     await expect(
-      downloadAsset('https://example.com/c.bin', path.join(dir, 'c.bin'), sha256(bytes), 'asset c', {
+      downloadAsset(url, path.join(dir, 'c.bin'), sha256(bytes), 'asset c', {
         fetchImpl: () => Promise.resolve(new Response('no', { status: 404 })),
       }),
     ).rejects.toThrow(/HTTP 404/);
     await expect(
-      downloadAsset('https://example.com/d.bin', path.join(dir, 'd.bin'), sha256(bytes), 'asset d', {
+      downloadAsset(url, path.join(dir, 'd.bin'), sha256(bytes), 'asset d', {
         fetchImpl: () => Promise.reject(new Error('offline')),
       }),
     ).rejects.toThrow(/offline/);
+  });
+
+  describe('the download host allowlist', () => {
+    const RELEASE_URL = 'https://github.com/synchain-oss/opentune-beats/releases/download/v0.1.0/a.bin';
+    const bytes = Buffer.from('release bytes');
+
+    function downloadDir() {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ot-hosts-'));
+      cleanup.push(() => {
+        fs.rmSync(dir, { recursive: true, force: true });
+      });
+      return dir;
+    }
+
+    it('is a frozen allowlist of the GitHub release hosts', () => {
+      expect(Object.isFrozen(DOWNLOAD_HOSTS)).toBe(true);
+      expect([...DOWNLOAD_HOSTS].sort()).toEqual([
+        'github.com',
+        'objects.githubusercontent.com',
+        'release-assets.githubusercontent.com',
+      ]);
+    });
+
+    it('accepts a final URL on github.com and on the two asset hosts', async () => {
+      const dir = downloadDir();
+      const urls = [
+        RELEASE_URL,
+        'https://objects.githubusercontent.com/github-production-release-asset/1/a.bin?sig=test',
+        'https://release-assets.githubusercontent.com/github-production-release-asset/2/a.bin?sig=test',
+      ];
+      for (const [index, url] of urls.entries()) {
+        const file = path.join(dir, `ok-${String(index)}.bin`);
+        await expect(
+          downloadAsset(RELEASE_URL, file, sha256(bytes), 'asset a', {
+            fetchImpl: () => Promise.resolve(fakeFetchResponse(bytes, url)),
+          }),
+        ).resolves.toBe(sha256(bytes));
+        expect(fs.readFileSync(file)).toEqual(bytes);
+      }
+      // A real Response carries a read-only url; a redirect sets it the same way.
+      const responseFile = path.join(dir, 'ok-response.bin');
+      const response = Object.defineProperty(new Response(bytes, { status: 200 }), 'url', {
+        value: 'https://release-assets.githubusercontent.com/github-production-release-asset/3/a.bin',
+      });
+      await expect(
+        downloadAsset(RELEASE_URL, responseFile, sha256(bytes), 'asset a', {
+          fetchImpl: () => Promise.resolve(response),
+        }),
+      ).resolves.toBe(sha256(bytes));
+      expect(fs.readFileSync(responseFile)).toEqual(bytes);
+    });
+
+    it('refuses a redirect that leaves the allowed hosts, and writes nothing', async () => {
+      const dir = downloadDir();
+      const urls = [
+        'https://evil.example/synchain-oss/opentune-beats/releases/download/v0.1.0/a.bin',
+        'https://cdn.example.test/assets/a.bin',
+      ];
+      for (const [index, url] of urls.entries()) {
+        const file = path.join(dir, `redirect-${String(index)}.bin`);
+        expect(
+          await downloadErrorCode(
+            downloadAsset(RELEASE_URL, file, sha256(bytes), 'asset a', {
+              fetchImpl: () => Promise.resolve(fakeFetchResponse(bytes, url)),
+            }),
+          ),
+        ).toBe('DOWNLOAD_HOST');
+        expect(fs.existsSync(file)).toBe(false);
+      }
+    });
+
+    it('refuses a hostname that only looks like an allowed one', async () => {
+      const dir = downloadDir();
+      const hosts = [
+        'evil-github.com',
+        'github.com.evil.example',
+        'notgithub.com',
+        'githubusercontent.com',
+        'objects.githubusercontent.com.evil.example',
+      ];
+      for (const host of hosts) {
+        const file = path.join(dir, 'lookalike.bin');
+        expect(
+          await downloadErrorCode(
+            downloadAsset(RELEASE_URL, file, sha256(bytes), 'asset a', {
+              fetchImpl: () => Promise.resolve(fakeFetchResponse(bytes, `https://${host}/a.bin`)),
+            }),
+          ),
+        ).toBe('DOWNLOAD_HOST');
+        expect(fs.existsSync(file)).toBe(false);
+      }
+      // A host that only appears in the userinfo or the path is not the host that served it.
+      const userinfo = path.join(dir, 'userinfo.bin');
+      // Built from parts: written out, the URL looks like an e-mail address to the privacy scan.
+      const userinfoUrl = ['https://github.com', 'evil.example/a.bin'].join('@');
+      expect(
+        await downloadErrorCode(
+          downloadAsset(RELEASE_URL, userinfo, sha256(bytes), 'asset a', {
+            fetchImpl: () => Promise.resolve(fakeFetchResponse(bytes, userinfoUrl)),
+          }),
+        ),
+      ).toBe('DOWNLOAD_HOST');
+      expect(fs.existsSync(userinfo)).toBe(false);
+    });
+
+    it('fails closed on a missing, empty, unparseable or non-https final URL', async () => {
+      const dir = downloadDir();
+      const finals: unknown[] = [
+        undefined,
+        '',
+        '   ',
+        'not a url',
+        'github.com/synchain-oss/opentune-beats/a.bin',
+        'http://github.com/synchain-oss/opentune-beats/a.bin',
+        42,
+      ];
+      for (const [index, url] of finals.entries()) {
+        const file = path.join(dir, `closed-${String(index)}.bin`);
+        expect(
+          await downloadErrorCode(
+            downloadAsset(RELEASE_URL, file, sha256(bytes), 'asset a', {
+              fetchImpl: () => Promise.resolve(fakeFetchResponse(bytes, url)),
+            }),
+          ),
+        ).toBe('DOWNLOAD_HOST');
+        expect(fs.existsSync(file)).toBe(false);
+      }
+    });
+
+    it('still checks the sha256 after the host check', async () => {
+      const dir = downloadDir();
+      const file = path.join(dir, 'hash.bin');
+      expect(
+        await downloadErrorCode(
+          downloadAsset(RELEASE_URL, file, 'e'.repeat(64), 'asset a', {
+            fetchImpl: () => Promise.resolve(fakeFetchResponse(bytes, 'https://objects.githubusercontent.com/x/a.bin')),
+          }),
+        ),
+      ).toBe('CHECKSUM_MISMATCH');
+      expect(fs.existsSync(file)).toBe(false);
+    });
   });
 });
 
@@ -927,6 +1097,25 @@ describe('status', () => {
     expect(result.notes.join(' ')).toContain('not published yet');
   });
 
+  it('orders installations by semantic version, newest first', () => {
+    const home = tempHome();
+    cleanup.push(home.remove);
+    const manifest = loadManifest(MANIFEST_FILE);
+    for (const version of ['0.9.0-rc.2', '0.9.0', '0.10.0', '0.9.0-rc.10', '1.0.0']) {
+      const dir = path.join(home.dir, 'bin', `opentune-beats-${version}-win-x64`);
+      fs.mkdirSync(path.join(dir, 'models'), { recursive: true });
+      fs.writeFileSync(path.join(dir, executableName('win-x64')), 'x');
+    }
+    const result = status({ manifest, env: { OPENTUNE_BEATS_HOME: home.dir }, platform: 'win32', arch: 'x64' });
+    expect(result.installations.map((entry) => entry.version)).toEqual([
+      '1.0.0',
+      '0.10.0',
+      '0.9.0',
+      '0.9.0-rc.10',
+      '0.9.0-rc.2',
+    ]);
+  });
+
   it('works without a data folder and on an unsupported platform', () => {
     const manifest = loadManifest(MANIFEST_FILE);
     const noHome = status({ manifest, env: {}, platform: 'win32', arch: 'x64' });
@@ -936,6 +1125,21 @@ describe('status', () => {
     const linux = status({ manifest, env: { OPENTUNE_BEATS_HOME: os.tmpdir() }, platform: 'linux', arch: 'x64' });
     expect(linux.platform).toEqual({ target: null, supported: false });
     expect(linux.download).toBeNull();
+  });
+});
+
+describe('compareVersions', () => {
+  it('compares numeric parts, then prereleases by the semantic-version rules', () => {
+    expect(compareVersions('0.9.0', '0.10.0')).toBeLessThan(0);
+    expect(compareVersions('2.0.0', '2.0.0')).toBe(0);
+    expect(compareVersions('1.0.0', '1.0.0-rc.1')).toBeGreaterThan(0);
+    expect(compareVersions('1.0.0-rc.1', '1.0.0')).toBeLessThan(0);
+    // Dot-separated identifiers: numeric compared as numbers, alphanumeric lexically.
+    expect(compareVersions('1.0.0-rc.2', '1.0.0-rc.10')).toBeLessThan(0);
+    expect(compareVersions('1.0.0-alpha', '1.0.0-alpha.1')).toBeLessThan(0);
+    expect(compareVersions('1.0.0-1', '1.0.0-alpha')).toBeLessThan(0);
+    expect(compareVersions('1.0.0-alpha.1', '1.0.0-alpha.beta')).toBeLessThan(0);
+    expect(compareVersions('1.0.0-beta.11', '1.0.0-beta.2')).toBeGreaterThan(0);
   });
 });
 
@@ -999,16 +1203,17 @@ describe('the timing plan', () => {
     expect(flagged.adjustedDeviationMs).toBeCloseTo(-240, 1);
     expect(flagged.deltaMs).toBe(240);
     expect(flagged.segment).toMatchObject({ index: 0, bpm: 120, confidence: 0.9 });
-    expect(flagged.editTiming).toEqual({
-      clip: 'p:1234abcd:1:1',
-      expected_revision: 'r:1234abcd:1:1:abc',
-      ops: [{ op: 'shift', start_content_sec: 6.3, end_content_sec: 6.5, delta_ms: 240 }],
-    });
+    const op = { op: 'shift', start_content_sec: 6.3, end_content_sec: 6.5, delta_ms: 240 };
+    expect(flagged.op).toEqual(op);
+    // A suggestion carries its op and nothing that could be mistaken for a ready call.
+    expect(flagged).not.toHaveProperty('editTiming');
+    expect(flagged).not.toHaveProperty('clip');
+    expect(flagged).not.toHaveProperty('expected_revision');
     expect(plan.calls).toEqual([
       {
         clip: 'p:1234abcd:1:1',
         expected_revision: 'r:1234abcd:1:1:abc',
-        ops: [{ op: 'shift', start_content_sec: 6.3, end_content_sec: 6.5, delta_ms: 240 }],
+        ops: [op],
       },
     ]);
   });
@@ -1098,6 +1303,9 @@ describe('the timing plan', () => {
     const barePlan = timingPlan({ grid, notes: bare, gridOffsetSec: 0 });
     expect(barePlan.suggestions).toHaveLength(2);
     expect(barePlan.warnings.map((w) => w.code)).toEqual(expect.arrayContaining(['NO_CLIP', 'NO_REVISION']));
+    // Without one clip and one revision there is no call and no op to apply.
+    expect(barePlan.calls).toEqual([]);
+    expect(firstSuggestion(barePlan).op).toBeNull();
   });
 
   it('needs a timeline clock when the notes have none, and a grid with beats', () => {
@@ -1145,13 +1353,19 @@ describe('the timing plan', () => {
     expect(plan.suggestions).toHaveLength(10);
     expect(plan.calls).toHaveLength(1);
     expect(plan.calls[0]?.ops).toHaveLength(8);
+    expect(plan.calls[0]?.ops).toEqual(plan.suggestions.slice(0, 8).map((suggestion) => suggestion.op));
     expect(plan.calls[0]).toMatchObject({ expected_revision: 'r:1234abcd:1:1:abc' });
     expect(plan.calls[0]?.ops[0]).not.toHaveProperty('dry_run');
     expect(plan.counts).toEqual({ flagged: 10, calls: 1, remainingSuggestions: 2 });
-    // The ninth and tenth suggestions are listed, but carry no call: they are stale after a write.
-    expect(plan.suggestions[7]?.editTiming).not.toBeNull();
-    expect(plan.suggestions[8]?.editTiming).toBeNull();
-    expect(plan.suggestions[9]?.editTiming).toBeNull();
+    // Every suggestion carries its op; the ninth and tenth are not in `calls`, so after the first
+    // call changes the revision they are planned again from fresh notes.
+    expect(plan.suggestions[8]?.op).toBeDefined();
+    expect(plan.suggestions[9]?.op).toBeDefined();
+    for (const suggestion of plan.suggestions) {
+      expect(suggestion).not.toHaveProperty('editTiming');
+      expect(suggestion.op).not.toHaveProperty('clip');
+      expect(suggestion.op).not.toHaveProperty('expected_revision');
+    }
     const replan = plan.warnings.find((warning) => warning.code === 'REPLAN_AFTER_CALL') as { detail?: string };
     expect(replan.detail ?? '').toContain('2 more suggestion(s)');
     expect(replan.detail ?? '').toContain('run timing-plan again');
@@ -1181,14 +1395,21 @@ describe('the timing plan', () => {
 
   it('says that a mixed-clip plan has no call and needs one plan per clip', () => {
     const mixed = [
-      page([note(0, 0.6, 0.6)], { placementId: 'p:1234abcd:1:1' }),
-      page([note(1, 1.1, 1.1)], { placementId: 'p:1234abcd:2:1' }),
+      page([note(0, 0.6, 0.6), note(1, 0.62, 0.62)], { placementId: 'p:1234abcd:1:1' }),
+      page([note(2, 1.36, 1.36)], { placementId: 'p:1234abcd:2:1' }),
     ];
     const plan = timingPlan({ grid, notes: mixed, gridOffsetSec: 0 });
     const warning = plan.warnings.find((entry) => entry.code === 'MIXED_PLACEMENTS') as { detail?: string };
     expect(warning.detail ?? '').toContain('no ready call');
     expect(warning.detail ?? '').not.toContain('uses the last');
     expect(plan.calls).toEqual([]);
+    expect(plan.suggestions.length).toBeGreaterThan(0);
+    for (const suggestion of plan.suggestions) {
+      // No call can be made from a mixed plan, so there is no op to apply either.
+      expect(suggestion.op).toBeNull();
+      expect(suggestion).not.toHaveProperty('editTiming');
+      expect(suggestion).not.toHaveProperty('expected_revision');
+    }
   });
 });
 
@@ -1231,6 +1452,11 @@ describe('the command line', () => {
       grid: 'a.json',
       notes: 'n.json',
       'grid-offset-sec': '1.5',
+    });
+    expect(parseArgs(['analyze', 'a.wav', '--no-refine', '--min-segment-beats', '8'])).toEqual({
+      command: 'analyze',
+      options: { 'no-refine': true, 'min-segment-beats': '8' },
+      positionals: ['a.wav'],
     });
     expect(() => parseArgs(['nope'])).toThrow(/unknown command/);
     expect(() => parseArgs(['status', '--yes'])).toThrow(/unknown option/);
@@ -1381,6 +1607,121 @@ describe('the command line', () => {
     );
     const result = await run(['timing-plan', '--grid', gridFile, '--notes', notesFile, '--grid-offset-sec', '0']);
     expect(result.code).toBe(EXIT.OK);
+  });
+
+  it('passes --no-refine and --min-segment-beats through to the analyzer', async () => {
+    const home = tempHome();
+    cleanup.push(home.remove);
+    const manifest = loadManifest(MANIFEST_FILE);
+    const dir = fakeInstall(home.dir, manifest, 'win-x64', { grid: fakeGrid() });
+    const wav = path.join(home.dir, 'backing.wav');
+    fs.writeFileSync(wav, 'RIFF....WAVE');
+    const base = ['analyze', wav, '--model', 'final', '--models-dir', path.join(dir, 'models')];
+    const calls: string[][] = [];
+    const options = {
+      env: { OPENTUNE_BEATS_HOME: home.dir },
+      platform: 'win32',
+      arch: 'x64',
+      run: (_executable: string, args: string[]) => {
+        calls.push(args);
+        return { status: 0, stdout: JSON.stringify(fakeGrid()), stderr: '', signal: null, error: null };
+      },
+    };
+    const plain = await run(['analyze', wav], options);
+    expect(plain.code).toBe(EXIT.OK);
+    expect(calls[0]).toEqual(base);
+
+    const both = await run(['analyze', wav, '--no-refine', '--min-segment-beats', '16'], options);
+    expect(both.code).toBe(EXIT.OK);
+    expect(calls[1]).toEqual([...base, '--no-refine', '--min-segment-beats', '16']);
+
+    const valueOnly = await run(['analyze', wav, '--min-segment-beats=4'], options);
+    expect(valueOnly.code).toBe(EXIT.OK);
+    expect(calls[2]).toEqual([...base, '--min-segment-beats', '4']);
+
+    // An invalid value is a usage error before the analyzer runs.
+    for (const value of ['0', '-1', '2.5', 'many', '']) {
+      const invalid = await run(['analyze', wav, '--no-refine', '--min-segment-beats', value], options);
+      expect(invalid.code, `--min-segment-beats ${value}`).toBe(EXIT.USAGE);
+    }
+    expect(calls).toHaveLength(3);
+  });
+
+  it('installs end to end through main with a fake fetch and without the network', async () => {
+    const home = tempHome();
+    cleanup.push(home.remove);
+    const version = '0.1.0';
+    const executable = executableName('win-x64');
+    const archive = `opentune-beats-${version}-win-x64.zip`;
+    const files: Record<string, Buffer> = {
+      [archive]: zipStored([
+        { name: executable, data: Buffer.from(fakeAnalyzer({ grid: fakeGrid() })) },
+        { name: 'LICENSE', data: Buffer.from('MIT\n') },
+      ]),
+      'mel_spectrogram.onnx': Buffer.from('mel'),
+      'beat_this_final.onnx': Buffer.from('final'),
+      'beat_this_small.onnx': Buffer.from('small'),
+    };
+    const manifest = releasedManifest(files, version);
+    const fetched: string[] = [];
+    const fetchImpl = (url: string) => {
+      fetched.push(url);
+      const name = url.slice(url.lastIndexOf('/') + 1);
+      const bytes = files[name];
+      if (bytes === undefined) throw new Error(`the test has no bytes for ${url}`);
+      return Promise.resolve(
+        fakeFetchResponse(
+          bytes,
+          `https://objects.githubusercontent.com/github-production-release-asset/${name}?sig=test`,
+        ),
+      );
+    };
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(() => {
+      throw new Error('the real fetch must not be used');
+    });
+    cleanup.push(() => {
+      fetchSpy.mockRestore();
+    });
+    let out = '';
+    let err = '';
+    const code = await main(['install', '--yes', '--model', 'final'], {
+      manifest,
+      fetchImpl,
+      env: { OPENTUNE_BEATS_HOME: home.dir },
+      platform: 'win32',
+      arch: 'x64',
+      out: (text: string) => (out += text),
+      err: (text: string) => (err += text),
+      selfCheck: () => 'opentune-beats 0.1.0 (beat-this 1.1.0)',
+    });
+    expect(code).toBe(EXIT.OK);
+    const result = JSON.parse(out) as Json;
+    const dir = installDir(home.dir, manifest, 'win-x64');
+    expect(result).toMatchObject({
+      schemaVersion: 1,
+      ok: true,
+      command: 'install',
+      dir,
+      executable: path.join(dir, executable),
+      version,
+      versionLine: 'opentune-beats 0.1.0 (beat-this 1.1.0)',
+      model: 'final',
+      models: { mel: true, final: true, small: false },
+      replaced: false,
+    });
+    expect(fs.existsSync(path.join(dir, executable))).toBe(true);
+    expect(fs.readdirSync(path.join(dir, 'models')).sort()).toEqual(['beat_this_final.onnx', 'mel_spectrogram.onnx']);
+    const metadata = JSON.parse(fs.readFileSync(path.join(dir, 'install.json'), 'utf8')) as Json;
+    expect(metadata).toMatchObject({ tool: 'opentune-beats', version, target: 'win-x64', source: 'download' });
+    expect((metadata.sha256 as Json).program).toBe(sha256(bufferOf(files, archive)));
+    // The three assets came from the fake fetch, and the real one was never called.
+    expect(fetched).toEqual([
+      asset(manifest.platforms, 'win-x64').url,
+      asset(manifest.models, 'mel').url,
+      asset(manifest.models, 'final').url,
+    ]);
+    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(err).toContain('installed');
   });
 
   it('builds a timing plan from the two files', async () => {

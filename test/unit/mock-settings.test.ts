@@ -99,6 +99,25 @@ describe('prefs.set', () => {
     session.mock.given({ dialogs: [{ kind: 'preferences' }] });
     expect((await session.fails('prefs.set', { hybridMode: true })).data).toMatchObject({ reason: 'modal_open' });
   });
+
+  it('fails the scheme job with BUSY when a dialog opened after the call, and changes no preference', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    const before = await processing(session);
+    const started = await ok('prefs.set', { editingScheme: 'openDyne', tuningHz: 442 });
+    expect(started).toMatchObject({ applied: false, job: { kind: 'prefsApply' } });
+    // The dialog opens between the call and the job's first step.
+    mock.setBusy({ modalOpen: true });
+    clock.advance(0);
+    const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+      job: { state: string; result: unknown; error: { data: Record<string, unknown> } | null };
+    };
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ kind: 'BUSY', reason: 'modal_open', retryable: true, executed: false });
+    mock.setBusy({ modalOpen: false });
+    expect(await processing(session)).toEqual(before);
+  });
 });
 
 describe('audio.get and audio.set', () => {

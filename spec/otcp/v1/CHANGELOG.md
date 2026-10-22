@@ -2,6 +2,28 @@
 
 All notable changes to the OTCP specification are recorded here. Versions follow `MAJOR.MINOR.PATCH` (README.md, "Versions"); each released version is tagged `spec-v<version>`.
 
+## [1.0.0-rc.5] - unreleased
+
+Fifth release candidate of protocol major 1, proposed as the text of 1.0.0. It records what implementing rc.4 in OpenTune showed: a job that checks the busy state again, two refusals of hidden tracks and of a missing editor window that the text did not name, the first-run overlay in a real window, and two sentences of rc.4 that said less or more than intended. The wire version stays `1.0`; no member, method, capability, error kind or warning code is added, renamed or removed; one reason is appended.
+
+### Added
+
+- Vector `track/duplicate-track-hidden`: duplicating a hidden track fails with `INVALID_ARGUMENT(track_hidden)`.
+- Vector `prefs/set-job-failures`: how `job.get` reports a `prefsApply` job that failed its second busy check with `BUSY(modal_open)`.
+- Reason `no_editor_window` (`UNSUPPORTED`, not retryable): a method that acts through the editor window while no editor exists (section 7 rule 6).
+
+### Changed
+
+- PROTOCOL.md section 7 rule 6 (new): the methods that act through the OpenTune editor window (those of `ui.bridge`, `track.add`, `track.duplicate`, `track.delete`, `project.save`, `project.saveAs`, `project.open` and `audio.set`) fail with `UNSUPPORTED(no_editor_window)`, `executed` false, while no editor exists, for example in a window-less run of a test build, although the instance reports their capabilities. The other methods work without an editor. Section 3.3 rule 5 case 10, the new reason `no_editor_window` and vectors/README.md ("Reproducibility") refer to it.
+- `prefs.set`: the `prefsApply` job checks the busy state again before its first step, so a modal dialog that opened after the call was accepted fails it with `BUSY(modal_open)`, `executed` false, and no preference changes. `x-otcp.jobErrors` lists `BUSY`.
+- `track.duplicate`: OpenTune offers Duplicate Track only for a visible track, so a hidden source track fails with `INVALID_ARGUMENT(track_hidden)`. The description of the reason `track_hidden` now covers duplication as well as deletion; the code is unchanged.
+- `ui.dismiss`: OpenTune marks onboarding as shown once the first-run overlay shows its choice, so closing a showing overlay usually changes the view only (`changes` empty, no warning, undo reason `not_persisted_state`, revert null, not a no-op). Only where onboarding was not yet marked as shown does the result list the preference with `IRREVERSIBLE`, as `ui/dismiss-onboarding-close` shows. vectors/README.md says when the precondition `onboarding: showing` holds.
+
+### Fixed
+
+- PROTOCOL.md section 12.6 rule 1: a job whose alignment data already exists is exempt from rules 2 and 3 only. Rule 4 applies to every job that fails and rule 5 to every job of `content.autoTune`, as the schema of `content.autoTune` says; rc.4 exempted such a job from rule 4 as well, although it can still fail, for example with `REVISION_CONFLICT`, and then changes no note.
+- PROTOCOL.md section 9: `trackIdMap` lists the deleted track and the tracks that moved, never a hidden track slot, as the description of `track.delete` says since rc.4.
+
 ## [1.0.0-rc.4] - unreleased
 
 Fourth release candidate of protocol major 1, the last planned before 1.0.0. It gathers what implementing the arrangement, track, transport and interface methods in OpenTune and checking them against a real build showed: reasons for the one failure that had none, and places where the text or the vectors differed from what OpenTune does. The wire version stays `1.0`, and no member, method or capability is added or removed.

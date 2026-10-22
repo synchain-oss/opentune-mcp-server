@@ -202,6 +202,10 @@ const duplicate: Handler = (context) => {
   const { world, params } = context;
   const source = slot(world, params.trackId as number);
   checkNotBusy(context);
+  // OpenTune offers Duplicate Track only for a visible track.
+  if (source.trackId >= world.visibleTrackCount) {
+    throw refuse('INVALID_ARGUMENT', 'track_hidden', 'a hidden track cannot be duplicated');
+  }
   const newTrackId = world.visibleTrackCount;
   if (newTrackId >= TRACK_SLOTS) {
     throw refuse('INVALID_ARGUMENT', 'track_limit', 'every track slot is visible, so there is no slot for the copy');

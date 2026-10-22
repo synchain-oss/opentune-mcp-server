@@ -163,7 +163,6 @@ export class JobStore {
       error = makeError(this.spec, {
         kind: spec.error?.kind ?? 'INTERNAL',
         ...(spec.error?.reason === undefined ? {} : { reason: spec.error.reason }),
-        ...(spec.error?.reason === 'reference_analysis_stalled' ? { retryable: false } : {}),
         detail: `the ${spec.kind} job failed`,
       });
     }

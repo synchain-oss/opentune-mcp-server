@@ -62,6 +62,11 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- OTCP specification `1.0.0-rc.5` (unreleased), proposed as the text of 1.0.0: the methods that need the OpenTune
+  editor window answer `UNSUPPORTED(no_editor_window)` (a new reason) while there is none, the `prefsApply` job of `prefs.set`
+  checks the busy state again (`BUSY` in its job errors), duplicating a hidden track fails with `track_hidden`,
+  closing a first-run overlay that already marked onboarding as shown changes the view only, and two corrections of
+  the reference-job and track-id text. The mock follows (test hook `showOnboarding`).
 - OTCP specification `1.0.0-rc.4` (unreleased): the reasons `reference_analysis_stalled`,
   `reference_analysis_timeout` and `reference_analysis_failed` for the reference analysis jobs, and corrections of
   the selection, track deletion, split and merge text and vectors to what OpenTune does. The mock follows (fault
@@ -95,7 +100,7 @@ versioned separately and has its own changelog.
   while the bare id already is the 1M-context model), it requires a session header, and PR-Agent
   v0.39.0 does not implement `config.max_output_tokens`, so the output cap comes from
   `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS` instead. The `base == 'dev'` gate and the
-  `ENABLE_PR_AGENT` switch already existed and are unchanged by this PR. (#63)
+  `ENABLE_PR_AGENT` switch already existed and are unchanged. (#63)
 - Documentation: the READMEs (English and Chinese) list all 27 tools by group, say which ones are marked destructive and
   which arguments need the user's agreement, add example prompts for moving and fading a clip, muting a track and saving
   a project under a new name, and give the known limits of undo, saving and the reference analysis. The DAW and WSL
@@ -103,6 +108,43 @@ versioned separately and has its own changelog.
   real-OpenTune set and how to judge it (what counts as a pass, the settings guard, the known upstream defect),
   `docs/COMPATIBILITY.md` lists the capabilities each tool needs, `docs/install.md` has a WSL section, and the
   hybrid-mode section of the troubleshooting guide mentions `opentune_set_settings`.
+- The real-OpenTune runs are stricter about their own clean-up and about what they print. The watch of the real
+  user's settings folder counts a file that is deleted between listing and reading as gone, instead of failing with
+  an ENOENT that names the full path, and a comparison that does fail shows the home folder as `~`. In the wave-B
+  boundary scenario, a rename back of the moved media that fails no longer replaces the result of the missing-media
+  step: it is listed as a manual check next to it. New unit tests cover each of these, and the arrangement effects
+  scenario has a test for a split whose two clips cannot be found after an applied merge.
+
+### Fixed
+
+- Revert lines now ask for the user's agreement where the way back is itself irreversible: restoring a deleted track
+  says to add `confirm: true` only after the user agrees, and a restore that would split, merge or delete together
+  with other clip edits is left to the user in the OpenTune window instead of being offered as a call the tool would
+  refuse.
+- A restore that can only put part of a change back says so: values of the recipe outside the range a tool accepts
+  are named as omitted in the revert line and in the first sentence of the result, so a partial restore is never
+  mistaken for a full one.
+- Every irreversible clip split, merge or delete says so in the first sentence of its result, also when OpenTune does
+  not report its undo defect for that call.
+- The first sentence of a structural edit and its revert line read the revert recipe the same way: a recipe that is
+  not in the protocol's form is no way back, so the first sentence no longer promises a restore that the revert line
+  does not.
+- `opentune_edit_arrangement` copies a clip that `clips` names twice only once, and the summary of a call with several
+  requests no longer repeats "not undoable" once per request.
+- `opentune_transport` is no longer marked idempotent: `play_from_last_start` seeks back to the last start on every
+  call, also while playback runs.
+- The `tuning-workflow` skill covers the arrangement, track, transport, window and settings tools, including who has
+  to agree before a clip split, merge or delete and that a changed global setting is restored when the step is done.
+- The `beat-grid` skill installs the analyzer only when the download stays on GitHub release hosts (the checksum
+  remains the trust anchor), exposes `--no-refine` and `--min-segment-beats`, gives each timing suggestion as a single
+  op instead of a call that would reuse a stale revision, explains what to do when the user rejects a plan, and sorts
+  installed analyzer versions by version rather than by text.
+- The errors of a reference analysis that does not complete tell what to do next: `reference_analysis_stalled` (not
+  retryable) asks the user to save the project and restart OpenTune, `reference_analysis_timeout` (retryable) says to
+  wait a little and call again, and `reference_analysis_failed` says to choose another reference clip or have the
+  reference audio checked.
+- A tool error for an instance that does not serve this server's protocol major (`PROTOCOL_MISMATCH`) now lists the majors
+  the instance's discovery file announces, in the optional member `protocolMajors`, as the status already did.
 
 ## [0.1.0] - 2026-10-17
 

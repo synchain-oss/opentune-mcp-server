@@ -5,7 +5,7 @@
 // test/support/settings-guard.ts): snapshot, difference report, byte-exact restore, and the read-only
 // watch of the real user's folder. Everything happens in temporary folders; no real folder is touched.
 
-import { mkdir, mkdtemp, readFile, rm, utimes, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -251,6 +251,31 @@ describe('the read-only watch of the real user folder', () => {
     ]);
     await rm(path.join(dir, 'third.settings'));
     expect(diffStats(await watchStats(dir), {})).toContain('OpenTune.settings: disappeared');
+  });
+
+  it('a file that is deleted between the listing and the stat counts as gone, not as an error', async () => {
+    const dir = await tempDir();
+    await fill(dir);
+    const before = await watchStats(dir);
+    // The stat of the first file runs after the file was deleted: the real ENOENT, with the full path in it.
+    const racing = async (file: string) => {
+      if (file.endsWith('OpenTune.settings')) await rm(file);
+      return stat(file);
+    };
+    const after = await watchStats(dir, racing);
+    expect(Object.keys(after)).toEqual(['app-preferences.settings']);
+    expect(diffStats(before, after)).toEqual(['OpenTune.settings: disappeared']);
+    // Once it is gone, the next reading no longer lists it and says nothing about it.
+    expect(diffStats(after, await watchStats(dir))).toEqual([]);
+  });
+
+  it('every other error of the stat is thrown as it is', async () => {
+    const dir = await tempDir();
+    await fill(dir);
+    const locked = () => Promise.reject(Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }));
+    await expect(watchStats(dir, locked)).rejects.toThrow('EACCES: permission denied');
+    const odd = () => Promise.reject(new Error('no code at all'));
+    await expect(watchStats(dir, odd)).rejects.toThrow('no code at all');
   });
 
   it('knows the settings folders of each platform (the per-user data and the state folder) and none without a home', () => {

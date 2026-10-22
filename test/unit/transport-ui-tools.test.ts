@@ -139,6 +139,21 @@ describe('opentune_transport', () => {
     expect(firstSentence(result.summary)).toMatch(/^opentune_transport: 3 requests ran in this order \(not undoable:/);
   });
 
+  it('names every flag once: the parts do not repeat what the first sentence already says', async () => {
+    const { mock, ctx } = await setup();
+    mock.given({ clips: [clip()], audio: { running: true } });
+    const result = body(await transport(ctx, { action: 'seek', position_sec: 1, bpm: 100, loop: true }));
+    const [first = '', ...parts] = result.summary.split('reported separately in results. ');
+    expect(first).toContain('not undoable');
+    // The two requests have different reasons; neither is repeated in the numbered parts.
+    expect(first.match(/not undoable/g)).toHaveLength(2);
+    expect(parts.join(' ')).not.toContain('not undoable');
+    // The parts still report the changes, and each entry of results keeps its own first sentence.
+    expect(parts.join(' ')).toMatch(/1\. changed 1 tempo/);
+    const results = result.results as { summary: string }[];
+    expect(results.some((entry) => entry.summary.includes('not undoable'))).toBe(true);
+  });
+
   it('checks the arguments before sending anything', async () => {
     const { mock, ctx } = await setup();
     mock.given({ clips: [clip()] });
@@ -176,7 +191,8 @@ describe('opentune_transport', () => {
     expect(transportTool.annotations).toMatchObject({
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: true,
+      // play_from_last_start seeks back to the last start on every call, also while playing.
+      idempotentHint: false,
     });
   });
 });

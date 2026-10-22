@@ -80,7 +80,9 @@ other versions or a checksum you guessed.
    it prints only the input, the model, the parameters, the segments (start, end, BPM, time signature,
    confidence, octave note, fit residual), the tempo changes, the refinement and the warnings. Read the
    summary, then the full file only for the part that matters. `--model small` is faster and a little
-   less accurate; use it when the user chose it.
+   less accurate; use it when the user chose it. `--no-refine` turns off the analyzer's beat
+   refinement (useful when it moves what the user heard), and `--min-segment-beats <n>` sets the
+   shortest constant-tempo segment it reports; both go to `opentune-beats` unchanged.
 3. **Give the tempo per section, then ask.** The analyzer splits the song into constant-tempo
    segments. Combine that with the other evidence you have:
    - section labels and times from a `lyrics-timeline` result, when the user has one;
@@ -113,10 +115,12 @@ other versions or a checksum you guessed.
 3. **Make the plan.** `node "${CLAUDE_SKILL_DIR}/scripts/beat-grid.mjs" timing-plan --grid "$TEMP/grid.json" --notes "$TEMP/notes.json" --grid-offset-sec 0 --threshold-ms 30 --subdivision 1`
    The plan removes the singer's overall lead or lag first (the median deviation), then lists every
    note that is still off by at least the threshold, with its deviation in ms, the nearest grid
-   point, its segment (BPM and confidence) and, when the notes file has one clip and one revision, a
-   ready `opentune_edit_timing` call. `calls` holds at most one call: the first suggestions (up to 8
-   ops) with their `expected_revision`. The other suggestions are listed without a call, and
-   `counts.remainingSuggestions` and the `REPLAN_AFTER_CALL` warning say how many. The ranges use the content clock, the matching uses the
+   point, its segment (BPM and confidence) and the shift it would take (`op`). Each suggestion
+   carries only its `op`, never a call, and `op` is `null` when no call can be made at all. When the
+   notes file has one clip and one revision, `calls` holds at most one ready `opentune_edit_timing`
+   call: the first suggestions' `op` values (up to 8) with their `expected_revision`. The other
+   suggestions are listed with their `op` but no call, and `counts.remainingSuggestions` and the
+   `REPLAN_AFTER_CALL` warning say how many. The ranges use the content clock, the matching uses the
    timeline clock.
    - Start at `--threshold-ms 30`. Raising it corrects less; lowering it corrects more, including
      expressive timing. Ask the user which they want when the style is not obvious.
@@ -134,14 +138,20 @@ other versions or a checksum you guessed.
    report "on the beat".
 5. **Apply with `opentune_edit_timing`, one call at a time.** The tool has no dry run: the plan is
    the preview. Tell the user what `calls[0]` would move and by how much, wait for their agreement,
-   then call `opentune_edit_timing` with exactly that `clip`, `expected_revision` and `ops`. The
-   time grid must already have handles; without them the tool answers `NOT_READY`
-   (`grid_not_seeded`) and suggests `op seed`, which changes the grid and cannot be undone: ask
-   before seeding. A write moves the notes and changes the revision, so the plan is stale after
-   it. When `counts.remainingSuggestions` is above 0, read the notes again with
+   then call `opentune_edit_timing` with exactly that `clip`, `expected_revision` and `ops`. Never
+   issue one call per suggestion. The time grid must already have handles; without them the tool
+   answers `NOT_READY` (`grid_not_seeded`) and suggests `op seed`, which changes the grid and cannot
+   be undone: ask before seeding. A write moves the notes and changes the revision, so the plan is
+   stale after it. When `counts.remainingSuggestions` is above 0, read the notes again with
    `opentune_get_notes`, run `timing-plan` again, and show the new plan; never reuse the old
    suggestions or a revision from before a write. On `REVISION_CONFLICT` (`grid_changed`), read the
    project and the notes again and make a new plan.
+   - If the user accepts only some of the suggestions, do not reuse the old plan as it is: call once
+     with `calls[0].ops` minus the rejected ops, and the same `clip` and `expected_revision`. It is
+     still one call.
+   - If the user rejects the whole call, do not reuse the old plan and do not propose the same ops
+     again: remove the rejected notes from the saved notes JSON (or use another threshold) and run
+     `timing-plan` again before proposing anything.
 6. **Report** which notes moved, by how much, in which segments, and what the user should listen to.
    Timing edits change when a syllable starts, not how it sounds; say so when the user expects a
    pitch change.

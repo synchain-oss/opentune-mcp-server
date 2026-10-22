@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { Json } from '../../src/otcp/client.js';
 import { encodeArrangementRevision, encodeClipRevision } from '../../src/otcp/tokens.js';
 import { MAX_TABLE_ROWS, isWriteEnvelope, renderWrite, writeBody, writeOutcome } from '../../src/render/index.js';
-import { RESTORABLE_METHODS, revertPlan } from '../../src/render/revert.js';
+import { RESTORABLE_METHODS, revertPlan, revertText } from '../../src/render/revert.js';
 import { SIDE_EFFECT_TEXT, UNDO_REASON_TEXT, WARNING_TEXT, token, undoReasonText } from '../../src/render/text.js';
 import { TOOLS } from '../../src/tools/index.js';
 import { WRITE_RESULT_OUTPUT } from '../../src/tools/registry.js';
@@ -349,10 +349,97 @@ describe('revert recipes as tool calls', () => {
       text:
         'Not undoable (OpenTune records no undo entry for this, as in its own interface). Only after the user ' +
         'explicitly agrees to restore it: call opentune_delete_track with the arguments in restore, adding ' +
-        'expected_revision: the latest arrangement_revision of opentune_get_project.',
+        'expected_revision: the latest arrangement_revision of opentune_get_project, adding confirm: true.',
       restore: { tool: 'opentune_delete_track', arguments: { track_id: 4 } },
     });
     expect(r.summary).toContain('can be restored with opentune_delete_track only after the user explicitly agrees');
+    // The consent argument is not part of the call: confirm: true is added only once the user agreed.
+    expect(r.lines.at(-1)).toMatchObject({ restore: { arguments: { track_id: 4 } } });
+    expect(JSON.stringify(r.summary)).not.toContain('track_id');
+    // Also without requiresConsent in the recipe, a track deletion restore cannot be undone either.
+    const plain = revertPlan({ method: 'track.delete', params: { trackId: 4, expectedArrangementRevision: 'a1' } });
+    expect(plain).toMatchObject({ kind: 'tool', consent: true, consentArgument: 'confirm', needsRevision: true });
+    expect(revertText(plain)).toContain('adding confirm: true');
+  });
+
+  it('says when a restore is only partial, naming the values the tool cannot take', () => {
+    // A fade the recipe names but the tool cannot take (a negative length): the other fade is restored.
+    const fade = revertPlan({
+      method: 'arrangement.edit',
+      params: {
+        expectedArrangementRevision: 'a7',
+        ops: [{ op: 'setFade', placementId: 'p:01234567:0:4', fadeInSec: -1, fadeOutSec: 0.5 }],
+      },
+    });
+    expect(fade).toMatchObject({
+      kind: 'tool',
+      omitted: true,
+      call: { arguments: { ops: [{ op: 'fade', clip: 'p:01234567:0:4', fade_out_sec: 0.5 }] } },
+    });
+    const reopened = render({
+      changes: [change('preference')],
+      undo: {
+        undoable: false,
+        reason: 'ui_parity',
+        revert: { method: 'prefs.set', params: { tuningHz: 900, hybridMode: true } },
+      },
+    });
+    expect(reopened.summary).toContain(
+      'some values of the recipe are outside what the tool takes and are omitted, so only part of the change can be ' +
+        'restored',
+    );
+    expect(reopened.lines.at(-1)).toMatchObject({
+      text: expect.stringContaining(
+        'Some values of the recipe are outside what the tool takes and are omitted, so this restores only part of the ' +
+          'change.',
+      ) as string,
+      restore: { tool: 'opentune_set_settings', arguments: { processing: { hybrid_mode: true } } },
+    });
+    // An audio device member the tool cannot take is reported the same way, and a complete recipe says nothing.
+    const audio = render({
+      changes: [change('audioDevice')],
+      undo: {
+        undoable: false,
+        reason: 'ui_parity',
+        revert: { method: 'audio.set', params: { outputDevice: '', sampleRateHz: 48000 } },
+      },
+    });
+    expect(audio.summary).toContain('are omitted');
+    expect(audio.lines.at(-1)).toMatchObject({
+      restore: { arguments: { audio_device: { sample_rate_hz: 48000 } } },
+    });
+    const whole = render({
+      changes: [change('track')],
+      undo: {
+        undoable: false,
+        reason: 'ui_parity',
+        revert: { method: 'track.set', params: { tracks: [{ trackId: 1, muted: true }] } },
+      },
+    });
+    expect(whole.summary).not.toContain('omitted');
+    expect(revertPlan({ method: 'prefs.set', params: { tuningHz: 442 } })).toMatchObject({ omitted: false });
+  });
+
+  it('leaves a restore that mixes a structural op with other ops to the user', () => {
+    const P = 'p:01234567:0:4';
+    const Q = 'p:01234567:0:5';
+    const recipe = (op: Json, other: Json) => ({
+      method: 'arrangement.edit',
+      params: { expectedArrangementRevision: 'a7', ops: [op, other] },
+    });
+    const gain = { op: 'setGain', placementId: Q, gainDb: -3 };
+    for (const op of [
+      { op: 'split', placementId: P, atTimelineSec: 3 },
+      { op: 'merge', leadingPlacementId: P, trailingPlacementId: Q },
+      { op: 'delete', placementIds: [P] },
+    ]) {
+      // The tool refuses a structural op together with any other op, so the restore is not offered.
+      expect(revertPlan(recipe(op, gain)), op.op).toEqual({ kind: 'manual', consent: false });
+      expect(revertPlan({ ...recipe(op, gain), requiresConsent: true }), op.op).toEqual({
+        kind: 'manual',
+        consent: true,
+      });
+    }
   });
 
   it('leaves recipes of tracks, tempo and selection to the user when no tool call fits them', () => {
@@ -389,6 +476,7 @@ describe('revert recipes as tool calls', () => {
     for (const track of [
       { trackId: 1, muted: true, colour: 'not-a-colour' },
       { trackId: 1, muted: true, volumeDb: 60 },
+      { trackId: 1, muted: true, volumeDb: -6, volumeLinear: 1 },
       { trackId: 1, muted: true, volumeLinear: 9 },
       { trackId: 1, muted: true, pan: 0.5 },
       { trackId: 1, muted: 'yes' },
