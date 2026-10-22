@@ -43,6 +43,13 @@ export async function runExeVector(
   return { id: outcome.id, result: 'FAIL', note: `${problems.join('; ')} (the vector itself: ${itself})`, ...kept };
 }
 
+/** One vector of the result file that scripts/vector-coverage.mjs reads. */
+export const vectorRow = (o: Outcome): { id: string; status: Outcome['result']; reason?: string } => ({
+  id: o.id,
+  status: o.result,
+  ...(o.note === '' ? {} : { reason: o.note }),
+});
+
 export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
   describe('contract vectors against the exe', () => {
     let target: ExeTarget;
@@ -99,6 +106,10 @@ export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
       if (file !== undefined && file !== '') {
         mkdirSync(path.dirname(file), { recursive: true });
         const summary = {
+          runner: 'exe',
+          // The build under test: set OTCP_TARGET_COMMIT to its commit; vector-coverage.mjs prints it.
+          commit: env.OTCP_TARGET_COMMIT ?? 'unknown',
+          vectors: outcomes.map(vectorRow),
           total: outcomes.length,
           pass: count('PASS'),
           fail: count('FAIL'),

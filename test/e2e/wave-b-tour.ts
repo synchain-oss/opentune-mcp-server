@@ -1654,9 +1654,10 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
           .filter((name) => startSetup[name] !== undefined && startSetup[name] !== null)
           .map((name) => [name, startSetup[name]]),
       );
-      let restored = false;
+      let restored: boolean;
       try {
         await t.call('write', 'audio.set', retry);
+        t.reads.clear();
         restored =
           differences(startSetup, pick(objectMember(await t.reads.audio(), 'device', 'audio.get'), DEVICE_MEMBERS))
             .length === 0;
