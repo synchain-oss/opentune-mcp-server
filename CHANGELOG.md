@@ -95,7 +95,7 @@ versioned separately and has its own changelog.
   while the bare id already is the 1M-context model), it requires a session header, and PR-Agent
   v0.39.0 does not implement `config.max_output_tokens`, so the output cap comes from
   `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS` instead. The `base == 'dev'` gate and the
-  `ENABLE_PR_AGENT` switch already existed and are unchanged by this PR. (#63)
+  `ENABLE_PR_AGENT` switch already existed and are unchanged. (#63)
 
 ## [0.1.0] - 2026-10-17
 
