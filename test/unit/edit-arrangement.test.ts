@@ -11,7 +11,13 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import type { OtcpSession } from '../../src/otcp/client.js';
 import { encodeArrangementRevision, encodeClipRevision } from '../../src/otcp/tokens.js';
-import { ERROR_STEPS, MAX_OPS, editArrangementTool, planRequest } from '../../src/tools/edit-arrangement.js';
+import {
+  ERROR_STEPS,
+  MAX_OPS,
+  editArrangementTool,
+  planRequest,
+  structuralLead,
+} from '../../src/tools/edit-arrangement.js';
 import { undoTool } from '../../src/tools/history.js';
 import { getProject } from '../../src/tools/project.js';
 import { render, type Outcome } from '../../src/tools/registry.js';
@@ -374,6 +380,10 @@ describe('what may share a call', () => {
         expectedArrangementRevision: 'a1',
       },
     });
+    // A list that names one clip twice copies it once, first occurrence first.
+    expect(plan([{ ...copy, clips: [A, B, A] }])).toMatchObject({
+      params: { sources: [{ placementId: A }, { placementId: B }] },
+    });
   });
 
   it('sends nothing for a refused call', async () => {
@@ -639,5 +649,66 @@ describe('results from an instance that misbehaves', () => {
       await edit(env, { expected_revision: revision, ops: [{ op: 'gain', clip: id(env, 'a'), gain_db: 0 }] }),
     );
     expect(error).toMatchObject({ kind: 'INTERNAL', executed: null });
+  });
+});
+
+describe('the first sentence of an irreversible structural edit', () => {
+  const irreversible = (extra: Record<string, unknown> = {}) => ({
+    dryRun: false,
+    undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
+    warnings: [{ code: 'IRREVERSIBLE', subject: null, data: null }],
+    ...extra,
+  });
+
+  it('says so for every structural kind, also when the instance reports no undo defect', () => {
+    for (const kind of ['split', 'merge', 'delete']) {
+      const lead = structuralLead(kind, irreversible());
+      expect(lead, kind).toContain(`this ${kind} cannot be undone or restored by any request`);
+      expect(lead, kind).toContain('only after the user explicitly agreed');
+    }
+    expect(structuralLead('delete', irreversible())).toContain('removing clips needs confirm: true');
+    // A change that is undoable, or that changed nothing, claims nothing.
+    expect(structuralLead('split', { undo: { undoable: true, undoId: 'u:01234567:4' }, warnings: [] })).toBeNull();
+    expect(
+      structuralLead('merge', { undo: { undoable: false, reason: 'no_op', revert: null }, warnings: [] }),
+    ).toBeNull();
+    expect(structuralLead('delete', { undo: null, warnings: [] })).toBeNull();
+    // The undo defect keeps its longer explanation, and a preview says what applying it would do.
+    expect(
+      structuralLead('delete', { undo: { undoable: false, reason: 'upstream_undo_defect' }, warnings: [] }),
+    ).toContain('OpenTune frees objects its own undo entry needs');
+    expect(structuralLead('delete', { dryRun: true })).toContain('cannot be undone');
+  });
+
+  it('puts it in the summary of a delete result that carries IRREVERSIBLE but no defect', async () => {
+    const env = await setup();
+    const revision = await env.revision();
+    env.session.call = () =>
+      Promise.resolve({
+        applied: true,
+        noOp: false,
+        dryRun: false,
+        changes: [],
+        created: [],
+        removed: [{ entity: 'placement', ref: { placementId: id(env, 'a') }, label: null }],
+        idMap: [],
+        revisionDiff: { arrangement: { before: 'a1', after: 'a2' }, trackState: null, contents: [] },
+        tokens: { arrangementRevision: 'a2', contents: [], placements: [] },
+        undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
+        dirty: { before: true, after: true },
+        ui: null,
+        sideEffects: {},
+        warnings: [{ code: 'IRREVERSIBLE', subject: null, data: null }],
+        job: null,
+      });
+    const out = body(
+      await edit(env, {
+        expected_revision: revision,
+        ops: [{ op: 'delete', clips: [id(env, 'a')] }],
+        confirm: true,
+      }),
+    );
+    expect(firstSentence(out.summary)).toContain('cannot be undone or restored by any request');
+    expect(firstSentence(out.summary)).toContain('removing clips needs confirm: true');
   });
 });

@@ -36,6 +36,8 @@ export type RevertPlan =
       readonly consent: boolean;
       /** The argument by which the tool takes the user's consent, added only once the user agreed. */
       readonly consentArgument?: string;
+      /** A value of the recipe is outside what the tool takes and is left out: the restore is partial. */
+      readonly omitted: boolean;
     };
 
 interface Mapped {
@@ -45,6 +47,8 @@ interface Mapped {
   readonly consent?: true;
   readonly consentArgument?: string;
   readonly revisionKind?: 'clip' | 'arrangement';
+  /** A value the recipe names is outside what the tool takes and is left out. */
+  readonly omitted?: true;
 }
 
 const isInt = (value: unknown, min: number, max: number): value is number =>
@@ -70,10 +74,18 @@ const isSec = (value: unknown): value is number => typeof value === 'number' && 
 const clipOf = (value: unknown): string | null => token(value, 'placementId');
 
 /** One op of an arrangement.edit recipe as opentune_edit_arrangement takes it, or null. */
-function clipOp(op: unknown): Json | null {
-  if (!isObject(op)) return null;
+interface ClipOp {
+  readonly op: Json;
+  /** A value the recipe named is outside what the tool takes, so it is left out of `op`. */
+  readonly omitted: boolean;
+}
+
+function clipOp(raw: unknown): ClipOp | null {
+  if (!isObject(raw)) return null;
+  const op = raw;
   const clip = clipOf(op.placementId);
-  const withClip = (rest: Json | null): Json | null => (clip === null || rest === null ? null : { clip, ...rest });
+  const withClip = (rest: Json | null): ClipOp | null =>
+    clip === null || rest === null ? null : { op: { clip, ...rest }, omitted: false };
   switch (op.op) {
     case 'move': {
       const track =
@@ -97,10 +109,21 @@ function clipOp(op: unknown): Json | null {
         ? withClip({ op: 'gain', gain_db: op.gainDb })
         : null;
     case 'setFade': {
+      // The tool takes a fade of 0 or more seconds. A fade the recipe names but the tool cannot take
+      // is left out rather than dropped silently: the caller is told the restore is partial.
       const fades: Json = {};
-      if (isSec(op.fadeInSec)) fades.fade_in_sec = op.fadeInSec;
-      if (isSec(op.fadeOutSec)) fades.fade_out_sec = op.fadeOutSec;
-      return Object.keys(fades).length === 0 ? null : withClip({ op: 'fade', ...fades });
+      let omitted = false;
+      for (const [member, argument] of [
+        ['fadeInSec', 'fade_in_sec'],
+        ['fadeOutSec', 'fade_out_sec'],
+      ] as const) {
+        const value = op[member];
+        if (value === undefined) continue;
+        if (isSec(value)) fades[argument] = value;
+        else omitted = true;
+      }
+      const call = Object.keys(fades).length === 0 ? null : withClip({ op: 'fade', ...fades });
+      return call === null ? null : { ...call, omitted };
     }
     case 'split':
       return isSec(op.atTimelineSec) ? withClip({ op: 'split', at_timeline_sec: op.atTimelineSec }) : null;
@@ -109,11 +132,13 @@ function clipOp(op: unknown): Json | null {
       const trailing = clipOf(op.trailingPlacementId);
       return leading === null || trailing === null
         ? null
-        : { op: 'merge', leading_clip: leading, trailing_clip: trailing };
+        : { op: { op: 'merge', leading_clip: leading, trailing_clip: trailing }, omitted: false };
     }
     case 'delete': {
       const clips = asList(op.placementIds).map(clipOf);
-      return clips.length === 0 || clips.length > 64 || clips.includes(null) ? null : { op: 'delete', clips };
+      return clips.length === 0 || clips.length > 64 || clips.includes(null)
+        ? null
+        : { op: { op: 'delete', clips }, omitted: false };
     }
     case 'setReference': {
       // The tool unbinds when reference_clip is left out.
@@ -132,13 +157,23 @@ const NOT_UNDOABLE = new Set(['split', 'merge', 'delete']);
 /**
  * An arrangement.edit recipe as a call of opentune_edit_arrangement; its expected revision comes with it.
  * A restore that splits, merges or deletes cannot be undone in turn, so it waits for the user's consent
- * even when the recipe does not ask for it; a delete also takes that consent as confirm.
+ * even when the recipe does not ask for it; a delete also takes that consent as confirm. The tool refuses
+ * such a structural op together with any other op (`op_not_alone`), so a recipe that mixes them cannot be
+ * carried out at all and is left to the user.
  */
 function editArrangement(params: Json): Mapped | null {
   const revision = token(params.expectedArrangementRevision, 'revision');
-  const ops = asList(params.ops).map(clipOp);
-  if (revision === null || ops.length === 0 || ops.length > 64 || ops.includes(null)) return null;
-  const kinds = ops.map((op) => String(op?.op));
+  const mapped = asList(params.ops).map(clipOp);
+  if (revision === null || mapped.length === 0 || mapped.length > 64) return null;
+  const ops: Json[] = [];
+  let omitted = false;
+  for (const entry of mapped) {
+    if (entry === null) return null;
+    ops.push(entry.op);
+    if (entry.omitted) omitted = true;
+  }
+  const kinds = ops.map((op) => String(op.op));
+  if (ops.length > 1 && kinds.some((kind) => NOT_UNDOABLE.has(kind))) return null;
   return {
     call: {
       tool: 'opentune_edit_arrangement',
@@ -147,31 +182,46 @@ function editArrangement(params: Json): Mapped | null {
     needsRevision: false,
     ...(kinds.some((kind) => NOT_UNDOABLE.has(kind)) ? { consent: true } : {}),
     ...(kinds.includes('delete') ? { consentArgument: 'confirm' } : {}),
+    ...(omitted ? { omitted: true } : {}),
   };
 }
 
 /** A non-empty settings call, or null when the recipe holds no member the tool can take. */
-function settingsCall(group: string, members: Json): Mapped | null {
-  return Object.keys(members).length === 0
-    ? null
-    : { call: { tool: 'opentune_set_settings', arguments: { [group]: members } }, needsRevision: false };
+function settingsCall(group: string, members: Json, omitted = false): Mapped | null {
+  if (Object.keys(members).length === 0) return null;
+  const call: Mapped = {
+    call: { tool: 'opentune_set_settings', arguments: { [group]: members } },
+    needsRevision: false,
+  };
+  return omitted ? { ...call, omitted: true } : call;
 }
 
 /**
  * The prefs.set recipe of a preference change: the previous values, which the tool takes in
  * snake_case. A member whose value is not in the protocol's form (the instance is another program)
- * is left out rather than sent on; a recipe that names none becomes a manual restore.
+ * is left out rather than sent on; a recipe that names none becomes a manual restore, and one that
+ * names some marks the restore as partial.
  */
 function preferenceRevert(params: Json): Mapped | null {
   const processing: Json = {};
-  // A number, not only an integer: prefs.set takes any frequency from 400 to 500 Hz.
-  if (typeof params.tuningHz === 'number' && params.tuningHz >= 400 && params.tuningHz <= 500)
-    processing.tuning_hz = params.tuningHz;
-  if (params.editingScheme === 'openTune' || params.editingScheme === 'openDyne')
-    processing.editing_scheme = params.editingScheme;
-  if (typeof params.hybridMode === 'boolean') processing.hybrid_mode = params.hybridMode;
-  if (typeof params.experimentalFeatures === 'boolean') processing.experimental_features = params.experimentalFeatures;
-  return settingsCall('processing', processing);
+  let omitted = false;
+  const known = new Set(['tuningHz', 'editingScheme', 'hybridMode', 'experimentalFeatures']);
+  /** A number, not only an integer: prefs.set takes any frequency from 400 to 500 Hz. */
+  const take = (member: string, argument: string, acceptable: boolean): void => {
+    if (params[member] === undefined) return;
+    if (acceptable) processing[argument] = params[member];
+    else omitted = true;
+  };
+  take(
+    'tuningHz',
+    'tuning_hz',
+    typeof params.tuningHz === 'number' && params.tuningHz >= 400 && params.tuningHz <= 500,
+  );
+  take('editingScheme', 'editing_scheme', params.editingScheme === 'openTune' || params.editingScheme === 'openDyne');
+  take('hybridMode', 'hybrid_mode', typeof params.hybridMode === 'boolean');
+  take('experimentalFeatures', 'experimental_features', typeof params.experimentalFeatures === 'boolean');
+  if (Object.keys(params).some((key) => !known.has(key))) omitted = true;
+  return settingsCall('processing', processing, omitted);
 }
 
 const textToken = (value: unknown, max: number): string | null =>
@@ -180,17 +230,37 @@ const textToken = (value: unknown, max: number): string | null =>
 /** The audio.set recipe of a device change, in the snake_case the tool takes. */
 function audioRevert(params: Json): Mapped | null {
   const audio_device: Json = {};
+  let omitted = false;
+  const known = new Set(['deviceType', 'outputDevice', 'sampleRateHz', 'bufferSizeFrame', 'outputChannelPair']);
   const deviceType = textToken(params.deviceType, 64);
   const outputDevice = textToken(params.outputDevice, 256);
-  if (deviceType !== null) audio_device.device_type = deviceType;
-  if (outputDevice !== null) audio_device.output_device = outputDevice;
-  if (typeof params.sampleRateHz === 'number' && params.sampleRateHz > 0)
-    audio_device.sample_rate_hz = params.sampleRateHz;
-  if (isInt(params.bufferSizeFrame, 1, Number.MAX_SAFE_INTEGER))
-    audio_device.buffer_size_frame = params.bufferSizeFrame;
-  if (isInt(params.outputChannelPair, 0, Number.MAX_SAFE_INTEGER))
-    audio_device.output_channel_pair = params.outputChannelPair;
-  return settingsCall('audio_device', audio_device);
+  const take = (member: string, argument: string, value: unknown, acceptable: boolean): void => {
+    if (params[member] === undefined) return;
+    if (acceptable) audio_device[argument] = value;
+    else omitted = true;
+  };
+  take('deviceType', 'device_type', deviceType, deviceType !== null);
+  take('outputDevice', 'output_device', outputDevice, outputDevice !== null);
+  take(
+    'sampleRateHz',
+    'sample_rate_hz',
+    params.sampleRateHz,
+    typeof params.sampleRateHz === 'number' && params.sampleRateHz > 0,
+  );
+  take(
+    'bufferSizeFrame',
+    'buffer_size_frame',
+    params.bufferSizeFrame,
+    isInt(params.bufferSizeFrame, 1, Number.MAX_SAFE_INTEGER),
+  );
+  take(
+    'outputChannelPair',
+    'output_channel_pair',
+    params.outputChannelPair,
+    isInt(params.outputChannelPair, 0, Number.MAX_SAFE_INTEGER),
+  );
+  if (Object.keys(params).some((key) => !known.has(key))) omitted = true;
+  return settingsCall('audio_device', audio_device, omitted);
 }
 
 const TRACK_ID_MAX = 63;
@@ -218,6 +288,8 @@ function trackOps(params: Json): Mapped | null {
       if (typeof item.solo !== 'boolean') return null;
       ops.push({ op: 'solo', track_id, on: item.solo });
     }
+    // The protocol allows one volume member; a recipe that names both would lose one silently.
+    if (item.volumeDb !== undefined && item.volumeLinear !== undefined) return null;
     if (item.volumeDb !== undefined) {
       if (isNum(item.volumeDb, -120, 24)) {
         ops.push({ op: 'volume', track_id, db: item.volumeDb });
@@ -279,6 +351,10 @@ const TOOL_FOR = table<(params: Json) => Mapped | null>({
           call: { tool: 'opentune_delete_track', arguments: { track_id } },
           needsRevision: true,
           revisionKind: 'arrangement',
+          // Deleting a track cannot be undone, so the user has to agree to this restore too; the
+          // consent is given as confirm, the argument the tool takes it by.
+          consent: true,
+          consentArgument: 'confirm',
         }
       : null;
   },
@@ -318,6 +394,7 @@ export function revertPlan(revert: unknown): RevertPlan {
     consent: consent || mapped.consent === true,
     ...(mapped.consentArgument === undefined ? {} : { consentArgument: mapped.consentArgument }),
     revisionKind: mapped.revisionKind ?? 'clip',
+    omitted: mapped.omitted === true,
   };
 }
 
@@ -339,10 +416,14 @@ export function revertText(plan: RevertPlan): string {
           ? 'arrangement_revision of opentune_get_project'
           : 'clip_revision you read for the clip';
       const revision = plan.needsRevision ? `, adding expected_revision: the latest ${latest}` : ', as they are';
-      const call = `call ${plan.call.tool} with the arguments in restore${revision}`;
-      if (!plan.consent) return `Restore: ${call}.`;
-      const add = plan.consentArgument === undefined ? '' : `, adding ${plan.consentArgument}: true`;
-      return `Only after the user explicitly agrees to restore it: ${call}${add}.`;
+      const consent = plan.consentArgument === undefined ? '' : `, adding ${plan.consentArgument}: true`;
+      const call = `call ${plan.call.tool} with the arguments in restore${revision}${consent}`;
+      const omitted = plan.omitted
+        ? ' Some values of the recipe are outside what the tool takes and are omitted, so this restores only part ' +
+          'of the change.'
+        : '';
+      if (!plan.consent) return `Restore: ${call}.${omitted}`;
+      return `Only after the user explicitly agrees to restore it: ${call}.${omitted}`;
     }
   }
 }
@@ -355,10 +436,17 @@ export function revertFlag(plan: RevertPlan): string {
       return 'cannot be restored by any request';
     case 'manual':
       return 'no tool of this server can restore it yet, but the user can by hand in the OpenTune window';
-    case 'tool':
+    case 'tool': {
+      // A partial restore has to say so in the first sentence: a reader who stops there must know
+      // that the recipe named more than the tool can put back.
+      const partial = plan.omitted
+        ? '; some values of the recipe are outside what the tool takes and are omitted, so only part of the change ' +
+          'can be restored'
+        : '';
       return plan.consent
-        ? `can be restored with ${plan.call.tool} only after the user explicitly agrees`
-        : `can be restored with ${plan.call.tool}, see the revert line`;
+        ? `can be restored with ${plan.call.tool} only after the user explicitly agrees${partial}`
+        : `can be restored with ${plan.call.tool}, see the revert line${partial}`;
+    }
   }
 }
 

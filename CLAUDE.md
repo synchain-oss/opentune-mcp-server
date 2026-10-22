@@ -110,7 +110,7 @@ npm run gates
 | 打包 | esbuild → `dist/opentune-mcp.mjs`(ESM、`platform: node`、`target: node22`、带 shebang);发布包无依赖、无生命周期脚本;`THIRD-PARTY-NOTICES.md` 由 metafile 生成,缺项即红 |
 | 本地 gates | `npm run gates`(§2) |
 | 合规扫描 | gitleaks(版本见钉版文件,下载校验 sha256)、`reuse lint`、隐私检查、署名检查;都在 `npm run gates` 里 |
-| CI secrets | `CLAUDE_CODE_OAUTH_TOKEN`(`claude-review.yml` 与 `review-dispatch.yml`;Dependabot 另设的那份已不再使用:中央 claude-review 不审 Dependabot 的 PR)、`OPENCODE_GO_API_KEY_FOR_REVIEW`(`pr-agent.yml`)、组织 secret `CLAUDE_API_KEY_FOR_PR_REVIEW`(`pr-agent-claude.yml`)。npm 发布走 OIDC trusted publishing,不存 npm token |
+| CI secrets | `CLAUDE_CODE_OAUTH_TOKEN`(`claude-review.yml` 与 `review-dispatch.yml`;Dependabot 另设的那份已不再使用:中央 claude-review 不审 Dependabot 的 PR)、`OPENCODE_GO_API_KEY_FOR_REVIEW`(`pr-agent.yml`)、组织 secret `CLAUDE_API_KEY_FOR_PR_REVIEW`(`pr-agent-claude.yml`)。npm 发布从 0.2.0 起(规划中)经 OIDC trusted publishing 进行,不存 npm token |
 | 测试数据目录 | 发现文件只写 `OPENTUNE_MCP_DISCOVERY_DIR`;E2E 用 `OPENTUNE_DATA_DIR` 临时目录;任何测试解析到真实 AppData 即失败 |
 
 ## 7. 安全铁律(MCP 专项)

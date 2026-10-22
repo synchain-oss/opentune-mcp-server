@@ -178,7 +178,8 @@ describe('OtcpSession against other listeners', () => {
     ['x', 'PROTOCOL_MISMATCH'],
     ['1.7', null],
   ])('checks the protocol major of a hello naming %s', async (protocol, kind) => {
-    const entry = entryOf(discoveryContent(4290));
+    // The discovery file this instance announced itself with serves majors 2 and 3.
+    const entry = entryOf(discoveryContent(4290, { protocolMajors: [2, 3] }));
     const fake = await fakeInstance((line, socket) => {
       const { id } = JSON.parse(line) as { id: number };
       socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, result: helloResult(entry, { protocol }) })}
@@ -190,8 +191,13 @@ describe('OtcpSession against other listeners', () => {
     } else {
       const error = await failure(opened);
       expect(error.data).toMatchObject({ kind, reason: 'major_not_served', executed: false });
-      // The detail names the major only; the instance's own protocol string is never echoed.
+      // The whole sentence at once: it names the major it read, never the instance's version string.
+      expect(error.data.detail).toMatch(
+        /^the instance speaks (OTCP major (?:[1-9][0-9]*)|an unreadable OTCP version); this server speaks major 1$/,
+      );
       expect(error.data.detail).not.toContain(protocol);
+      // The majors of the discovery file come with the error, as they do with the status.
+      expect(error.data.protocolMajors).toEqual([2, 3]);
     }
   });
 

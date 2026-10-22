@@ -97,6 +97,32 @@ describe('error kinds', () => {
     expect(new OtcpError(data).message).toBe('BUSY(modal_open)');
     expect(new OtcpError({ ...data, reason: null }).message).toBe('BUSY');
   });
+
+  it('carries the protocol majors of a refusal, keeping only positive integers', () => {
+    const data = errorDataFrom({
+      data: {
+        kind: 'PROTOCOL_MISMATCH',
+        reason: 'major_not_served',
+        retryable: false,
+        detail: 'unsupported protocol major version',
+        executed: false,
+        protocolMajors: [2, 2, 3, 0, -1, 1.5, 'x', 4],
+      },
+    });
+    expect(data.protocolMajors).toEqual([2, 3, 4]);
+    expect(fromOtcpError(data)).toMatchObject({ kind: 'PROTOCOL_MISMATCH', protocolMajors: [2, 3, 4] });
+    expect(toolError('PROTOCOL_MISMATCH', { detail: 'x', protocolMajors: [1] })).toMatchObject({
+      protocolMajors: [1],
+    });
+    // No majors, or none that can be one, leaves the member out rather than sending an empty list on.
+    expect(errorDataFrom({ data: { kind: 'PROTOCOL_MISMATCH', protocolMajors: ['2'] } })).not.toHaveProperty(
+      'protocolMajors',
+    );
+    expect(toolError('PROTOCOL_MISMATCH', { detail: 'x' })).not.toHaveProperty('protocolMajors');
+    expect(toolError('PROTOCOL_MISMATCH', { detail: 'x', protocolMajors: [0, -2] })).not.toHaveProperty(
+      'protocolMajors',
+    );
+  });
 });
 
 describe('untrusted strings', () => {

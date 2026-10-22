@@ -87,16 +87,27 @@ function stateFlags(envelope: Json, warnings: readonly string[]): string[] {
 
 const inParens = (flags: readonly string[]): string => (flags.length === 0 ? '' : ` (${flags.join('; ')})`);
 
-export function summarize(envelope: Json, tool: string): string {
+export interface SummarizeOptions {
+  /**
+   * false leaves the first-sentence flags out. A summary that combines several results carries every
+   * flag of all of them in its own first sentence, so the parts do not repeat them.
+   */
+  readonly flags?: boolean;
+}
+
+export function summarize(envelope: Json, tool: string, options: SummarizeOptions = {}): string {
+  const withFlags = options.flags !== false;
   const warnings = warningCodes(envelope);
   const tail = warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
+  const states = (): string[] => (withFlags ? stateFlags(envelope, warnings) : []);
+  const flags = (): string[] => (withFlags ? flagsOf(envelope) : []);
   const job = isObject(envelope.job) ? envelope.job : null;
   if (job !== null) {
     const id = token(job.jobId, 'jobId');
     const kind = token(job.kind, 'camel');
     const state = token(job.state, 'camel');
     const named = id === null ? 'a job' : `job ${id}${kind === null ? '' : ` (${kind})`}`;
-    const flagText = inParens([...flagsOf(envelope), ...stateFlags(envelope, warnings)]);
+    const flagText = inParens([...flags(), ...states()]);
     return (
       `${tool}: started ${named}${state === null ? '' : `, ${state}`}${flagText}; ` +
       `nothing is committed until it finishes. Follow it with opentune_get_job.${tail}`
@@ -106,14 +117,14 @@ export function summarize(envelope: Json, tool: string): string {
   const undoId = undo?.undoable === true ? token(undo.undoId, 'undoId') : null;
   const undoText = undoId === null ? '' : ` Undo it as one step with undoId ${undoId}.`;
   if (envelope.noOp === true) {
-    const flagText = inParens([...flagsOf(envelope), ...stateFlags(envelope, warnings)]);
+    const flagText = inParens([...flags(), ...states()]);
     return `${tool}: nothing was changed, which is a success${flagText}.${undoText}${tail}`;
   }
   const dryRun = envelope.dryRun === true;
   const lead = dryRun
     ? `${tool}: dry run, nothing was changed; would ${didPhrase(envelope, true)}`
     : `${tool}: ${didPhrase(envelope, false)}`;
-  return `${lead}${inParens(flagsOf(envelope))}.${undoText}${tail}`;
+  return `${lead}${inParens(flags())}.${undoText}${tail}`;
 }
 
 /**

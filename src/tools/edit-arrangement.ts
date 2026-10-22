@@ -214,7 +214,8 @@ export function planRequest(args: EditArrangementArgs): Request | Outcome {
     return {
       method: 'arrangement.copy',
       params: {
-        sources: first.clips.map((placementId) => ({ placementId })),
+        // OTCP copies each clip once; a list that names one twice is deduplicated, first occurrence first.
+        sources: [...new Set(first.clips)].map((placementId) => ({ placementId })),
         mode: first.mode,
         toTrackId: first.to_track_id,
         startTimelineSec: first.start_timeline_sec,
@@ -304,8 +305,21 @@ const UPSTREAM_DEFECT = (envelope: Json): boolean =>
   (isObject(envelope.undo) && envelope.undo.reason === 'upstream_undo_defect') ||
   asList(envelope.warnings).some((w) => isObject(w) && w.code === 'UPSTREAM_UNDO_DEFECT');
 
-/** Why a split, merge or delete cannot be undone, for the first sentence of its result. */
-function structuralLead(kind: string, envelope: Json): string | null {
+/** Whether the result says the change can be neither undone nor restored by any request. */
+const IRREVERSIBLE = (envelope: Json): boolean => {
+  const undo = isObject(envelope.undo) ? envelope.undo : null;
+  return (
+    (undo !== null && undo.undoable === false && undo.reason !== 'no_op') ||
+    asList(envelope.warnings).some((w) => isObject(w) && w.code === 'IRREVERSIBLE')
+  );
+};
+
+/**
+ * Why a split, merge or delete cannot be undone, for the first sentence of its result. Every
+ * irreversible structural edit says so there, not only the ones OpenTune's undo defect affects:
+ * a delete whose result carries IRREVERSIBLE is just as final.
+ */
+export function structuralLead(kind: string, envelope: Json): string | null {
   if (envelope.dryRun === true) {
     const consent = kind === 'delete' ? ', and it needs confirm: true' : '';
     return (
@@ -313,14 +327,20 @@ function structuralLead(kind: string, envelope: Json): string | null {
       'apply it only after the user explicitly agreed'
     );
   }
-  if (!UPSTREAM_DEFECT(envelope)) return null;
-  const effect =
-    kind === 'delete' ? 'undoing a delete does nothing' : `undoing a ${kind} makes its audio vanish from the timeline`;
-  return (
-    `this ${kind} cannot be undone: OpenTune frees objects its own undo entry needs, so ${effect}; ` +
-    'opentune_undo refuses it, and the user should not undo it in the OpenTune window either. Ask the user before ' +
-    'every split, merge or delete'
-  );
+  if (UPSTREAM_DEFECT(envelope)) {
+    const effect =
+      kind === 'delete'
+        ? 'undoing a delete does nothing'
+        : `undoing a ${kind} makes its audio vanish from the timeline`;
+    return (
+      `this ${kind} cannot be undone: OpenTune frees objects its own undo entry needs, so ${effect}; ` +
+      'opentune_undo refuses it, and the user should not undo it in the OpenTune window either. Ask the user before ' +
+      'every split, merge or delete'
+    );
+  }
+  if (!IRREVERSIBLE(envelope)) return null;
+  const consent = kind === 'delete' ? '; removing clips needs confirm: true' : '';
+  return `this ${kind} cannot be undone or restored by any request${consent}, so apply it only after the user explicitly agreed`;
 }
 
 const capital = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
