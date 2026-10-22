@@ -143,7 +143,7 @@ export interface AudioRec {
 /** What the audio settings page offers; the mock's stand-in device is the only one. */
 export const AUDIO_AVAILABLE = {
   deviceTypes: ['Mock Audio'],
-  outputDevices: ['Mock Output'],
+  outputDevices: ['Mock Output', 'Mock Output 2'],
   sampleRatesHz: [44100, 48000],
   bufferSizesFrame: [256, 512],
   outputChannelPairCount: 1,

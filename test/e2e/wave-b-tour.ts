@@ -11,8 +11,10 @@
 // stdio against the same instance and calls each wave-B tool once.
 //
 // Safety on the machine: the instance runs with a data folder of this run (never the real AppData);
-// playback happens only while every track is muted, and the mute is put back; audio.set changes only
-// a value audio.get offers for the current device and reverts it; prefs.set reverts every preference
+// playback happens only while every track is muted, and the mute is put back; audio.set changes one
+// value audio.get offers (a buffer size or sample rate of the current device, else another output
+// device or device type), with the maintainer's agreement, and reverts it, comparing the whole setup
+// with the one it found; prefs.set reverts every preference
 // it touched; ui.dismiss runs only when no dialog is open (or closes the first-run overlay this run's
 // own instance started); track.delete and arrangement.edit op delete act only on tracks and clips this
 // scenario created, with confirm true set here. All audio is generated at run time.
@@ -100,6 +102,37 @@ const listOf = (value: unknown): Json[] => (Array.isArray(value) ? value.filter(
 /** The numbers of an array value, for the audio lists; anything else is empty. */
 const numbersOf = (value: unknown): number[] =>
   (Array.isArray(value) ? (value as unknown[]) : []).filter((item): item is number => typeof item === 'number');
+
+/** The strings of an array value, for the audio lists; anything else is empty. */
+const stringsOf = (value: unknown): string[] =>
+  (Array.isArray(value) ? (value as unknown[]) : []).filter((item): item is string => typeof item === 'string');
+
+/** The one audio setting the tour changes and puts back. */
+export interface AudioSwitch {
+  readonly field: 'bufferSizeFrame' | 'sampleRateHz' | 'outputDevice' | 'deviceType';
+  readonly value: string | number;
+}
+
+/**
+ * Picks what audio.set changes in the audio.get answer. A buffer size or sample rate of the current
+ * device comes first (nothing else about the setup moves); when the device offers neither, another
+ * output device, then another device type. null when audio.get offers nothing but the current setup.
+ */
+export function chooseAudioSwitch(device: Json, available: Json): AudioSwitch | null {
+  const otherNumber = (offered: unknown, current: unknown): number | undefined =>
+    numbersOf(offered).find((value) => value !== current);
+  const otherText = (offered: unknown, current: unknown): string | undefined =>
+    stringsOf(offered).find((value) => value !== current);
+  const buffer = otherNumber(available.bufferSizesFrame, device.bufferSizeFrame);
+  if (buffer !== undefined) return { field: 'bufferSizeFrame', value: buffer };
+  const rate = otherNumber(available.sampleRatesHz, device.sampleRateHz);
+  if (rate !== undefined) return { field: 'sampleRateHz', value: rate };
+  const output = otherText(available.outputDevices, device.outputDevice);
+  if (output !== undefined) return { field: 'outputDevice', value: output };
+  const type = otherText(available.deviceTypes, device.deviceType);
+  if (type !== undefined) return { field: 'deviceType', value: type };
+  return null;
+}
 
 /** A member that must be an object. */
 function objectMember(value: unknown, name: string, what: string): Json {
@@ -1566,57 +1599,83 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     const device = objectMember(read, 'device', 'audio.get');
     const available = objectMember(read, 'available', 'audio.get');
     if (device.running !== true) {
+      throw new StepSkip('SKIP', 'no audio device runs in the instance, so no audio setting can be changed');
+    }
+    // A buffer size or sample rate of the current device when it offers one, otherwise another output
+    // device or device type (the maintainer agreed to that, provided the setup is put back). The whole
+    // setup is read now and compared with the one read after the revert.
+    const chosen = chooseAudioSwitch(device, available);
+    if (chosen === null) {
       throw new StepSkip(
         'SKIP',
-        'no audio device runs in the instance, so no value of the current device can be changed',
+        'audio.get offers no other buffer size, sample rate, output device or device type than the current setup, so there is nothing to switch',
       );
     }
-    // Only a buffer size or sample rate audio.get lists for the current device; never another device
-    // or driver type.
-    const buffers = numbersOf(available.bufferSizesFrame);
-    const rates = numbersOf(available.sampleRatesHz);
-    const currentBuffer = num(device, 'bufferSizeFrame', 'the audio device');
-    const currentRate = num(device, 'sampleRateHz', 'the audio device');
-    const field = buffers.some((value) => value !== currentBuffer)
-      ? 'bufferSizeFrame'
-      : rates.some((value) => value !== currentRate)
-        ? 'sampleRateHz'
-        : null;
-    if (field === null) {
-      throw new StepSkip('SKIP', 'the current audio device offers no other buffer size or sample rate');
+    const { field, value: wanted } = chosen;
+    const startSetup = pick(device, DEVICE_MEMBERS);
+    const startNote = `the setup at the start was ${JSON.stringify(startSetup)}; set it back by hand if it is not`;
+    const previous = device[field];
+    let written: WriteRun;
+    try {
+      written = await t.write({
+        step: 'audio.set',
+        method: 'audio.set',
+        params: { [field]: wanted },
+        snapshot: ['audio'],
+        expect: {
+          applied: true,
+          noOp: false,
+          undoable: false,
+          undoReason: 'ui_parity',
+          revert: 'present',
+          warnings: ['GLOBAL_PREFERENCE'],
+        },
+      });
+      collect('audio.set', problems, written);
+    } catch (error) {
+      if (error instanceof Unrestored) throw new Unrestored(`${error.message}; ${startNote}`);
+      throw error;
     }
-    const wanted =
-      field === 'bufferSizeFrame'
-        ? buffers.find((value) => value !== currentBuffer)
-        : rates.find((value) => value !== currentRate);
-    const written = await t.write({
-      step: 'audio.set',
-      method: 'audio.set',
-      params: { [field]: wanted },
-      snapshot: ['audio'],
-      expect: {
-        applied: true,
-        noOp: false,
-        undoable: false,
-        undoReason: 'ui_parity',
-        revert: 'present',
-        warnings: ['GLOBAL_PREFERENCE'],
-      },
-    });
-    collect('audio.set', problems, written);
     // The runner read the state right after the write and found the requested value there (the
     // `after` of the change); by now the revert recipe has put the previous value back.
-    const changed = listOf(member(written.envelope, 'changes', 'the result')).some(
-      (change) => isObject(change.fields) && field in change.fields,
-    );
-    if (!changed) problems.push(`the result names no ${field} change`);
-    const previous = field === 'bufferSizeFrame' ? currentBuffer : currentRate;
-    const now = objectMember(await t.reads.audio(), 'device', 'audio.get');
-    if (!sameValue(now[field], previous)) {
-      problems.push(`${field} is ${JSON.stringify(now[field])}, not back at ${JSON.stringify(previous)}`);
+    if (written.envelope.applied === true) {
+      const changed = listOf(member(written.envelope, 'changes', 'the result')).some(
+        (change) => isObject(change.fields) && field in change.fields,
+      );
+      if (!changed) problems.push(`the result names no ${field} change`);
+    }
+    // The setup as it is now, whatever happened above (a refused or failed switch included).
+    const now = pick(objectMember(await t.reads.audio(), 'device', 'audio.get'), DEVICE_MEMBERS);
+    const moved = differences(startSetup, now);
+    if (moved.length > 0) {
+      // Put it back with the values read at the start, so that the machine is left as it was found.
+      const retry = Object.fromEntries(
+        ['deviceType', 'outputDevice', 'sampleRateHz', 'bufferSizeFrame', 'outputChannelPair']
+          .filter((name) => startSetup[name] !== undefined && startSetup[name] !== null)
+          .map((name) => [name, startSetup[name]]),
+      );
+      let restored = false;
+      try {
+        await t.call('write', 'audio.set', retry);
+        restored =
+          differences(startSetup, pick(objectMember(await t.reads.audio(), 'device', 'audio.get'), DEVICE_MEMBERS))
+            .length === 0;
+      } catch {
+        restored = false;
+      }
+      problems.push(
+        `the audio setup differs from the one at the start (${moved.join('; ')}); ${restored ? 'it was set back with the start values' : 'it could not be set back'}; ${startNote}`,
+      );
+      if (!restored) stopReason = 'the audio setup could not be put back';
     }
     scenario.facts.audioSetting = field;
-    return finish('audio.get and audio.set', problems, `${field} changed and put back`);
+    scenario.facts.audioSwitched =
+      field === 'outputDevice' || field === 'deviceType' ? 'another device' : 'another buffer size or sample rate';
+    return finish(
+      'audio.get and audio.set',
+      problems,
+      `${field} ${JSON.stringify(previous)} -> ${JSON.stringify(wanted)} and back; the setup read back equals the one at the start (${String(Object.keys(startSetup).length)} members compared)`,
+    );
   });
 
   await checkStep('arrangement.edit: move, trim, gain and fade', async () => {
@@ -1736,22 +1795,38 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     requireCapabilities(['reference.v1', 'edit.v1', 'history.v1']);
     const problems: string[] = [];
     const t = theTour();
+    const analysisStarted = performance.now();
     const started = await t.call('write', 'content.analyzeReference', { placementId: copyId });
     problems.push(
       ...schemaProblems(schemaPath('content.analyzeReference', 'result'), started, 'content.analyzeReference'),
     );
     const job = member(started, 'job', 'the content.analyzeReference result');
     if (!isObject(job)) throw new Error('content.analyzeReference handed over no job');
-    const analysis = await t.followJob('content.analyzeReference', 'reference analysis', job);
-    problems.push(
-      ...schemaProblems(schemaPath('content.analyzeReference', 'jobResult'), analysis, 'the reference analysis job'),
-    );
-    if (analysis.placementId !== copyId || analysis.referencePlacementId !== clipId) {
-      problems.push('the job result names another binding than the one asked for');
+    // The same rule as for content.autoTune below: only the stalled error that came before the wait
+    // limit is the known defect; any other failure of the job fails the step.
+    let analysisStalled = false;
+    try {
+      const analysis = await t.followJob('content.analyzeReference', 'reference analysis', job);
+      problems.push(
+        ...schemaProblems(schemaPath('content.analyzeReference', 'jobResult'), analysis, 'the reference analysis job'),
+      );
+      if (analysis.placementId !== copyId || analysis.referencePlacementId !== clipId) {
+        problems.push('the job result names another binding than the one asked for');
+      }
+      if (analysis.alignmentReady !== true) problems.push('the alignment data is not ready after the job');
+    } catch (error) {
+      if (!(error instanceof OtcpError) || !isKnownStalledDefect(error.data, performance.now() - analysisStarted)) {
+        throw error;
+      }
+      analysisStalled = true;
     }
-    if (analysis.alignmentReady !== true) problems.push('the alignment data is not ready after the job');
     const details = await t.reads.details(copyContentId);
-    if (member(member(details, 'reference', 'content details'), 'alignmentReady', 'reference') !== true) {
+    const alignmentReady =
+      member(member(details, 'reference', 'content details'), 'alignmentReady', 'reference') === true;
+    if (analysisStalled) {
+      // The job wrote nothing, so the alignment data is still missing; that it is missing is the defect.
+      if (alignmentReady) problems.push('content.getDetails reports alignment data although the analysis was stalled');
+    } else if (!alignmentReady) {
       problems.push('content.getDetails does not report the alignment data of the copy');
     }
 
@@ -1777,10 +1852,15 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       return finish(
         'content.analyzeReference and content.autoTune in mode reference',
         problems,
-        'known upstream defect: OpenTune completes only one reference analysis per session, reported as NOT_READY(reference_analysis_stalled); nothing changed',
+        'known upstream defect: OpenTune completes only one reference analysis per session, reported as NOT_READY(reference_analysis_stalled); nothing changed' +
+          (analysisStalled ? ' (by content.analyzeReference and by content.autoTune)' : ' (by content.autoTune)'),
       );
     }
     collect('content.autoTune (reference)', problems, tuned);
+    if (analysisStalled) {
+      // The analysis was stalled but the alignment still ran: the defect is listed, the step checks the rest as usual.
+      if (problems.length === 0) recordKnownDefect(KNOWN_STALLED_REASON);
+    }
     if (tuned.envelope.noOp !== true) {
       const undo = isObject(tuned.envelope.undo) ? tuned.envelope.undo : null;
       if (undo?.undoable !== true) problems.push('mode reference did not commit one undo step');

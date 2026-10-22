@@ -18,6 +18,7 @@ import type { McpProcess, RealInstance, RealInstanceOptions, ToolOutcome } from 
 import type { SmokeConfig } from '../e2e/smoke.js';
 import {
   REFERENCE_WAIT_LIMIT_MS,
+  chooseAudioSwitch,
   isKnownStalledDefect,
   refusalIsDefect,
   runWaveBTour,
@@ -535,14 +536,15 @@ describe('the reference analysis of the locked OpenTune', () => {
       ),
   };
 
-  type Where = 'step' | 'tool' | 'both';
+  type Where = 'analysis' | 'step' | 'tool' | 'both';
 
   /**
    * The first analysis completes, as it does in OpenTune; later the alignment data has to be computed
    * again and the mock's analysis ends as `fault` says. `where` picks the autoTune of the OTCP step
    * (the fault ends with the history read that follows it, so the steps after it run as usual), the
    * one of the MCP tool `opentune_autotune_range` (armed at the second history read, which is the one
-   * before that tool), or both (the fault stays).
+   * before that tool), or both (the fault stays). `analysis` arms it at content.analyzeReference, so that
+   * the analysis job and the autoTune that follows it both meet the fault.
    */
   const faultAt = (
     fault: 'stalled' | 'timeout' | 'failed',
@@ -551,6 +553,7 @@ describe('the reference analysis of the locked OpenTune', () => {
   ) => {
     let mock: OtcpMock | undefined;
     let armed = false;
+    let tuned = false;
     let histories = 0;
     let replies = 0;
     const arm = () => {
@@ -565,11 +568,14 @@ describe('the reference analysis of the locked OpenTune', () => {
       },
       ...(options.clock === undefined ? {} : { clock: options.clock }),
       before: (method, params) => {
-        if (method === 'content.autoTune' && params.mode === 'reference' && where !== 'tool') arm();
-        else if (method === 'edit.getHistory') {
+        if (method === 'content.analyzeReference' && where === 'analysis') arm();
+        else if (method === 'content.autoTune' && params.mode === 'reference' && where !== 'tool') {
+          if (where === 'analysis') tuned = true;
+          else arm();
+        } else if (method === 'edit.getHistory') {
           histories += 1;
           if (where === 'tool' && histories === 2) arm();
-          else if (where === 'step' && armed) {
+          else if ((where === 'step' && armed) || (where === 'analysis' && tuned)) {
             armed = false;
             mock?.setReferenceFault(null);
           }
@@ -600,6 +606,33 @@ describe('the reference analysis of the locked OpenTune', () => {
     expect(stepNames(report).filter((entry) => !entry.includes('=PASS'))).toEqual([]);
     expect(report.result).toBe('PASS');
   }, 120_000);
+
+  it('passes a stalled analysis that ended at once and changed nothing, and lists the defect', async () => {
+    const { hooks } = faultAt('stalled', 'analysis');
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('PASS');
+    expect(step?.note).toContain(DEFECT_NOTE);
+    expect(step?.note).toContain('by content.analyzeReference and by content.autoTune');
+    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
+    expect(
+      report.calls.some((call) => call.method === 'job.get' && call.note.includes('reference_analysis_stalled')),
+    ).toBe(true);
+    expect(stepNames(report).filter((entry) => !entry.includes('=PASS'))).toEqual([]);
+  }, 120_000);
+
+  it.each(['timeout', 'failed'] as const)(
+    'fails an analysis that ended with the %s reason, which is not the known defect',
+    async (fault) => {
+      const { hooks } = faultAt(fault, 'analysis', { clock: quick });
+      const report = await runWaveBTour(config, hooks);
+      const step = stepResult(report, STEP);
+      expect(step?.result).toBe('FAIL');
+      expect(step?.note).toContain(`reference_analysis_${fault}`);
+      expect(report.facts.knownUpstreamDefects).toBeUndefined();
+    },
+    120_000,
+  );
 
   it('fails an autoTune that ended with reference_analysis_timeout', async () => {
     const { hooks } = faultAt('timeout', 'step', { clock: quick });
@@ -680,5 +713,112 @@ describe('the reference analysis of the locked OpenTune', () => {
 
   it('uses the wait limit of the mock as the limit before which the stalled error must come', () => {
     expect(REFERENCE_WAIT_LIMIT_MS).toBe(MOCK_REFERENCE_WAIT_LIMIT_MS);
+  });
+});
+
+describe('the audio step of the tour', () => {
+  const STEP = 'audio.get and audio.set';
+
+  /** audio.get offers nothing but the current values of the listed lists. */
+  const offerOnlyCurrent =
+    (...lists: readonly ('bufferSizesFrame' | 'sampleRatesHz' | 'outputDevices' | 'deviceTypes')[]): SessionDefect =>
+    (method, result) => {
+      if (method !== 'audio.get' || !isObject(result.device) || !isObject(result.available)) return undefined;
+      const current: Record<string, unknown> = {
+        bufferSizesFrame: result.device.bufferSizeFrame,
+        sampleRatesHz: result.device.sampleRateHz,
+        outputDevices: result.device.outputDevice,
+        deviceTypes: result.device.deviceType,
+      };
+      for (const list of lists) result.available[list] = [current[list]];
+      return result;
+    };
+
+  it('changes a buffer size of the current device first and compares the whole setup after the revert', async () => {
+    const { hooks } = fixture({ prepare: withAudio });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('PASS');
+    expect(report.facts.audioSetting).toBe('bufferSizeFrame');
+    expect(report.facts.audioSwitched).toBe('another buffer size or sample rate');
+    expect(step?.note).toContain('the setup read back equals the one at the start (6 members compared)');
+  }, 120_000);
+
+  it('switches to another output device when the device offers no other buffer size or sample rate', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: offerOnlyCurrent('bufferSizesFrame', 'sampleRatesHz'),
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('PASS');
+    expect(report.facts.audioSetting).toBe('outputDevice');
+    expect(report.facts.audioSwitched).toBe('another device');
+    expect(step?.note).toContain('outputDevice "Mock Output" -> "Mock Output 2" and back');
+  }, 120_000);
+
+  it('skips with its reason when audio.get offers nothing but the current setup', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: offerOnlyCurrent('bufferSizesFrame', 'sampleRatesHz', 'outputDevices', 'deviceTypes'),
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('SKIP');
+    expect(step?.note).toContain('nothing to switch');
+    expect(report.facts.audioSetting).toBeUndefined();
+  }, 120_000);
+
+  it('fails, and names the setup of the start, when the setup cannot be put back', async () => {
+    let writes = 0;
+    let mock: OtcpMock | undefined;
+    const { hooks } = fixture({
+      prepare: (m) => {
+        withAudio(m);
+        mock = m;
+      },
+      before: (method) => {
+        if (method !== 'audio.set') return;
+        writes += 1;
+        // The switch works; the device then refuses to open again, for the revert and for the retry.
+        if (writes === 2) mock?.given({ audio: { running: true, failsToOpen: true } });
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('the setup at the start was');
+    expect(step?.note).toContain('"bufferSizeFrame":512');
+    expect(step?.note).toContain('set it back by hand');
+  }, 120_000);
+
+  it('picks buffer size, sample rate, output device, device type in that order', () => {
+    const device = {
+      bufferSizeFrame: 256,
+      sampleRateHz: 48000,
+      outputDevice: 'A',
+      deviceType: 'T',
+    };
+    const offer = (extra: Json = {}): Json => ({
+      bufferSizesFrame: [256],
+      sampleRatesHz: [48000],
+      outputDevices: ['A'],
+      deviceTypes: ['T'],
+      ...extra,
+    });
+    expect(chooseAudioSwitch(device, offer())).toBeNull();
+    expect(chooseAudioSwitch(device, offer({ deviceTypes: ['T', 'U'] }))).toEqual({ field: 'deviceType', value: 'U' });
+    expect(chooseAudioSwitch(device, offer({ outputDevices: ['A', 'B'], deviceTypes: ['T', 'U'] }))).toEqual({
+      field: 'outputDevice',
+      value: 'B',
+    });
+    expect(chooseAudioSwitch(device, offer({ sampleRatesHz: [48000, 44100], outputDevices: ['A', 'B'] }))).toEqual({
+      field: 'sampleRateHz',
+      value: 44100,
+    });
+    expect(chooseAudioSwitch(device, offer({ bufferSizesFrame: [256, 512], sampleRatesHz: [44100] }))).toEqual({
+      field: 'bufferSizeFrame',
+      value: 512,
+    });
   });
 });
