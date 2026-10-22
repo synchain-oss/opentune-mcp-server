@@ -457,6 +457,25 @@ describe('the checks behind the findings of the real runs turn red on a defectiv
     expect(step?.note).toContain('no CLAMPED warning');
   }, 120_000);
 
+  it('an out-of-range gain that keeps its CLAMPED warning but reports the unchanged value fails the step', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result, params) => {
+        const ops = Array.isArray(params.ops) ? params.ops.filter(isObject) : [];
+        if (method !== 'arrangement.edit' || !ops.some((op) => op.op === 'setGain')) return undefined;
+        for (const change of Array.isArray(result.changes) ? result.changes.filter(isObject) : []) {
+          const fields = isObject(change.fields) ? change.fields : {};
+          if (isObject(fields.gainDb)) fields.gainDb.after = 200;
+        }
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, 'arrangement.edit: move, trim, gain and fade');
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('applied unchanged');
+  }, 120_000);
+
   it('a reference analysis job that ends without alignment data fails the analysis step', async () => {
     const { hooks } = fixture({
       prepare: withAudio,

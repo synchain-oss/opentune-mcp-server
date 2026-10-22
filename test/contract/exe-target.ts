@@ -28,6 +28,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { resolveDiscoveryDir } from '../../mock/discovery.js';
 import { pidAlive, systemProbe, type ProcessInfo } from '../../src/discovery/process.js';
 import { otcpSpec } from '../support/otcp-spec.js';
+import { guardDataDir, type SettingsGuard } from '../support/settings-guard.js';
 import { RunnerConnection } from './connection.js';
 import { PreconditionUnavailable, type ContractTarget } from './target.js';
 
@@ -457,6 +458,8 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       let instancePid: number | undefined = undefined;
       let owned: Owned | undefined;
       let unconfirmed: string | undefined;
+      /** The snapshot of the settings files of the data folder, taken before the start. */
+      let settings: SettingsGuard | undefined;
 
       const redacted = (text: string) => {
         let out = text.replace(/[0-9a-fA-F]{32,}/g, '[redacted]');
@@ -514,6 +517,15 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
             : 'the temporary data folder could not be removed';
         }
       };
+      /** Compares the settings files with the snapshot and puts them back; what differed or stayed wrong. */
+      const settingsProblems = async (): Promise<readonly string[]> => {
+        try {
+          return (await settings?.finish()) ?? [];
+        } catch (error) {
+          const why = error instanceof Error ? error.message : String(error);
+          return [`the settings of the data folder could not be checked: ${why}`];
+        }
+      };
       const fail = async (problem: string): Promise<never> => {
         const notes = [problem];
         try {
@@ -525,6 +537,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
         } catch (error) {
           notes.push(`stopping it failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+        notes.push(...(await settingsProblems()));
         const removal = await removeDataDir();
         if (removal !== undefined) notes.push(removal);
         throw new Error(describe(notes.join('; ')));
@@ -537,6 +550,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
         if (options.dataTemplate !== undefined && (await copyTemplate(options.dataTemplate, dataDir))) {
           stats.templateSkipped++;
         }
+        settings = await guardDataDir(dataDir);
         child = spawn(
           options.exe,
           [
@@ -618,6 +632,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       // The capabilities come from a session.hello of this target's own; the runner opens its own connections.
       const hello = await ownHello(discovery, timeoutMs);
       if ('problem' in hello) return fail(hello.problem);
+      await settings.settle();
 
       return {
         discovery,
@@ -658,6 +673,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
           } catch (error) {
             found.push(`stopping the instance failed: ${error instanceof Error ? error.message : String(error)}`);
           }
+          found.push(...(await settingsProblems()));
           const removal = await removeDataDir();
           if (removal !== undefined) found.push(removal);
           problems.push(...found.map(redacted));

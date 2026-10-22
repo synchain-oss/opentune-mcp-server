@@ -9,6 +9,7 @@
 import { describe, it } from 'vitest';
 
 import { arrangementEffectsSetupFromEnv, runArrangementEffects } from './arrangement-effects.js';
+import { withUserSettingsWatch } from './settings-guard.js';
 import { formatTable, writeReport } from './smoke.js';
 
 describe('end-to-end arrangement effects against the exe', () => {
@@ -30,7 +31,7 @@ describe('end-to-end arrangement effects against the exe', () => {
   const { config } = setup;
 
   it('changes the exported master mix as each arrangement write reports, and nothing else', async (ctx) => {
-    const report = await runArrangementEffects(config);
+    const report = await withUserSettingsWatch(() => runArrangementEffects(config));
     process.stderr.write(`\n${formatTable(report)}\n`);
     if (config.reportPath !== undefined) writeReport(config.reportPath, report);
     if (report.result === 'FAIL') {

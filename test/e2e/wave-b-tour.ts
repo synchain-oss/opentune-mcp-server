@@ -30,6 +30,7 @@ import { generateTone } from '../support/harmonic-tone.js';
 import { otcpSpec } from '../support/otcp-spec.js';
 import {
   endAllConfirmed,
+  instanceSettingsProblems,
   removeDir,
   scratchDir,
   startMcp,
@@ -746,7 +747,18 @@ class Tour {
       };
     }
     this.reads.clear();
-    const checked = await this.checkEnvelope(spec.method, envelope, spec.expect);
+    // A check that throws (a read that fails) is a problem of the step; the write is still taken back below.
+    let checked: { problems: string[]; unread: string[] };
+    try {
+      checked = await this.checkEnvelope(spec.method, envelope, spec.expect);
+    } catch (error) {
+      checked = {
+        problems: [
+          `checking the result of ${spec.method} failed: ${clean(error instanceof Error ? error.message : String(error))}`,
+        ],
+        unread: [],
+      };
+    }
     problems.push(...checked.problems);
     const ms = performance.now() - started;
 
@@ -1252,10 +1264,12 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     requireCapabilities(['tracks.v1']);
     const problems: string[] = [];
     const t = theTour();
+    // The track of the imported clip: the first track is not always the one that holds it.
+    const sourceTrack = Number(placementById(await t.reads.project(), clipId)?.trackId ?? 0);
     const muted = await t.write({
       step: 'track.set',
       method: 'track.set',
-      params: { tracks: [{ trackId: 0, muted: true }] },
+      params: { tracks: [{ trackId: sourceTrack, muted: true }] },
       snapshot: ['tracks'],
       expect: { applied: true, noOp: false, undoable: false, undoReason: 'ui_parity', revert: 'present' },
     });
@@ -1294,7 +1308,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     const duplicate = await t.write({
       step: 'track.duplicate',
       method: 'track.duplicate',
-      params: { trackId: 0, mode: 'clone' },
+      params: { trackId: sourceTrack, mode: 'clone' },
       snapshot: ['tracks', 'placements'],
       expect: { applied: true, noOp: false, undoable: false, undoReason: 'ui_parity', revert: 'consent' },
     });
@@ -1378,70 +1392,89 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       else problems.push('not every visible track is muted; playback is not started');
     }
 
-    if (playable) {
-      const seekTo = before.positionTimelineSec === 0 ? 0.5 : 0;
-      const seek = await t.writeKept({
-        step: 'transport.control (seek)',
-        method: 'transport.control',
-        params: { action: 'seek', positionTimelineSec: seekTo },
-        expect: {
-          applied: true,
-          noOp: false,
-          undoable: false,
-          undoReason: 'not_persisted_state',
-          revert: 'none',
-          absentWarnings: ['IRREVERSIBLE', 'NO_AUDIO_DEVICE'],
-        },
-      });
-      collect('transport.control (seek)', problems, seek);
+    // Whatever fails between the seek and the stop, the transport is stopped and the mute put back.
+    let started = false;
+    let stopped = false;
+    try {
+      if (playable) {
+        const seekTo = before.positionTimelineSec === 0 ? 0.5 : 0;
+        const seek = await t.writeKept({
+          step: 'transport.control (seek)',
+          method: 'transport.control',
+          params: { action: 'seek', positionTimelineSec: seekTo },
+          expect: {
+            applied: true,
+            noOp: false,
+            undoable: false,
+            undoReason: 'not_persisted_state',
+            revert: 'none',
+            absentWarnings: ['IRREVERSIBLE', 'NO_AUDIO_DEVICE'],
+          },
+        });
+        collect('transport.control (seek)', problems, seek);
 
-      const play = await t.writeKept({
-        step: 'transport.control (play)',
-        method: 'transport.control',
-        params: { action: 'play' },
-        expect: {
-          applied: true,
-          noOp: false,
-          undoable: false,
-          undoReason: 'not_persisted_state',
-          revert: 'none',
-          absentWarnings: ['IRREVERSIBLE'],
-          warnings: device ? [] : ['NO_AUDIO_DEVICE'],
-        },
-      });
-      collect('transport.control (play)', problems, play);
-      if (member(await t.reads.transportState(), 'playing', 'transport') !== true) {
-        problems.push('the transport does not play after action play');
+        const play = await t.writeKept({
+          step: 'transport.control (play)',
+          method: 'transport.control',
+          params: { action: 'play' },
+          expect: {
+            applied: true,
+            noOp: false,
+            undoable: false,
+            undoReason: 'not_persisted_state',
+            revert: 'none',
+            absentWarnings: ['IRREVERSIBLE'],
+            warnings: device ? [] : ['NO_AUDIO_DEVICE'],
+          },
+        });
+        collect('transport.control (play)', problems, play);
+        started = play.envelope.applied === true;
+        if (member(await t.reads.transportState(), 'playing', 'transport') !== true) {
+          problems.push('the transport does not play after action play');
+        }
+
+        const stop = await t.writeKept({
+          step: 'transport.control (stop)',
+          method: 'transport.control',
+          params: { action: 'stop' },
+          expect: { applied: true, noOp: false, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
+        });
+        collect('transport.control (stop)', problems, stop);
+        stopped = true;
+
+        const back = await t.writeKept({
+          step: 'transport.control (seek back)',
+          method: 'transport.control',
+          params: { action: 'seek', positionTimelineSec: before.positionTimelineSec },
+          expect: { applied: true, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
+        });
+        collect('transport.control (seek back)', problems, back);
       }
-
-      const stop = await t.writeKept({
-        step: 'transport.control (stop)',
-        method: 'transport.control',
-        params: { action: 'stop' },
-        expect: { applied: true, noOp: false, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
-      });
-      collect('transport.control (stop)', problems, stop);
-
-      const back = await t.writeKept({
-        step: 'transport.control (seek back)',
-        method: 'transport.control',
-        params: { action: 'seek', positionTimelineSec: before.positionTimelineSec },
-        expect: { applied: true, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
-      });
-      collect('transport.control (seek back)', problems, back);
-    }
-
-    if (canMute && tracks.length > 0) {
-      const unmuted = await t.writeKept({
-        step: 'track.set (restore the mute)',
-        method: 'track.set',
-        params: { tracks: tracksBefore.map((track) => ({ trackId: track.trackId, muted: track.muted === true })) },
-        expect: { applied: true, undoable: false, undoReason: 'ui_parity', revert: 'present' },
-      });
-      collect('track.set (unmute)', problems, unmuted);
-      const after = listOf(member(await t.reads.snapshot(['tracks']), 'tracks', 'the tracks snapshot'));
-      const found = differences({ tracks: tracksBefore }, { tracks: after });
-      if (found.length > 0) problems.push(`the tracks after the mute was put back differ: ${found.join('; ')}`);
+    } finally {
+      if (started && !stopped) {
+        try {
+          await t.writeKept({
+            step: 'transport.control (stop after a failure)',
+            method: 'transport.control',
+            params: { action: 'stop' },
+            expect: { applied: true },
+          });
+        } catch {
+          problems.push('the transport could not be stopped after a failure');
+        }
+      }
+      if (canMute && tracks.length > 0) {
+        const unmuted = await t.writeKept({
+          step: 'track.set (restore the mute)',
+          method: 'track.set',
+          params: { tracks: tracksBefore.map((track) => ({ trackId: track.trackId, muted: track.muted === true })) },
+          expect: { applied: true, undoable: false, undoReason: 'ui_parity', revert: 'present' },
+        });
+        collect('track.set (unmute)', problems, unmuted);
+        const after = listOf(member(await t.reads.snapshot(['tracks']), 'tracks', 'the tracks snapshot'));
+        const found = differences({ tracks: tracksBefore }, { tracks: after });
+        if (found.length > 0) problems.push(`the tracks after the mute was put back differ: ${found.join('; ')}`);
+      }
     }
     const now = pick(await t.reads.transportState(), ['playing', 'positionTimelineSec']);
     if (!sameValue(now, { playing: before.playing, positionTimelineSec: before.positionTimelineSec })) {
@@ -2174,6 +2207,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
         const ended = await endAllConfirmed(discoveryDir);
         notes.push(...ended.notes);
       }
+      notes.push(...(await instanceSettingsProblems([instance])));
       if (root !== '') {
         try {
           await removeDir(root);
