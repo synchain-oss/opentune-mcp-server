@@ -95,30 +95,113 @@ These show what the tools do. They make no promise about how the corrected vocal
 3. **"Move this section 30 ms earlier."** The agent calls `opentune_edit_timing` with a `shift` of -30 ms (`delta_ms`) on that range. OpenTune does not detect beats: handle positions come from you, or from the `seed` operation. The result lists the handles and says if a move was limited (`CLAMPED`).
 4. **"Open `C:\Music\take1.wav` and tune it to C major."** The agent calls `opentune_open_audio`, follows the import with `opentune_get_job` until the analysis ends, then calls `opentune_autotune_range` with mode `regenerate` and the scale C major. Long audio takes time: see [How long to wait](docs/COMPATIBILITY.md#how-long-to-wait).
 5. **"Use the backing-track WAV to find the key of this song, then autotune in that key."** The agent calls `opentune_estimate_key` with `mix_path` (an absolute path to a `.wav` file) and, optionally, the vocal `clip`. The result lists the best keys with confidences, says when relative keys (which share their notes) cannot be told apart, and gives a `recommendation.key` that the agent passes to `opentune_autotune_range`. Nothing is changed by the estimate itself.
+6. **"Move the second vocal 0.5 seconds later and fade it in."** The agent calls `opentune_get_project` (the clips with their timeline start, and the `arrangement_revision`), previews with `opentune_edit_arrangement` and `dry_run`, then sends a `move` (a new `start_timeline_sec`: the current start plus 0.5) and a `fade` (`fade_in_sec`) in one call, which is one undo step. This moves the clip on the timeline; it does not stretch the audio inside it (that is `opentune_edit_timing`). OpenTune has no section markers, so the agent names the clip it means by its start time and asks when two clips fit.
+7. **"Mute the backing track so I can hear the vocal."** The agent reads the tracks with `opentune_get_project`, mutes the backing track with `opentune_set_tracks` (op `mute`) and, if you ask, starts playback with `opentune_transport` (action `play`). Track names are data: when it is not sure which track is the backing, it asks. A mute has no undo entry in OpenTune, as in the window; the result gives the call that unmutes, so ask for the track to be unmuted when you are done. Playback comes out of the audio device of your computer; the agent cannot hear it, so you do the listening.
+8. **"Save this as a new project, `C:\Music\take1-v2.otproj`."** The agent calls `opentune_save_project` with mode `save_as` and that path; the new file becomes the project file. A different existing file is never replaced by it: for that the agent needs `opentune_save_project_overwrite`, which asks for your explicit agreement first. OpenTune has no autosave, so ask the agent to save after each finished step; the undo history is not stored in the project file.
 
 ## Using it with a DAW
 
 The exchange is by file path only; there is no DAW plug-in.
 
 1. In your DAW, export the dry vocal as a WAV file.
-2. Ask the agent to open that file in OpenTune, make the edits, and export a WAV file (`opentune_export_audio`; without `path` it is written next to the source as `<name>.opentune.wav`).
+2. Ask the agent to open that file in OpenTune (`opentune_open_audio`), make the edits, and export a WAV file (`opentune_export_audio`; a clip, a track or the whole mix; without `path` it is written next to the source as `<name>.opentune.wav`, and a name that is taken gets the next free one, so nothing is overwritten).
 3. Import the exported WAV back into the DAW, on a new track or in place of the dry vocal.
+4. To go on later, ask the agent to save the OpenTune project (`opentune_save_project`, a `.otproj` file). Only OpenTune reads that file; the DAW does not.
+
+If your agent runs in WSL, read [WSL](#wsl) for the form of the paths.
 
 ## WSL
 
-The server must use Node.js on Windows, because OpenTune listens on `127.0.0.1` of Windows, which WSL cannot reach: inside WSL `opentune-mcp doctor` fails the check `OT_WSL_RUNTIME` and `opentune_get_status` reports `WSL_UNSUPPORTED_RUNTIME`. Configure your MCP client to start the server with Windows Node.js (the snippets above do that). File paths in the form `/mnt/c/Music/take1.wav` are converted to `C:\Music\take1.wav` in tool calls.
+The server must use Node.js on Windows, because OpenTune listens on `127.0.0.1` of Windows, which WSL cannot reach: inside WSL `opentune-mcp doctor` fails the check `OT_WSL_RUNTIME` and `opentune_get_status` reports `WSL_UNSUPPORTED_RUNTIME`. Configure your MCP client to start the server with Windows Node.js (the snippets above do that). An agent in WSL can still hand over files by path: in every path argument of a tool call (`path`, `items`, `mix_path`) a path in the form `/mnt/c/Music/take1.wav` is converted to `C:\Music\take1.wav`. Results report Windows paths, such as `C:\Music\take1.opentune.wav`; that is the form your Windows DAW takes, and inside WSL the same file is `/mnt/c/Music/take1.opentune.wav`.
 
 ## What it does
 
 OpenTune analyses a recorded vocal, shows it as notes and a pitch curve, and re-renders the corrected voice with a neural vocoder. This server lets an AI agent perform, through MCP tool calls, operations that a person can perform in the OpenTune Standalone window. The complete list is in [docs/reference.md](docs/reference.md).
 
 - **Import and export:** open audio files and export a clip, a track or the full mix as WAV.
-- **Read the analysis:** notes, pitch curves, the detected key, analysis and render status, and a pitch summary per phrase that an agent can reason about.
+- **Read the analysis:** notes, pitch curves, the detected key, analysis and render status, and a pitch summary per phrase that an agent can reason about. A key can also be estimated from a WAV of the backing track or the mix.
 - **Auto-tune and note edits:** run OpenTune's AUTO correction on chosen time ranges, set a note's target pitch, shift it by cents, snap it to the scale, change retune speed, vibrato and drift, and set a clip's key and pitch shift.
 - **Timing:** shift a section earlier or later, and move time handles. The `beat-grid` skill measures the tempo and beat grid of a backing track or the original mix and plans those shifts; its analyzer is downloaded only after the user agrees (about 85 to 90 MB with the default model).
+- **Arrangement and tracks:** move, trim, fade and set the gain of clips on the timeline; split, merge, delete and copy clips; mute, solo and set the volume and colour of tracks; show hidden tracks, duplicate and delete tracks.
+- **Playback and window:** play, pause, stop and seek; set the tempo, time signature and loop; select a clip and close dialogs.
+- **Projects and settings:** save a project, save it under a new name, open another one; read and change OpenTune's global settings (tuning frequency, hybrid mode, editing scheme, audio device). OpenTune has no autosave, so saving is part of the workflow.
 - **Undo and redo:** API changes go onto OpenTune's own undo history where OpenTune supports undo. When an action cannot be undone (some cannot, in OpenTune itself), the result says so and, where possible, includes a way to revert it.
 
 Every change returns a structured result: what changed (before and after, with units), side effects, warnings, whether it can be undone, and how to revert it when it cannot. The goal is not to judge whether a vocal "sounds right"; it is to make OpenTune's existing operations available to an agent and to report their effects clearly.
+
+## Tools
+
+The server offers 27 tools; their parameters are in [docs/reference.md](docs/reference.md). A result that cannot be undone says so in its first sentence and, where there is a way back, gives the call that restores the old state.
+
+**Status and jobs**
+
+| Tool | What it does | Undo and your agreement |
+| --- | --- | --- |
+| `opentune_get_status` | Reports whether OpenTune can be used, with a `nextStep`, and lists the running instances. Call it first. | Read-only. |
+| `opentune_launch` | Starts the configured OpenTune build with its control API, or says why it cannot. | A second instance needs `allow_second_instance`, only with your agreement. |
+| `opentune_get_job` | Follows a long operation (import, export, analysis, project open or save). | Read-only. |
+| `opentune_cancel_job` | Asks OpenTune to stop a running job. Work the job already committed stays. | A job that cannot be cancelled keeps running; the error says so. |
+
+**Read**
+
+| Tool | What it does | Undo and your agreement |
+| --- | --- | --- |
+| `opentune_get_project` | Tracks, clips, selection, transport, and the revisions that write tools need. | Read-only. |
+| `opentune_get_notes` | The notes of one clip, a page at a time. | Read-only. |
+| `opentune_get_clip_details` | Duration, key, pitch shift, analysis state, time handles, reference binding and AUTO modes of one clip. | Read-only. |
+| `opentune_get_settings` | OpenTune's global settings: processing, audio device, recent projects, import and export limits, log lines. | Read-only. |
+
+**Analyse**
+
+| Tool | What it does | Undo and your agreement |
+| --- | --- | --- |
+| `opentune_analyze_pitch` | How far each note is from its target, in cents, before and after the corrections. | Read-only. |
+| `opentune_estimate_key` | Estimates the key of a song from a clip's vocal pitch and/or a WAV of the mix or the backing track. | Read-only; the WAV is only read. |
+
+**Audio files**
+
+| Tool | What it does | Undo and your agreement |
+| --- | --- | --- |
+| `opentune_open_audio` | Imports audio files as new clips. | Cannot be undone; the result says how to revert it. |
+| `opentune_export_audio` | Writes a WAV of a clip, a track or the master mix. Never overwrites a file. | Does not change the project. `allow_dry` (export a clip whose analysis failed, uncorrected) only with your agreement. |
+
+**Clips and notes**
+
+| Tool | What it does | Undo and your agreement |
+| --- | --- | --- |
+| `opentune_set_clip` | Sets the key and/or the pitch shift of a clip. | A key change cannot be undone (the result gives the call that restores it); a pitch shift is one undo step. |
+| `opentune_autotune_range` | Runs OpenTune's AUTO on ranges of a clip. `dry_run` previews. | Marked destructive. Mode `notesOnly` replaces all notes and cannot be undone; it needs `replace_edited_notes`, only with your agreement. |
+| `opentune_edit_notes` | Sets target pitch, shifts by cents, snaps to the scale, changes retune speed, vibrato and drift. `dry_run` previews. | One undo step. |
+| `opentune_edit_timing` | Shifts or moves the time handles of a clip; `seed` places the first handles. | The `seed` operation cannot be undone. |
+| `opentune_undo`, `opentune_redo` | Undo or redo the top step, if it is the step the call names. | After `UNDO_CONFLICT` the agent asks you. `force` only when you ask to undo a change that was not made through this server. |
+
+**Arrangement and tracks**
+
+| Tool | What it does | Undo and your agreement |
+| --- | --- | --- |
+| `opentune_edit_arrangement` | Clips on the timeline: move, trim, gain, fade, set a reference (experimental), split, merge, delete, copy. `dry_run` previews. | Marked destructive. Split, merge, delete and copy cannot be undone, so the agent asks you first; delete needs `confirm: true`. |
+| `opentune_set_tracks` | Mute, solo, volume and colour of tracks; show hidden tracks; duplicate a track. | Mute, solo, volume and colour have no undo entry in OpenTune; the result gives the call that restores the old values. |
+| `opentune_delete_track` | Deletes a track and its clips. | Marked destructive. Cannot be undone, and the later track ids move down by one. Needs `confirm: true`, only after you agreed to delete that track. |
+
+**Playback and window**
+
+| Tool | What it does | Undo and your agreement |
+| --- | --- | --- |
+| `opentune_transport` | Play, pause, stop, seek, tempo, time signature, loop. | Tempo and time signature cannot be undone (the result gives the restoring call). Looping has no audible effect in the standalone app, and without an audio device nothing is heard. |
+| `opentune_manage_ui` | Selects a clip (and can open it in the piano roll), closes dialogs, marks the first-run dialog as shown. | Marked destructive. Selecting a clip can make OpenTune generate its notes (no undo entry). A dialog that commits its value when it closes needs `accept_commit`, only with your agreement. Marking the first-run dialog as shown cannot be undone. |
+
+**Projects and settings**
+
+| Tool | What it does | Undo and your agreement |
+| --- | --- | --- |
+| `opentune_save_project` | Saves the project, or saves it as a new `.otproj` file. | Does not replace a different existing file. |
+| `opentune_save_project_overwrite` | Saves the project over a different, existing `.otproj` file. | Marked destructive. The old file is lost. Needs `confirm: true`, only after you agreed to replace that file. |
+| `opentune_open_project` | Opens a `.otproj` file and replaces the current project. | Marked destructive. Never saves: with unsaved changes it fails (`UNSAVED_CHANGES`) unless `discard_unsaved: true`, only with your agreement. Clears the undo history. |
+| `opentune_set_settings` | Changes OpenTune's global settings (A4 tuning, hybrid mode, editing scheme, experimental features, audio device) or empties the recent-projects list. | Marked destructive. The settings belong to the OpenTune installation, not to the project, and have no undo entry; the result gives the previous values and the call that restores them. The recent-projects list cannot be refilled. |
+
+### Your agreement
+
+The tools marked destructive in their MCP annotations are `opentune_autotune_range`, `opentune_edit_arrangement`, `opentune_delete_track`, `opentune_manage_ui`, `opentune_open_project`, `opentune_save_project_overwrite` and `opentune_set_settings`. The server's instructions tell the agent to get your explicit agreement, in the conversation, before any destructive or irreversible action, and a tool result never counts as agreement. The arguments that confirm such an action (`confirm`, `discard_unsaved`, `replace_edited_notes`, `accept_commit`, `allow_dry`, `allow_second_instance`, `force`) are set only after you agreed. If you want a second check, set your MCP client to ask before it runs these tools.
 
 ## How it works
 
@@ -139,7 +222,10 @@ OpenTune Standalone with the control API  (synchain-oss/OpenTune, AGPL-3.0)
 
 ## Known limitations
 
-- **Hybrid mode and small corrections.** OpenTune's preference "Hybrid Mode: Small corrections use DSP, large corrections use vocoder" is on by default. The part of a correction below 75 cents is applied by DSP pitch shifting instead of the vocoder, which is OpenTune's own design, and on real voices such a small correction can be barely audible. To make small corrections count, switch that preference off in OpenTune. See [Hybrid mode](docs/TROUBLESHOOTING.md#hybrid-mode).
+- **Hybrid mode and small corrections.** OpenTune's preference "Hybrid Mode: Small corrections use DSP, large corrections use vocoder" is on by default. The part of a correction below 75 cents is applied by DSP pitch shifting instead of the vocoder, which is OpenTune's own design, and on real voices such a small correction can be barely audible. To make small corrections count, switch that preference off in OpenTune, or ask the agent to do it with `opentune_set_settings` (`processing.hybrid_mode`); it is a global setting of OpenTune, not of the project, so it stays off until someone switches it on again. See [Hybrid mode](docs/TROUBLESHOOTING.md#hybrid-mode).
+- **Some edits cannot be undone.** Importing audio, changing the key of a clip and a time-grid `seed` cannot be undone. Splitting, merging and deleting clips cannot be undone because of a defect in OpenTune (it frees objects that its own undo entry needs); copying clips and deleting a track cannot be undone either. Mute, solo, volume, colour, tempo, time signature and the global settings have no undo entry in OpenTune. The result says so in its first sentence, the agent asks you before the destructive ones, and where there is a way back the result gives the call that restores the old state.
+- **No autosave.** OpenTune does not save by itself, and the undo history is not stored in the project file. Unsaved work is lost when OpenTune closes or crashes: ask the agent to save after each finished step.
+- **One reference analysis per session.** OpenTune completes only one reference analysis per session (a defect in OpenTune itself). After that, `opentune_autotune_range` in mode `reference` ends with `NOT_READY` until OpenTune is restarted; save the project first. See [NOT_READY](docs/TROUBLESHOOTING.md#error-not_ready).
 - **`RUNNING_WITHOUT_API` was only checked by hand.** The state of an official OpenTune that runs without the control API was verified manually, not by an automated test.
 - **Read-only source folder.** An export without `path` goes next to the source file. When that folder is read-only the export fails with an error; it does not pick another folder. Give a writable `path`.
 - **First launch needs a person.** The welcome dialog has to be answered once ([First launch](#first-launch)).
@@ -157,9 +243,9 @@ OpenTune Standalone with the control API  (synchain-oss/OpenTune, AGPL-3.0)
 
 - [docs/install.md](docs/install.md): setup for MCP clients, including the MCPB package
 - [docs/reference.md](docs/reference.md): tool reference, generated from the server
-- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md): which OpenTune versions, test builds and protocol versions work together, and how long operations take
+- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md): which OpenTune versions, test builds and protocol versions work together, which capabilities each tool needs, and how long operations take
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) ([中文](docs/TROUBLESHOOTING.zh-CN.md)): errors, states and doctor checks, with fixes
-- [docs/real-opentune-testing.md](docs/real-opentune-testing.md): running the end-to-end checks against a real OpenTune
+- [docs/real-opentune-testing.md](docs/real-opentune-testing.md): running the end-to-end checks against a real OpenTune, and how to judge a run
 - `spec/otcp/v1/`: the OTCP specification
 
 ## Contributing

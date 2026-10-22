@@ -96,6 +96,13 @@ versioned separately and has its own changelog.
   v0.39.0 does not implement `config.max_output_tokens`, so the output cap comes from
   `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS` instead. The `base == 'dev'` gate and the
   `ENABLE_PR_AGENT` switch already existed and are unchanged by this PR. (#63)
+- Documentation: the READMEs (English and Chinese) list all 27 tools by group, say which ones are marked destructive and
+  which arguments need the user's agreement, add example prompts for moving and fading a clip, muting a track and saving
+  a project under a new name, and give the known limits of undo, saving and the reference analysis. The DAW and WSL
+  sections agree on how paths are written and reported. `docs/real-opentune-testing.md` explains how to run the whole
+  real-OpenTune set and how to judge it (what counts as a pass, the settings guard, the known upstream defect),
+  `docs/COMPATIBILITY.md` lists the capabilities each tool needs, `docs/install.md` has a WSL section, and the
+  hybrid-mode section of the troubleshooting guide mentions `opentune_set_settings`.
 
 ## [0.1.0] - 2026-10-17
 
