@@ -17,6 +17,7 @@ import type { Json } from '../otcp/client.js';
 import { decodeArrangementRevision, decodeClipRevision, encodeArrangementRevision } from '../otcp/tokens.js';
 import { asList, isObject } from '../render/changes.js';
 import { writeOutcome } from '../render/index.js';
+import { revertPlan } from '../render/revert.js';
 import { table, token } from '../render/text.js';
 import { INSTANCE_FIELD, WRITE_TIMEOUT_MS, invalid } from './clip-write.js';
 import {
@@ -307,15 +308,18 @@ const UPSTREAM_DEFECT = (envelope: Json): boolean =>
 
 /**
  * How far a result that cannot be undone can be taken back: `final` when no request can restore it (an
- * IRREVERSIBLE warning, or no undo and no revert recipe), `restorable` when the result carries a revert
- * recipe, and null when the change can be undone or changed nothing.
+ * IRREVERSIBLE warning, or no undo and no revert recipe this server can carry out), `restorable` when
+ * the result carries such a recipe, and null when the change can be undone or changed nothing. The
+ * recipe is read the way the revert line reads it, so the first sentence and the revert line cannot
+ * contradict each other: a recipe that is not in the protocol form is no way back either.
  */
 function reversibility(envelope: Json): 'final' | 'restorable' | null {
   if (asList(envelope.warnings).some((w) => isObject(w) && w.code === 'IRREVERSIBLE')) return 'final';
   const undo = isObject(envelope.undo) ? envelope.undo : null;
   if (undo?.undoable !== false) return null;
   if (undo.reason === 'no_op') return null;
-  return undo.revert == null ? 'final' : 'restorable';
+  const plan = revertPlan(undo.revert);
+  return plan.kind === 'none' || plan.kind === 'malformed' ? 'final' : 'restorable';
 }
 
 /**

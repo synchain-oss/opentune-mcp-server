@@ -701,6 +701,24 @@ describe('the first sentence of an irreversible structural edit', () => {
       ]) {
         expect(structuralLead(kind, result), kind).toContain('cannot be undone or restored by any request');
       }
+      // A recipe that is not in the protocol form is no way back either, so the lead says so: the
+      // revert line reads the recipe the same way and cannot promise a restore.
+      const broken: readonly (readonly [string, unknown])[] = [
+        ['false', false],
+        ['a string', 'a string'],
+        ['a number', 42],
+        ['an empty object', {}],
+        ['a method that is not one', { method: 'not a method' }],
+      ];
+      for (const [label, revert] of broken) {
+        const lead = structuralLead(kind, {
+          dryRun: false,
+          undo: { undoable: false, reason: 'no_upstream_undo', revert },
+          warnings: [],
+        });
+        expect(lead, label).toContain('cannot be undone or restored by any request');
+        expect(lead, label).not.toContain('the revert line says how to put it back');
+      }
     }
     expect(structuralLead('delete', restorable)).toContain('removing clips needs confirm: true');
     expect(structuralLead('split', restorable)).not.toContain('confirm');
@@ -750,6 +768,38 @@ describe('the first sentence of an irreversible structural edit', () => {
     const first = firstSentence(out.summary);
     expect(first).toContain('this split cannot be undone, but the revert line says how to put it back');
     expect(first).not.toContain('restored by any request');
+  });
+
+  it('says the same about a recipe that is not in the protocol form in the first sentence and the revert line', async () => {
+    const env = await setup();
+    const revision = await env.revision();
+    env.session.call = () =>
+      Promise.resolve({
+        applied: true,
+        noOp: false,
+        dryRun: false,
+        changes: [],
+        created: [],
+        removed: [],
+        idMap: [],
+        revisionDiff: { arrangement: { before: 'a1', after: 'a2' }, trackState: null, contents: [] },
+        tokens: { arrangementRevision: 'a2', contents: [], placements: [] },
+        // An instance that sends a revert that is not an object: the revert line reads it as no recipe.
+        undo: { undoable: false, reason: 'no_upstream_undo', revert: false },
+        dirty: { before: true, after: true },
+        ui: null,
+        sideEffects: {},
+        warnings: [],
+        job: null,
+      });
+    const out = body(
+      await edit(env, { expected_revision: revision, ops: [{ op: 'split', clip: id(env, 'a'), at_timeline_sec: 1 }] }),
+    );
+    const first = firstSentence(out.summary);
+    expect(first).toContain('this split cannot be undone or restored by any request');
+    expect(first).not.toContain('the revert line says how to put it back');
+    // The revert line says the same: no request can restore the previous state.
+    expect(revertLine(out)?.text).toContain('No request of the protocol can restore the previous state.');
   });
 
   it('puts it in the summary of a delete result that carries IRREVERSIBLE but no defect', async () => {

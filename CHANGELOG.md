@@ -108,6 +108,9 @@ versioned separately and has its own changelog.
   mistaken for a full one.
 - Every irreversible clip split, merge or delete says so in the first sentence of its result, also when OpenTune does
   not report its undo defect for that call.
+- The first sentence of a structural edit and its revert line read the revert recipe the same way: a recipe that is
+  not in the protocol's form is no way back, so the first sentence no longer promises a restore that the revert line
+  does not.
 - `opentune_edit_arrangement` copies a clip that `clips` names twice only once, and the summary of a call with several
   requests no longer repeats "not undoable" once per request.
 - `opentune_transport` is no longer marked idempotent: `play_from_last_start` seeks back to the last start on every
