@@ -125,7 +125,7 @@ In every vector, the runner makes sure that the connections of the vector are th
 
 ## Reproducibility
 
-Vectors are written so that they hold against any target: mock, a window-less test build of OpenTune, or a running OpenTune. In a window-less test build the methods that act through the editor window fail with `UNSUPPORTED(capability_missing)` (PROTOCOL.md section 7 rule 6), so a runner gives such a build a stand-in for the editor or skips their vectors. Values that differ between runs (ids, timestamps, secrets) are matched with `$any`, `$capture` and `$ref`, never written as literals.
+Vectors are written so that they hold against any target: mock, a window-less test build of OpenTune, or a running OpenTune. In a window-less test build the methods that act through the editor window fail with `UNSUPPORTED(no_editor_window)` (PROTOCOL.md section 7 rule 6), so a runner gives such a build a stand-in for the editor or skips their vectors. Values that differ between runs (ids, timestamps, secrets) are matched with `$any`, `$capture` and `$ref`, never written as literals.
 
 A mock used for contract tests SHOULD additionally be deterministic, so that its full transcripts can be compared byte for byte:
 

@@ -349,7 +349,13 @@
       "code": "capability_missing",
       "scope": "UNSUPPORTED",
       "since": "1.0",
-      "description": "The instance lacks the capability the request needs, or the method acts through the OpenTune editor window and no editor exists (PROTOCOL.md section 7 rule 6). detail names the capability."
+      "description": "The instance lacks the capability the request needs. detail names the capability."
+    },
+    {
+      "code": "no_editor_window",
+      "scope": "UNSUPPORTED",
+      "since": "1.0",
+      "description": "The method acts through the OpenTune editor window (PROTOCOL.md section 7 rule 6), and this instance has no editor window, for example in a window-less run. The request changes nothing (executed false). The method works when OpenTune Standalone is started with its window. Not retryable: the same request fails until OpenTune is started with a window."
     },
     {
       "code": "undo_unsafe_build",

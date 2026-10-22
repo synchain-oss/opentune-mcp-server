@@ -63,7 +63,7 @@ versioned separately and has its own changelog.
 ### Changed
 
 - OTCP specification `1.0.0-rc.5` (unreleased), proposed as the text of 1.0.0: the methods that need the OpenTune
-  editor window answer `UNSUPPORTED(capability_missing)` while there is none, the `prefsApply` job of `prefs.set`
+  editor window answer `UNSUPPORTED(no_editor_window)` (a new reason) while there is none, the `prefsApply` job of `prefs.set`
   checks the busy state again (`BUSY` in its job errors), duplicating a hidden track fails with `track_hidden`,
   closing a first-run overlay that already marked onboarding as shown changes the view only, and two corrections of
   the reference-job and track-id text. The mock follows (test hook `showOnboarding`).

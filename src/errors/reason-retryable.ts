@@ -24,4 +24,5 @@ export const REASON_RETRYABLE: Readonly<Record<string, boolean>> = Object.freeze
   'NOT_READY/reference_analysis_stalled': false,
   'NOT_READY/reference_analysis_timeout': true,
   'ANALYSIS_FAILED/reference_analysis_failed': false,
+  'UNSUPPORTED/no_editor_window': false,
 });
