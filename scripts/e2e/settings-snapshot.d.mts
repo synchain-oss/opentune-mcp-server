@@ -34,7 +34,10 @@ export function settleSnapshot(
   snapshot: SettingsSnapshot,
   baseline?: SettingsSnapshot,
 ): Promise<{ readonly differences: string[]; readonly appeared: string[]; readonly problems: string[] }>;
-export function watchStats(dir: string): Promise<Record<string, FileStat>>;
+export function watchStats(
+  dir: string,
+  statFile?: (file: string) => Promise<FileStat>,
+): Promise<Record<string, FileStat>>;
 export function diffStats(
   before: Readonly<Record<string, FileStat>>,
   after: Readonly<Record<string, FileStat>>,

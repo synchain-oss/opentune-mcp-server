@@ -38,6 +38,7 @@ import {
   runArrangementEffects,
   silenceOf,
   splitConsistency,
+  splitPartsOf,
   splitPointOf,
   tokensProblems,
   trackOf,
@@ -400,6 +401,28 @@ describe('arrangement effects scenario against the stand-in', () => {
   );
 
   it(
+    'fails the split check, instead of calling the merge refused, when an applied merge cannot be checked because the two split clips are not found',
+    async () => {
+      const report = await runArrangementEffects(config('arrangement-split-extra-part'));
+      expect(results(report)['split boundary is seamless']).toBe('FAIL');
+      expect(noteOf(report, 'split boundary is seamless')).toContain(
+        'the merge was applied, but checking its result failed: the two split clips cannot be found for the merge check',
+      );
+      const split = check<{ merge: { refused?: string; applied?: boolean; checkFailed?: string } }>(
+        report,
+        'split boundary is seamless',
+      );
+      expect(split.merge.refused).toBeUndefined();
+      expect(split.merge).toMatchObject({
+        applied: true,
+        checkFailed: 'the two split clips cannot be found for the merge check',
+      });
+      expect(results(report).shutdown).toBe('PASS');
+    },
+    SLOW,
+  );
+
+  it(
     'fails the split when it drops a sample at its boundary, and reports where, then merges',
     async () => {
       const report = await runArrangementEffects(config('arrangement-split-gap'));
@@ -580,6 +603,30 @@ describe('arrangement effects measurements', () => {
         { index: 0, startContentSec: 0, endContentSec: 2, voiced: true },
       ]),
     ).toBeCloseTo(1, 6);
+  });
+
+  it('finds the two clips a split left on the track of the old clip, and nothing when there are not exactly two', () => {
+    const old = placement();
+    const leading = placement({ placementId: 'p:0123abcd:0:2', endTimelineSec: 1.2, durationSec: 1.2 });
+    const trailing = placement({
+      placementId: 'p:0123abcd:0:3',
+      startTimelineSec: 1.2,
+      durationSec: 0.8,
+      clipInContentSec: 1.2,
+    });
+    expect(splitPartsOf(stateOf([trailing, leading]), old)).toEqual({ leading, trailing });
+    // Clips on another track, or outside the old clip, are not parts of it.
+    const elsewhere = placement({ placementId: 'p:0123abcd:0:4', startTimelineSec: 2, endTimelineSec: 3 });
+    expect(splitPartsOf(stateOf([leading, trailing, elsewhere]), old)).toEqual({ leading, trailing });
+    expect(splitPartsOf(stateOf([leading, { ...trailing, trackId: 1 }]), old)).toBeUndefined();
+    // One clip (nothing was split) and three clips are not a split into two.
+    expect(splitPartsOf(stateOf([old]), old)).toBeUndefined();
+    expect(
+      splitPartsOf(
+        stateOf([leading, trailing, placement({ placementId: 'p:0123abcd:0:5', endTimelineSec: 0.1 })]),
+        old,
+      ),
+    ).toBeUndefined();
   });
 
   it('reads the applied split position from SPLIT_SNAPPED', () => {

@@ -254,6 +254,11 @@ async function runSteps(
         continue;
       }
       // The job outlived the wait: the start envelope names it, and no later group is attempted.
+      // With the current protocol only the first group can get here: prefs.set is the one method of the three
+      // that starts a job (audio.set and project.clearRecent finish inside the call) and it always runs first,
+      // so `earlier` is empty. Should a later group ever start a job, the revert lines of the groups that were
+      // applied before it are only in `applied_before_job`, not in this body's own lines, and the note below
+      // has to say so.
       const remaining = steps.length - index - 1;
       const earlier = results.map((result) => result.label);
       const note =

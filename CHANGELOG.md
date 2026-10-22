@@ -96,6 +96,12 @@ versioned separately and has its own changelog.
   v0.39.0 does not implement `config.max_output_tokens`, so the output cap comes from
   `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS` instead. The `base == 'dev'` gate and the
   `ENABLE_PR_AGENT` switch already existed and are unchanged by this PR. (#63)
+- The real-OpenTune runs are stricter about their own clean-up and about what they print. The watch of the real
+  user's settings folder counts a file that is deleted between listing and reading as gone, instead of failing with
+  an ENOENT that names the full path, and a comparison that does fail shows the home folder as `~`. In the wave-B
+  boundary scenario, a rename back of the moved media that fails no longer replaces the result of the missing-media
+  step: it is listed as a manual check next to it. New unit tests cover each of these, and the arrangement effects
+  scenario has a test for a split whose two clips cannot be found after an applied merge.
 
 ## [0.1.0] - 2026-10-17
 
