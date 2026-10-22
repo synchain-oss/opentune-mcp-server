@@ -152,6 +152,18 @@ const REASONS: Readonly<Record<string, NextStep>> = {
     'Another export is running in OpenTune (from the window or another client). Wait for it to end, then call again.',
   ),
   'NOT_FOUND/job_not_found': agent('The job is unknown or expired (finished jobs are kept for 30 minutes).'),
+  'NOT_READY/reference_analysis_stalled': user(
+    'OpenTune no longer accepts reference analyses in this session (a known defect of OpenTune), so retrying does ' +
+      'not help. Ask the user to save the project and restart OpenTune, then try again.',
+  ),
+  'NOT_READY/reference_analysis_timeout': agent(
+    'The reference analysis is still running and did not finish within the wait limit. Wait a little, then follow ' +
+      'the job with opentune_get_job or call again.',
+  ),
+  'ANALYSIS_FAILED/reference_analysis_failed': agent(
+    'OpenTune could not analyse the reference. Choose another reference clip, or ask the user to check the ' +
+      'reference audio.',
+  ),
   'NOT_READY/f0_failed': user('Pitch analysis of this clip failed, so it cannot be edited. Tell the user.'),
   'NOT_READY/f0_empty': user('OpenTune found no singing in this clip, so it cannot be edited. Tell the user.'),
   'BUSY/request_limit': agent('Too many requests at once. Wait for the pending ones, then retry.'),
@@ -181,6 +193,11 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   ),
 };
 
+/** Reasons whose retryability differs from that of their kind, by `<kind>/<reason>` (registry/reasons.json). */
+const REASON_RETRYABLE: Readonly<Record<string, boolean>> = {
+  'NOT_READY/reference_analysis_stalled': false,
+};
+
 /** The default next step, retryability and anchor kind of an error. Unknown kinds use INTERNAL. */
 export function kindStep(
   kind: string,
@@ -189,7 +206,8 @@ export function kindStep(
   const known = Object.hasOwn(KINDS, kind);
   const entry = (known ? KINDS[kind] : undefined) ?? INTERNAL;
   const refined = reason === null ? undefined : REASONS[`${kind}/${reason}`];
-  return { nextStep: refined ?? entry.step, retryable: entry.retryable, anchorKind: known ? kind : 'INTERNAL' };
+  const retryable = (reason === null ? undefined : REASON_RETRYABLE[`${kind}/${reason}`]) ?? entry.retryable;
+  return { nextStep: refined ?? entry.step, retryable, anchorKind: known ? kind : 'INTERNAL' };
 }
 
 /** Kinds with a default step: the OTCP kinds and this server's own. */

@@ -125,6 +125,12 @@ Finished jobs are kept for 30 minutes.
 OpenTune is still analysing the audio or generating notes. Wait and retry. Reasons `f0_failed` and `f0_empty` do not
 pass: the clip cannot be edited.
 
+The reference analysis has three reasons. `reference_analysis_stalled`: OpenTune completes only one reference analysis
+per session (a known defect of OpenTune), so retrying does not help; save the project, restart OpenTune, then try
+again. `reference_analysis_timeout`: the analysis is still running; wait, then follow the job with `opentune_get_job` or
+call again. `reference_analysis_failed` (kind ANALYSIS_FAILED): OpenTune could not analyse the reference; choose
+another reference clip or check the reference audio.
+
 ### Error ANALYSIS_FAILED
 
 OpenTune could not analyse the pitch of the audio.

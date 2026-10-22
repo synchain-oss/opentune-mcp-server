@@ -108,6 +108,10 @@ versioned separately and has its own changelog.
   remains the trust anchor), exposes `--no-refine` and `--min-segment-beats`, gives each timing suggestion as a single
   op instead of a call that would reuse a stale revision, explains what to do when the user rejects a plan, and sorts
   installed analyzer versions by version rather than by text.
+- The errors of a reference analysis that does not complete tell what to do next: `reference_analysis_stalled` (not
+  retryable) asks the user to save the project and restart OpenTune, `reference_analysis_timeout` (retryable) says to
+  follow the job or call again, and `reference_analysis_failed` says to choose another reference clip or have the
+  reference audio checked.
 
 ## [0.1.0] - 2026-10-17
 

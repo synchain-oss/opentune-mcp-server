@@ -43,6 +43,21 @@ describe('error kinds', () => {
     );
   });
 
+  it('gives the reference analysis reasons their own step, actor and retryability', () => {
+    const stalled = kindStep('NOT_READY', 'reference_analysis_stalled');
+    expect(stalled.retryable).toBe(false);
+    expect(stalled.nextStep.actor).toBe('user');
+    expect(stalled.nextStep.message).toMatch(/save the project and restart OpenTune/);
+    const timeout = kindStep('NOT_READY', 'reference_analysis_timeout');
+    expect(timeout.retryable).toBe(true);
+    expect(timeout.nextStep.actor).toBe('agent');
+    expect(timeout.nextStep.message).toMatch(/opentune_get_job/);
+    const failed = kindStep('ANALYSIS_FAILED', 'reference_analysis_failed');
+    expect(failed.retryable).toBe(false);
+    expect(failed.nextStep.actor).toBe('agent');
+    expect(failed.nextStep.message).toMatch(/another reference clip/);
+  });
+
   it('handles unknown kinds like INTERNAL but keeps the kind', () => {
     const error = toolError('SOMETHING_NEW', { detail: 'x' });
     expect(error.kind).toBe('SOMETHING_NEW');

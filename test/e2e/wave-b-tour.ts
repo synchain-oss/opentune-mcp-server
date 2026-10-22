@@ -23,7 +23,7 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { parseDiscoveryFile } from '../../src/discovery/file.js';
-import { OtcpError } from '../../src/errors/tool-error.js';
+import { OtcpError, type ErrorData } from '../../src/errors/tool-error.js';
 import { OtcpSession, type Json } from '../../src/otcp/client.js';
 import { TOOLS } from '../../src/tools/index.js';
 import { generateTone } from '../support/harmonic-tone.js';
@@ -488,6 +488,8 @@ export interface WriteRun {
   readonly ms: number;
   /** What took the change back, for the note. */
   readonly restoredBy: string | null;
+  /** The error the instance answered the write (or its job) with; absent when it committed. */
+  readonly failure?: ErrorData;
 }
 
 /** Runs the calls of the tour, times them and keeps the read cache in step with the instance. */
@@ -740,6 +742,7 @@ class Tour {
         unrestored: false,
         ms: performance.now() - started,
         restoredBy: null,
+        failure: error.data,
       };
     }
     this.reads.clear();
@@ -917,6 +920,24 @@ const isRevisionConflict = (error: unknown): boolean =>
 /** A recipe may be refused for its token only when the arrangement has moved on from the revision it names. */
 export const refusalIsDefect = (currentRevision: string, recipeRevision: unknown): boolean =>
   currentRevision === recipeRevision;
+
+/**
+ * The wait limit of a referenceAnalysis job. The protocol leaves the value to the implementation
+ * (PROTOCOL.md section 12.6); the fork waits this long, as the mock does.
+ */
+export const REFERENCE_WAIT_LIMIT_MS = 30_000;
+
+/**
+ * Whether a failed content.autoTune (mode reference) is the known defect of the locked OpenTune: its
+ * reference analysis service accepts only one task per session, and the fork reports every later
+ * analysis as NOT_READY(reference_analysis_stalled) (PROTOCOL.md section 15.4 rule 8). Only that
+ * error counts, and only when the job ended before the wait limit: one that ended at the limit, or
+ * another error such as reference_analysis_timeout, is a failure of the step.
+ */
+export const isKnownStalledDefect = (failure: ErrorData | undefined, elapsedMs: number): boolean =>
+  failure?.kind === 'NOT_READY' &&
+  failure.reason === 'reference_analysis_stalled' &&
+  elapsedMs < REFERENCE_WAIT_LIMIT_MS;
 
 /** A step that could not put the state back; the scenario stops after it. */
 export class Unrestored extends Error {}
@@ -1663,6 +1684,13 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       problems.push('content.getDetails does not report the alignment data of the copy');
     }
 
+    const notesKind = `notes:${copyContentId}`;
+    const undoCountOf = async (): Promise<number> => {
+      const read = await t.call('read', 'edit.getHistory', {});
+      return num(member(read, 'history', 'the edit.getHistory result'), 'undoCount', 'the history');
+    };
+    const notesBefore = await t.reads.snapshot([notesKind]);
+    const undoBefore = await undoCountOf();
     const tuned = await t.write({
       step: 'content.autoTune (reference)',
       method: 'content.autoTune',
@@ -1676,6 +1704,23 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       snapshot: [`notes:${copyContentId}`],
       expect: { applied: true, absentWarnings: ['IRREVERSIBLE', 'REPLACES_ALL_NOTES'] },
     });
+    if (isKnownStalledDefect(tuned.failure, tuned.ms)) {
+      // The defect is OpenTune's and the protocol does not hide it: the step passes only if the error
+      // is exactly that one, it came at once, and the failed job left the project as it was.
+      t.reads.clear();
+      const moved = differences(notesBefore, await t.reads.snapshot([notesKind]));
+      if (moved.length > 0) problems.push(`the notes changed although the job failed: ${moved.join('; ')}`);
+      const undoAfter = await undoCountOf();
+      if (undoAfter !== undoBefore) {
+        problems.push(`the undo stack went from ${String(undoBefore)} to ${String(undoAfter)} steps`);
+      }
+      scenario.facts.knownUpstreamDefects = ['reference_analysis_stalled'];
+      return finish(
+        'content.analyzeReference and content.autoTune in mode reference',
+        problems,
+        'known upstream defect: OpenTune completes only one reference analysis per session, reported as NOT_READY(reference_analysis_stalled); nothing changed',
+      );
+    }
     collect('content.autoTune (reference)', problems, tuned);
     if (tuned.envelope.noOp !== true) {
       const undo = isObject(tuned.envelope.undo) ? tuned.envelope.undo : null;

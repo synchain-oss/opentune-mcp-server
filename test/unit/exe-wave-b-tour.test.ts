@@ -10,11 +10,19 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { realClock, type Clock } from '../../mock/clock.js';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { OtcpSession, type Json } from '../../src/otcp/client.js';
 import type { McpProcess, RealInstance, RealInstanceOptions, ToolOutcome } from '../e2e/real-support.js';
 import type { SmokeConfig } from '../e2e/smoke.js';
-import { refusalIsDefect, runWaveBTour, type WaveBTourHooks, type WaveBTourReport } from '../e2e/wave-b-tour.js';
+import {
+  REFERENCE_WAIT_LIMIT_MS,
+  isKnownStalledDefect,
+  refusalIsDefect,
+  runWaveBTour,
+  type WaveBTourHooks,
+  type WaveBTourReport,
+} from '../e2e/wave-b-tour.js';
 import { INITIALIZE, mcpClient, testContext, type TestContext } from '../support/context.js';
 
 const cleanup: (() => unknown)[] = [];
@@ -36,8 +44,11 @@ type SessionDefect = (method: string, result: Json, params: Json) => Json | unde
 /** Changes one MCP tool result before the tour sees it. */
 type ToolDefect = (tool: string, body: Json) => unknown;
 
+/** Runs before a call is sent to the instance. */
+type BeforeCall = (method: string, params: Json) => void;
+
 /** A session that answers like `session`, with `defect` applied to every reply. */
-function wrapSession(session: OtcpSession, defect: SessionDefect): OtcpSession {
+function wrapSession(session: OtcpSession, defect: SessionDefect, before?: BeforeCall): OtcpSession {
   const wrapped = {
     get hello() {
       return session.hello;
@@ -46,6 +57,7 @@ function wrapSession(session: OtcpSession, defect: SessionDefect): OtcpSession {
       return session.closed;
     },
     async call(method: string, params: Json, timeoutMs: number): Promise<Json> {
+      before?.(method, params);
       const result = await session.call(method, params, timeoutMs);
       return defect(method, structuredClone(result), params) ?? result;
     },
@@ -97,6 +109,8 @@ async function fakeMcp(
 interface FixtureOptions {
   readonly prepare?: (mock: OtcpMock) => void;
   readonly reply?: SessionDefect;
+  readonly before?: BeforeCall;
+  readonly clock?: Clock;
   readonly tool?: ToolDefect;
 }
 
@@ -109,7 +123,10 @@ function fixture(options: FixtureOptions = {}): {
   const contexts: TestContext[] = [];
   const hooks: WaveBTourHooks = {
     async instance(request: RealInstanceOptions): Promise<RealInstance> {
-      const mock = await startMock({ discoveryDir: request.discoveryDir });
+      const mock = await startMock({
+        discoveryDir: request.discoveryDir,
+        ...(options.clock === undefined ? {} : { clock: options.clock }),
+      });
       mocks.push(mock);
       options.prepare?.(mock);
       return {
@@ -122,9 +139,11 @@ function fixture(options: FixtureOptions = {}): {
         },
       };
     },
-    ...(options.reply === undefined
+    ...(options.reply === undefined && options.before === undefined
       ? {}
-      : { session: (session: OtcpSession) => wrapSession(session, options.reply ?? (() => undefined)) }),
+      : {
+          session: (session: OtcpSession) => wrapSession(session, options.reply ?? (() => undefined), options.before),
+        }),
     mcp: (env) => fakeMcp(env, contexts, options.tool),
   };
   cleanup.push(async () => {
@@ -476,5 +495,86 @@ describe('a revert recipe refused for its token', () => {
     expect(refusalIsDefect('a1', 'a1')).toBe(true);
     expect(refusalIsDefect('a2', 'a1')).toBe(false);
     expect(refusalIsDefect('a2', undefined)).toBe(false);
+  });
+});
+
+describe('the reference analysis of the locked OpenTune', () => {
+  const STEP = 'content.analyzeReference and content.autoTune';
+
+  /**
+   * The first analysis completes, as it does in OpenTune; when the autoTune of the step comes, the
+   * alignment data has to be computed again and the mock's analysis ends as `fault` says. The fault
+   * ends with that step (the history read that follows it), so that the steps after it run as usual.
+   */
+  const afterTheFirstAnalysis = (fault: 'stalled' | 'timeout' | 'failed', clock?: Clock) => {
+    let mock: OtcpMock | undefined;
+    let armed = false;
+    return fixture({
+      prepare: (m) => {
+        withAudio(m);
+        mock = m;
+      },
+      ...(clock === undefined ? {} : { clock }),
+      before: (method, params) => {
+        if (method === 'content.autoTune' && params.mode === 'reference') {
+          armed = true;
+          mock?.setReferenceFault(fault);
+          mock?.forgetAlignment();
+        } else if (armed && method === 'edit.getHistory') {
+          armed = false;
+          mock?.setReferenceFault(null);
+        }
+      },
+    });
+  };
+
+  it('passes a stalled autoTune that ended at once and changed nothing, and lists the defect', async () => {
+    const { hooks } = afterTheFirstAnalysis('stalled');
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('PASS');
+    expect(step?.note).toContain('known upstream defect');
+    expect(step?.note).toContain('reported as NOT_READY(reference_analysis_stalled); nothing changed');
+    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
+    expect(stepNames(report).filter((entry) => !entry.includes('=PASS'))).toEqual([]);
+    expect(report.result).toBe('PASS');
+  }, 120_000);
+
+  it('fails an autoTune that ended with reference_analysis_timeout', async () => {
+    // The mock's job waits its 30 s limit; a clock that shortens such waits keeps the test quick.
+    const quick: Clock = {
+      now: () => realClock.now(),
+      setTimer: (ms, callback) => realClock.setTimer(ms >= 10_000 ? 50 : ms, callback),
+    };
+    const { hooks } = afterTheFirstAnalysis('timeout', quick);
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('reference_analysis_timeout');
+    expect(report.facts.knownUpstreamDefects).toBeUndefined();
+  }, 120_000);
+
+  it('fails an autoTune that ended with reference_analysis_failed', async () => {
+    const { hooks } = afterTheFirstAnalysis('failed');
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('reference_analysis_failed');
+    expect(report.facts.knownUpstreamDefects).toBeUndefined();
+  }, 120_000);
+
+  it('counts only NOT_READY(reference_analysis_stalled) that came before the wait limit', () => {
+    const stalled = {
+      kind: 'NOT_READY',
+      reason: 'reference_analysis_stalled',
+      retryable: false,
+      detail: 'x',
+      executed: false,
+    };
+    expect(isKnownStalledDefect(stalled, 120)).toBe(true);
+    expect(isKnownStalledDefect(stalled, REFERENCE_WAIT_LIMIT_MS)).toBe(false);
+    expect(isKnownStalledDefect({ ...stalled, reason: 'reference_analysis_timeout' }, 120)).toBe(false);
+    expect(isKnownStalledDefect({ ...stalled, kind: 'ANALYSIS_FAILED' }, 120)).toBe(false);
+    expect(isKnownStalledDefect(undefined, 120)).toBe(false);
   });
 });

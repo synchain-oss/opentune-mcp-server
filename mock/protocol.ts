@@ -6,6 +6,7 @@
 // the fixed responses of Appendix A.
 
 import { encodeLine } from '../src/otcp/framing.js';
+import { REASON_RETRYABLE } from './retryable.js';
 import type { OtcpSpec } from '../test/support/otcp-spec.js';
 
 export type RequestId = string | number;
@@ -34,7 +35,7 @@ export interface ErrorInit {
   readonly kind: string;
   readonly reason?: string;
   readonly detail: string;
-  /** Defaults to the kind's retryability in registry/error-kinds.json. */
+  /** Defaults to the reason's retryability (mock/retryable.ts), else the kind's in registry/error-kinds.json. */
   readonly retryable?: boolean;
   /** Defaults to false: the request changed nothing. */
   readonly executed?: boolean;
@@ -106,7 +107,10 @@ export function makeError(spec: OtcpSpec, init: ErrorInit): ErrorObject {
     data: {
       kind: init.kind,
       ...(init.reason === undefined ? {} : { reason: init.reason }),
-      retryable: init.retryable ?? kind.retryable,
+      retryable:
+        init.retryable ??
+        (init.reason === undefined ? undefined : REASON_RETRYABLE.get(`${init.kind}/${init.reason}`)) ??
+        kind.retryable,
       ...(init.retryAfterMs === undefined ? {} : { retryAfterMs: init.retryAfterMs }),
       detail: printableDetail(init.detail),
       executed: init.executed ?? false,
