@@ -43,3 +43,32 @@ What this means for a client:
 - After `opentune_launch`, allow about 30 seconds for OpenTune to announce itself (the tool waits that long itself).
   On Windows, finding an instance can take a few seconds more once (see
   [Slow process discovery](TROUBLESHOOTING.md#slow-process-discovery)).
+
+## Capabilities of the test build
+
+A build lists what it can do as capabilities (`capabilities` in the answer to `session.hello`). Every tool declares the
+ones it needs. A build that lacks one answers the tools that need it with the error `UNSUPPORTED`, reason
+`capability_missing`, and `detail` names the capability (see
+[Error UNSUPPORTED](TROUBLESHOOTING.md#error-unsupported)); every other tool keeps working. Two tools take what a build
+can give: `opentune_get_settings` returns a section it cannot read as `null` with the reason
+`capability_missing:<capability>`, and `opentune_set_settings` asks only for the capabilities of the groups you give
+it. A test build older than this server may therefore offer fewer tools than [reference.md](reference.md) lists.
+
+| Capability       | Tools that need it                                                                                                                                                                                                                                                 |
+| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `session.v1`     | `opentune_get_status`, `opentune_launch`, `opentune_get_settings`                                                                                                                                                                                                  |
+| `read.v1`        | `opentune_get_project`, `opentune_get_notes`, `opentune_get_clip_details`, `opentune_analyze_pitch`, `opentune_estimate_key` (with `clip`), `opentune_export_audio`, `opentune_set_clip`, `opentune_autotune_range`, `opentune_edit_notes`, `opentune_edit_timing` |
+| `jobs.v1`        | `opentune_get_job`, `opentune_cancel_job`, and every tool that waits for a job: open, export, timing seed, save and open project, and `opentune_set_settings` when OpenTune answers with a job (it does not check for `jobs.v1` before it sends the change)        |
+| `import.v1`      | `opentune_open_audio`                                                                                                                                                                                                                                              |
+| `export.v1`      | `opentune_export_audio`                                                                                                                                                                                                                                            |
+| `edit.v1`        | `opentune_set_clip`, `opentune_autotune_range`, `opentune_edit_notes`                                                                                                                                                                                              |
+| `history.v1`     | `opentune_undo`, `opentune_redo`                                                                                                                                                                                                                                   |
+| `timing.v1`      | `opentune_edit_timing`                                                                                                                                                                                                                                             |
+| `reference.v1`   | `opentune_autotune_range`, only in mode `reference`                                                                                                                                                                                                                |
+| `arrangement.v1` | `opentune_edit_arrangement`                                                                                                                                                                                                                                        |
+| `tracks.v1`      | `opentune_set_tracks`, `opentune_delete_track`                                                                                                                                                                                                                     |
+| `transport.v1`   | `opentune_transport`                                                                                                                                                                                                                                               |
+| `ui.bridge`      | `opentune_manage_ui`                                                                                                                                                                                                                                               |
+| `project.io`     | `opentune_save_project`, `opentune_save_project_overwrite`, `opentune_open_project`, and the `clear_recent` part of `opentune_set_settings`                                                                                                                        |
+| `prefs.write`    | `opentune_set_settings` (the `processing` part)                                                                                                                                                                                                                    |
+| `audio.device`   | `opentune_get_settings` (the `audio_device` section), `opentune_set_settings` (the `audio_device` part)                                                                                                                                                            |

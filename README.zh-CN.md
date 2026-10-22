@@ -95,30 +95,113 @@ claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\
 3. **「把这一段整体提前 30 毫秒。」** agent 对该范围调用 `opentune_edit_timing`,做一次 `shift`,`delta_ms` 为 -30。OpenTune 不检测节拍:时间柄的位置由你给出,或由 `seed` 操作生成。结果会列出时间柄,并说明某次移动是否被限制(`CLAMPED`)。
 4. **「打开 `C:\Music\take1.wav`,调到 C 大调。」** agent 调用 `opentune_open_audio`,用 `opentune_get_job` 跟踪导入直到分析结束,再用模式 `regenerate` 与 C 大调调用 `opentune_autotune_range`。较长的音频需要时间,见[要等多久](docs/COMPATIBILITY.md#how-long-to-wait)。
 5. **「用伴奏 WAV 帮我确定这首歌的调,再按这个调自动修音。」** agent 调用 `opentune_estimate_key`,传入 `mix_path`(`.wav` 文件的绝对路径),也可以再给出人声片段 `clip`。结果列出最可能的几个调及其置信度,并说明相对大小调(音阶相同)分不开的情况,给出 `recommendation.key`,agent 再把它传给 `opentune_autotune_range`。估计本身不会改动任何内容。
+6. **「把第二段人声往后挪 0.5 秒,并加个淡入。」** agent 调用 `opentune_get_project`(各片段的时间线起点,以及 `arrangement_revision`),先用 `opentune_edit_arrangement` 加 `dry_run` 预览,再在一次调用里发出 `move`(新的 `start_timeline_sec`:当前起点加 0.5)和 `fade`(`fade_in_sec`),这是一个撤销步骤。这移动的是片段在时间线上的位置,不会拉伸片段里的音频(那是 `opentune_edit_timing` 的事)。OpenTune 没有段落标记,所以 agent 会用起始时间说明它指的是哪个片段,有两个都像时会来问你。
+7. **「把伴奏轨静音,我想听听人声。」** agent 用 `opentune_get_project` 读出各轨道,用 `opentune_set_tracks`(操作 `mute`)把伴奏轨静音,你要求的话再用 `opentune_transport`(动作 `play`)开始播放。轨道名是数据:不确定哪条是伴奏轨时,agent 会来问你。静音在 OpenTune 里没有撤销条目(和窗口里一样);结果会给出取消静音的调用,所以用完请让它把这条轨道的静音取消。播放从你电脑的音频设备出声,agent 听不到,听感要你自己判断。
+8. **「另存为新工程 `C:\Music\take1-v2.otproj`。」** agent 用模式 `save_as` 和这个路径调用 `opentune_save_project`,新文件成为当前工程文件。它不会替换另一个已有文件:要替换就得用 `opentune_save_project_overwrite`,而它会先征得你的明确同意。OpenTune 没有自动保存,所以请让 agent 在每个完成的步骤之后保存;撤销历史不会存进工程文件。
 
 ## 与 DAW 配合使用
 
 只通过文件路径交换,没有 DAW 插件。
 
 1. 在 DAW 里把干声导出为 WAV 文件。
-2. 让 agent 在 OpenTune 里打开该文件、做修改,再导出 WAV(`opentune_export_audio`;不给 `path` 时写在源文件旁,名为 `<名字>.opentune.wav`)。
+2. 让 agent 在 OpenTune 里打开该文件(`opentune_open_audio`)、做修改,再导出 WAV(`opentune_export_audio`;可以导出片段、轨道或整个混音;不给 `path` 时写在源文件旁,名为 `<名字>.opentune.wav`,名字被占用就改用下一个空闲的名字,所以不会覆盖任何文件)。
 3. 把导出的 WAV 导回 DAW,放在新轨道上或替换原来的干声。
+4. 想以后接着做,就让 agent 保存 OpenTune 工程(`opentune_save_project`,`.otproj` 文件)。只有 OpenTune 读这个文件,DAW 不读。
+
+如果你的 agent 在 WSL 里运行,路径的写法见 [WSL](#wsl)。
 
 ## WSL
 
-服务必须用 Windows 上的 Node.js,因为 OpenTune 监听的是 Windows 的 `127.0.0.1`,WSL 访问不到:在 WSL 里 `opentune-mcp doctor` 的 `OT_WSL_RUNTIME` 检查会失败,`opentune_get_status` 会报告 `WSL_UNSUPPORTED_RUNTIME`。请把 MCP 客户端配置成用 Windows 的 Node.js 启动服务(上面的片段在 Windows 上就是这样配的)。工具调用里 `/mnt/c/Music/take1.wav` 形式的路径会被转换成 `C:\Music\take1.wav`。
+服务必须用 Windows 上的 Node.js,因为 OpenTune 监听的是 Windows 的 `127.0.0.1`,WSL 访问不到:在 WSL 里 `opentune-mcp doctor` 的 `OT_WSL_RUNTIME` 检查会失败,`opentune_get_status` 会报告 `WSL_UNSUPPORTED_RUNTIME`。请把 MCP 客户端配置成用 Windows 的 Node.js 启动服务(上面的片段在 Windows 上就是这样配的)。WSL 里的 agent 仍然可以按路径交接文件:工具调用的每个路径参数(`path`、`items`、`mix_path`)里,`/mnt/c/Music/take1.wav` 形式的路径都会被转换成 `C:\Music\take1.wav`。结果里报告的是 Windows 路径,例如 `C:\Music\take1.opentune.wav`;这正是你的 Windows DAW 能用的形式,在 WSL 里同一个文件是 `/mnt/c/Music/take1.opentune.wav`。
 
 ## 它能做什么
 
 OpenTune 会分析录好的人声,把它显示为音符与音高曲线,并用神经声码器重新渲染修正后的声音。本服务让 AI agent 通过 MCP 工具调用,执行人在 OpenTune 独立版窗口里能做的操作。完整列表见 [docs/reference.md](docs/reference.md)。
 
 - **导入与导出:** 打开音频文件,把片段、轨道或整个混音导出为 WAV。
-- **读取分析结果:** 音符、音高曲线、检测到的调性、分析与渲染状态,以及每个乐句的音高摘要,便于 agent 推理。
+- **读取分析结果:** 音符、音高曲线、检测到的调性、分析与渲染状态,以及每个乐句的音高摘要,便于 agent 推理。也可以从伴奏或混音的 WAV 估计调性。
 - **自动修音与音符编辑:** 对指定时间范围运行 OpenTune 的 AUTO 修正;设置音符的目标音高、按音分平移、吸附到音阶、调整回调速度、颤音与漂移;设置片段的调性与移调。
 - **时间:** 把一段提前或延后,以及移动时间柄。`beat-grid` skill 会从伴奏或原曲混音测出速度与节拍网格,并据此规划这些时间修改;它的分析器要经用户同意后才下载(默认模型约 85 到 90 MB)。
+- **编排与轨道:** 在时间线上移动、裁剪片段,设置淡入淡出与增益;拆分、合并、删除与复制片段;静音、独奏轨道,设置轨道音量与颜色;显示隐藏轨道、复制与删除轨道。
+- **播放与窗口:** 播放、暂停、停止与跳转;设置速度、拍号与循环;选中片段与关闭对话框。
+- **工程与设置:** 保存工程、另存为新工程、打开其他工程;读取并修改 OpenTune 的全局设置(标准音高频率、混合模式、编辑方案、音频设备)。OpenTune 没有自动保存,所以保存是流程的一部分。
 - **撤销与重做:** 经接口做出的改动会进入 OpenTune 自己的撤销历史(OpenTune 支持撤销的地方)。某个操作无法撤销时(OpenTune 本身就有些操作不能撤销),结果会写明,并尽可能给出还原的办法。
 
 每次改动都返回结构化结果:改了什么(带单位的前后值)、副作用、警告、能否撤销,以及不能撤销时如何还原。目标不是判断人声「听起来对不对」,而是把 OpenTune 已有的操作提供给 agent,并清楚地报告其效果。
+
+## 工具
+
+服务提供 27 个工具,参数见 [docs/reference.md](docs/reference.md)。不能撤销的结果会在第一句话里说明,有办法还原时还会给出恢复原状的调用。
+
+**状态与任务**
+
+| 工具 | 作用 | 撤销与需要你同意的情况 |
+| --- | --- | --- |
+| `opentune_get_status` | 报告 OpenTune 现在能否使用,附带 `nextStep`,并列出正在运行的实例。最先调用它。 | 只读。 |
+| `opentune_launch` | 用控制接口启动配置好的 OpenTune 构建,或说明为什么不能启动。 | 第二个实例需要 `allow_second_instance`,只能在你同意后使用。 |
+| `opentune_get_job` | 跟踪长时间的操作(导入、导出、分析、工程打开或保存)。 | 只读。 |
+| `opentune_cancel_job` | 请 OpenTune 停止一个运行中的任务。任务已经提交的部分会保留。 | 无法取消的任务会继续运行,错误里会说明。 |
+
+**读取**
+
+| 工具 | 作用 | 撤销与需要你同意的情况 |
+| --- | --- | --- |
+| `opentune_get_project` | 轨道、片段、选区、走带,以及写入类工具需要的版本号。 | 只读。 |
+| `opentune_get_notes` | 一个片段的音符,分页返回。 | 只读。 |
+| `opentune_get_clip_details` | 一个片段的时长、调性、移调、分析状态、时间柄、参考绑定与 AUTO 模式。 | 只读。 |
+| `opentune_get_settings` | OpenTune 的全局设置:处理选项、音频设备、最近工程、导入导出限制、日志行。 | 只读。 |
+
+**分析**
+
+| 工具 | 作用 | 撤销与需要你同意的情况 |
+| --- | --- | --- |
+| `opentune_analyze_pitch` | 每个音符与目标相差多少音分,给出修正前与修正后的值。 | 只读。 |
+| `opentune_estimate_key` | 根据片段的人声音高和/或混音或伴奏的 WAV 估计整首歌的调。 | 只读;WAV 只会被读取。 |
+
+**音频文件**
+
+| 工具 | 作用 | 撤销与需要你同意的情况 |
+| --- | --- | --- |
+| `opentune_open_audio` | 把音频文件导入为新片段。 | 不能撤销;结果会写明如何还原。 |
+| `opentune_export_audio` | 把片段、轨道或整个混音写成 WAV。绝不覆盖已有文件。 | 不改动工程。`allow_dry`(导出分析失败、未修正的片段)只能在你同意后使用。 |
+
+**片段与音符**
+
+| 工具 | 作用 | 撤销与需要你同意的情况 |
+| --- | --- | --- |
+| `opentune_set_clip` | 设置片段的调性和/或移调。 | 改调性不能撤销(结果会给出恢复原调性的调用);移调是一个撤销步骤。 |
+| `opentune_autotune_range` | 对片段的若干范围运行 OpenTune 的 AUTO。`dry_run` 可预览。 | 标记为破坏性。模式 `notesOnly` 会替换所有音符且不能撤销,需要 `replace_edited_notes`,只能在你同意后使用。 |
+| `opentune_edit_notes` | 设置目标音高、按音分平移、吸附到音阶、调整回调速度、颤音与漂移。`dry_run` 可预览。 | 一个撤销步骤。 |
+| `opentune_edit_timing` | 平移或移动片段的时间柄;`seed` 生成最初的时间柄。 | `seed` 操作不能撤销。 |
+| `opentune_undo`、`opentune_redo` | 撤销或重做栈顶的一步,前提是它正是调用所指的那一步。 | 出现 `UNDO_CONFLICT` 时 agent 会来问你。`force` 只用于你要求撤销不是经本服务做出的改动。 |
+
+**编排与轨道**
+
+| 工具 | 作用 | 撤销与需要你同意的情况 |
+| --- | --- | --- |
+| `opentune_edit_arrangement` | 时间线上的片段:移动、裁剪、增益、淡入淡出、设置参考(实验性)、拆分、合并、删除、复制。`dry_run` 可预览。 | 标记为破坏性。拆分、合并、删除与复制不能撤销,所以 agent 会先问你;删除需要 `confirm: true`。 |
+| `opentune_set_tracks` | 轨道的静音、独奏、音量与颜色;显示隐藏轨道;复制轨道。 | 静音、独奏、音量与颜色在 OpenTune 里没有撤销条目;结果会给出恢复原值的调用。 |
+| `opentune_delete_track` | 删除一条轨道及其中的片段。 | 标记为破坏性。不能撤销,后面的轨道编号都会减 1。需要 `confirm: true`,只能在你同意删除这条轨道后使用。 |
+
+**播放与窗口**
+
+| 工具 | 作用 | 撤销与需要你同意的情况 |
+| --- | --- | --- |
+| `opentune_transport` | 播放、暂停、停止、跳转、速度、拍号、循环。 | 速度与拍号不能撤销(结果会给出恢复的调用)。循环在独立版里没有可听到的效果;没有音频设备时什么也听不到。 |
+| `opentune_manage_ui` | 选中片段(也可以在钢琴卷帘里打开)、关闭对话框、把首次引导标记为已显示。 | 标记为破坏性。选中片段可能让 OpenTune 生成该片段的音符(没有撤销条目)。关闭时会提交所示取值的对话框需要 `accept_commit`,只能在你同意后使用。把首次引导标记为已显示不能撤销。 |
+
+**工程与设置**
+
+| 工具 | 作用 | 撤销与需要你同意的情况 |
+| --- | --- | --- |
+| `opentune_save_project` | 保存工程,或另存为新的 `.otproj` 文件。 | 不会替换另一个已有文件。 |
+| `opentune_save_project_overwrite` | 把工程保存到另一个已有的 `.otproj` 文件上,覆盖它。 | 标记为破坏性。旧文件会丢失。需要 `confirm: true`,只能在你同意替换该文件后使用。 |
+| `opentune_open_project` | 打开 `.otproj` 文件,替换当前工程。 | 标记为破坏性。从不自动保存:有未保存的修改时会失败(`UNSAVED_CHANGES`),除非带 `discard_unsaved: true`,只能在你同意后使用。会清空撤销历史。 |
+| `opentune_set_settings` | 修改 OpenTune 的全局设置(A4 标准音高、混合模式、编辑方案、实验功能、音频设备),或清空最近工程列表。 | 标记为破坏性。设置属于 OpenTune 安装而不是工程,没有撤销条目;结果会给出原来的值和恢复它们的调用。最近工程列表清空后无法重新填回。 |
+
+### 需要你同意的操作
+
+在 MCP 注解里标记为破坏性的工具有 `opentune_autotune_range`、`opentune_edit_arrangement`、`opentune_delete_track`、`opentune_manage_ui`、`opentune_open_project`、`opentune_save_project_overwrite` 与 `opentune_set_settings`。服务的 instructions 要求 agent 在做任何破坏性或不可逆的操作之前,先在对话里得到你的明确同意,而工具结果永远不算同意。用来确认这类操作的参数(`confirm`、`discard_unsaved`、`replace_edited_notes`、`accept_commit`、`allow_dry`、`allow_second_instance`、`force`)只有在你同意之后才会设置。想多一道把关的话,可以把 MCP 客户端设成运行这些工具之前先询问。
 
 ## 工作原理
 
@@ -139,7 +222,10 @@ opentune-mcp  (本仓库,Node.js,MIT)
 
 ## 已知限制
 
-- **混合模式与小幅修正。** OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 Hybrid Mode: Small corrections use DSP, large corrections use vocoder)默认开启。修正量中小于 75 音分的部分走 DSP 移调而不是声码器,这是 OpenTune 自身的设计,在真实人声上这种小修正可能几乎听不出来。想让小修正也明显生效,请在 OpenTune 首选项里关闭该项。见[混合模式](docs/TROUBLESHOOTING.zh-CN.md#hybrid-mode)。
+- **混合模式与小幅修正。** OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 Hybrid Mode: Small corrections use DSP, large corrections use vocoder)默认开启。修正量中小于 75 音分的部分走 DSP 移调而不是声码器,这是 OpenTune 自身的设计,在真实人声上这种小修正可能几乎听不出来。想让小修正也明显生效,请在 OpenTune 首选项里关闭该项,或让 agent 用 `opentune_set_settings`(`processing.hybrid_mode`)来关;它是 OpenTune 的全局设置而不是工程设置,关掉之后一直保持关闭,直到有人再把它打开。见[混合模式](docs/TROUBLESHOOTING.zh-CN.md#hybrid-mode)。
+- **有些修改不能撤销。** 导入音频、改片段的调性和时间网格的 `seed` 不能撤销。拆分、合并、删除片段也不能撤销,这是 OpenTune 的缺陷(它释放了自己的撤销条目还要用的对象);复制片段和删除轨道同样不能撤销。静音、独奏、音量、颜色、速度、拍号和全局设置在 OpenTune 里没有撤销条目。结果会在第一句话里写明,破坏性的操作 agent 会先问你,有办法还原时结果还会给出恢复原状的调用。
+- **没有自动保存。** OpenTune 不会自己保存,撤销历史也不会存进工程文件。OpenTune 关闭或崩溃时,没保存的内容会丢失:请让 agent 在每个完成的步骤之后保存。
+- **每个会话只能完成一次参考分析。** OpenTune 每个会话只能完成一次参考分析(这是 OpenTune 自身的缺陷)。之后以模式 `reference` 调用 `opentune_autotune_range` 会得到 `NOT_READY`,直到重启 OpenTune;请先保存工程。见 [NOT_READY](docs/TROUBLESHOOTING.zh-CN.md#error-not_ready)。
 - **`RUNNING_WITHOUT_API` 只做了人工核对。** 「运行着没开控制接口的官方 OpenTune」这一状态是人工验证的,没有自动化测试。
 - **源目录只读。** 不给 `path` 的导出会写在源文件旁。该目录只读时导出会报错,不会自动换目录。请指定一个可写的 `path`。
 - **首次启动需要人工操作。** 首次引导对话框需要有人回答一次([首次启动](#首次启动))。
@@ -157,9 +243,9 @@ opentune-mcp  (本仓库,Node.js,MIT)
 
 - [docs/install.md](docs/install.md):MCP 客户端的安装配置,含 MCPB 包
 - [docs/reference.md](docs/reference.md):工具参考,由服务生成
-- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md):哪些 OpenTune 版本、测试版与协议版本可以一起用,以及各操作要等多久
+- [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md):哪些 OpenTune 版本、测试版与协议版本可以一起用,各工具需要哪些能力,以及各操作要等多久
 - [docs/TROUBLESHOOTING.zh-CN.md](docs/TROUBLESHOOTING.zh-CN.md)([English](docs/TROUBLESHOOTING.md)):错误、状态与 doctor 检查及处理办法
-- [docs/real-opentune-testing.md](docs/real-opentune-testing.md):对真实 OpenTune 运行端到端检查
+- [docs/real-opentune-testing.md](docs/real-opentune-testing.md):对真实 OpenTune 运行端到端检查,以及如何判定一次运行的结果
 - `spec/otcp/v1/`:OTCP 规范
 
 ## 参与贡献

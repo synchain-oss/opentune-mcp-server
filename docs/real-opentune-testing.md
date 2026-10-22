@@ -11,15 +11,16 @@ themselves, in a temporary `OPENTUNE_DATA_DIR`, and stop it afterwards; your pre
 real discovery files are never touched. With `OTCP_TARGET_DATA_DIR` the data folders are kept
 instead, so the logs of the instance can be read afterwards (see below).
 
-| Command                 | What it runs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| `npm run e2e:exe`       | The end-to-end scenarios, one after the other, each with an instance of its own: the smoke scenario (import, analysis, AUTO, export, with timings), the [effects scenario], the [arrangement effects scenario], the [wave-B tour], the [wave-B boundary scenario] and the three boundary scenarios below. The wave-B tour fails until the build under test fixes the defects it found (an out-of-range clip gain that is not limited and gives no `CLAMPED` warning, and a reference analysis that never finishes), so a red `e2e:exe` with only the tour failing is not a regression. |
+| Command                 | What it runs                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `npm run test:contract` | Every OTCP vector of `spec/otcp/v1/vectors` against the instance (details: `test/contract/README.md`).                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `npm run e2e:exe`       | The end-to-end scenarios, one after the other, each with an instance of its own: the smoke scenario (import, analysis, AUTO, export, with timings), the [effects scenario], the [arrangement effects scenario], the [wave-B tour], the [wave-B boundary scenario] and the three boundary scenarios below. The wave-B tour fails while the build under test has a defect it found, for example an out-of-range clip gain that is not limited and gives no `CLAMPED` warning; a red `e2e:exe` in which only the tour fails for such a reason is not a regression of this server. How to read the outcome of a whole run, and which defect of OpenTune itself is counted as known, is in [Judging a run]. |
 
 [effects scenario]: #effects-scenario
 [arrangement effects scenario]: #arrangement-effects-scenario
 [wave-B tour]: #wave-b-tour
 [wave-B boundary scenario]: #wave-b-boundary-scenario
+[Judging a run]: #judging-a-run
 
 ## Prerequisites
 
@@ -497,7 +498,8 @@ added once against a started OpenTune, and checks that the answers agree with th
 with what the tools tell the user. It is a tour, not a measurement: no audio is judged, only the
 structure and the state. It starts its own instance like the boundary scenarios (same variables,
 same data folders, its data folder below a scratch folder named `ot-e2e-wave-b-tour-*`), and it
-starts `dist/opentune-mcp.mjs` over stdio for the tool part, so `npm run build` must have run once.
+starts `dist/opentune-mcp.mjs` over stdio for the tool part; the project's global setup builds that file before the
+scenarios start.
 `OTCP_TARGET_DATA_DIR` does **not** apply to this scenario: its instance, discovery folder and data
 folder are its own scratch folder, removed at the end, also after a failure.
 
@@ -619,3 +621,96 @@ the saved bytes, so point it only at a scratch data folder. It refuses a snapsho
 relative path inside `<dir>` (`..`, absolute, drive letter), and a `<dir>` that is, contains or lies inside the
 settings folder of the real OpenTune. The unit tests
 (`test/unit/settings-snapshot.test.ts`) run on temporary folders and never touch a real one.
+
+## Judging a run
+
+`npm run e2e:exe` exits with 0 for a run that passed and for one that was skipped as a whole; only a `FAIL` fails the
+command. The exit code therefore does not say that a build passed: read the step tables and the reports. This section
+is about running the whole set on a real machine and reading what comes out.
+
+### Running the whole set
+
+1. Prepare the machine as in [Prerequisites](#prerequisites). Close every other OpenTune on it and do not work in
+   OpenTune during the run: the guard on the real settings folders (see [Settings snapshot](#settings-snapshot))
+   compares them before and after, and it cannot tell your changes from the run's. Prefer a machine whose audio device
+   can be switched to another buffer size or sample rate (see the table of `SKIP`s below).
+2. Set `OTCP_TARGET_EXE` to the build under test and `OTCP_E2E_REPORT` to a file path in a folder you keep. For the
+   effects scenario and the arrangement effects scenario give a data template that starts OpenTune with hybrid mode
+   off (`OTCP_E2E_EFFECTS_DATA_TEMPLATE`, `OTCP_E2E_ARRANGEMENT_EFFECTS_DATA_TEMPLATE`, see above).
+3. Run `npm run e2e:exe`. The scenarios run one after the other, each with an instance of its own.
+4. To run one scenario, name its file: `npm run e2e:exe -- test/e2e/exe-wave-b-tour.test.ts` (the others are
+   `exe-wave-b-boundary.test.ts`, `exe-arrangement-effects.test.ts`, `exe-effects.test.ts`, `exe-smoke.test.ts` and
+   `exe-boundary.test.ts`, which runs the three boundary scenarios).
+
+Every scenario prints its step table to stderr and, with `OTCP_E2E_REPORT`, writes its report: the smoke report at the
+path given, the others as `<scenario>.json` in the same folder (`effects.json`, `arrangement-effects.json`,
+`boundary.json`, `instances.json`, `launch-real.json`, `wave-b-tour.json`, `wave-b-boundary.json`).
+
+### What counts as a pass
+
+A build passes a real-OpenTune check when all of this holds:
+
+- Every report has `result` `PASS`, and its `counts` show 0 `FAIL`, 0 `SKIP` and 0 `FLAKY-SKIP`. A `SKIP` is not a
+  defect, but it is a check that did not run, so it is not a pass. The `SKIP`s that a machine causes, and what clears
+  them:
+
+  | Step                               | Skipped when                                                                                            | What clears it                                         |
+  | ---------------------------------- | ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+  | `audio.get and audio.set`          | No audio device runs in the instance, or the current device offers no other buffer size or sample rate. | Run on a machine whose audio device offers a choice.   |
+  | `ui.getState and ui.dismiss`       | A dialog is open that the scenario did not open; the scenario never closes it.                          | Close the dialog in the OpenTune window and run again. |
+  | `launch-real` (the whole scenario) | An `OpenTune.exe` that the scenario did not start is running; it never ends that one.                   | Close it and run again.                                |
+  | Any step                           | The instance does not report a capability the step needs; the note names it.                            | Use a build that reports it.                           |
+
+- The settings guard is clean in every scenario. `real user settings untouched` is `PASS` with a count of watched
+  files above 0. A `SKIP` there means the guard found no settings file at all, which on a machine with OpenTune
+  installed means it looked in the wrong folder, so the run proved nothing about your settings.
+- The only defects the reports hold against the build are the known upstream defects listed below, each named in the
+  report.
+- The `manualChecks` of the reports are for a person; they are not part of the automatic result. The tour mutes every
+  track before it plays, so nothing should have been heard and no track should be left muted; the track-colour dialog
+  and a write during a modal dialog are described under [Wave-B boundary scenario](#wave-b-boundary-scenario).
+
+### Reading the settings guard
+
+The guard (see [Settings snapshot](#settings-snapshot)) reports in two places:
+
+- **In the scenario.** The last, clean-up step of the scenario (`shutdown` in the smoke scenario and in the tour) is a
+  `FAIL` when a settings file of the instance's own data folder changed in value, or could not be put back to the
+  first snapshot byte for byte. Its note lists the files and the changed keys, values clipped. Keys and files that
+  OpenTune added while it started are not a difference. In the wave-B boundary scenario only, the number of files that
+  gained keys is reported as the fact `settingsFilesWithAddedKeys`.
+- **Around the scenario.** The step `real user settings untouched` compares the settings files in the real user folders
+  by size and modification time and fails on any change. It names the file that changed. One possible cause is another
+  OpenTune that was open on the same machine; find out what touched the file before you run again.
+
+A failed guard fails the run even when every other step passed. Fix the cause and run again; do not edit the report.
+
+### Known upstream defects
+
+OpenTune completes only one reference analysis per session. Every later reference analysis ends, in a build that
+reports it, with `NOT_READY` and the reason `reference_analysis_stalled`, and only a restart of OpenTune helps. The
+tour counts this as a known upstream defect, not as a failure of the build, when all of the following hold for a
+reference alignment:
+
+- the error is exactly `NOT_READY` with the reason `reference_analysis_stalled`;
+- it came back before the wait limit of 30 seconds, not at the limit;
+- the notes of the clip read back as before and the undo history has the same number of steps.
+
+Two calls of the tour are judged by this rule, and both need all three conditions:
+
+- the `content.autoTune` call in mode `reference` of the step `content.analyzeReference and content.autoTune in mode
+reference`;
+- the `opentune_autotune_range` call in mode `reference` of the step `the wave-B MCP tools`.
+
+The step then passes. Its note says `known upstream defect`, and the report names the defect in the fact
+`knownUpstreamDefects` (`["reference_analysis_stalled"]`), listed once however many calls met it. A run that meets a
+known upstream defect is a `PASS` that carries that list: name the defects when you report the run; they are neither
+hidden nor turned into a `SKIP`. Anything else fails the step: no reason on the error, the error at the limit,
+`reference_analysis_timeout`, `ANALYSIS_FAILED`, a change of the notes or of the undo history, and the same error in any
+other call. That last one includes the `content.analyzeReference` job that runs earlier in the same step: it is not
+covered by the rule, so a second reference analysis that stalls there fails the step. The defect is OpenTune's own;
+the control API does not hide it and does not work around it.
+
+A defect of the build under test is never a known upstream defect. An out-of-range clip gain that is applied without
+being limited and without a `CLAMPED` warning, for example, fails the step of the tour that checks it until the build
+is fixed.
