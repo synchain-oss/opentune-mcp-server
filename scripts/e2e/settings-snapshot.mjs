@@ -217,11 +217,23 @@ export async function settleSnapshot(dir, snapshot, baseline = snapshot) {
 // ---------------------------------------------------------------------------------------------
 // the read-only watch of a folder that must not change
 
-/** Size and modification time of every settings file below `dir`; nothing is opened. */
-export async function watchStats(dir) {
+/**
+ * Size and modification time of every settings file below `dir`; nothing is opened. The folder is listed
+ * first and the files are read one by one, so a file can be deleted in between: that file is left out of
+ * the reading (diffStats then reports it as disappeared, or says nothing when it was not in the earlier
+ * reading either) instead of raising an ENOENT whose message carries the full path of the real user's
+ * folder. Any other error is thrown as it is. `statFile` replaces `stat` in tests.
+ */
+export async function watchStats(dir, statFile = stat) {
   const stats = {};
   for (const rel of await listSettingsFiles(dir)) {
-    const info = await stat(path.join(dir, ...rel.split('/')));
+    let info;
+    try {
+      info = await statFile(path.join(dir, ...rel.split('/')));
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue;
+      throw error;
+    }
     stats[rel] = { size: info.size, mtimeMs: info.mtimeMs };
   }
   return stats;

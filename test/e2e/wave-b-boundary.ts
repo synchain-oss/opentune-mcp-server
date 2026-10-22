@@ -88,6 +88,58 @@ const close = (a: number, b: number): boolean => Math.abs(a - b) <= EPSILON;
 
 const messageOf = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+/** What `withMediaAway` found: how `body` ended, and the renames back that did not work. */
+export interface MediaAwayResult<T> {
+  readonly outcome: { readonly ok: true; readonly value: T } | { readonly ok: false; readonly error: unknown };
+  /** One line per rename back that failed, with file names and an error code but no folder. */
+  readonly putBackFailures: readonly string[];
+}
+
+/**
+ * Takes the copies of the media that OpenTune keeps in folders next to the project files in `folder` away
+ * (each folder gets `.away` appended), runs `body`, and puts everything back whatever `body` did: the folders
+ * and the media file that the caller already renamed from `copy` to `moved`. Every rename back is tried on its
+ * own, so one that fails neither stops the others nor replaces how `body` ended: the failure is returned in
+ * `putBackFailures` for the caller to report next to the outcome. `move` replaces `rename` in tests.
+ */
+export async function withMediaAway<T>(
+  files: { readonly folder: string; readonly copy: string; readonly moved: string },
+  body: (copyFolders: number) => Promise<T>,
+  move: (from: string, to: string) => Promise<void> = rename,
+): Promise<MediaAwayResult<T>> {
+  const away: string[] = [];
+  let outcome: MediaAwayResult<T>['outcome'];
+  try {
+    for (const entry of await readdir(files.folder, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      await move(path.join(files.folder, entry.name), path.join(files.folder, `${entry.name}.away`));
+      away.push(entry.name);
+    }
+    outcome = { ok: true, value: await body(away.length) };
+  } catch (error) {
+    outcome = { ok: false, error };
+  }
+  const back: (readonly [string, string])[] = [
+    [files.moved, files.copy],
+    ...away.map((name): readonly [string, string] => [
+      path.join(files.folder, `${name}.away`),
+      path.join(files.folder, name),
+    ]),
+  ];
+  const putBackFailures: string[] = [];
+  for (const [from, to] of back) {
+    try {
+      await move(from, to);
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      putBackFailures.push(
+        `${path.basename(from)} could not be renamed back to ${path.basename(to)} (${typeof code === 'string' ? code : 'rename failed'})`,
+      );
+    }
+  }
+  return { outcome, putBackFailures };
+}
+
 /** A compact picture of the arrangement a fresh read shows, to tell "unchanged" from "changed". */
 function signatureOf(state: ProjectState): string {
   const placements = state.placements
@@ -786,14 +838,8 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
       throw new StepSkip('SKIP', `the media file could not be renamed while OpenTune held it: ${messageOf(error)}`);
     }
     // OpenTune keeps a copy of the media in a folder next to the project file; that copy is taken away too.
-    const away: string[] = [];
-    try {
-      for (const entry of await readdir(folder, { withFileTypes: true })) {
-        if (!entry.isDirectory()) continue;
-        await rename(path.join(folder, entry.name), path.join(folder, `${entry.name}.away`));
-        away.push(entry.name);
-      }
-      scenario.facts.mediaCopyFolders = away.length;
+    const { outcome, putBackFailures } = await withMediaAway({ folder, copy, moved }, async (copyFolders) => {
+      scenario.facts.mediaCopyFolders = copyFolders;
       const opened = await runJob(need(), 'project.open', { path: first }, 'project open', timeoutMs);
       if (!isObject(opened)) throw new Error('project.open ended without a result object');
       if (!warningCodes(opened).includes('MEDIA_MISSING')) problems.push('opening carries no MEDIA_MISSING warning');
@@ -814,14 +860,19 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
         problems.push(`a fresh read shows ${String(after.placements.length)} clip(s), not ${String(placedCount - 1)}`);
       }
       scenario.facts.missingMediaWarnings = warningCodes(opened).sort().join(',');
-    } finally {
-      await rename(moved, copy);
-      for (const name of away) await rename(path.join(folder, `${name}.away`), path.join(folder, name));
-    }
+    });
+    // A rename back that fails neither hides what the check found nor turns it into a failure of its own: it
+    // is a note of the report (the scratch folder is removed afterwards), and the verdict stays as it was.
+    const left =
+      putBackFailures.length === 0
+        ? undefined
+        : `files of the scratch folder were left renamed: ${putBackFailures.join(', ')}`;
+    if (left !== undefined) scenario.manualChecks.push(`MISSING MEDIA: ${left}.`);
+    if (!outcome.ok) throw outcome.error;
     return finish(
       'missing media',
       problems,
-      'the project opened without the missing file, and MEDIA_MISSING was reported',
+      `the project opened without the missing file, and MEDIA_MISSING was reported${left === undefined ? '' : `; ${left}`}`,
     );
   });
 
