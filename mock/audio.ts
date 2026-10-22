@@ -3,7 +3,7 @@
 
 // The audio device methods of the mock (capability audio.device): audio.get and audio.set
 // (spec/otcp/v1/methods/audio.get.schema.json). The setup belongs to the installation, not to the
-// project. The mock has one stand-in device that offers a few sample rates and buffer sizes; a
+// project. The mock has one stand-in device type with two output devices, two sample rates and two buffer sizes; a
 // test can make it fail to open (`failsToOpen`), so that audio.set restores the previous setup.
 
 import { checkNotBusy, envelope, type Handler } from './context.js';

@@ -1615,6 +1615,24 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     const startSetup = pick(device, DEVICE_MEMBERS);
     const startNote = `the setup at the start was ${JSON.stringify(startSetup)}; set it back by hand if it is not`;
     const previous = device[field];
+    /** Sends the values read at the start once more and compares the read-back one by one. */
+    const putBack = async (): Promise<boolean> => {
+      const retry = Object.fromEntries(
+        ['deviceType', 'outputDevice', 'sampleRateHz', 'bufferSizeFrame', 'outputChannelPair']
+          .filter((name) => startSetup[name] !== undefined && startSetup[name] !== null)
+          .map((name) => [name, startSetup[name]]),
+      );
+      try {
+        await t.call('write', 'audio.set', retry);
+        t.reads.clear();
+        return (
+          differences(startSetup, pick(objectMember(await t.reads.audio(), 'device', 'audio.get'), DEVICE_MEMBERS))
+            .length === 0
+        );
+      } catch {
+        return false;
+      }
+    };
     let written: WriteRun;
     try {
       written = await t.write({
@@ -1633,7 +1651,14 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       });
       collect('audio.set', problems, written);
     } catch (error) {
-      if (error instanceof Unrestored) throw new Unrestored(`${error.message}; ${startNote}`);
+      if (error instanceof Unrestored) {
+        // The runner could not take the change back, or read something else after the revert: send the
+        // values of the start once more before the step stops, and say whether that put them back.
+        const restoredAgain = await putBack();
+        throw new Unrestored(
+          `${error.message}; ${restoredAgain ? 'it was then set back with the start values' : 'it could not be set back with the start values either'}; ${startNote}`,
+        );
+      }
       throw error;
     }
     // The runner read the state right after the write and found the requested value there (the
@@ -1649,21 +1674,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     const moved = differences(startSetup, now);
     if (moved.length > 0) {
       // Put it back with the values read at the start, so that the machine is left as it was found.
-      const retry = Object.fromEntries(
-        ['deviceType', 'outputDevice', 'sampleRateHz', 'bufferSizeFrame', 'outputChannelPair']
-          .filter((name) => startSetup[name] !== undefined && startSetup[name] !== null)
-          .map((name) => [name, startSetup[name]]),
-      );
-      let restored: boolean;
-      try {
-        await t.call('write', 'audio.set', retry);
-        t.reads.clear();
-        restored =
-          differences(startSetup, pick(objectMember(await t.reads.audio(), 'device', 'audio.get'), DEVICE_MEMBERS))
-            .length === 0;
-      } catch {
-        restored = false;
-      }
+      const restored = await putBack();
       problems.push(
         `the audio setup differs from the one at the start (${moved.join('; ')}); ${restored ? 'it was set back with the start values' : 'it could not be set back'}; ${startNote}`,
       );
@@ -1858,20 +1869,23 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       );
     }
     collect('content.autoTune (reference)', problems, tuned);
-    if (analysisStalled) {
-      // The analysis was stalled but the alignment still ran: the defect is listed, the step checks the rest as usual.
-      if (problems.length === 0) recordKnownDefect(KNOWN_STALLED_REASON);
-    }
     if (tuned.envelope.noOp !== true) {
       const undo = isObject(tuned.envelope.undo) ? tuned.envelope.undo : null;
       if (undo?.undoable !== true) problems.push('mode reference did not commit one undo step');
     }
+    // The analysis was stalled but the alignment still ran: the defect is listed only when nothing else
+    // is wrong, so that a failing step does not put it in the report.
+    const stalledNote = analysisStalled && problems.length === 0;
+    if (stalledNote) recordKnownDefect(KNOWN_STALLED_REASON);
     return finish(
       'content.analyzeReference and content.autoTune in mode reference',
       problems,
-      tuned.envelope.noOp === true
-        ? 'the alignment data was computed; the notes already followed the reference'
-        : 'the alignment data was computed and the notes were aligned in one undo step',
+      (stalledNote
+        ? 'known upstream defect: OpenTune completes only one reference analysis per session, reported as NOT_READY(reference_analysis_stalled) by content.analyzeReference; the alignment still ran; '
+        : '') +
+        (tuned.envelope.noOp === true
+          ? 'the alignment data was computed; the notes already followed the reference'
+          : 'the alignment data was computed and the notes were aligned in one undo step'),
     );
   });
 

@@ -133,3 +133,5 @@ runner passes with every runner's reason, vector ids that are not in the directo
 a runner did not list shows as "not run" there. Exit code 0: every vector passes in at least one runner and none
 fails; 1: a vector fails somewhere, passes nowhere, or a result names an unknown id; 2: unreadable input or a
 wrong option.
+
+The result files (`OTCP_CONTRACT_SUMMARY`, `OTCP_CONTRACT_SUMMARY_EXE`) can be shared: the home and temporary folders in their texts are replaced by `~` and `%TEMP%` (`$TMPDIR` outside Windows), and a stack trace keeps its first line only.

@@ -286,18 +286,10 @@ export async function establishExeGiven(
 
 /**
  * Marks the project as changed by a write that is taken back at once, so that the state a vector
- * looks at is the one it asked for: muting and unmuting track 0, else a tempo change and back.
+ * looks at is the one it asked for: a tempo change and back first, else muting and unmuting track 0.
  */
 async function makeDirty(rpc: Rpc, env: GivenEnv, project: Json): Promise<Json> {
   const attempts: (() => Promise<void>)[] = [];
-  if (env.capabilities.includes('tracks.v1')) {
-    const track = list(project.tracks)[0];
-    const muted = track?.muted === true;
-    attempts.push(async () => {
-      await rpc.call('track.set', { tracks: [{ trackId: 0, muted: !muted }] }, CALL_MS);
-      await rpc.call('track.set', { tracks: [{ trackId: 0, muted }] }, CALL_MS);
-    });
-  }
   if (env.capabilities.includes('transport.v1')) {
     attempts.push(async () => {
       const transport = isObject(project.transport) ? project.transport : {};
@@ -306,8 +298,15 @@ async function makeDirty(rpc: Rpc, env: GivenEnv, project: Json): Promise<Json> 
       await rpc.call('transport.setTempo', { bpm }, CALL_MS);
     });
   }
+  if (env.capabilities.includes('tracks.v1')) {
+    const track = list(project.tracks)[0];
+    const muted = track?.muted === true;
+    attempts.push(async () => {
+      await rpc.call('track.set', { tracks: [{ trackId: 0, muted: !muted }] }, CALL_MS);
+      await rpc.call('track.set', { tracks: [{ trackId: 0, muted }] }, CALL_MS);
+    });
+  }
   // Setting the tempo is the write that marks the project as changed; the mute is the second try.
-  attempts.reverse();
   for (const attempt of attempts) {
     await attempt();
     const latest = await projectOf(rpc);

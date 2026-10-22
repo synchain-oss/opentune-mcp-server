@@ -95,6 +95,14 @@ const HELLO_ID = 'otcp-exe-hello';
 /** How far two readings of one process's start time may differ (PROTOCOL.md section 5.4 rule 2). */
 const START_TOLERANCE_MS = 2000;
 const PROBE_ATTEMPTS = 3;
+/**
+ * How long to wait after closing a preparatory session. OTCP has no call that reports how many sessions
+ * are open (only the limit, `maxSessions`, is specified), so the release cannot be polled; the server
+ * handles the close on its next turn, which takes a few milliseconds, and 200 ms is a generous margin. If
+ * it were too short, the vector's own connection would meet the session limit and the vector would fail
+ * with BUSY(session_limit) instead of passing.
+ */
+const SESSION_CLOSE_SETTLE_MS = 200;
 /** The ready file's name in the data folder, and the discovery folder below it: paths this runner itself uses. */
 const READY_FILE_NAME = 'ready.json';
 const DISCOVERY_DIR_PARTS = ['control', 'instances'] as const;
@@ -645,7 +653,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
         } finally {
           session.close();
           // The server notices the close on its own turn; the vector needs to be the only connection.
-          await sleep(200);
+          await sleep(SESSION_CLOSE_SETTLE_MS);
         }
       };
       // The capabilities come from a session.hello of this target's own; the runner opens its own connections.

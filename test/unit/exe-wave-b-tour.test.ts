@@ -621,6 +621,51 @@ describe('the reference analysis of the locked OpenTune', () => {
     expect(stepNames(report).filter((entry) => !entry.includes('=PASS'))).toEqual([]);
   }, 120_000);
 
+  /** The analysis stalls, then the fault ends before the autoTune, which therefore succeeds. */
+  const stalledThenTuned = (damage?: SessionDefect) => {
+    let mock: OtcpMock | undefined;
+    return fixture({
+      prepare: (m) => {
+        withAudio(m);
+        mock = m;
+      },
+      before: (method, params) => {
+        if (method === 'content.analyzeReference') {
+          mock?.setReferenceFault('stalled');
+          mock?.forgetAlignment();
+        } else if (method === 'content.autoTune' && params.mode === 'reference') {
+          mock?.setReferenceFault(null);
+        }
+      },
+      ...(damage === undefined ? {} : { reply: damage }),
+    });
+  };
+
+  it('passes a stalled analysis followed by a successful autoTune, with the defect in the note and the list', async () => {
+    const { hooks } = stalledThenTuned();
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('PASS');
+    expect(step?.note).toContain(DEFECT_NOTE);
+    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
+  }, 120_000);
+
+  it('does not list the defect when the same step fails the undo check', async () => {
+    // The result of the autoTune job is the only job result that carries an undo descriptor.
+    const { hooks } = stalledThenTuned((method, result) => {
+      const job = result.job;
+      if (method !== 'job.get' || !isObject(job) || !isObject(job.result) || !isObject(job.result.undo))
+        return undefined;
+      job.result.undo.undoable = false;
+      return result;
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('/undo');
+    expect(report.facts.knownUpstreamDefects).toBeUndefined();
+  }, 120_000);
+
   it.each(['timeout', 'failed'] as const)(
     'fails an analysis that ended with the %s reason, which is not the known defect',
     async (fault) => {
@@ -769,27 +814,50 @@ describe('the audio step of the tour', () => {
     expect(report.facts.audioSetting).toBeUndefined();
   }, 120_000);
 
-  it('fails, and names the setup of the start, when the setup cannot be put back', async () => {
+  /** The switch works; the revert (the second audio.set) fails to open; the retry is the third. */
+  const failingRevert = (retryWorks: boolean) => {
     let writes = 0;
     let mock: OtcpMock | undefined;
+    const sent: Json[] = [];
     const { hooks } = fixture({
       prepare: (m) => {
         withAudio(m);
         mock = m;
       },
-      before: (method) => {
+      before: (method, params) => {
         if (method !== 'audio.set') return;
         writes += 1;
-        // The switch works; the device then refuses to open again, for the revert and for the retry.
+        sent.push(structuredClone(params));
         if (writes === 2) mock?.given({ audio: { running: true, failsToOpen: true } });
+        if (writes === 3 && retryWorks) mock?.given({ audio: { running: true, failsToOpen: false } });
       },
     });
+    return { hooks, sent };
+  };
+
+  it('sends the values of the start once more when the revert fails, and fails when that fails too', async () => {
+    const { hooks, sent } = failingRevert(false);
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('FAIL');
     expect(step?.note).toContain('the setup at the start was');
     expect(step?.note).toContain('"bufferSizeFrame":512');
     expect(step?.note).toContain('set it back by hand');
+    expect(step?.note).toContain('could not be set back with the start values either');
+    expect(sent).toHaveLength(3);
+    expect(sent[2]).toMatchObject({ bufferSizeFrame: 512, sampleRateHz: 44100, outputDevice: 'Mock Output' });
+  }, 120_000);
+
+  it('fails too when the retry with the values of the start works, and says so', async () => {
+    const { hooks, sent } = failingRevert(true);
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('it was then set back with the start values');
+    expect(step?.note).not.toContain('either');
+    expect(step?.note).toContain('the setup at the start was');
+    expect(sent).toHaveLength(3);
+    expect(sent[2]).toMatchObject({ bufferSizeFrame: 512 });
   }, 120_000);
 
   it('picks buffer size, sample rate, output device, device type in that order', () => {
