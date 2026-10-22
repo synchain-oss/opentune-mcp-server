@@ -12,6 +12,8 @@
 //    modification time before and after the run (never opened, never written). A change is a FAIL: the
 //    run must not have touched the real settings. The log folder is not part of the comparison.
 
+import os from 'node:os';
+
 import {
   diffStats,
   settleSnapshot,
@@ -68,6 +70,46 @@ export const labelOf = (dir: string): string =>
     .filter(Boolean)
     .slice(-2)
     .join('/');
+
+/**
+ * The home folders of this machine as they can appear in an error message (the one the platform reports, `HOME`
+ * and `USERPROFILE`), without a trailing separator. A bare root or drive is not a home folder and is left out,
+ * so that redacting never rewrites every path.
+ */
+export function homeFolders(env: NodeJS.ProcessEnv = process.env, home: string = os.homedir()): string[] {
+  const found = new Set<string>();
+  for (const value of [home, env.HOME, env.USERPROFILE]) {
+    const trimmed = value?.replace(/[\\/]+$/, '');
+    if (trimmed !== undefined && trimmed !== '' && !/^[a-z]:$/i.test(trimmed)) found.add(trimmed);
+  }
+  return [...found].sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Replaces the home folder at the start of a path in `message` with `~`, as `labelOf` keeps the user's name out
+ * of a label. Either slash style matches (and a doubled one, as in an escaped string); the case is ignored on
+ * Windows only; a longer folder name that merely starts like the home folder (the home folder plus a letter or
+ * a dot) is left alone.
+ *
+ * The doctor command has a helper of its own (`src/cli/doctor.ts`) that replaces one home folder wherever it
+ * appears. This one replaces the home folder of the machine the run happens on (the platform's own, `HOME` and
+ * `USERPROFILE` can differ), and only where a path starts, so that a folder whose name begins like the home
+ * folder keeps its own name.
+ */
+export function redactHome(
+  message: string,
+  homes: readonly string[] = homeFolders(),
+  platform: NodeJS.Platform = process.platform,
+): string {
+  let redacted = message;
+  for (const home of homes) {
+    const parts = home.split(/[\\/]+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    if (parts.every((part) => part === '')) continue;
+    const pattern = new RegExp(`(?<![\\w.~-])${parts.join('[\\\\/]+')}(?![\\w.-])`, platform === 'win32' ? 'gi' : 'g');
+    redacted = redacted.replace(pattern, () => '~');
+  }
+  return redacted;
+}
 
 /** One watched folder of the real user and how many settings files it had at the start. */
 export interface WatchedFolder {

@@ -3,7 +3,7 @@
 
 // Runs a scenario with the watch of the real user's settings files (test/support/settings-guard.ts) around it.
 
-import { labelOf, watchUserSettings } from '../support/settings-guard.js';
+import { labelOf, redactHome, watchUserSettings } from '../support/settings-guard.js';
 import { summarise, type StepReport } from './smoke.js';
 
 export const USER_SETTINGS_STEP = 'real user settings untouched';
@@ -38,9 +38,10 @@ export async function withUserSettingsWatch<T extends Summarised>(
   try {
     problems = await watch.finish();
   } catch (error) {
-    problems = [
-      `the real user settings could not be compared: ${error instanceof Error ? error.message : String(error)}`,
-    ];
+    // The message of a failed stat carries the full path of the real user's folder; the home folder in it
+    // becomes `~`, as `labelOf` keeps the user's name out of the labels.
+    const why = redactHome(error instanceof Error ? error.message : String(error));
+    problems = [`the real user settings could not be compared: ${why}`];
   }
   if (failed) {
     const why = failure instanceof Error ? failure.message : 'the scenario failed';

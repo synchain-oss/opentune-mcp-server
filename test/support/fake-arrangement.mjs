@@ -19,6 +19,8 @@
 // `arrangement-export-fails-in-mute` fails the export of the first mute case and
 // `arrangement-export-fails-after-merge` the export after the merge of the split check.
 // `arrangement-export-other-path` reports another file than the one asked for.
+// `arrangement-split-extra-part` leaves a third, very quiet clip inside the split clip, so that the project
+// shows three clips where a split leaves two (the merge of the split check cannot find its two clips).
 // `arrangement-no-arrangement`, `arrangement-no-tracks` and `arrangement-no-history` do not report
 // the capability of that name; `arrangement-backend` fails the import with an unavailable inference
 // backend; `arrangement-hybrid` reports hybrid mode on. Its "analysis" reads the truth file the tone
@@ -451,6 +453,20 @@ export function createArrangement(mode) {
     placements.delete(p.id);
     placements.set(leading.id, leading);
     placements.set(trailing.id, trailing);
+    if (mode === 'arrangement-split-extra-part') {
+      const extra = {
+        ...clone(leading),
+        id: newPlacementId(),
+        endTimelineSec: r6(p.startTimelineSec + 0.1),
+        durationSec: 0.1,
+        gainDb: -60,
+        gainLinear: 0.001,
+        fadeInSec: 0,
+        fadeOutSec: 0,
+        geometryHash: newHash(),
+      };
+      placements.set(extra.id, extra);
+    }
     bump();
     const created = [
       { entity: 'placement', ref: { placementId: leading.id }, label: null },
