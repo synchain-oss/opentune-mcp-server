@@ -680,6 +680,78 @@ describe('the first sentence of an irreversible structural edit', () => {
     expect(structuralLead('delete', { dryRun: true })).toContain('cannot be undone');
   });
 
+  it('claims "or restored" only where the result gives no way back', () => {
+    const recipe = { method: 'arrangement.edit', params: { ops: [] } };
+    const restorable = {
+      dryRun: false,
+      undo: { undoable: false, reason: 'no_upstream_undo', revert: recipe },
+      warnings: [],
+    };
+    for (const kind of ['split', 'merge', 'delete']) {
+      // Not undoable, but the result has a revert recipe: it can be put back, so the lead points to the revert line.
+      const lead = structuralLead(kind, restorable);
+      expect(lead, kind).toContain(`this ${kind} cannot be undone, but the revert line says how to put it back`);
+      expect(lead, kind).not.toContain('restored by any request');
+      expect(lead, kind).toContain('only after the user explicitly agreed');
+      // Not undoable and no recipe, with or without the warning: no request can restore it.
+      for (const result of [
+        { dryRun: false, undo: { undoable: false, reason: 'no_upstream_undo', revert: null }, warnings: [] },
+        { dryRun: false, undo: { undoable: false, reason: 'no_upstream_undo' }, warnings: [] },
+        { ...restorable, warnings: [{ code: 'IRREVERSIBLE', subject: null, data: null }] },
+      ]) {
+        expect(structuralLead(kind, result), kind).toContain('cannot be undone or restored by any request');
+      }
+    }
+    expect(structuralLead('delete', restorable)).toContain('removing clips needs confirm: true');
+    expect(structuralLead('split', restorable)).not.toContain('confirm');
+  });
+
+  it('puts the revert line in the summary of a split that cannot be undone but has a recipe', async () => {
+    const env = await setup();
+    const revision = await env.revision();
+    env.session.call = () =>
+      Promise.resolve({
+        applied: true,
+        noOp: false,
+        dryRun: false,
+        changes: [],
+        created: [],
+        removed: [],
+        idMap: [],
+        revisionDiff: { arrangement: { before: 'a1', after: 'a2' }, trackState: null, contents: [] },
+        tokens: { arrangementRevision: 'a2', contents: [], placements: [] },
+        undo: {
+          undoable: false,
+          reason: 'no_upstream_undo',
+          revert: {
+            method: 'arrangement.edit',
+            requiresConsent: true,
+            params: {
+              expectedArrangementRevision: 'a2',
+              ops: [
+                {
+                  op: 'merge',
+                  leadingPlacementId: id(env, 'a'),
+                  trailingPlacementId: id(env, 'b'),
+                },
+              ],
+            },
+          },
+        },
+        dirty: { before: true, after: true },
+        ui: null,
+        sideEffects: {},
+        warnings: [],
+        job: null,
+      });
+    const out = body(
+      await edit(env, { expected_revision: revision, ops: [{ op: 'split', clip: id(env, 'a'), at_timeline_sec: 1 }] }),
+    );
+    const first = firstSentence(out.summary);
+    expect(first).toContain('this split cannot be undone, but the revert line says how to put it back');
+    expect(first).not.toContain('restored by any request');
+  });
+
   it('puts it in the summary of a delete result that carries IRREVERSIBLE but no defect', async () => {
     const env = await setup();
     const revision = await env.revision();

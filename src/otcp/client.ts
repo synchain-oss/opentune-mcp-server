@@ -172,7 +172,17 @@ export class OtcpSession {
             ),
           );
         } else if (message.error !== undefined) {
-          finish(new OtcpError({ ...errorDataFrom(message.error), executed: false }));
+          const data = errorDataFrom(message.error);
+          // The fixed PROTOCOL_MISMATCH response of Appendix A cannot repeat the majors the instance
+          // serves; the discovery file holds them. Nothing else on the wire supplies this member.
+          const majors = data.kind === 'PROTOCOL_MISMATCH' ? protocolMajorsOf(entry.protocolMajors) : [];
+          finish(
+            new OtcpError({
+              ...data,
+              executed: false,
+              ...(majors.length === 0 ? {} : { protocolMajors: majors }),
+            }),
+          );
         } else {
           const hello = verifyHello(message.result, entry);
           if (hello === null) {

@@ -305,19 +305,24 @@ const UPSTREAM_DEFECT = (envelope: Json): boolean =>
   (isObject(envelope.undo) && envelope.undo.reason === 'upstream_undo_defect') ||
   asList(envelope.warnings).some((w) => isObject(w) && w.code === 'UPSTREAM_UNDO_DEFECT');
 
-/** Whether the result says the change can be neither undone nor restored by any request. */
-const IRREVERSIBLE = (envelope: Json): boolean => {
+/**
+ * How far a result that cannot be undone can be taken back: `final` when no request can restore it (an
+ * IRREVERSIBLE warning, or no undo and no revert recipe), `restorable` when the result carries a revert
+ * recipe, and null when the change can be undone or changed nothing.
+ */
+function reversibility(envelope: Json): 'final' | 'restorable' | null {
+  if (asList(envelope.warnings).some((w) => isObject(w) && w.code === 'IRREVERSIBLE')) return 'final';
   const undo = isObject(envelope.undo) ? envelope.undo : null;
-  return (
-    (undo !== null && undo.undoable === false && undo.reason !== 'no_op') ||
-    asList(envelope.warnings).some((w) => isObject(w) && w.code === 'IRREVERSIBLE')
-  );
-};
+  if (undo?.undoable !== false) return null;
+  if (undo.reason === 'no_op') return null;
+  return undo.revert == null ? 'final' : 'restorable';
+}
 
 /**
  * Why a split, merge or delete cannot be undone, for the first sentence of its result. Every
- * irreversible structural edit says so there, not only the ones OpenTune's undo defect affects:
- * a delete whose result carries IRREVERSIBLE is just as final.
+ * structural edit that cannot be undone says so there, not only the ones OpenTune's undo defect
+ * affects. It says "or restored by any request" only when the result gives no way back: an
+ * IRREVERSIBLE warning, or no undo and no revert recipe.
  */
 export function structuralLead(kind: string, envelope: Json): string | null {
   if (envelope.dryRun === true) {
@@ -338,9 +343,14 @@ export function structuralLead(kind: string, envelope: Json): string | null {
       'every split, merge or delete'
     );
   }
-  if (!IRREVERSIBLE(envelope)) return null;
+  const how = reversibility(envelope);
+  if (how === null) return null;
   const consent = kind === 'delete' ? '; removing clips needs confirm: true' : '';
-  return `this ${kind} cannot be undone or restored by any request${consent}, so apply it only after the user explicitly agreed`;
+  // A result with a revert recipe can be put back, so it must not claim that no request can: it says
+  // that undo is not possible and points to the revert line.
+  return how === 'final'
+    ? `this ${kind} cannot be undone or restored by any request${consent}, so apply it only after the user explicitly agreed`
+    : `this ${kind} cannot be undone, but the revert line says how to put it back${consent}, so apply it only after the user explicitly agreed`;
 }
 
 const capital = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;

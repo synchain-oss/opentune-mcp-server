@@ -147,13 +147,11 @@ export function errorDataFrom(error: unknown): ErrorData {
     Record<string, unknown> | undefined;
   const kind = typeof data?.kind === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(data.kind) ? data.kind : 'INTERNAL';
   const reason = typeof data?.reason === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(data.reason) ? data.reason : null;
-  const majors = protocolMajorsOf(data?.protocolMajors);
   return {
     kind,
     reason,
     retryable: data?.retryable === true,
     detail: typeof data?.detail === 'string' ? data.detail : 'the instance sent an error without data',
     executed: typeof data?.executed === 'boolean' ? data.executed : null,
-    ...(majors.length === 0 ? {} : { protocolMajors: majors }),
   };
 }

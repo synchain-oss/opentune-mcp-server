@@ -6,6 +6,7 @@
 // differs from the kind's default. Unit tests check that every kind, status and doctor check has
 // a step and an anchor.
 
+import { REASON_RETRYABLE } from './reason-retryable.js';
 import type { NextStep } from './tool-error.js';
 
 const DOCS = 'https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md';
@@ -157,8 +158,8 @@ const REASONS: Readonly<Record<string, NextStep>> = {
       'not help. Ask the user to save the project and restart OpenTune, then try again.',
   ),
   'NOT_READY/reference_analysis_timeout': agent(
-    'The reference analysis is still running and did not finish within the wait limit. Wait a little, then follow ' +
-      'the job with opentune_get_job or call again.',
+    'The reference analysis did not finish within the wait limit; OpenTune may still be analysing. Wait a little, ' +
+      'then call again (a new request waits for the analysis again).',
   ),
   'ANALYSIS_FAILED/reference_analysis_failed': agent(
     'OpenTune could not analyse the reference. Choose another reference clip, or ask the user to check the ' +
@@ -191,11 +192,6 @@ const REASONS: Readonly<Record<string, NextStep>> = {
     'The configured OpenTune executable could not be started (see detail). Ask the user to check ' +
       'OPENTUNE_MCP_OPENTUNE_PATH ("opentune-mcp doctor" checks it).',
   ),
-};
-
-/** Reasons whose retryability differs from that of their kind, by `<kind>/<reason>` (registry/reasons.json). */
-const REASON_RETRYABLE: Readonly<Record<string, boolean>> = {
-  'NOT_READY/reference_analysis_stalled': false,
 };
 
 /** The default next step, retryability and anchor kind of an error. Unknown kinds use INTERNAL. */

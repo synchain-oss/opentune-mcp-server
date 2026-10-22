@@ -206,12 +206,12 @@ function preferenceRevert(params: Json): Mapped | null {
   const processing: Json = {};
   let omitted = false;
   const known = new Set(['tuningHz', 'editingScheme', 'hybridMode', 'experimentalFeatures']);
-  /** A number, not only an integer: prefs.set takes any frequency from 400 to 500 Hz. */
   const take = (member: string, argument: string, acceptable: boolean): void => {
     if (params[member] === undefined) return;
     if (acceptable) processing[argument] = params[member];
     else omitted = true;
   };
+  // A number, not only an integer: prefs.set takes any frequency from 400 to 500 Hz.
   take(
     'tuningHz',
     'tuning_hz',
@@ -220,6 +220,8 @@ function preferenceRevert(params: Json): Mapped | null {
   take('editingScheme', 'editing_scheme', params.editingScheme === 'openTune' || params.editingScheme === 'openDyne');
   take('hybridMode', 'hybrid_mode', typeof params.hybridMode === 'boolean');
   take('experimentalFeatures', 'experimental_features', typeof params.experimentalFeatures === 'boolean');
+  // A member this function does not know is counted as omitted on purpose: the conservative reading, so the
+  // restore is never presented as complete when the recipe named more than it can put back.
   if (Object.keys(params).some((key) => !known.has(key))) omitted = true;
   return settingsCall('processing', processing, omitted);
 }

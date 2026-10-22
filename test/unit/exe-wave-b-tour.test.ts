@@ -11,6 +11,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { realClock, type Clock } from '../../mock/clock.js';
+import { REFERENCE_WAIT_LIMIT_MS as MOCK_REFERENCE_WAIT_LIMIT_MS } from '../../mock/reference.js';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { OtcpSession, type Json } from '../../src/otcp/client.js';
 import type { McpProcess, RealInstance, RealInstanceOptions, ToolOutcome } from '../e2e/real-support.js';
@@ -519,53 +520,89 @@ describe('a revert recipe refused for its token', () => {
 
 describe('the reference analysis of the locked OpenTune', () => {
   const STEP = 'content.analyzeReference and content.autoTune';
+  const TOOLS_STEP = 'the wave-B MCP tools';
+  const DEFECT_NOTE = 'known upstream defect';
+
+  /** Shortens the 30 s wait limit of the mock's reference job, so that a timeout does not make the test slow. */
+  const quick: Clock = {
+    now: () => realClock.now(),
+    // Only the wait limit of the reference job is shortened; every other timer (the idle timeout of the
+    // mock, for one) keeps its length.
+    setTimer: (ms, callback) =>
+      realClock.setTimer(
+        ms >= MOCK_REFERENCE_WAIT_LIMIT_MS - 1_000 && ms <= MOCK_REFERENCE_WAIT_LIMIT_MS ? 50 : ms,
+        callback,
+      ),
+  };
+
+  type Where = 'step' | 'tool' | 'both';
 
   /**
-   * The first analysis completes, as it does in OpenTune; when the autoTune of the step comes, the
-   * alignment data has to be computed again and the mock's analysis ends as `fault` says. The fault
-   * ends with that step (the history read that follows it), so that the steps after it run as usual.
+   * The first analysis completes, as it does in OpenTune; later the alignment data has to be computed
+   * again and the mock's analysis ends as `fault` says. `where` picks the autoTune of the OTCP step
+   * (the fault ends with the history read that follows it, so the steps after it run as usual), the
+   * one of the MCP tool `opentune_autotune_range` (armed at the second history read, which is the one
+   * before that tool), or both (the fault stays).
    */
-  const afterTheFirstAnalysis = (fault: 'stalled' | 'timeout' | 'failed', clock?: Clock) => {
+  const faultAt = (
+    fault: 'stalled' | 'timeout' | 'failed',
+    where: Where,
+    options: { clock?: Clock; undoGrows?: boolean } = {},
+  ) => {
     let mock: OtcpMock | undefined;
     let armed = false;
+    let histories = 0;
+    let replies = 0;
+    const arm = () => {
+      armed = true;
+      mock?.setReferenceFault(fault);
+      mock?.forgetAlignment();
+    };
     return fixture({
       prepare: (m) => {
         withAudio(m);
         mock = m;
       },
-      ...(clock === undefined ? {} : { clock }),
+      ...(options.clock === undefined ? {} : { clock: options.clock }),
       before: (method, params) => {
-        if (method === 'content.autoTune' && params.mode === 'reference') {
-          armed = true;
-          mock?.setReferenceFault(fault);
-          mock?.forgetAlignment();
-        } else if (armed && method === 'edit.getHistory') {
-          armed = false;
-          mock?.setReferenceFault(null);
+        if (method === 'content.autoTune' && params.mode === 'reference' && where !== 'tool') arm();
+        else if (method === 'edit.getHistory') {
+          histories += 1;
+          if (where === 'tool' && histories === 2) arm();
+          else if (where === 'step' && armed) {
+            armed = false;
+            mock?.setReferenceFault(null);
+          }
         }
+      },
+      // The third history read is the one that follows the tool's job: one more undo step there is a change.
+      reply: (method, result) => {
+        if (method !== 'edit.getHistory' || options.undoGrows !== true) return undefined;
+        replies += 1;
+        if (replies !== 3 || !isObject(result.history)) return undefined;
+        result.history.undoCount = Number(result.history.undoCount) + 1;
+        return result;
       },
     });
   };
 
+  const tool = (report: WaveBTourReport) => report.tools.find((entry) => entry.tool === 'opentune_autotune_range');
+
   it('passes a stalled autoTune that ended at once and changed nothing, and lists the defect', async () => {
-    const { hooks } = afterTheFirstAnalysis('stalled');
+    const { hooks } = faultAt('stalled', 'step');
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('PASS');
-    expect(step?.note).toContain('known upstream defect');
+    expect(step?.note).toContain(DEFECT_NOTE);
     expect(step?.note).toContain('reported as NOT_READY(reference_analysis_stalled); nothing changed');
     expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
+    expect(tool(report)?.note).not.toContain(DEFECT_NOTE);
     expect(stepNames(report).filter((entry) => !entry.includes('=PASS'))).toEqual([]);
     expect(report.result).toBe('PASS');
   }, 120_000);
 
   it('fails an autoTune that ended with reference_analysis_timeout', async () => {
-    // The mock's job waits its 30 s limit; a clock that shortens such waits keeps the test quick.
-    const quick: Clock = {
-      now: () => realClock.now(),
-      setTimer: (ms, callback) => realClock.setTimer(ms >= 10_000 ? 50 : ms, callback),
-    };
-    const { hooks } = afterTheFirstAnalysis('timeout', quick);
+    const { hooks } = faultAt('timeout', 'step', { clock: quick });
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('FAIL');
@@ -574,13 +611,57 @@ describe('the reference analysis of the locked OpenTune', () => {
   }, 120_000);
 
   it('fails an autoTune that ended with reference_analysis_failed', async () => {
-    const { hooks } = afterTheFirstAnalysis('failed');
+    const { hooks } = faultAt('failed', 'step');
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('FAIL');
     expect(step?.note).toContain('reference_analysis_failed');
     expect(report.facts.knownUpstreamDefects).toBeUndefined();
   }, 120_000);
+
+  it('passes opentune_autotune_range when its job ended with the stalled error and changed nothing', async () => {
+    const { hooks } = faultAt('stalled', 'tool');
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.note).not.toContain(DEFECT_NOTE);
+    expect(stepResult(report, TOOLS_STEP)?.result).toBe('PASS');
+    expect(tool(report)).toMatchObject({ outcome: 'ok' });
+    expect(tool(report)?.note).toContain(DEFECT_NOTE);
+    expect(tool(report)?.note).toContain('NOT_READY(reference_analysis_stalled); nothing changed');
+    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
+    expect(report.tools.every((entry) => entry.outcome === 'ok')).toBe(true);
+    expect(report.result).toBe('PASS');
+  }, 120_000);
+
+  it('lists the defect once when both the OTCP step and the tool met it', async () => {
+    const { hooks } = faultAt('stalled', 'both');
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.note).toContain(DEFECT_NOTE);
+    expect(tool(report)?.note).toContain(DEFECT_NOTE);
+    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
+    expect(stepNames(report).filter((entry) => !entry.includes('=PASS'))).toEqual([]);
+  }, 120_000);
+
+  it('fails opentune_autotune_range when the stalled job left an undo step behind', async () => {
+    const { hooks } = faultAt('stalled', 'tool', { undoGrows: true });
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, TOOLS_STEP)?.result).toBe('FAIL');
+    expect(tool(report)).toMatchObject({ outcome: 'error' });
+    expect(tool(report)?.note).toContain('the undo stack went from');
+    expect(report.facts.knownUpstreamDefects).toBeUndefined();
+  }, 120_000);
+
+  it.each(['timeout', 'failed'] as const)(
+    'fails opentune_autotune_range when its job ended with the %s reason',
+    async (fault) => {
+      const { hooks } = faultAt(fault, 'tool', { clock: quick });
+      const report = await runWaveBTour(config, hooks);
+      expect(stepResult(report, TOOLS_STEP)?.result).toBe('FAIL');
+      expect(tool(report)).toMatchObject({ outcome: 'error' });
+      expect(tool(report)?.note).toContain(`reference_analysis_${fault}`);
+      expect(report.facts.knownUpstreamDefects).toBeUndefined();
+    },
+    120_000,
+  );
 
   it('counts only NOT_READY(reference_analysis_stalled) that came before the wait limit', () => {
     const stalled = {
@@ -595,5 +676,9 @@ describe('the reference analysis of the locked OpenTune', () => {
     expect(isKnownStalledDefect({ ...stalled, reason: 'reference_analysis_timeout' }, 120)).toBe(false);
     expect(isKnownStalledDefect({ ...stalled, kind: 'ANALYSIS_FAILED' }, 120)).toBe(false);
     expect(isKnownStalledDefect(undefined, 120)).toBe(false);
+  });
+
+  it('uses the wait limit of the mock as the limit before which the stalled error must come', () => {
+    expect(REFERENCE_WAIT_LIMIT_MS).toBe(MOCK_REFERENCE_WAIT_LIMIT_MS);
   });
 });

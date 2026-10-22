@@ -5,8 +5,8 @@
 // request ids, the request and notification forms, error objects built from the registries, and
 // the fixed responses of Appendix A.
 
+import { REASON_RETRYABLE } from '../src/errors/reason-retryable.js';
 import { encodeLine } from '../src/otcp/framing.js';
-import { REASON_RETRYABLE } from './retryable.js';
 import type { OtcpSpec } from '../test/support/otcp-spec.js';
 
 export type RequestId = string | number;
@@ -35,7 +35,7 @@ export interface ErrorInit {
   readonly kind: string;
   readonly reason?: string;
   readonly detail: string;
-  /** Defaults to the reason's retryability (mock/retryable.ts), else the kind's in registry/error-kinds.json. */
+  /** Defaults to the reason's retryability (src/errors/reason-retryable.ts), else the kind's in registry/error-kinds.json. */
   readonly retryable?: boolean;
   /** Defaults to false: the request changed nothing. */
   readonly executed?: boolean;
@@ -109,7 +109,7 @@ export function makeError(spec: OtcpSpec, init: ErrorInit): ErrorObject {
       ...(init.reason === undefined ? {} : { reason: init.reason }),
       retryable:
         init.retryable ??
-        (init.reason === undefined ? undefined : REASON_RETRYABLE.get(`${init.kind}/${init.reason}`)) ??
+        (init.reason === undefined ? undefined : REASON_RETRYABLE[`${init.kind}/${init.reason}`]) ??
         kind.retryable,
       ...(init.retryAfterMs === undefined ? {} : { retryAfterMs: init.retryAfterMs }),
       detail: printableDetail(init.detail),

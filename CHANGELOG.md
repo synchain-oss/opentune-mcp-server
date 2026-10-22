@@ -120,8 +120,10 @@ versioned separately and has its own changelog.
   installed analyzer versions by version rather than by text.
 - The errors of a reference analysis that does not complete tell what to do next: `reference_analysis_stalled` (not
   retryable) asks the user to save the project and restart OpenTune, `reference_analysis_timeout` (retryable) says to
-  follow the job or call again, and `reference_analysis_failed` says to choose another reference clip or have the
+  wait a little and call again, and `reference_analysis_failed` says to choose another reference clip or have the
   reference audio checked.
+- A tool error for an instance that does not serve this server's protocol major (`PROTOCOL_MISMATCH`) now lists the majors
+  the instance's discovery file announces, in the optional member `protocolMajors`, as the status already did.
 
 ## [0.1.0] - 2026-10-17
 

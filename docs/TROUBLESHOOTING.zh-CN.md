@@ -83,8 +83,8 @@ OpenTune 正在关闭。先检查状态,再做别的。
 OpenTune 仍在分析音频或生成音符。请等待后重试。原因 `f0_failed` 与 `f0_empty` 不会恢复:该片段无法编辑。
 
 参考分析有三个原因。`reference_analysis_stalled`:OpenTune 每个会话只能完成一次参考分析(OpenTune 的已知缺陷),
-重试无用;请先保存工程,重启 OpenTune,再试。`reference_analysis_timeout`:分析仍在进行,请稍等后用
-`opentune_get_job` 跟进任务或重新调用。`reference_analysis_failed`(类别 ANALYSIS_FAILED):OpenTune 分析参考失败,
+重试无用;请先保存工程,重启 OpenTune,再试。`reference_analysis_timeout`:分析没有在等待上限内完成,可能仍在运行,
+请稍等后重新调用(新的请求会再次等待分析)。`reference_analysis_failed`(类别 ANALYSIS_FAILED):OpenTune 分析参考失败,
 请换一个参考片段,或检查参考音频。
 
 ### Error ANALYSIS_FAILED
