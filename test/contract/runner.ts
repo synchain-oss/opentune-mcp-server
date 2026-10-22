@@ -405,6 +405,9 @@ export async function runVector(
     }
     const bindings = initialBindings(instance, given);
     const { refs, captures } = names([vector.request, vector.response, vector.steps]);
+    if ([...refs].some((name) => name.startsWith('runner.') && name !== 'runner.wrongToken')) {
+      await instance.prepareRunnerValues?.();
+    }
     for (const name of refs) {
       if (bindings.has(name) || captures.has(name)) continue;
       const value = name.startsWith('runner.') ? instance.runnerValue(name) : undefined;

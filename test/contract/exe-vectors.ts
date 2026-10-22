@@ -7,6 +7,7 @@
 // (JSON) for the "contract vectors (exe)" row of `npm run gates`.
 
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { afterAll, describe, it } from 'vitest';
@@ -41,6 +42,43 @@ export async function runExeVector(
   if (problems.length === 0) return { ...outcome, ...kept };
   const itself = outcome.note === '' ? outcome.result : `${outcome.result}: ${outcome.note}`;
   return { id: outcome.id, result: 'FAIL', note: `${problems.join('; ')} (the vector itself: ${itself})`, ...kept };
+}
+
+/** One vector of the result file that scripts/vector-coverage.mjs reads. */
+export const vectorRow = (o: Outcome): { id: string; status: Outcome['result']; reason?: string } => ({
+  id: o.id,
+  status: o.result,
+  ...(o.note === '' ? {} : { reason: neutralize(o.note) }),
+});
+
+const escapeRegExp = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+/** A regular expression that matches `directory` with either slash and any letter case. */
+function directoryPattern(directory: string): RegExp {
+  const parts = directory.split(/[\\/]+/).filter((part) => part !== '');
+  const lead = /^[\\/]/.test(directory) ? '[\\\\/]+' : '';
+  return new RegExp(`${lead}${parts.map(escapeRegExp).join('[\\\\/]+')}(?=[\\\\/]|$|[^\\w.-])`, 'gi');
+}
+
+/**
+ * Makes text safe to share: the home folder becomes `~`, the temporary folder `%TEMP%` (Windows) or
+ * `$TMPDIR` (elsewhere), matched without regard to case and with either slash, and a stack trace
+ * keeps its first line. The temporary folder is replaced first because it often lies inside the home folder.
+ */
+export function neutralize(
+  text: string,
+  folders: { home: string; tmp: string; windows: boolean } = {
+    home: homedir(),
+    tmp: tmpdir(),
+    windows: process.platform === 'win32',
+  },
+): string {
+  const firstLine = text.split(/\r?\n\s+at /)[0] ?? text;
+  let out = firstLine;
+  const tmpName = folders.windows ? '%TEMP%' : '$TMPDIR';
+  if (folders.tmp !== '') out = out.replace(directoryPattern(folders.tmp), () => tmpName);
+  if (folders.home !== '') out = out.replace(directoryPattern(folders.home), () => '~');
+  return out;
 }
 
 export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
@@ -94,11 +132,18 @@ export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
       );
       const count = (result: Outcome['result']) => outcomes.filter((o) => o.result === result).length;
       const skipReasons: Record<string, number> = {};
-      for (const o of outcomes.filter((x) => x.result === 'SKIP')) skipReasons[o.note] = (skipReasons[o.note] ?? 0) + 1;
+      for (const o of outcomes.filter((x) => x.result === 'SKIP')) {
+        const reason = neutralize(o.note);
+        skipReasons[reason] = (skipReasons[reason] ?? 0) + 1;
+      }
       const file = env.OTCP_CONTRACT_SUMMARY_EXE;
       if (file !== undefined && file !== '') {
         mkdirSync(path.dirname(file), { recursive: true });
         const summary = {
+          runner: 'exe',
+          // The build under test: set OTCP_TARGET_COMMIT to its commit; vector-coverage.mjs prints it.
+          commit: env.OTCP_TARGET_COMMIT ?? 'unknown',
+          vectors: outcomes.map(vectorRow),
           total: outcomes.length,
           pass: count('PASS'),
           fail: count('FAIL'),

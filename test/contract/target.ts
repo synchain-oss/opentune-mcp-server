@@ -21,6 +21,11 @@ export interface TargetInstance {
   establish(given: Readonly<Record<string, unknown>>): Promise<Readonly<Record<string, unknown>>>;
   /** The value of a `runner.*` name that depends on the instance's state, or undefined if unknown. */
   runnerValue(name: string): unknown;
+  /**
+   * Reads what the `runner.*` values depend on, once the preconditions are established. The runner
+   * calls it before it asks for those values; a target whose values do not depend on state has none.
+   */
+  prepareRunnerValues?(): Promise<void>;
   /** Ends the instance, or detaches from it. */
   close(): Promise<void>;
 }
