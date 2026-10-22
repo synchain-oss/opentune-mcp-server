@@ -286,6 +286,37 @@ describe('ui.dismiss', () => {
     expect((await fails('ui.dismiss', { target: 'onboarding' })).data).toMatchObject({ reason: 'capability_missing' });
     expect((await ok('ui.getState')).onboarding).toEqual({ shown: false, showing: true });
   });
+
+  it('closes an overlay that has shown its choice as a change of the view only', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: false, onboarding: 'notShown' });
+    // OpenTune marks onboarding as shown once the overlay shows its choice.
+    mock.showOnboarding(true);
+    expect((await ok('ui.getState')).onboarding).toEqual({ shown: true, showing: true });
+    const closed = await ok('ui.dismiss', { target: 'onboarding' });
+    expect(closed).toMatchObject({
+      applied: true,
+      noOp: false,
+      changes: [],
+      warnings: [],
+      undo: { undoable: false, reason: 'not_persisted_state', revert: null },
+      dirty: { before: false, after: false },
+    });
+    expect((await ok('ui.getState')).onboarding).toEqual({ shown: true, showing: false });
+    // Closed and shown before: a no-op.
+    expect(await ok('ui.dismiss', { target: 'onboarding' })).toMatchObject({ noOp: true });
+
+    // An overlay that has not shown its choice yet: closing it marks onboarding as shown, which no request resets.
+    mock.given({ onboarding: 'notShown' });
+    mock.showOnboarding(false);
+    const marked = await ok('ui.dismiss', { target: 'onboarding' });
+    expect(marked).toMatchObject({
+      changes: [{ entity: 'preference', fields: { onboardingShown: { before: false, after: true } } }],
+      undo: { reason: 'no_upstream_undo', revert: null },
+    });
+    expect((marked.warnings as { code: string }[]).map((w) => w.code)).toEqual(['IRREVERSIBLE']);
+  });
 });
 
 describe('ui.getState', () => {

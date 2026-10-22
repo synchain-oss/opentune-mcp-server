@@ -110,8 +110,12 @@ const set: Handler = (context) => {
   const { world, params } = context;
   checkNotBusy(context);
   if (typeof params.editingScheme === 'string' && params.editingScheme !== world.editingScheme) {
-    // The editor applies a new scheme asynchronously: the job commits every change of the call.
-    const job = context.startJob('prefsApply', () => apply(context));
+    // The editor applies a new scheme asynchronously: the job commits every change of the call. Before its first
+    // step it checks the busy state again, so a dialog that opened in the meantime fails it with nothing changed.
+    const job = context.startJob('prefsApply', () => {
+      checkNotBusy(context);
+      return apply(context);
+    });
     return jobStartedResult(world, job);
   }
   return apply(context);

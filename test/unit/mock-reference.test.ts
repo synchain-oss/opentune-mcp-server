@@ -373,39 +373,6 @@ describe('a reference analysis that does not complete', () => {
     },
   );
 
-  it('does not touch data that exists, and the job of content.autoTune compares the revision before it writes', async () => {
-    const clock = new ManualClock();
-    const { session, ids } = await setup(clock);
-    const { ok } = session;
-    const revision = (
-      (await ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
-        contents: { revision: string }[];
-      }
-    ).contents[0]?.revision;
-    const started = await ok('content.autoTune', {
-      contentId: ids['clip.contentId'],
-      mode: 'reference',
-      placementId: ids['clip.placementId'],
-      expectedRevision: revision,
-    });
-    await ok('content.editNotes', {
-      contentId: ids['clip.contentId'],
-      expectedRevision: revision,
-      ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents: 10 }],
-    });
-    const edited = targets(session, 1);
-    clock.advance(REFERENCE_WAIT_LIMIT_MS);
-    const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
-      job: { state: string; error: { data: Record<string, unknown> } | null };
-    };
-    expect(job.state).toBe('failed');
-    expect(job.error?.data).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'content_changed', executed: false });
-    expect(targets(session, 1)).toEqual(edited);
-    // The job failed before it stored anything: the alignment data is not there (section 12.6 rule 4).
-    const details = await ok('content.getDetails', { contentId: ids['clip.contentId'] });
-    expect(field(details, 'reference', 'alignmentReady')).toBe(false);
-  });
-
   it('does not touch alignment data that exists: content.autoTune still succeeds under the stalled fault', async () => {
     const clock = new ManualClock();
     const { session, ids } = await setup(clock);
@@ -458,10 +425,11 @@ describe('a reference analysis that does not complete', () => {
       expect(job.error?.data).toMatchObject({ reason });
     }
   });
+});
 
-  it('fails the job of content.autoTune with REVISION_CONFLICT when the revision changed while it waited, and stores no alignment data', async () => {
-    const clock = new ManualClock();
-    const { session, ids } = await setup(clock);
+describe('the job of content.autoTune compares the revision just before it writes (PROTOCOL.md section 12.6 rule 5)', () => {
+  /** Starts AUTO in mode reference, then edits a note before the job runs; returns the job's end and the notes. */
+  async function editWhileQueued(session: TestSession, ids: Record<string, unknown>, clock: ManualClock) {
     const { ok } = session;
     const revision = (
       (await ok('content.getDetails', { contentId: ids['clip.contentId'] })).asOf as {
@@ -479,13 +447,43 @@ describe('a reference analysis that does not complete', () => {
       expectedRevision: revision,
       ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents: 10 }],
     });
-    clock.advance(1000);
+    const edited = targets(session, 1);
+    clock.advance(REFERENCE_WAIT_LIMIT_MS);
     const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
       job: { state: string; error: { data: Record<string, unknown> } | null };
     };
+    return { job, edited };
+  }
+
+  const alignmentReady = async (session: TestSession, ids: Record<string, unknown>) =>
+    field(await session.ok('content.getDetails', { contentId: ids['clip.contentId'] }), 'reference', 'alignmentReady');
+
+  it('fails with REVISION_CONFLICT when the revision changed while the job waited for the analysis, and stores no alignment data', async () => {
+    const clock = new ManualClock();
+    const { session, ids } = await setup(clock);
+    expect(await alignmentReady(session, ids)).toBe(false);
+    const { job, edited } = await editWhileQueued(session, ids, clock);
     expect(job.state).toBe('failed');
-    expect(job.error?.data).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'content_changed' });
-    const details = await ok('content.getDetails', { contentId: ids['clip.contentId'] });
-    expect(field(details, 'reference', 'alignmentReady')).toBe(false);
+    expect(job.error?.data).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'content_changed', executed: false });
+    expect(targets(session, 1)).toEqual(edited);
+    // The job failed before it stored anything: the alignment data is not there (section 12.6 rule 4).
+    expect(await alignmentReady(session, ids)).toBe(false);
+  });
+
+  it('fails with REVISION_CONFLICT also when the alignment data exists and the job does not wait for it', async () => {
+    const clock = new ManualClock();
+    const { session, ids } = await setup(clock);
+    const analysis = await session.ok('content.analyzeReference', { placementId: ids['clip.placementId'] });
+    clock.advance(1000);
+    const done = (await session.ok('job.get', { jobId: field(analysis, 'job', 'jobId') })) as {
+      job: { state: string };
+    };
+    expect(done.job.state).toBe('succeeded');
+    const { job, edited } = await editWhileQueued(session, ids, clock);
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'content_changed', executed: false });
+    expect(targets(session, 1)).toEqual(edited);
+    // The alignment data that existed before the job stays (section 12.6 rule 1).
+    expect(await alignmentReady(session, ids)).toBe(true);
   });
 });

@@ -349,7 +349,7 @@
       "code": "capability_missing",
       "scope": "UNSUPPORTED",
       "since": "1.0",
-      "description": "The instance lacks the capability the request needs. detail names the capability."
+      "description": "The instance lacks the capability the request needs, or the method acts through the OpenTune editor window and no editor exists (PROTOCOL.md section 7 rule 6). detail names the capability."
     },
     {
       "code": "undo_unsafe_build",
@@ -547,7 +547,7 @@
       "code": "track_hidden",
       "scope": "INVALID_ARGUMENT",
       "since": "1.0",
-      "description": "The track is hidden; OpenTune deletes only visible tracks."
+      "description": "The track is hidden. A hidden track cannot be deleted or duplicated: OpenTune deletes and duplicates only visible tracks (track.delete, track.duplicate)."
     },
     {
       "code": "no_project_path",
