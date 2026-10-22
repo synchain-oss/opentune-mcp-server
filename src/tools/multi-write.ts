@@ -13,7 +13,7 @@ import type { Json, OtcpSession } from '../otcp/client.js';
 import { encodeArrangementRevision } from '../otcp/tokens.js';
 import { isObject } from '../render/changes.js';
 import { writeOutcome } from '../render/index.js';
-import { leadFlags } from '../render/summary.js';
+import { leadFlags, summarize } from '../render/summary.js';
 import { WRITE_TIMEOUT_MS } from './clip-write.js';
 import type { Body, Outcome } from './registry.js';
 
@@ -76,7 +76,12 @@ export function combineResults(tool: string, results: readonly WriteResult[]): B
   if (results.length === 1 && only !== undefined) return only.body;
   const flags = leadFlags(results.map((r) => r.envelope));
   const flagText = flags.length === 0 ? '' : ` (${flags.join('; ')})`;
-  const parts = results.map((r, i) => `${String(i + 1)}. ${noPrefix(r.body.summary, tool)}`);
+  // The first sentence carries every flag of every request. The parts repeat the changes only: a
+  // reader who wants the flags of one request finds them in `results`, so "not undoable" and the
+  // other flags are not repeated once per part.
+  const parts = results.map(
+    (r, i) => `${String(i + 1)}. ${noPrefix(summarize(r.envelope, tool, { flags: false }), tool)}`,
+  );
   return {
     summary:
       `${tool}: ${String(results.length)} requests ran in this order${flagText}, reported separately in ` +

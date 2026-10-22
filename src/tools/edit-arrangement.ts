@@ -17,6 +17,7 @@ import type { Json } from '../otcp/client.js';
 import { decodeArrangementRevision, decodeClipRevision, encodeArrangementRevision } from '../otcp/tokens.js';
 import { asList, isObject } from '../render/changes.js';
 import { writeOutcome } from '../render/index.js';
+import { revertPlan } from '../render/revert.js';
 import { table, token } from '../render/text.js';
 import { INSTANCE_FIELD, WRITE_TIMEOUT_MS, invalid } from './clip-write.js';
 import {
@@ -214,7 +215,8 @@ export function planRequest(args: EditArrangementArgs): Request | Outcome {
     return {
       method: 'arrangement.copy',
       params: {
-        sources: first.clips.map((placementId) => ({ placementId })),
+        // OTCP copies each clip once; a list that names one twice is deduplicated, first occurrence first.
+        sources: [...new Set(first.clips)].map((placementId) => ({ placementId })),
         mode: first.mode,
         toTrackId: first.to_track_id,
         startTimelineSec: first.start_timeline_sec,
@@ -304,8 +306,31 @@ const UPSTREAM_DEFECT = (envelope: Json): boolean =>
   (isObject(envelope.undo) && envelope.undo.reason === 'upstream_undo_defect') ||
   asList(envelope.warnings).some((w) => isObject(w) && w.code === 'UPSTREAM_UNDO_DEFECT');
 
-/** Why a split, merge or delete cannot be undone, for the first sentence of its result. */
-function structuralLead(kind: string, envelope: Json): string | null {
+/**
+ * How far a result that cannot be undone can be taken back: `final` when no request can restore it (an
+ * IRREVERSIBLE warning, or a result that carries no recipe at all, or one that is not in the protocol
+ * form), `restorable` when the result carries a recipe in the protocol form, and null when the change
+ * can be undone or changed nothing. A recipe in the protocol form that no tool of this server carries
+ * out is `restorable` as well: the revert line tells the user to put the state back by hand in the
+ * OpenTune window. The recipe is read the way the revert line reads it, so the first sentence and the
+ * revert line cannot contradict each other.
+ */
+function reversibility(envelope: Json): 'final' | 'restorable' | null {
+  if (asList(envelope.warnings).some((w) => isObject(w) && w.code === 'IRREVERSIBLE')) return 'final';
+  const undo = isObject(envelope.undo) ? envelope.undo : null;
+  if (undo?.undoable !== false) return null;
+  if (undo.reason === 'no_op') return null;
+  const plan = revertPlan(undo.revert);
+  return plan.kind === 'none' || plan.kind === 'malformed' ? 'final' : 'restorable';
+}
+
+/**
+ * Why a split, merge or delete cannot be undone, for the first sentence of its result. Every
+ * structural edit that cannot be undone says so there, not only the ones OpenTune's undo defect
+ * affects. It says "or restored by any request" only when the result gives no way back: an
+ * IRREVERSIBLE warning, a result that carries no recipe, or a recipe that is not in the protocol form.
+ */
+export function structuralLead(kind: string, envelope: Json): string | null {
   if (envelope.dryRun === true) {
     const consent = kind === 'delete' ? ', and it needs confirm: true' : '';
     return (
@@ -313,14 +338,25 @@ function structuralLead(kind: string, envelope: Json): string | null {
       'apply it only after the user explicitly agreed'
     );
   }
-  if (!UPSTREAM_DEFECT(envelope)) return null;
-  const effect =
-    kind === 'delete' ? 'undoing a delete does nothing' : `undoing a ${kind} makes its audio vanish from the timeline`;
-  return (
-    `this ${kind} cannot be undone: OpenTune frees objects its own undo entry needs, so ${effect}; ` +
-    'opentune_undo refuses it, and the user should not undo it in the OpenTune window either. Ask the user before ' +
-    'every split, merge or delete'
-  );
+  if (UPSTREAM_DEFECT(envelope)) {
+    const effect =
+      kind === 'delete'
+        ? 'undoing a delete does nothing'
+        : `undoing a ${kind} makes its audio vanish from the timeline`;
+    return (
+      `this ${kind} cannot be undone: OpenTune frees objects its own undo entry needs, so ${effect}; ` +
+      'opentune_undo refuses it, and the user should not undo it in the OpenTune window either. Ask the user before ' +
+      'every split, merge or delete'
+    );
+  }
+  const how = reversibility(envelope);
+  if (how === null) return null;
+  const consent = kind === 'delete' ? '; removing clips needs confirm: true' : '';
+  // A result with a revert recipe can be put back, so it must not claim that no request can: it says
+  // that undo is not possible and points to the revert line.
+  return how === 'final'
+    ? `this ${kind} cannot be undone or restored by any request${consent}, so apply it only after the user explicitly agreed`
+    : `this ${kind} cannot be undone, but the revert line says how to put it back${consent}, so apply it only after the user explicitly agreed`;
 }
 
 const capital = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;

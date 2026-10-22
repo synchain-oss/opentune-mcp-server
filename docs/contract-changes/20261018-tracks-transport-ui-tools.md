@@ -62,5 +62,5 @@ Other changes that clients can see:
 
 The catalog only grows: existing tools keep their names, descriptions and schemas. The instructions text is not
 changed. An OpenTune build without `tracks.v1`, `transport.v1` or `ui.bridge` still works for every other tool; the
-new tools answer `UNSUPPORTED(capability_missing)`. With 27 tools the size of `tools/list` is now about 62 KB, within
-the 64 KB limit; each new tool is below 4 KB.
+new tools answer `UNSUPPORTED(capability_missing)`. With 27 tools `tools/list` is 61,708 bytes of the 65,536-byte
+limit; each new tool is below 4 KB.

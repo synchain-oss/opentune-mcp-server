@@ -11,8 +11,9 @@ import path from 'node:path';
 
 /**
  * Size limits of tools/list, in bytes of compact JSON (UTF-8). The total leaves room for the
- * arrangement, track, transport, UI and settings tools on top of the 21 tools of version 0.1.0
- * (about 45 KB together); the per-tool limits stay as they are.
+ * arrangement, track, transport, UI and settings tools and for the tools a later version adds,
+ * without letting one tool grow until the whole catalog no longer fits an ordinary context budget;
+ * the per-tool limits keep a single tool from using up that room on its own.
  */
 export const CATALOG_LIMITS = Object.freeze({
   total: 64 * 1024,
