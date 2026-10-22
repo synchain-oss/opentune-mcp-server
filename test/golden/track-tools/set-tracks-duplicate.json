@@ -235,7 +235,7 @@
     "lines": [
       {
         "kind": "revert",
-        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Only after the user explicitly agrees to restore it: call opentune_delete_track with the arguments in restore, adding expected_revision: the latest arrangement_revision of opentune_get_project.",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Only after the user explicitly agrees to restore it: call opentune_delete_track with the arguments in restore, adding expected_revision: the latest arrangement_revision of opentune_get_project, adding confirm: true.",
         "revert": {
           "method": "track.delete",
           "params": {

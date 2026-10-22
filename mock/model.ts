@@ -506,10 +506,14 @@ export class World {
     this.#timers.add(timer);
   }
 
-  /** Queues the reference alignment analysis of a content; its data is there ALIGNMENT_SETTLE_MS later. */
+  /**
+   * Queues the reference alignment analysis of a content; its data is there ALIGNMENT_SETTLE_MS later.
+   * Under a reference fault OpenTune's analysis never completes, so no data arrives.
+   */
   queueAlignment(content: ContentRec): void {
     this.after(ALIGNMENT_SETTLE_MS, () => {
       if (this.contents.get(content.objectId) !== content || content.alignmentReady) return;
+      if (this.referenceFault !== null) return;
       content.alignmentReady = true;
       this.touch(content, 'reference');
     });

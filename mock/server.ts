@@ -160,6 +160,8 @@ export interface OtcpMock {
   failRender(contentId: string, times?: number): void;
   /** A reference analysis that has to compute alignment data ends as `fault` says (null: it completes). */
   setReferenceFault(fault: 'stalled' | 'timeout' | 'failed' | null): void;
+  /** The alignment data of every content is gone, so that a reference analysis has to compute it again. */
+  forgetAlignment(): void;
   /** The pitch analysis of the next `count` imported clips fails. */
   failNextAnalysis(count?: number): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
@@ -713,6 +715,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     setReferenceFault(fault) {
       world.referenceFault = fault;
+    },
+    forgetAlignment() {
+      for (const content of world.contents.values()) content.alignmentReady = false;
     },
     failNextAnalysis(count = 1) {
       importer.failNextAnalysis(count);

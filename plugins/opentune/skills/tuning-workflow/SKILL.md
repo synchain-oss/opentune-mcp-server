@@ -33,6 +33,35 @@ Ground rules:
 6. **Measure after.** `opentune_analyze_pitch` again. After tuning, the `corrected*` fields describe the corrected target curve, not a re-measurement of rendered audio. Compare with step 3 and report the change.
 7. **Export.** `opentune_export_audio` (`kind`: `clip`, `track` or `master`, with `target`, and `path` ending in `.wav`). Tell the user where the file is.
 
+## Clips, tracks, transport and the window
+
+These tools edit the timeline around the vocal. Use them only when the user asks for that, not as a side effect of
+tuning.
+
+- `opentune_edit_arrangement`: `move`, `trim`, `gain`, `fade` and `set_reference` run in order as one undo step;
+  preview them with `dry_run: true`. `split`, `merge`, `delete` and `copy` each go in a call of their own, and they
+  cannot be undone (OpenTune frees objects its own undo step needs). **Ask the user before every split, merge, delete
+  or copy**, name the clips it would affect, and call only after they agree; `delete` also needs `confirm: true`,
+  which comes from the user alone. Every call returns the new `arrangement_revision`: pass it to the next call. Never
+  undo a split, merge or delete, and do not suggest doing it in the OpenTune window either: it can make audio vanish.
+- `opentune_set_tracks` changes mute, solo, volume, colour, hidden tracks and duplicates; `opentune_delete_track`
+  cannot be undone and moves every later track down one position, so all old track ids change. Ask the user before a
+  deletion and pass `confirm: true` only after they agree; the result lists how the ids moved.
+- `opentune_transport` drives play, pause, stop, seek, the tempo and time signature, and the loop flag. `bpm` and
+  `time_signature` are saved with the project and cannot be undone; say which section the project should follow before
+  setting them (the `beat-grid` skill measures the tempo per section).
+- `opentune_manage_ui` selects a clip, closes dialogs or marks the first-run onboarding as shown. Selecting a clip can
+  make OpenTune generate its notes with no undo entry: run `focus_clip` with `dry_run: true` first and tell the user.
+  Closing a confirmation dialog cancels the action it asked about, and a dialog that commits its value on close is
+  closed only with `accept_commit: true`, which the user has to allow.
+
+## Global settings
+
+`opentune_get_settings` only reads. `opentune_set_settings` changes the OpenTune installation, not the project, so the
+values outlive the session. Change a global setting only for a step the user asked for, say that it is global, and
+**put the previous value back when that step is done**; the result carries the previous values and the call that
+restores them. `clear_recent: true` cannot be undone by any request.
+
 ## Save often
 
 OpenTune has no autosave, and the undo history is not stored in the project file. Unsaved work is lost when OpenTune closes or crashes.

@@ -112,9 +112,47 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     ops: [{ op: 'delete', clips: [a] }],
     dry_run: true,
   });
+  // An instance whose delete result carries IRREVERSIBLE but not the undo defect of OpenTune: the
+  // mock always reports the defect, so this one answer is scripted. Nothing in the mock changes.
+  const scan = await ctx.instances.scan();
+  if (!('instances' in scan) || scan.instances[0] === undefined) throw new Error('no instance');
+  const session = await ctx.instances.session(scan.instances[0]);
+  const original = session.call.bind(session);
+  session.call = (method, params, timeoutMs) => {
+    if (method !== 'arrangement.edit') return original(method, params, timeoutMs);
+    return Promise.resolve({
+      applied: true,
+      noOp: false,
+      dryRun: false,
+      changes: [],
+      created: [],
+      removed: [{ entity: 'placement', ref: { placementId: a }, label: 'Clip 1 on Track 1' }],
+      idMap: [],
+      revisionDiff: { arrangement: { before: 'a1', after: 'a2' }, trackState: null, contents: [] },
+      tokens: { arrangementRevision: 'a2', contents: [], placements: [] },
+      undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
+      dirty: { before: true, after: true },
+      ui: null,
+      sideEffects: {},
+      warnings: [{ code: 'IRREVERSIBLE', subject: null, data: null }],
+      job: null,
+    });
+  };
+  try {
+    await run(
+      'delete-irreversible-without-defect',
+      'A delete whose result is IRREVERSIBLE without the undo defect of OpenTune: the first sentence still says it cannot be undone.',
+      { ops: [{ op: 'delete', clips: [a] }], confirm: true },
+    );
+  } finally {
+    session.call = original;
+  }
   await run('delete', 'A delete with consent: cannot be undone or restored, said first.', {
     ops: [{ op: 'delete', clips: [a] }],
     confirm: true,
+  });
+  await run('copy-duplicate-clips', 'A copy that names the same clip twice: it is copied once.', {
+    ops: [{ op: 'copy', clips: [b, b], mode: 'full', to_track_id: 3, start_timeline_sec: 20 }],
   });
   return out;
 }

@@ -100,7 +100,8 @@ export const transportTool = defineTool({
     instance_id: INSTANCE_FIELD,
   }),
   outputSchema: WRITE_RESULT_OUTPUT,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  // Not idempotent: play_from_last_start seeks back to the last start every time, also while playing.
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   capabilities: ['transport.v1'],
   otcpMethods: ['transport.control', 'transport.setTempo', 'transport.setLoop'],
   run: (args, ctx) => transport(ctx, args),
