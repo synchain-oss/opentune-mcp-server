@@ -308,10 +308,12 @@ const UPSTREAM_DEFECT = (envelope: Json): boolean =>
 
 /**
  * How far a result that cannot be undone can be taken back: `final` when no request can restore it (an
- * IRREVERSIBLE warning, or no undo and no revert recipe this server can carry out), `restorable` when
- * the result carries such a recipe, and null when the change can be undone or changed nothing. The
- * recipe is read the way the revert line reads it, so the first sentence and the revert line cannot
- * contradict each other: a recipe that is not in the protocol form is no way back either.
+ * IRREVERSIBLE warning, or a result that carries no recipe at all, or one that is not in the protocol
+ * form), `restorable` when the result carries a recipe in the protocol form, and null when the change
+ * can be undone or changed nothing. A recipe in the protocol form that no tool of this server carries
+ * out is `restorable` as well: the revert line tells the user to put the state back by hand in the
+ * OpenTune window. The recipe is read the way the revert line reads it, so the first sentence and the
+ * revert line cannot contradict each other.
  */
 function reversibility(envelope: Json): 'final' | 'restorable' | null {
   if (asList(envelope.warnings).some((w) => isObject(w) && w.code === 'IRREVERSIBLE')) return 'final';
@@ -326,7 +328,7 @@ function reversibility(envelope: Json): 'final' | 'restorable' | null {
  * Why a split, merge or delete cannot be undone, for the first sentence of its result. Every
  * structural edit that cannot be undone says so there, not only the ones OpenTune's undo defect
  * affects. It says "or restored by any request" only when the result gives no way back: an
- * IRREVERSIBLE warning, or no undo and no revert recipe.
+ * IRREVERSIBLE warning, a result that carries no recipe, or a recipe that is not in the protocol form.
  */
 export function structuralLead(kind: string, envelope: Json): string | null {
   if (envelope.dryRun === true) {

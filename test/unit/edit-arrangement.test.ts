@@ -724,6 +724,26 @@ describe('the first sentence of an irreversible structural edit', () => {
     expect(structuralLead('split', restorable)).not.toContain('confirm');
   });
 
+  it('calls a recipe that is in the protocol form but that no tool of this server carries out restorable', () => {
+    // revertPlan reads such a recipe as `manual`: the method is one of the protocol, but no tool of
+    // this server performs it, so the user has to put the state back by hand. The state is not lost
+    // (the recipe names a request that restores it), so the lead points to the revert line.
+    const manual = {
+      dryRun: false,
+      undo: {
+        undoable: false,
+        reason: 'no_upstream_undo',
+        revert: { method: 'content.editNotes', params: { contentId: 'c:01234567:0:1' } },
+      },
+      warnings: [],
+    };
+    for (const kind of ['split', 'merge', 'delete']) {
+      const lead = structuralLead(kind, manual);
+      expect(lead, kind).toContain(`this ${kind} cannot be undone, but the revert line says how to put it back`);
+      expect(lead, kind).not.toContain('restored by any request');
+    }
+  });
+
   it('puts the revert line in the summary of a split that cannot be undone but has a recipe', async () => {
     const env = await setup();
     const revision = await env.revision();
@@ -800,6 +820,43 @@ describe('the first sentence of an irreversible structural edit', () => {
     expect(first).not.toContain('the revert line says how to put it back');
     // The revert line says the same: no request can restore the previous state.
     expect(revertLine(out)?.text).toContain('No request of the protocol can restore the previous state.');
+  });
+
+  it('says the same about a recipe no tool of this server carries out in the first sentence and the revert line', async () => {
+    const env = await setup();
+    const revision = await env.revision();
+    env.session.call = () =>
+      Promise.resolve({
+        applied: true,
+        noOp: false,
+        dryRun: false,
+        changes: [],
+        created: [],
+        removed: [],
+        idMap: [],
+        revisionDiff: { arrangement: { before: 'a1', after: 'a2' }, trackState: null, contents: [] },
+        tokens: { arrangementRevision: 'a2', contents: [], placements: [] },
+        // An instance that sends a recipe of the protocol form whose method no tool of this server
+        // performs: the state can be put back, but not by a request of this server.
+        undo: {
+          undoable: false,
+          reason: 'no_upstream_undo',
+          revert: { method: 'content.editNotes', params: { contentId: 'c:01234567:0:1' } },
+        },
+        dirty: { before: true, after: true },
+        ui: null,
+        sideEffects: {},
+        warnings: [],
+        job: null,
+      });
+    const out = body(
+      await edit(env, { expected_revision: revision, ops: [{ op: 'split', clip: id(env, 'a'), at_timeline_sec: 1 }] }),
+    );
+    const first = firstSentence(out.summary);
+    expect(first).toContain('this split cannot be undone, but the revert line says how to put it back');
+    expect(first).not.toContain('restored by any request');
+    // The revert line says how the user puts it back by hand.
+    expect(revertLine(out)?.text).toContain('the user can restore it by hand in the OpenTune window');
   });
 
   it('puts it in the summary of a delete result that carries IRREVERSIBLE but no defect', async () => {

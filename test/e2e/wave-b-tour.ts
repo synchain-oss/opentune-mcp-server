@@ -2004,6 +2004,11 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       const unchanged = await captureState(copyContentId);
       let undoId: string | null = null;
       let knownDefect = false;
+      // The clock of the wait starts before the tool call, not inside the check that follows it: the
+      // job runs while the tool call is answered, so a clock that starts later measures less than
+      // the wait really was, and a stalled error that came at the wait limit would pass as a known
+      // defect.
+      const toolStarted = performance.now();
       await runTool({
         tool: 'opentune_autotune_range',
         args: { clip: copyId, expected_revision: copyRevision, mode: 'reference' },
@@ -2015,13 +2020,12 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
         visible: async (body) => {
           let envelope = body;
           if (isObject(body.job)) {
-            const jobStarted = performance.now();
             try {
               envelope = await t.followJob('opentune_autotune_range', 'reference alignment', body.job);
             } catch (error) {
               // The same rule as for content.autoTune: only the stalled error that came before the wait
               // limit, with the project left as it was, is the known defect; anything else is a problem.
-              if (!(error instanceof OtcpError) || !isKnownStalledDefect(error.data, performance.now() - jobStarted)) {
+              if (!(error instanceof OtcpError) || !isKnownStalledDefect(error.data, performance.now() - toolStarted)) {
                 throw error;
               }
               const moved = await unchanged();
