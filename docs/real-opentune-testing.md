@@ -653,9 +653,12 @@ time only: they are never opened or written, and the log folder is not compared.
 are in JUCE's per-user application data folder (`%APPDATA%\OpenTune` on Windows); the control-API discovery folder
 is under the per-user state folder (`%LOCALAPPDATA%\OpenTune\control` on Windows). Both folders are watched. Any
 change fails the run (`real user settings untouched`), which proves the run did not touch the real settings. The
-step's note says how many files were watched in which folder; when no settings file was found at all the step is a
-`SKIP` (the check could not have noticed anything), never a silent PASS. When a scenario throws, the watch result is
-added to its error message.
+step's note says how many files were watched in which folder. When no settings file was found at all, the step is a
+`SKIP` on a machine (the check could not have noticed anything, and where OpenTune has been run that means a wrong
+folder), never a silent PASS. On a CI runner (the environment variable `CI` is `true`, which GitHub Actions sets) it is
+a `PASS` whose note says that no settings file existed before or after the run: a clean runner has never run OpenTune,
+and a file that the run creates is still found and fails the step. When a scenario throws, the watch result is added
+to its error message.
 
 The script can also be used by hand: `node scripts/e2e/settings-snapshot.mjs snapshot <dir> <snapshot.json>`,
 then `diff <dir> <snapshot.json>` (exit 1 when they differ) and `restore <dir> <snapshot.json>`. **`restore`
@@ -708,7 +711,8 @@ A build passes a real-OpenTune check when all of this holds:
 
 - The settings guard is clean in every scenario. `real user settings untouched` is `PASS` with a count of watched
   files above 0. A `SKIP` there means the guard found no settings file at all, which on a machine with OpenTune
-  installed means it looked in the wrong folder, so the run proved nothing about your settings.
+  installed means it looked in the wrong folder, so the run proved nothing about your settings. On a clean CI runner
+  there is no such file to find, and the step is a `PASS` that says so (see [Settings snapshot](#settings-snapshot)).
 - The only defects the reports hold against the build are the known upstream defects listed below, each named in the
   report.
 - The `manualChecks` of the reports are for a person; they are not part of the automatic result. The tour mutes every

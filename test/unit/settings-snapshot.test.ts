@@ -397,17 +397,103 @@ describe('the read-only watch of the real user folder', () => {
     expect(touched.counts).toEqual({ PASS: 1, FAIL: 1, SKIP: 0, 'FLAKY-SKIP': 0 });
   });
 
-  it('withUserSettingsWatch is a SKIP, not a PASS, when it found no file to watch', async () => {
-    const dir = await tempDir();
+  describe('withUserSettingsWatch when it found no file to watch', () => {
     const base = {
       steps: [{ name: 'a', result: 'PASS', ms: 1, note: '' }] as StepReport[],
       result: 'PASS' as StepResult,
       counts: { PASS: 1, FAIL: 0, SKIP: 0, 'FLAKY-SKIP': 0 },
     };
-    const report = await withUserSettingsWatch(() => Promise.resolve(base), path.join(dir, 'missing'));
-    expect(report.steps.at(-1)).toMatchObject({ name: USER_SETTINGS_STEP, result: 'SKIP' });
-    expect(report.steps.at(-1)?.note).toContain('no settings file found');
-    expect(report.result).toBe('SKIP');
+    // The environment is given in every call, so that the result does not depend on whether these tests run on a
+    // CI runner (which sets CI=true) or on a machine.
+    const onMachine = {};
+    const onRunner = { CI: 'true' };
+
+    it('is a SKIP, not a PASS, off a CI runner', async () => {
+      const dir = await tempDir();
+      for (const env of [onMachine, { CI: 'false' }, { CI: '1' }, { CI: '' }]) {
+        const report = await withUserSettingsWatch(() => Promise.resolve(base), path.join(dir, 'missing'), env);
+        expect(report.steps.at(-1)).toMatchObject({ name: USER_SETTINGS_STEP, result: 'SKIP' });
+        expect(report.steps.at(-1)?.note).toContain('no settings file found to watch');
+        expect(report.steps.at(-1)?.note).toContain('the check could not notice a change');
+        expect(report.result).toBe('SKIP');
+      }
+    });
+
+    it('is a PASS on a CI runner, which has never run OpenTune, and says so', async () => {
+      const dir = await tempDir();
+      const empty = path.join(dir, 'empty');
+      await mkdir(empty);
+      // A folder that is missing and one that exists without a settings file are the same thing here.
+      for (const watched of [path.join(dir, 'missing'), empty, [path.join(dir, 'missing'), empty]]) {
+        const report = await withUserSettingsWatch(() => Promise.resolve(base), watched, onRunner);
+        expect(report.steps.at(-1)).toMatchObject({ name: USER_SETTINGS_STEP, result: 'PASS' });
+        expect(report.steps.at(-1)?.note).toContain('no settings file existed in the watched folders');
+        expect(report.steps.at(-1)?.note).toContain('none was created (clean CI runner)');
+        expect(report.result).toBe('PASS');
+        expect(report.counts).toEqual({ PASS: 2, FAIL: 0, SKIP: 0, 'FLAKY-SKIP': 0 });
+      }
+    });
+
+    it('is a FAIL on a CI runner when the run creates a settings file, in a folder that was missing or empty', async () => {
+      const dir = await tempDir();
+      const missing = path.join(dir, 'missing');
+      const empty = path.join(dir, 'empty');
+      await mkdir(empty);
+      for (const [folder, create] of [
+        [missing, () => mkdir(missing)],
+        [empty, () => Promise.resolve()],
+      ] as const) {
+        const report = await withUserSettingsWatch(
+          async () => {
+            await create();
+            await writeFile(path.join(folder, 'app-preferences.settings'), 'created by the run');
+            return base;
+          },
+          folder,
+          onRunner,
+        );
+        expect(report.steps.at(-1)).toMatchObject({ name: USER_SETTINGS_STEP, result: 'FAIL' });
+        expect(report.steps.at(-1)?.note).toContain('app-preferences.settings: appeared');
+        expect(report.result).toBe('FAIL');
+        expect(report.counts).toEqual({ PASS: 1, FAIL: 1, SKIP: 0, 'FLAKY-SKIP': 0 });
+      }
+    });
+
+    it('is still a SKIP on a CI runner when no folder is known, since nothing was compared', async () => {
+      const report = await withUserSettingsWatch(() => Promise.resolve(base), [], onRunner);
+      expect(report.steps.at(-1)).toMatchObject({ name: USER_SETTINGS_STEP, result: 'SKIP' });
+      expect(report.steps.at(-1)?.note).toContain('no folder known');
+      expect(report.result).toBe('SKIP');
+    });
+
+    it('is the PASS of the files it watched, on a runner or not, when there were files and none changed', async () => {
+      const dir = await tempDir();
+      await fill(dir);
+      for (const env of [onMachine, onRunner]) {
+        const report = await withUserSettingsWatch(() => Promise.resolve(base), dir, env);
+        expect(report.steps.at(-1)).toMatchObject({ name: USER_SETTINGS_STEP, result: 'PASS' });
+        expect(report.steps.at(-1)?.note).toContain('watched 2 files');
+        expect(report.steps.at(-1)?.note).not.toContain('clean CI runner');
+        expect(report.result).toBe('PASS');
+      }
+    });
+
+    it('is a FAIL for a changed file on a runner or not, never made a PASS by the CI flag', async () => {
+      const dir = await tempDir();
+      await fill(dir);
+      for (const env of [onMachine, onRunner]) {
+        const report = await withUserSettingsWatch(
+          async () => {
+            await writeFile(path.join(dir, 'app-preferences.settings'), `touched ${JSON.stringify(env)}`);
+            return base;
+          },
+          dir,
+          env,
+        );
+        expect(report.steps.at(-1)).toMatchObject({ name: USER_SETTINGS_STEP, result: 'FAIL' });
+        expect(report.result).toBe('FAIL');
+      }
+    });
   });
 
   it('withUserSettingsWatch lets the scenario fail on its own', async () => {
@@ -432,7 +518,11 @@ describe('the read-only watch of the real user folder', () => {
     expect(message).toContain('boom');
     expect(message).toContain(USER_SETTINGS_STEP);
     expect(message).toContain('app-preferences.settings');
-    expect((error as Error).cause).toBe(failure);
+    // The cause is a copy of the scenario's error with the home folder redacted, never the error itself.
+    const cause = (error as Error).cause;
+    expect(cause).toBeInstanceOf(Error);
+    expect(cause).not.toBe(failure);
+    expect(cause).toMatchObject({ name: 'Error', message: 'boom' });
   });
 
   it('withUserSettingsWatch does not lose the scenario error when the watch itself fails', async () => {

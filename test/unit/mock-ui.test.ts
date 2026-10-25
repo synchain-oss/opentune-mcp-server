@@ -4,10 +4,14 @@
 // The mock's UI bridge beyond what the contract vectors show: revert recipes applied as given, what
 // a dialog's closing commits, the busy rules around dialogs, and the effects of selecting a clip.
 
+import os from 'node:os';
+import path from 'node:path';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
+import { otcpSpec } from '../support/otcp-spec.js';
 
 const sessions = new Sessions();
 afterEach(async () => {
@@ -332,27 +336,110 @@ describe('showOnboarding', () => {
 });
 
 describe('a window-less run (no editor window)', () => {
-  it('refuses the methods that act through the editor window with UNSUPPORTED(no_editor_window), changing nothing', async () => {
+  // The ten methods that act through the editor window (PROTOCOL.md section 7 rule 6; NO_EDITOR_METHODS of the mock).
+  const NO_EDITOR_METHODS = [
+    'ui.getState',
+    'ui.dismiss',
+    'ui.setSelection',
+    'track.add',
+    'track.duplicate',
+    'track.delete',
+    'project.save',
+    'project.saveAs',
+    'project.open',
+    'audio.set',
+  ] as const;
+  const projectFile = path.join(os.tmpdir(), 'ot-no-editor', 'song.otproj');
+
+  /** Valid params for every method of the rule, so that only the missing window can make a call fail. */
+  const paramsFor = (
+    ids: Record<string, string>,
+    arrangementRevision: string,
+  ): Record<string, Record<string, unknown>> => ({
+    'ui.getState': {},
+    'ui.dismiss': { target: 'dialogs' },
+    'ui.setSelection': { placementId: ids['a.placementId'] },
+    'track.add': {},
+    'track.duplicate': { trackId: 1, mode: 'clone' },
+    'track.delete': { trackId: 1, expectedArrangementRevision: arrangementRevision, confirm: true },
+    'project.save': {},
+    'project.saveAs': { path: projectFile },
+    'project.open': { path: projectFile },
+    'audio.set': { bufferSizeFrame: 256 },
+  });
+
+  /** What a call could change: the data of the mock, the state of the interface, the audio setup and the project. */
+  async function observed(session: TestSession) {
+    const { mock, ok } = session;
+    return {
+      data: mock.snapshot(),
+      audio: await ok('audio.get'),
+      project: await ok('project.get'),
+    };
+  }
+
+  it('lists exactly the methods that the specification names, and gives each one valid params', async () => {
+    const session = await sessions.open();
+    const ids = session.mock.given({ clips: [clip({ bind: 'a', trackId: 1 })] });
+    const arrangementRevision = field(await session.ok('project.get'), 'asOf', 'arrangementRevision') as string;
+    const params = paramsFor(ids, arrangementRevision);
+    expect(Object.keys(params).sort()).toEqual([...NO_EDITOR_METHODS].sort());
+    for (const method of NO_EDITOR_METHODS) {
+      expect(otcpSpec().validate(`methods/${method}.schema.json#/$defs/params`, params[method]), method).toEqual([]);
+    }
+  });
+
+  it.each(NO_EDITOR_METHODS)('refuses %s with UNSUPPORTED(no_editor_window) and changes nothing', async (method) => {
     const session = await sessions.open();
     const { mock, ok, fails } = session;
-    const ids = mock.given({ clips: [clip({ bind: 'a', trackId: 1 })] });
-    const before = await state(session);
+    const ids = mock.given({
+      dirty: false,
+      visibleTrackCount: 3,
+      clips: [clip({ bind: 'a', trackId: 1 })],
+      dialogs: [{ kind: 'message' }],
+      audio: { running: true },
+    });
+    const arrangementRevision = field(await ok('project.get'), 'asOf', 'arrangementRevision') as string;
+    const params = paramsFor(ids, arrangementRevision)[method] ?? {};
+    const interfaceBefore = await state(session);
+    const before = await observed(session);
+
     mock.setNoEditor(true);
-    const refusals: [string, Record<string, unknown>][] = [
-      ['ui.getState', {}],
-      ['ui.setSelection', { placementId: ids['a.placementId'] }],
-      ['project.save', {}],
-    ];
-    for (const [method, params] of refusals) {
-      expect(await fails(method, params)).toMatchObject({
-        data: { kind: 'UNSUPPORTED', reason: 'no_editor_window', executed: false },
-      });
-    }
-    // A method that works without the editor window still answers.
-    expect(await ok('prefs.get')).toHaveProperty('onboardingShown');
+    expect(await fails(method, params)).toMatchObject({
+      data: { kind: 'UNSUPPORTED', reason: 'no_editor_window', executed: false },
+    });
+    // The refusal changed nothing, in the data of the mock or in what the methods that still work report.
+    expect(await observed(session)).toEqual(before);
     mock.setNoEditor(false);
-    expect(await state(session)).toEqual(before);
-    // Back with an editor window, the same selection works again.
+    expect(await state(session)).toEqual(interfaceBefore);
+  });
+
+  it('lets a method that works without the editor window run, track.set among them, and the preferences answer', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ visibleTrackCount: 2, clips: [clip({ bind: 'a', trackId: 0 })] });
+    const muted = async () => (field(await ok('project.get'), 'tracks') as { muted: boolean }[])[0]?.muted;
+    expect(await muted()).toBe(false);
+    mock.setNoEditor(true);
+    // The rule names track.set as one of the methods that work without a window; it is not in the list of refusals.
+    expect(NO_EDITOR_METHODS).not.toContain('track.set');
+    expect(await ok('prefs.get')).toHaveProperty('onboardingShown');
+    expect(await ok('track.set', { tracks: [{ trackId: 0, muted: true }] })).toMatchObject({
+      applied: true,
+      noOp: false,
+    });
+    expect(await muted()).toBe(true);
+  });
+
+  it('works again with an editor window: the same selection that was refused is applied', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ clips: [clip({ bind: 'a', trackId: 1 })] });
+    mock.setNoEditor(true);
+    expect(await session.fails('ui.setSelection', { placementId: ids['a.placementId'] })).toMatchObject({
+      data: { reason: 'no_editor_window' },
+    });
+    mock.setNoEditor(false);
     await ok('ui.setSelection', { placementId: ids['a.placementId'] });
     expect(await state(session)).toMatchObject({ selectedPlacementIds: [ids['a.placementId']] });
   });
