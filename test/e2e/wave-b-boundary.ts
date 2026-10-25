@@ -44,6 +44,7 @@ import {
   scratchDir,
   startRealInstance,
   type RealInstance,
+  type RealInstanceOptions,
 } from './real-support.js';
 import { Scenario, type ScenarioReport } from './scenario.js';
 import {
@@ -149,6 +150,32 @@ function signatureOf(state: ProjectState): string {
   return JSON.stringify({ placements, tracks });
 }
 
+/**
+ * The clips a fresh read shows, as a picture that leaves their ids out: opening a project gives its clips new
+ * ids, and what has to come back is where they are and how they sound.
+ */
+export function clipsWithoutIds(state: ProjectState): string {
+  return JSON.stringify(
+    state.placements
+      .map((p) => [
+        p.trackId,
+        p.startTimelineSec,
+        p.durationSec,
+        p.clipInContentSec,
+        p.gainLinear,
+        p.fadeInSec,
+        p.fadeOutSec,
+      ])
+      .sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b))),
+  );
+}
+
+/** Compares two paths the way the platform does: without regard to case, and with either slash, on Windows only. */
+const samePath = (a: string, b: string): boolean =>
+  process.platform === 'win32'
+    ? path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase()
+    : path.resolve(a) === path.resolve(b);
+
 interface Clip {
   readonly placementId: string;
   readonly contentId: string;
@@ -157,7 +184,15 @@ interface Clip {
 
 const PROCESSING_MEMBERS = ['tuningHz', 'editingScheme', 'hybridMode', 'experimentalFeatures'] as const;
 
-export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioReport> {
+/** What a test can replace in the scenario. */
+export interface WaveBBoundaryHooks {
+  /** For tests: starts the instance in place of startRealInstance. */
+  readonly instance?: (options: RealInstanceOptions) => Promise<RealInstance>;
+  /** For tests: wraps the session, so that a reply can be changed before the scenario checks it. */
+  readonly session?: (session: OtcpSession) => OtcpSession;
+}
+
+export async function runWaveBBoundary(config: SmokeConfig, hooks: WaveBBoundaryHooks = {}): Promise<ScenarioReport> {
   const scenario = new Scenario(SCENARIO_NAME);
   const timeoutMs = config.stepTimeoutMs;
   const startTimeoutMs = config.exe.timeoutMs ?? 60_000;
@@ -384,7 +419,7 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
   await step(
     'launch',
     async () => {
-      instance = await startRealInstance({
+      instance = await (hooks.instance ?? startRealInstance)({
         exe: config.exe.exe,
         discoveryDir,
         dataDirParent,
@@ -403,7 +438,8 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
       if (started === undefined) throw new Error('no instance');
       const entry = parseDiscoveryFile(`${String(started.pid)}.json`, await readFile(started.discoveryFile));
       if (!entry.ok) throw new Error(`the discovery file is not valid: ${entry.problem}`);
-      session = await OtcpSession.open(entry.entry, START_HELLO_TIMEOUT_MS);
+      const opened = await OtcpSession.open(entry.entry, START_HELLO_TIMEOUT_MS);
+      session = hooks.session === undefined ? opened : hooks.session(opened);
       capabilities = session.hello.capabilities;
       requireCapabilities(REQUIRED_CAPABILITIES);
       scenario.facts.protocol = session.hello.protocol;
@@ -787,13 +823,26 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
   const second = path.join(folder, 'second.otproj');
   let placedCount = 0;
 
+  /** The project file and the unsaved-changes flag of a fresh project.get, and the clips without their ids. */
+  const projectView = async (): Promise<{ path: string | null; dirty: boolean; clips: string }> => {
+    const read = await call('project.get', {}, READ_TIMEOUT_MS);
+    const project = member(read, 'project', 'project.get');
+    if (!isObject(project)) throw new Error('project.get has no project object');
+    const state = await readProject(need());
+    return {
+      path: typeof project.path === 'string' ? project.path : null,
+      dirty: project.dirty === true,
+      clips: clipsWithoutIds(state),
+    };
+  };
+
   await check('save as over another project', async () => {
     requireCapabilities(['project.io']);
     const problems: string[] = [];
     await mkdir(folder, { recursive: true });
     await mkdir(media, { recursive: true });
     await copyFile(toneFile, copy);
-    await importClip(copy, { generateNotes: false, focus: false });
+    const imported = clipOf(await importClip(copy, { generateNotes: false, focus: false }));
     placedCount = (await readProject(need())).placements.length;
     const save = (target: string, extra: Json = {}) =>
       runJob(need(), 'project.saveAs', { path: target, ...extra }, 'project save', timeoutMs);
@@ -820,13 +869,66 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
     if (!isObject(overwritten) || !warningCodes(overwritten).includes('OVERWROTE_OTHER_PROJECT')) {
       problems.push('saving over another project with confirm carries no OVERWROTE_OTHER_PROJECT warning');
     }
-    return finish('save as', problems, 'overwrite refused, then confirmed with its warning');
+
+    // project.save writes the project to its own file. The project is saved now (its file is the one just written),
+    // so one change marks it as changed again; saving clears the flag and keeps the file.
+    const saved = await projectView();
+    if (saved.path === null || !samePath(saved.path, first)) {
+      problems.push('project.get does not name the file the project was saved to');
+    }
+    if (saved.dirty) problems.push('project.get reports unsaved changes right after the save');
+    const edited = await call('arrangement.edit', {
+      expectedArrangementRevision: (await readProject(need())).arrangementRevision,
+      ops: [{ op: 'setGain', placementId: imported.placementId, gainDb: -1 }],
+    });
+    if (!(await projectView()).dirty) {
+      problems.push('a change did not mark the project as changed, so project.save has nothing to clear');
+    }
+    scenario.facts.editMarksDirty = isObject(edited.dirty) ? edited.dirty.after === true : null;
+    const filePath = saved.path ?? first;
+    const fileBefore = await stat(filePath);
+    const plainSave = await runJob(need(), 'project.save', {}, 'project save', timeoutMs);
+    if (!isObject(plainSave)) throw new Error('project.save ended without a result object');
+    const writtenPath = typeof plainSave.path === 'string' ? plainSave.path : '';
+    if (!samePath(writtenPath, filePath)) problems.push('project.save wrote another file than the project file');
+    if (num(plainSave, 'sizeBytes', 'the save result') <= 0) problems.push('project.save reports an empty file');
+    const codes = warningCodes(plainSave);
+    for (const code of ['IRREVERSIBLE', 'NOT_SAVED_IN_PROJECT']) {
+      if (!codes.includes(code)) problems.push(`project.save carries no ${code} warning`);
+    }
+    if (codes.includes('OVERWROTE_OTHER_PROJECT')) problems.push('project.save reports OVERWROTE_OTHER_PROJECT');
+    const undo = plainSave.undo;
+    if (!isObject(undo) || undo.undoable !== false || undo.reason !== 'no_upstream_undo' || undo.revert !== null) {
+      problems.push('project.save: undo is not {undoable:false, reason:no_upstream_undo, revert:null}');
+    }
+    const after = await projectView();
+    if (after.dirty) problems.push('project.get still reports unsaved changes after project.save');
+    if (after.path === null || !samePath(after.path, filePath)) {
+      problems.push('project.get names another file after project.save');
+    }
+    const fileAfter = await stat(filePath);
+    if (fileAfter.mtimeMs <= fileBefore.mtimeMs)
+      problems.push('the project file was not written again by project.save');
+    scenario.facts.saveWrote = fileAfter.size > 0;
+    return finish(
+      'save as',
+      problems,
+      'overwrite refused, then confirmed with its warning; project.save cleared the unsaved-changes flag and kept the file',
+    );
   });
 
   await check('a project with missing media', async () => {
     requireCapabilities(['project.io']);
     if (placedCount === 0) throw new StepSkip('SKIP', 'the save-as step did not leave a saved project to open');
     const problems: string[] = [];
+    // The state before the open, to compare with the state after the revert recipe has opened it again.
+    const stateBefore = await projectView();
+    if (stateBefore.dirty) {
+      throw new StepSkip(
+        'SKIP',
+        'the saved project has unsaved changes, so it cannot be opened without discarding them',
+      );
+    }
     // The project is saved now; take the media of the copied clip away and open the file again.
     try {
       await rename(copy, moved);
@@ -837,11 +939,13 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
       );
       throw new StepSkip('SKIP', `the media file could not be renamed while OpenTune held it: ${messageOf(error)}`);
     }
+    let openedResult: Json | undefined;
     // OpenTune keeps a copy of the media in a folder next to the project file; that copy is taken away too.
     const { outcome, putBackFailures } = await withMediaAway({ folder, copy, moved }, async (copyFolders) => {
       scenario.facts.mediaCopyFolders = copyFolders;
       const opened = await runJob(need(), 'project.open', { path: first }, 'project open', timeoutMs);
       if (!isObject(opened)) throw new Error('project.open ended without a result object');
+      openedResult = opened;
       if (!warningCodes(opened).includes('MEDIA_MISSING')) problems.push('opening carries no MEDIA_MISSING warning');
       const skipped = member(opened, 'skipped', 'the open result');
       const missing = isObject(skipped) ? listOf(skipped.media) : [];
@@ -868,11 +972,47 @@ export async function runWaveBBoundary(config: SmokeConfig): Promise<ScenarioRep
         ? undefined
         : `files of the scratch folder were left renamed: ${putBackFailures.join(', ')}`;
     if (left !== undefined) scenario.manualChecks.push(`MISSING MEDIA: ${left}.`);
+
+    // The revert recipe of the open: it opens the previous project again. The media is back in its place, so the
+    // clip that the open had to leave out comes back, and the project is the one from before the open. The
+    // recipe never carries discardUnsaved (a project that is opened has no unsaved changes), so it is sent as given.
+    let revertNote = 'the revert recipe was not sent';
+    if (outcome.ok && putBackFailures.length === 0 && openedResult !== undefined) {
+      const recipe =
+        isObject(openedResult.undo) && isObject(openedResult.undo.revert) ? openedResult.undo.revert : null;
+      if (recipe?.method !== 'project.open' || !isObject(recipe.params)) {
+        problems.push('the result of project.open gives no revert recipe that opens the previous project');
+      } else {
+        const named = typeof recipe.params.path === 'string' ? recipe.params.path : '';
+        if (!samePath(named, first))
+          problems.push('the revert recipe of project.open names another file than the previous project');
+        const params = recipe.params;
+        try {
+          await sendRevert(recipe);
+        } catch (error) {
+          if (!(error instanceof OtcpError)) throw error;
+          problems.push(`the revert recipe of project.open was refused with ${errorName(error)}`);
+          if (error.data.kind === 'UNSAVED_CHANGES') {
+            // Put the project back all the same, with the consent this scenario gives as the end user (it made the project).
+            await writeEnvelope('project.open', { ...params, discardUnsaved: true });
+          }
+        }
+        const stateAfter = await projectView();
+        if (stateAfter.path === null || stateBefore.path === null || !samePath(stateAfter.path, stateBefore.path)) {
+          problems.push('project.get names another project file after the revert recipe than before the open');
+        }
+        if (stateAfter.clips !== stateBefore.clips) {
+          problems.push('the clips after the revert recipe are not the ones from before the open');
+        }
+        if (stateAfter.dirty) problems.push('project.get reports unsaved changes after the revert recipe');
+        revertNote = `the revert recipe opened the previous project again: ${String(placedCount)} clips as before`;
+      }
+    }
     if (!outcome.ok) throw outcome.error;
     return finish(
       'missing media',
       problems,
-      `the project opened without the missing file, and MEDIA_MISSING was reported${left === undefined ? '' : `; ${left}`}`,
+      `the project opened without the missing file, and MEDIA_MISSING was reported; ${revertNote}${left === undefined ? '' : `; ${left}`}`,
     );
   });
 

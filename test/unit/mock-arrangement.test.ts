@@ -544,6 +544,44 @@ describe('transport', () => {
     expect((await ok('transport.get')).transport).toEqual(stopped.transport);
   });
 
+  it('moves the position on only while it plays on a running device at the rate the test sets', async () => {
+    const { mock, ok } = await sessions.open();
+    const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+    const position = async (): Promise<number> =>
+      Number(field(await ok('transport.get'), 'transport', 'positionTimelineSec'));
+    // The default rate is 0: the position stays where it is, whatever the time.
+    mock.given({ audio: { running: true } });
+    await ok('transport.control', { action: 'seek', positionTimelineSec: 2 });
+    await ok('transport.control', { action: 'play' });
+    await wait(30);
+    expect(await position()).toBe(2);
+    await ok('transport.control', { action: 'stop' });
+
+    mock.setTransportRate(1000);
+    await ok('transport.control', { action: 'seek', positionTimelineSec: 2 });
+    await ok('transport.control', { action: 'play' });
+    await wait(30);
+    const moved = await position();
+    expect(moved).toBeGreaterThan(2);
+    // A pause keeps the position it reached; pausing at the last start goes back to where the play began.
+    const paused = await ok('transport.control', { action: 'pause' });
+    expect(paused.transport).toMatchObject({ playing: false, playStartTimelineSec: 2 });
+    const kept = Number((paused.transport as Record<string, unknown>).positionTimelineSec);
+    expect(kept).toBeGreaterThanOrEqual(moved);
+    await wait(30);
+    expect(await position()).toBe(kept);
+    const restart = await ok('transport.control', { action: 'playFromLastStart' });
+    expect(Number((restart.transport as Record<string, unknown>).positionTimelineSec)).toBeLessThan(kept);
+    const back = await ok('transport.control', { action: 'pauseAtLastStart' });
+    expect(back.transport).toMatchObject({ playing: false, positionTimelineSec: 2 });
+
+    // A device that does not run plays nowhere, however fast the rate.
+    mock.given({ audio: { running: false } });
+    await ok('transport.control', { action: 'play' });
+    await wait(30);
+    expect(await position()).toBe(2);
+  });
+
   it('does not warn about the audio device when one runs', async () => {
     const { mock, ok } = await sessions.open();
     mock.given({ audio: { running: true } });

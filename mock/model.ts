@@ -141,15 +141,16 @@ export interface AudioRec {
 }
 
 /**
- * What the audio settings page offers: one device type with two output devices (so that a test can
- * switch the output device), two sample rates and two buffer sizes.
+ * What the audio settings page offers: two device types (so that a test can switch the type), two output
+ * devices, two sample rates, two buffer sizes and two output channel pairs. The lists are the same for both
+ * types; a test that needs them to differ changes what audio.get reports.
  */
 export const AUDIO_AVAILABLE = {
-  deviceTypes: ['Mock Audio'],
+  deviceTypes: ['Mock Audio', 'Mock Audio 2'],
   outputDevices: ['Mock Output', 'Mock Output 2'],
   sampleRatesHz: [44100, 48000],
   bufferSizesFrame: [256, 512],
-  outputChannelPairCount: 1,
+  outputChannelPairCount: 2,
 } as const;
 
 /** The state an undo or redo step puts back. */
@@ -322,6 +323,23 @@ export class World {
   /** Milliseconds since the Unix epoch, from the injectable clock. */
   now(): number {
     return this.clock.now();
+  }
+
+  /**
+   * Test interface: timeline seconds that pass per second while the transport plays on a running device.
+   * 0 (the default) leaves the position where it is, which is what most tests want.
+   */
+  transportRate = 0;
+  #transportSettledAt: number | null = null;
+
+  /** Moves the position on by the time since the last call, when the transport plays at a rate. */
+  settleTransport(): void {
+    const now = this.now();
+    const t = this.transport;
+    if (t.playing && t.audioDeviceRunning && this.transportRate > 0 && this.#transportSettledAt !== null) {
+      t.positionTimelineSec += ((now - this.#transportSettledAt) / 1000) * this.transportRate;
+    }
+    this.#transportSettledAt = now;
   }
 
   /** A new token. Tokens are opaque, never repeat, and are only compared for equality. */
