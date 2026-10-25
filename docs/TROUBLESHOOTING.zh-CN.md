@@ -72,7 +72,11 @@ OpenTune 正在关闭。先检查状态,再做别的。
 
 ### Error INVALID_ARGUMENT
 
-参数被拒绝;`detail` 说明原因。原因为 `confirm_required` 时,该操作具有破坏性,需要用户的明确同意。
+参数被拒绝;`detail` 说明原因。原因为 `confirm_required` 时,该操作具有破坏性,需要用户的明确同意。原因为 `option_unavailable`
+(`opentune_set_settings`)时,声码器权重或音高模型不是这套安装提供的值;`detail` 指出是哪一项,且没有任何改动。用
+`opentune_get_settings` 读取可用的值(`processing.options`),再用其中一个重新调用。即使名称等于当前值,只要它已不在列表里
+(例如权重文件被删除),也会被拒绝。`1.0.0-rc.5` 的测试构建完全不认识这些成员,会以原因 `invalid_params` 回答
+(见 [Settings tools and the specification versions](COMPATIBILITY.md#settings-tools-and-the-specification-versions))。
 
 ### Error NOT_FOUND
 
@@ -98,6 +102,11 @@ OpenTune 无法渲染修正后的音频,自动重试一次后仍然失败。
 ### Error MODEL_UNAVAILABLE
 
 OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`。
+
+修改声码器权重或渲染优先级(`opentune_set_settings`)时有两个原因:OpenTune 用一个任务应用这类修改,并等到声码器重新就绪。
+两种情况下 OpenTune 都会撤回这些改动,结果里会写明。`vocoder_not_ready`(可重试):等待上限到了,声码器仍然忙;稍等片刻再调用,
+若反复出现,运行 `opentune-mcp doctor`。`vocoder_load_failed`(不可重试):声码器无法加载新的权重或后端,例如权重文件损坏或不兼容;
+原来的设置已经恢复,再次发送同一个值没有用。请告诉用户,并用 `opentune-mcp doctor` 检查模型。
 
 ### Error REVISION_CONFLICT
 

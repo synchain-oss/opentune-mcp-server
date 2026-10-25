@@ -97,6 +97,25 @@ const REASONS: Readonly<Record<string, NextStep>> = {
     'The instance does not offer this audio value (audio.get lists what it offers as available). Call ' +
       'opentune_get_settings with sections audio_device to read audio_device.available, then call again with one of its values.',
   ),
+  'INVALID_ARGUMENT/option_unavailable': {
+    actor: 'agent',
+    tool: 'opentune_get_settings',
+    args: { sections: ['processing'] },
+    message:
+      'The vocoder weight or pitch model is not one this installation offers (the detail names the member), and ' +
+      'nothing was changed. Read the offered values with opentune_get_settings (processing.options), then call ' +
+      'again with one of them.',
+  },
+  'MODEL_UNAVAILABLE/vocoder_not_ready': agent(
+    'OpenTune was still loading its vocoder when the wait ended, so the job took its changes back (the detail ' +
+      'names a setting that another change kept, if any). Wait a little, then call again. If it keeps happening, ' +
+      'ask the user to check the models with "opentune-mcp doctor".',
+  ),
+  'MODEL_UNAVAILABLE/vocoder_load_failed': user(
+    'OpenTune could not load the new vocoder weight or backend and put the previous settings back, so retrying ' +
+      'the same value does not help. Tell the user; the weight file may be corrupt or incompatible. Ask them to ' +
+      'check the models with "opentune-mcp doctor".',
+  ),
   'IO_ERROR/device_open_failed': user(
     'OpenTune could not open the audio device with the new setup and restored the previous one, so nothing changed. ' +
       'Ask the user to choose another output device or sample rate, or to close the program that holds the device, then retry.',

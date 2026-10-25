@@ -87,6 +87,22 @@ export const SIDE_EFFECT_TEXT = table<string>({
   dialogCommitted: 'closing a dialog committed its value',
 });
 
+/**
+ * What a change of the vocoder weight says about rendering again. OpenTune renders every content again once the
+ * new weight has loaded; a job that did not wait for the vocoder (it was not ready before the call) can end before
+ * that, and when the weight cannot be loaded nothing is rendered again (PROTOCOL.md section 12.7 rule 4).
+ * `loaded`: the vocoder is ready, so the render happens. `afterLoad`: the vocoder is not ready (yet), so it
+ * happens only if the weight loads.
+ */
+export type ReRenderState = 'loaded' | 'afterLoad';
+
+export const RE_RENDER_TEXT: Readonly<Record<ReRenderState, string>> = {
+  loaded: 'rendering of one or more contents will be done again with the new vocoder weight, which has loaded',
+  afterLoad:
+    'rendering of one or more contents starts again only after the new vocoder weight has finished loading, and ' +
+    'not at all if it cannot be loaded',
+};
+
 /** Not-undoable reasons (`undo` scope of registry/reasons.json). */
 export const UNDO_REASON_TEXT = table<string>({
   ui_parity: 'OpenTune records no undo entry for this, as in its own interface',

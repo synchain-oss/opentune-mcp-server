@@ -197,7 +197,7 @@ The server offers 27 tools; their parameters are in [docs/reference.md](docs/ref
 | `opentune_save_project` | Saves the project, or saves it as a new `.otproj` file. | Does not replace a different existing file. |
 | `opentune_save_project_overwrite` | Saves the project over a different, existing `.otproj` file. | Marked destructive. The old file is lost. Needs `confirm: true`, only after you agreed to replace that file. |
 | `opentune_open_project` | Opens a `.otproj` file and replaces the current project. | Marked destructive. Never saves: with unsaved changes it fails (`UNSAVED_CHANGES`) unless `discard_unsaved: true`, only with your agreement. Clears the undo history. |
-| `opentune_set_settings` | Changes OpenTune's global settings (A4 tuning, hybrid mode, editing scheme, experimental features, audio device) or empties the recent-projects list. | Marked destructive. The settings belong to the OpenTune installation, not to the project, and have no undo entry; the result gives the previous values and the call that restores them. The recent-projects list cannot be refilled. |
+| `opentune_set_settings` | Changes OpenTune's global settings (A4 tuning, hybrid mode, editing scheme, experimental features, vocoder weight, rendering priority, pitch model, reference alignment mode, audio device) or empties the recent-projects list. | Marked destructive. The settings belong to the OpenTune installation, not to the project, and have no undo entry; the result gives the previous values and the call that restores them. The recent-projects list cannot be refilled. |
 
 ### Your agreement
 

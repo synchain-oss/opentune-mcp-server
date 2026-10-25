@@ -83,7 +83,18 @@ const NOTE_MEMBERS = [
   'voiced',
   'corrected',
 ] as const;
-const PROCESSING_MEMBERS = ['tuningHz', 'editingScheme', 'hybridMode', 'experimentalFeatures'] as const;
+const PROCESSING_MEMBERS = [
+  'tuningHz',
+  'editingScheme',
+  'hybridMode',
+  'experimentalFeatures',
+  'vocoderWeight',
+  'renderingPriority',
+  'f0Model',
+  'referenceAlignMode',
+] as const;
+/** The processing preferences prefs.set takes since 1.0.0-rc.6, in addition to the earlier four. */
+const RC6_MEMBERS = ['vocoderWeight', 'renderingPriority', 'f0Model', 'referenceAlignMode'] as const;
 const DEVICE_MEMBERS = [
   'running',
   'deviceType',
@@ -837,6 +848,13 @@ class Tour {
     // specification promises for the state it puts back.
     const invalid = schemaProblems(schemaPath(method, 'result'), written, `${method} (revert)`);
     if (invalid.length > 0) throw new Error(invalid.join('; '));
+    // A revert that is itself work for a job (prefs.set back to the previous vocoder weight) answers before the work
+    // is done: the state is read back only after the job has ended.
+    if (isObject(written.job)) {
+      const done = await this.followJob(step, method, written.job);
+      const jobInvalid = schemaProblems(schemaPath(method, 'jobResult'), done, `${method} (revert job result)`);
+      if (jobInvalid.length > 0) throw new Error(jobInvalid.join('; '));
+    }
     return `${method} (the revert recipe)`;
   }
 
@@ -1096,6 +1114,33 @@ export const isKnownStalledDefect = (failure: ErrorData | undefined, elapsedMs: 
 
 /** A step that could not put the state back; the scenario stops after it. */
 export class Unrestored extends Error {}
+
+/** The other value of a preference that has two, or null when the current value is neither of them. */
+export function otherOf(current: unknown, pair: readonly [string, string]): string | null {
+  if (current === pair[0]) return pair[1];
+  if (current === pair[1]) return pair[0];
+  return null;
+}
+
+/**
+ * A vocoder weight other than the current one among the weights the installation offers (processing.options of
+ * prefs.get), or null when there is no other one: a weight is switched only where there is a choice.
+ */
+export function otherWeight(options: unknown, current: unknown): string | null {
+  const names = stringsOf(isObject(options) ? options.vocoderWeight : undefined);
+  return names.find((name) => name !== current) ?? null;
+}
+
+/** A vocoder weight name that is not among `offered`, for the call that must be refused. */
+export function unofferedWeight(offered: readonly string[]): string {
+  let name = 'not-installed-weight.onnx';
+  while (offered.includes(name)) name = `x-${name}`;
+  return name;
+}
+
+/** How long the preference step waits for the vocoder to be ready before it changes a weight or priority, in ms. */
+const VOCODER_SETTLE_MS = 30_000;
+const VOCODER_POLL_MS = 250;
 
 // ---------------------------------------------------------------------------------------------
 // the tour
@@ -1976,6 +2021,283 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     );
   });
 
+  /**
+   * The preferences prefs.set takes since 1.0.0-rc.6. Each one is switched once, read back (prefs.get and
+   * session.info) and put back by the revert recipe of the result; a change that a job applies (the vocoder weight and
+   * the rendering priority) is followed until the job has ended and the vocoder is ready again. A value that is not
+   * among the options is sent once and must be refused with nothing changed. Whatever goes wrong, the values read at
+   * the start are sent once more; when that does not put them back either, the scenario stops. An instance that
+   * reports no processing.options does not implement the members: they are skipped with that reason, and nothing is sent.
+   */
+  const rc6Preferences = async (
+    t: Tour,
+    processing: Json,
+    problems: string[],
+    touched: string[],
+    notes: string[],
+  ): Promise<void> => {
+    type Member = (typeof RC6_MEMBERS)[number];
+    const fact = (name: string, result: string): void => {
+      scenario.facts[`prefs.${name}`] = result;
+    };
+    const skip = (name: string, reason: string): void => {
+      fact(name, `SKIP: ${reason}`);
+      skipped.push(`prefs.set ${name} (${reason})`);
+    };
+    const options = processing.options;
+    if (!isObject(options)) {
+      for (const name of [
+        'renderingPriority',
+        'referenceAlignMode',
+        'f0Model',
+        'vocoderWeight',
+        'vocoderWeightRefused',
+      ]) {
+        skip(name, 'prefs.get reports no processing.options, so the instance does not take the members of 1.0.0-rc.6');
+      }
+      return;
+    }
+
+    const processingNow = async (): Promise<Json> => {
+      t.reads.clear();
+      return objectMember(await t.reads.prefs(), 'processing', 'prefs.get');
+    };
+    const infoNow = async (): Promise<Json> =>
+      objectMember(await t.call('read', 'session.info', {}), 'processing', 'session.info');
+    const vocoderReady = (info: Json): boolean => info.vocoderReady === true && info.vocoderReconfiguring !== true;
+    const settleVocoder = async (): Promise<boolean> => {
+      const until = Date.now() + VOCODER_SETTLE_MS;
+      for (;;) {
+        if (vocoderReady(await infoNow())) return true;
+        if (Date.now() >= until) return false;
+        await sleep(VOCODER_POLL_MS);
+      }
+    };
+
+    /** Sends the values read at the start once more (those that differ now); true when the read-back equals them. */
+    const putBack = async (start: Json): Promise<boolean> => {
+      try {
+        const now = pick(await processingNow(), RC6_MEMBERS);
+        const params = Object.fromEntries(
+          RC6_MEMBERS.filter((name) => typeof start[name] === 'string' && now[name] !== start[name]).map((name) => [
+            name,
+            start[name],
+          ]),
+        );
+        if (Object.keys(params).length > 0) {
+          const written = await t.call('write', 'prefs.set', params);
+          if (isObject(written.job)) await t.followJob('prefs.set', 'prefs.set (start values)', written.job);
+        }
+        return differences(pick(start, RC6_MEMBERS), pick(await processingNow(), RC6_MEMBERS)).length === 0;
+      } catch {
+        return false;
+      }
+    };
+
+    /** Compares the preferences with those at `start`; a difference is a problem, and the start values are sent again. */
+    const settle = async (label: string, start: Json, restoredBy: string | null): Promise<boolean> => {
+      const found = differences(pick(start, RC6_MEMBERS), pick(await processingNow(), RC6_MEMBERS));
+      if (found.length === 0) return true;
+      problems.push(
+        `${label}: the read-back state ${restoredBy === null ? 'now' : `after ${restoredBy}`} differs from before the write: ${found.join('; ')}`,
+      );
+      if (!(await putBack(start))) {
+        stopReason = `${label} could not put the preferences back`;
+        throw new Unrestored(
+          `${problems.slice(-MAX_LISTED).join('; ')}; the values at the start were ${JSON.stringify(pick(start, RC6_MEMBERS))}`,
+        );
+      }
+      return false;
+    };
+
+    /** One member switched to `wanted`, read back, put back by the revert recipe and read back again. */
+    const roundTrip = async (trip: {
+      readonly name: Member;
+      readonly wanted: string;
+      readonly job: boolean;
+      readonly warnings: readonly string[];
+      /** Whether the result must report that every content renders again (a new weight) or must not (a new priority). */
+      readonly reRender?: 'present' | 'absent';
+    }): Promise<void> => {
+      const label = `prefs.set (${trip.name})`;
+      const start = await processingNow();
+      // A change that a job applies waits for the vocoder only when the vocoder is ready before the call.
+      if (trip.job && !(await settleVocoder())) {
+        skip(trip.name, 'the vocoder was not ready within 30 s, so the job would not wait for it');
+        return;
+      }
+      const before = problems.length;
+      const infoBefore = await infoNow();
+      const run = await t.writeKept({
+        step: 'prefs.set',
+        method: 'prefs.set',
+        params: { [trip.name]: trip.wanted },
+        followJob: trip.job,
+        expect: {
+          applied: true,
+          noOp: false,
+          undoable: false,
+          undoReason: 'ui_parity',
+          revert: 'present',
+          warnings: ['GLOBAL_PREFERENCE', ...trip.warnings],
+        },
+      });
+      problems.push(...run.problems.map((problem) => `${label}: ${problem}`));
+      let restoredBy: string | null = null;
+      let backend = '';
+      if (run.failure === undefined && run.envelope.applied === true) {
+        const prefs = await processingNow();
+        if (prefs[trip.name] !== trip.wanted) {
+          problems.push(
+            `${label}: prefs.get says ${JSON.stringify(prefs[trip.name])} after the write, not ${JSON.stringify(trip.wanted)}`,
+          );
+        }
+        const info = await infoNow();
+        if (info[trip.name] !== trip.wanted) {
+          problems.push(
+            `${label}: session.info says ${JSON.stringify(info[trip.name])} after the write, not ${JSON.stringify(trip.wanted)}`,
+          );
+        }
+        if (trip.job && !vocoderReady(info)) {
+          problems.push(`${label}: the job has ended, but session.info does not report the vocoder as ready`);
+        }
+        if (trip.reRender !== undefined) {
+          const contents = listOf(member(await t.reads.project(), 'contents', 'project.get')).length;
+          const effects = isObject(run.envelope.sideEffects) ? run.envelope.sideEffects : {};
+          if (trip.reRender === 'present' && contents > 0 && !('reRenderQueued' in effects)) {
+            problems.push(
+              `${label}: the project has ${String(contents)} content(s), but the result reports no reRenderQueued`,
+            );
+          }
+          if (trip.reRender === 'absent' && 'reRenderQueued' in effects) {
+            problems.push(`${label}: the result reports reRenderQueued, which this preference does not cause`);
+          }
+        }
+        backend = ` (backend ${String(infoBefore.backend)} -> ${String(info.backend)})`;
+        try {
+          restoredBy = await t.restore('prefs.set', run.envelope);
+        } catch (error) {
+          problems.push(
+            `${label}: taking the write back failed: ${clean(error instanceof Error ? error.message : String(error))}`,
+          );
+        }
+      }
+      const same = await settle(label, start, restoredBy);
+      if (same && trip.job) {
+        const infoAfter = await infoNow();
+        if (!vocoderReady(infoAfter)) {
+          problems.push(`${label}: after the revert job, session.info does not report the vocoder as ready`);
+        }
+        if (infoAfter[trip.name] !== start[trip.name]) {
+          problems.push(
+            `${label}: after the revert, session.info says ${JSON.stringify(infoAfter[trip.name])}, not ${JSON.stringify(start[trip.name])}`,
+          );
+        }
+      }
+      if (problems.length === before) {
+        fact(trip.name, 'PASS');
+        touched.push(trip.name);
+        notes.push(
+          `${trip.name} ${JSON.stringify(start[trip.name])} -> ${JSON.stringify(trip.wanted)} and back${backend}`,
+        );
+      } else {
+        fact(trip.name, 'FAIL');
+      }
+    };
+
+    // The rendering priority: a job applies it; the vocoder loads again for the new backend.
+    const priority = otherOf(processing.renderingPriority, ['gpuFirst', 'cpuFirst']);
+    if (priority === null) skip('renderingPriority', 'prefs.get reports neither gpuFirst nor cpuFirst');
+    else {
+      await roundTrip({ name: 'renderingPriority', wanted: priority, job: true, warnings: [], reRender: 'absent' });
+    }
+
+    // The reference alignment mode: finishes inside the call; the result warns that the feature is experimental.
+    const mode = otherOf(processing.referenceAlignMode, ['standardAuto', 'game']);
+    if (mode === null) skip('referenceAlignMode', 'prefs.get reports neither standardAuto nor game');
+    else {
+      await roundTrip({ name: 'referenceAlignMode', wanted: mode, job: false, warnings: ['EXPERIMENTAL_FEATURE'] });
+    }
+
+    // The pitch model: the one in use is a no-op, and nothing changes.
+    const model = processing.f0Model;
+    if (typeof model !== 'string') skip('f0Model', 'prefs.get reports no pitch model');
+    else {
+      const before = problems.length;
+      const start = await processingNow();
+      const noOp = await t.writeKept({
+        step: 'prefs.set',
+        method: 'prefs.set',
+        params: { f0Model: model },
+        expect: {
+          applied: true,
+          noOp: true,
+          undoable: false,
+          undoReason: 'no_op',
+          revert: 'none',
+          absentWarnings: ['GLOBAL_PREFERENCE'],
+        },
+      });
+      problems.push(...noOp.problems.map((problem) => `prefs.set (f0Model): ${problem}`));
+      await settle('prefs.set (f0Model)', start, null);
+      if (problems.length === before) {
+        fact('f0Model', 'PASS');
+        notes.push('f0Model set to the one in use is a no-op');
+      } else fact('f0Model', 'FAIL');
+    }
+
+    // The vocoder weight: switched where there is a choice among the installed weights.
+    const weight = otherWeight(options, processing.vocoderWeight);
+    if (weight === null) {
+      skip('vocoderWeight', 'only one vocoder weight is installed, or prefs.get reports none in use');
+    } else {
+      await roundTrip({ name: 'vocoderWeight', wanted: weight, job: true, warnings: [], reRender: 'present' });
+    }
+
+    // A weight that is not among the options: refused with nothing changed.
+    {
+      const before = problems.length;
+      const start = await processingNow();
+      const missing = unofferedWeight(stringsOf(options.vocoderWeight));
+      const refused = await t.writeKept({
+        step: 'prefs.set',
+        method: 'prefs.set',
+        params: { vocoderWeight: missing },
+        followJob: true,
+      });
+      const failure = refused.failure;
+      if (failure === undefined) {
+        problems.push('prefs.set (vocoderWeight): a weight that is not among the options was accepted');
+        problems.push(...refused.problems.map((problem) => `prefs.set (vocoderWeight): ${problem}`));
+        let restoredBy: string | null = null;
+        try {
+          restoredBy = await t.restore('prefs.set', refused.envelope);
+        } catch (error) {
+          problems.push(
+            `prefs.set (vocoderWeight): taking the write back failed: ${clean(error instanceof Error ? error.message : String(error))}`,
+          );
+        }
+        await settle('prefs.set (vocoderWeight)', start, restoredBy);
+      } else {
+        if (failure.kind !== 'INVALID_ARGUMENT' || failure.reason !== 'option_unavailable') {
+          problems.push(
+            `prefs.set (vocoderWeight): a weight that is not among the options was refused with ${failure.kind}(${String(failure.reason)}), not INVALID_ARGUMENT(option_unavailable)`,
+          );
+        }
+        if (failure.executed !== false) {
+          problems.push(
+            'prefs.set (vocoderWeight): the refusal does not say that nothing was executed (executed false)',
+          );
+        }
+        await settle('prefs.set (vocoderWeight)', start, null);
+      }
+      if (problems.length === before) {
+        fact('vocoderWeightRefused', 'PASS');
+        notes.push('a weight that is not among the options was refused with option_unavailable, nothing changed');
+      } else fact('vocoderWeightRefused', 'FAIL');
+    }
+  };
+
   await checkStep('prefs.set', async () => {
     requireCapabilities(['prefs.write']);
     const problems: string[] = [];
@@ -2004,8 +2326,11 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     }
     const back = num(member(await t.reads.prefs(), 'processing', 'prefs.get'), 'tuningHz', 'the preferences');
     if (!sameNumber(back, current)) problems.push(`tuningHz is ${String(back)}, not back at ${String(current)}`);
-    scenario.facts.preferencesTouched = 'tuningHz';
-    return finish('prefs.set', problems, `tuningHz ${String(current)} -> ${String(wanted)} and back`);
+    const touched = ['tuningHz'];
+    const notes = [`tuningHz ${String(current)} -> ${String(wanted)} and back`];
+    await rc6Preferences(t, processing as Json, problems, touched, notes);
+    scenario.facts.preferencesTouched = touched;
+    return finish('prefs.set', problems, notes.join('; '));
   });
 
   await checkStep('audio.get and audio.set', async () => {

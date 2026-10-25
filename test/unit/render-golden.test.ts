@@ -13,7 +13,7 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Json } from '../../src/otcp/client.js';
-import { writeBody } from '../../src/render/index.js';
+import { writeBody, type ReRenderState } from '../../src/render/index.js';
 import { WRITE_RESULT_OUTPUT } from '../../src/tools/registry.js';
 import { settingsLead } from '../../src/tools/set-settings.js';
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
@@ -32,6 +32,8 @@ interface Scenario {
   readonly description: string;
   readonly tool: string;
   readonly envelope: Json;
+  /** How the side effect reRenderQueued of a vocoder-weight change reads; absent: the generic words. */
+  readonly reRender?: ReRenderState;
 }
 
 const CONTENT = 'c:01234567:0:1';
@@ -198,6 +200,43 @@ async function fromMock(): Promise<Record<string, Scenario>> {
       'The result of the prefsApply job after a switch to openDyne: the generated notes cannot be undone or reverted, and the first sentence says so before the revert line.',
     tool: 'opentune_set_settings',
     envelope: schemeJob.result as Json,
+  };
+
+  // The vocoder weight, the rendering priority, the pitch model and the reference alignment mode. A weight change
+  // renders every content again once it has loaded, and the wording follows what the vocoder reported.
+  const vocoder = await sessions.open({ instanceId: INSTANCE });
+  vocoder.mock.given({ clips: [clip()], preferences: { options: { f0Model: ['fcpe', 'rmvpe'] } } });
+  const jobResult = async (params: Json): Promise<Json> => {
+    const started = await vocoder.ok('prefs.set', params);
+    const job = (await vocoder.ok('job.get', { jobId: (started.job as Json).jobId, waitMs: 30_000 })).job as Json;
+    return job.result as Json;
+  };
+  const weightChanged = await jobResult({ vocoderWeight: 'hifigan_coulin9.onnx' });
+  out['settings-vocoder-weight-loaded'] = {
+    description:
+      'The result of the prefsApply job after a vocoder weight change, read after the vocoder reported the new weight loaded: every content will be rendered again, and the revert recipe is an opentune_set_settings call with the previous weight.',
+    tool: 'opentune_set_settings',
+    envelope: weightChanged,
+    reRender: 'loaded',
+  };
+  out['settings-vocoder-weight-after-load'] = {
+    description:
+      'The same result when the vocoder was not ready afterwards: the render starts only after the new weight has finished loading, and not at all if it cannot be loaded.',
+    tool: 'opentune_set_settings',
+    envelope: weightChanged,
+    reRender: 'afterLoad',
+  };
+  out['settings-rendering-priority'] = {
+    description:
+      'The result of the prefsApply job after a rendering priority change: no render follows, and the revert recipe carries the previous priority.',
+    tool: 'opentune_set_settings',
+    envelope: await jobResult({ renderingPriority: 'cpuFirst' }),
+  };
+  out['settings-pitch-model-reference-align'] = {
+    description:
+      'A pitch model and a reference alignment mode set in one call, which finishes inside the call: the alignment mode is an experimental feature, and the revert recipe restores both.',
+    tool: 'opentune_set_settings',
+    envelope: await vocoder.ok('prefs.set', { f0Model: 'rmvpe', referenceAlignMode: 'game' }),
   };
 
   const replaced = await ok('content.autoTune', {
@@ -393,7 +432,10 @@ export async function scenarios(): Promise<Record<string, Scenario>> {
 
 /** The body of a scenario; the settings tool puts its own lead sentence in front of the renderer's summary. */
 const renderedOf = (s: Scenario) => {
-  const body = writeBody(s.envelope, { tool: s.tool });
+  const body = writeBody(
+    s.envelope,
+    s.reRender === undefined ? { tool: s.tool } : { tool: s.tool, reRender: s.reRender },
+  );
   return s.tool === 'opentune_set_settings' ? settingsLead(body) : body;
 };
 

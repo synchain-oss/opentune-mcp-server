@@ -1647,7 +1647,7 @@
   {
     "name": "opentune_get_settings",
     "title": "Get OpenTune settings",
-    "description": "OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features, language, whether onboarding was shown), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, reference alignment mode, experimental features, language, onboarding shown, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1692,7 +1692,7 @@
   {
     "name": "opentune_set_settings",
     "title": "Set OpenTune settings",
-    "description": "OpenTune (audio vocal pitch editor): changes the global settings of the OpenTune installation, not of the project. processing: tuning_hz (A4 in Hz, 400-500), editing_scheme (openTune or openDyne, applied by a job), hybrid_mode, experimental_features. audio_device: device_type, output_device, sample_rate_hz, buffer_size_frame, output_channel_pair, each one the instance offers. clear_recent: true empties the recent-project list, which nothing refills. OpenTune records no undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.",
+    "description": "OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, f0_model, reference_align_mode; values of vocoder_weight and f0_model: see options of opentune_get_settings. audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1722,6 +1722,34 @@
             "experimental_features": {
               "description": "Show or hide experimental features such as reference binding.",
               "type": "boolean"
+            },
+            "vocoder_weight": {
+              "description": "Vocoder weight, one of the options of opentune_get_settings. Applied by a job; every content renders again.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "rendering_priority": {
+              "description": "Inference backend rendering prefers. Applied by a job.",
+              "type": "string",
+              "enum": [
+                "gpuFirst",
+                "cpuFirst"
+              ]
+            },
+            "f0_model": {
+              "description": "Pitch model, one of the options of opentune_get_settings.",
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            "reference_align_mode": {
+              "description": "Reference alignment mode of AUTO Ref, an experimental feature.",
+              "type": "string",
+              "enum": [
+                "standardAuto",
+                "game"
+              ]
             }
           },
           "additionalProperties": false

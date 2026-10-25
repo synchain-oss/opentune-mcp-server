@@ -32,6 +32,15 @@
 // `effects-resynth-detuned` render notes after an edited note again, as a vocoder that re-synthesises
 // a stretch does (see reached() below). Every other mode reports hybrid mode off.
 //
+// Modes about the vocoder weight (prefs.get, prefs.set and the sound of an export): `effects` offers the
+// weights `fake` and `fake-b`, takes the second by a prefsApply job, hands back the revert recipe of the
+// switch, and renders a note with fewer overtones under `fake-b` (the same pitch, another sound).
+// `effects-one-weight` offers one weight only, `effects-no-options` leaves processing.options out of
+// prefs.get as an instance of an earlier release candidate does, `effects-no-prefs` does not report
+// prefs.write, `effects-weights-alike` renders both weights as the same sound, `effects-weight-revert-broken`
+// gives a revert recipe that names the weight just set, and `effects-weight-stuck` accepts a switch back to
+// the first weight and keeps the second one.
+//
 // Modes about a damaged export: the export of a clip nothing was corrected in (the first export of the
 // scenario, which should be the source as it is) holds the notes at the wrong pitch, as an instance that
 // shifts or bends what it should leave alone would. `effects-export-offset` renders every note 30
@@ -53,9 +62,21 @@ const r4 = (v) => Math.round(v * 1e4) / 1e4;
 const r6 = (v) => Math.round(v * 1e6) / 1e6;
 
 export function effectsCapabilities(mode) {
-  return ['session.v1', 'jobs.v1', 'read.v1', 'import.v1', 'edit.v1', 'export.v1', 'history.v1', 'timing.v1'].filter(
+  return [
+    'session.v1',
+    'jobs.v1',
+    'read.v1',
+    'import.v1',
+    'edit.v1',
+    'export.v1',
+    'history.v1',
+    'timing.v1',
+    'prefs.write',
+  ].filter(
     (c) =>
-      !(mode === 'effects-no-timing' && c === 'timing.v1') && !(mode === 'effects-no-history' && c === 'history.v1'),
+      !(mode === 'effects-no-timing' && c === 'timing.v1') &&
+      !(mode === 'effects-no-history' && c === 'history.v1') &&
+      !(mode === 'effects-no-prefs' && c === 'prefs.write'),
   );
 }
 
@@ -146,8 +167,11 @@ function reached(mode, notes, i, hz) {
   return { hz, delaySec: turn / hz };
 }
 
-/** Re-synthesises the notes: a harmonic series at each note's pitch, placed through the time grid. */
-function render(content, notes, pitchShift, handles, mode = '') {
+/**
+ * Re-synthesises the notes: a harmonic series at each note's pitch, placed through the time grid. The overtone k has
+ * the amplitude 1 / k ** rolloff: another rolloff is another sound at the same pitch (the other vocoder weight).
+ */
+function render(content, notes, pitchShift, handles, mode = '', rolloff = 1) {
   const out = new Float64Array(Math.round(content.durationSec * RATE));
   for (const [i, note] of notes.entries()) {
     const midi = note.targetMidi + pitchShift.semitones + pitchShift.cents / 100;
@@ -158,7 +182,9 @@ function render(content, notes, pitchShift, handles, mode = '') {
     for (let n = 0; n < count && from + n < out.length; n++) {
       const t = n / RATE;
       let v = 0;
-      for (let k = 1; k <= HARMONICS; k++) v += Math.sin(2 * Math.PI * k * hz * (t + delaySec)) / k;
+      for (let k = 1; k <= HARMONICS; k++) {
+        v += Math.sin(2 * Math.PI * k * hz * (t + delaySec)) / (rolloff === 1 ? k : k ** rolloff);
+      }
       const edge = Math.min(1, t / FADE_SEC, (count / RATE - t) / FADE_SEC);
       out[from + n] = 0.2 * v * Math.max(0, edge);
     }
@@ -201,6 +227,10 @@ export function createEffects(mode) {
   const next = (prefix) => `${prefix}${(++counter).toString(16).padStart(8, '0')}`;
   const writesDuringExport = ['effects-mixed', 'effects-conflict', 'effects-down-misreport'].includes(mode);
   const hybridMode = mode === 'effects-hybrid';
+  // The vocoder weights the installation offers and the one in use. Under `fake-b` a note has fewer overtones.
+  const weights = mode === 'effects-one-weight' ? ['fake'] : ['fake', 'fake-b'];
+  let weight = 'fake';
+  const rolloff = () => (weight === 'fake-b' && mode !== 'effects-weights-alike' ? 2 : 1);
 
   const ok = (id, result) => ({ jsonrpc: '2.0', id, result });
   const fail = (id, kind, reason, detail = 'fake') => ({
@@ -341,7 +371,7 @@ export function createEffects(mode) {
         c.pitchShift,
         c.handles,
       );
-    else samples = render(c, c.notes, c.pitchShift, c.handles, mode);
+    else samples = render(c, c.notes, c.pitchShift, c.handles, mode, rolloff());
     fs.writeFileSync(job.path, wavBytes(samples));
     return {
       result: {
@@ -353,7 +383,7 @@ export function createEffects(mode) {
         startTimelineSec: 0,
         contents: [{ contentId: c.id, revision: c.revision }],
         dryContents: dry ? [{ contentId: c.id, reason: 'nothingToRender' }] : [],
-        processing: { vocoderWeight: 'fake', hybridMode, backend: 'fake', tuningHz: TUNING_HZ },
+        processing: { vocoderWeight: weight, hybridMode, backend: 'fake', tuningHz: TUNING_HZ },
       },
     };
   }
@@ -379,6 +409,54 @@ export function createEffects(mode) {
     return before;
   }
 
+  /** prefs.set for the vocoder weight, the only member the stand-in takes: a prefsApply job applies it, as OpenTune does. */
+  function setPreferences(id, params) {
+    const refused = busy(id);
+    if (refused !== null) return refused;
+    const asked = params?.vocoderWeight;
+    if (typeof asked !== 'string' || Object.keys(params).length !== 1) {
+      return fail(id, 'INVALID_ARGUMENT', 'invalid_params');
+    }
+    if (!weights.includes(asked)) return fail(id, 'INVALID_ARGUMENT', 'option_unavailable', 'vocoderWeight');
+    const anyContent = [...contents.values()][0] ?? { id: 'c:0:0:0', revision: 'r0', gridRevision: 'g0' };
+    if (asked === weight) {
+      const undo = { undoable: false, reason: 'no_op', revert: null };
+      return ok(id, envelope(anyContent, { applied: false, noOp: true, undo }));
+    }
+    const before = weight;
+    const job = startJob(
+      'prefsApply',
+      () => {
+        // `effects-weight-stuck` accepts a switch back to the first weight and keeps the second one.
+        if (!(mode === 'effects-weight-stuck' && asked === weights[0])) weight = asked;
+        const contentIds = [...contents.keys()];
+        // `effects-weight-revert-broken` hands back a recipe that sets the weight just set.
+        const revertTo = mode === 'effects-weight-revert-broken' ? asked : before;
+        return {
+          result: envelope(anyContent, {
+            changes: [
+              {
+                entity: 'preference',
+                ref: { preference: 'vocoderWeight' },
+                label: 'Vocoder weight',
+                fields: { vocoderWeight: { before, after: asked, unit: null } },
+              },
+            ],
+            undo: {
+              undoable: false,
+              reason: 'ui_parity',
+              revert: { method: 'prefs.set', params: { vocoderWeight: revertTo } },
+            },
+            sideEffects: contentIds.length > 0 ? { reRenderQueued: { contentIds, revert: null } } : {},
+            warnings: [{ code: 'GLOBAL_PREFERENCE', subject: null, data: { preferences: ['vocoderWeight'] } }],
+          }),
+        };
+      },
+      0,
+    );
+    return ok(id, { ...envelope(anyContent, { applied: false, undo: null }), job });
+  }
+
   function reply(request) {
     const { id, method, params } = request;
     if (method === 'session.info') {
@@ -387,7 +465,7 @@ export function createEffects(mode) {
           tuningHz: TUNING_HZ,
           editingScheme: 'openTune',
           hybridMode,
-          vocoderWeight: 'fake',
+          vocoderWeight: weight,
           f0Model: 'fake',
           renderingPriority: null,
           backend: 'fake',
@@ -398,6 +476,29 @@ export function createEffects(mode) {
         },
       });
     }
+    if (method === 'prefs.get' && mode !== 'effects-no-prefs') {
+      const processing = {
+        tuningHz: TUNING_HZ,
+        editingScheme: 'openTune',
+        hybridMode,
+        vocoderWeight: weight,
+        f0Model: 'fake',
+        renderingPriority: 'gpuFirst',
+        experimentalFeatures: false,
+        referenceAlignMode: 'standardAuto',
+      };
+      // An instance of an earlier release candidate does not report the options.
+      if (mode !== 'effects-no-options') {
+        processing.options = {
+          vocoderWeight: weights,
+          f0Model: ['fake'],
+          renderingPriority: ['gpuFirst', 'cpuFirst'],
+          referenceAlignMode: ['standardAuto', 'game'],
+        };
+      }
+      return ok(id, { processing, onboardingShown: true, language: 'en', recentProjects: [] });
+    }
+    if (method === 'prefs.set' && mode !== 'effects-no-prefs') return setPreferences(id, params);
     if (method === 'import.start') {
       if (mode === 'effects-backend') return fail(id, 'MODEL_UNAVAILABLE', 'backend_unavailable');
       const job = startJob('import', () => ({ result: importItem(params) }));

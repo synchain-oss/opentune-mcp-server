@@ -10,6 +10,17 @@ versioned separately and has its own changelog.
 
 ### Added
 
+- `opentune_set_settings` also changes the vocoder weight (`vocoder_weight`), the rendering priority
+  (`rendering_priority`), the pitch model (`f0_model`) and the reference alignment mode (`reference_align_mode`), as
+  `prefs.set` of the specification `1.0.0-rc.6` does, and `opentune_get_settings` returns the values they accept
+  (`options`, from `processing.options` of `prefs.get`). A weight or model that is not on the list is refused with
+  `INVALID_ARGUMENT(option_unavailable)` and nothing is changed. The vocoder weight and the rendering priority are applied
+  by a job, which the tool follows. The result of a new vocoder weight says whether the clips render again now or after
+  the weight has loaded, the result of a new reference alignment mode carries the experimental-feature warning, and the
+  revert line restores the new members too. `MODEL_UNAVAILABLE(vocoder_not_ready)` (retryable) and
+  `MODEL_UNAVAILABLE(vocoder_load_failed)` (not retryable) have a next step. The wave-B tour switches each new member
+  and puts it back, and the effects scenario renders the same small correction under two vocoder weights (a skip with a
+  reason where only one weight is installed). See `docs/COMPATIBILITY.md` for how a test build of `1.0.0-rc.5` answers.
 - The wave-B tour and boundary scenario now drive the remaining real-machine steps and take each change back by the
   revert recipe of its result: transport `pause`, `playFromLastStart` (also after a seek) and `pauseAtLastStart` during
   playback, `setTempo` with a time signature, selecting a clip with `openEditor` (the piano roll shows that clip), a
@@ -79,12 +90,15 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- `opentune_set_settings` now checks `jobs.v1` before it sends a change that OpenTune applies by a job (the editing
+  scheme, the vocoder weight, the rendering priority). A build without `jobs.v1` used to apply the change and then fail
+  when following the job; now the call is refused with `UNSUPPORTED(capability_missing)` and nothing is changed.
 - OTCP specification `1.0.0-rc.6` (unreleased), proposed as the text of 1.0.0: `prefs.set` also changes the vocoder
   weight, the rendering priority, the pitch model and the reference alignment mode (the first two are applied by the
   `prefsApply` job, which waits until the vocoder is ready again), `prefs.get` lists the accepted values in
   `processing.options`, three reasons are appended (`option_unavailable`, `vocoder_not_ready`, `vocoder_load_failed`), and 16 vectors cover the
   new members and settings that were specified but not shown. The mock follows (test hooks `setVocoderFault` and `failF0Model`); its
-  `vibratoRateHz` change now reports the unit `hz`. The tools are unchanged.
+  `vibratoRateHz` change now reports the unit `hz`. The tools take the new members in a separate change (see Added).
 - OTCP specification `1.0.0-rc.5` (unreleased), proposed as the text of 1.0.0: the methods that need the OpenTune
   editor window answer `UNSUPPORTED(no_editor_window)` (a new reason) while there is none, the `prefsApply` job of `prefs.set`
   checks the busy state again (`BUSY` in its job errors), duplicating a hidden track fails with `track_hidden`,

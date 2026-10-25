@@ -460,6 +460,46 @@ describe('opentune_get_settings', () => {
     expect(processing).toHaveProperty('vocoderReady');
     expect(processing.onboardingShown).toBeNull();
     expect((processing.nullReasons as Record<string, unknown>).onboardingShown).toBe('capability_missing:read.v1');
+    // The options come from prefs.get only.
+    expect(processing.options).toBeNull();
+    expect((processing.nullReasons as Record<string, unknown>).options).toBe('capability_missing:read.v1');
+  });
+
+  it('reports the options of the vocoder weight, pitch model, rendering priority and alignment mode', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({
+      clips: [clip()],
+      preferences: { options: { vocoderWeight: ['a.onnx', 'b.onnx'], f0Model: ['fcpe', 'rmvpe'] } },
+    });
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.summary).toMatch(/^Read the OpenTune settings sections: processing\./);
+    const processing = out.processing as Record<string, unknown>;
+    expect(processing.options).toEqual({
+      vocoderWeight: ['a.onnx', 'b.onnx'],
+      f0Model: ['fcpe', 'rmvpe'],
+      renderingPriority: ['gpuFirst', 'cpuFirst'],
+      referenceAlignMode: ['standardAuto', 'game'],
+    });
+    // Nothing is missing, so no reason is attached to the options.
+    expect(processing.nullReasons ?? {}).not.toHaveProperty('options');
+    // The options are data from the installation: they stay values of the result, not words of the summary.
+    expect(out.summary).not.toContain('a.onnx');
+  });
+
+  it('gives null with a reason, and no error, for an instance that does not report the options', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      if (method !== 'prefs.get') return;
+      delete (result.processing as Record<string, unknown>).options;
+    });
+    const outcome = await getSettings(ctx, { sections: ['processing'] });
+    const processing = body(outcome).processing as Record<string, unknown>;
+    expect(processing.options).toBeNull();
+    expect((processing.nullReasons as Record<string, unknown>).options).toBe('not_reported');
+    // The rest of the processing section is read as before.
+    expect(processing.tuningHz).toEqual(expect.any(Number));
+    expect(processing.vocoderWeight).toEqual(expect.any(String));
   });
 
   it('keeps hostile log lines and project paths out of the summary, one case each', async () => {
