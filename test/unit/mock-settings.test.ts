@@ -304,7 +304,7 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
     expect(await jobOf(session, started)).toMatchObject({ state: 'succeeded', result: { applied: true } });
   });
 
-  it('does not wait for a vocoder that was not ready, nor for a scheme change alone', async () => {
+  it('does not wait for a vocoder that was not ready, but still hands it the change, nor for a scheme change alone', async () => {
     const clock = new ManualClock();
     const session = await sessions.open({ clock });
     const { mock, ok } = session;
@@ -321,9 +321,15 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
       renderingPriority: 'cpuFirst',
       vocoderWeight: 'hifigan_coulin9.onnx',
     });
-    // Once the fault is gone, the first job sees the vocoder ready and ends too.
+    // The vocoder still gets the new weight: that reconfiguration supersedes the stuck one, so the fault going away
+    // does not end it early, and the first job ends once the new one has.
     mock.setVocoderFault(null);
     clock.advance(10);
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    expect((await jobOf(session, stuck)).state).toBe('running');
+    clock.advance(5);
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+    clock.advance(3);
     expect((await jobOf(session, stuck)).state).toBe('succeeded');
     // A scheme change alone reconfigures nothing.
     const scheme = await ok('prefs.set', { editingScheme: 'openDyne' });
@@ -358,7 +364,10 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
       executed: false,
     });
     expect(await processing(session)).toEqual(before);
-    // The vocoder is released once the fault is gone, and a new request waits again from the start.
+    // The previous weight and priority go back to the vocoder, which loads them again: it reports reconfiguring while
+    // the fault lasts and is ready once that reconfiguration ends. A new request then waits again from the start.
+    clock.advance(100);
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
     mock.setVocoderFault(null);
     expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
     const again = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
@@ -388,14 +397,22 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
       executed: false,
     });
     expect(await processing(session)).toEqual(before);
-    // The runtime is asked for the previous weight again, which loads.
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: false });
+    // The previous weight goes back to the vocoder, which loads it again: reconfiguring while it does, then ready.
+    clock.advance(5);
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    clock.advance(10);
     expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
     // A rendering priority fails the same way while the fault lasts, and succeeds once it is gone.
     const priority = await ok('prefs.set', { renderingPriority: 'cpuFirst' });
     clock.advance(15);
-    expect((await jobOf(session, priority)).error?.data).toMatchObject({ reason: 'vocoder_load_failed' });
+    const failed = await jobOf(session, priority);
+    expect(failed.error?.data).toMatchObject({ reason: 'vocoder_load_failed' });
+    expect(String(failed.error?.data.detail)).toMatch(/^the vocoder could not load the new weight or backend;/);
     expect(await processing(session)).toMatchObject({ renderingPriority: 'gpuFirst' });
     mock.setVocoderFault(null);
+    clock.advance(15);
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
     const again = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
     clock.advance(100);
     expect((await jobOf(session, again)).state).toBe('succeeded');
@@ -433,25 +450,163 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
     expect(await processing(session)).toMatchObject({ vocoderWeight: 'hifigan.onnx', tuningHz: 450 });
   });
 
-  it('reports the render of a new vocoder weight only when the job waited for the vocoder', async () => {
+  it('reports the render of a new vocoder weight also when the job did not wait, and renders once the weight loaded', async () => {
     const clock = new ManualClock();
     const session = await sessions.open({ clock });
     const { mock, ok } = session;
-    mock.given({ clips: [clip()] });
+    const ids = mock.given({ clips: [clip()] });
+    const contentId = ids['clip.contentId'];
+    const desired = async () => field(await ok('content.getDetails', { contentId }), 'render', 'desiredRevision');
     // A vocoder that is not ready (a reconfiguration that never finishes) is not waited for.
     mock.setVocoderFault('stuck');
     await ok('prefs.set', { renderingPriority: 'cpuFirst' });
     clock.advance(20);
     expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    const before = await desired();
     const started = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
     clock.advance(0);
     const job = await jobOf(session, started);
     expect(job).toMatchObject({ state: 'succeeded', result: { applied: true } });
-    expect(job.result?.sideEffects).toEqual({});
+    expect(job.result?.sideEffects).toEqual({ reRenderQueued: { contentIds: [contentId], revert: null } });
+    // The render starts once the vocoder has loaded the new weight, after the job ended.
+    expect(await desired()).toBe(before);
+    mock.setVocoderFault(null);
+    clock.advance(20);
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+    expect(await desired()).not.toBe(before);
     // Hybrid mode reports its render whatever the vocoder does.
     const hybrid = await ok('prefs.set', { hybridMode: true });
     expect(field(hybrid, 'sideEffects', 'reRenderQueued', 'contentIds')).toHaveLength(1);
   });
+
+  it('renders nothing for a new vocoder weight that cannot be loaded, and the vocoder stays not ready', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    const ids = mock.given({ clips: [clip()] });
+    const contentId = ids['clip.contentId'];
+    const desired = async () => field(await ok('content.getDetails', { contentId }), 'render', 'desiredRevision');
+    mock.setVocoderFault('loadFails');
+    // A rendering priority that cannot be loaded is taken back, and the vocoder loads the previous one again.
+    await ok('prefs.set', { renderingPriority: 'cpuFirst' });
+    clock.advance(21);
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    const before = await desired();
+    // While it does, a new weight is not waited for; the result reports the render it causes once it loads.
+    const started = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
+    clock.advance(0);
+    const job = await jobOf(session, started);
+    expect(job).toMatchObject({ state: 'succeeded', result: { applied: true } });
+    expect(job.result?.sideEffects).toEqual({ reRenderQueued: { contentIds: [contentId], revert: null } });
+    // It cannot be loaded: nothing is rendered, and the vocoder stays not ready.
+    clock.advance(100);
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: false });
+    expect(await desired()).toBe(before);
+    expect(await processing(session)).toMatchObject({ vocoderWeight: 'hifigan_coulin9.onnx' });
+  });
+
+  it('lets only the latest reconfiguration end the vocoder, so an earlier one never ends a later job early', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { ok } = session;
+    const first = await ok('prefs.set', { renderingPriority: 'cpuFirst' });
+    clock.advance(1);
+    // The first command is still queued: the vocoder reports ready, so the second job waits as well.
+    const second = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
+    clock.advance(14);
+    // The first reconfiguration would have ended now; the second one still runs, and so do both jobs.
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    expect((await jobOf(session, first)).state).toBe('running');
+    expect((await jobOf(session, second)).state).toBe('running');
+    clock.advance(1);
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+    clock.advance(3);
+    expect((await jobOf(session, first)).state).toBe('succeeded');
+    expect((await jobOf(session, second)).state).toBe('succeeded');
+  });
+
+  it('fails every job that waits for a reconfiguration that cannot load, not only the first to see it', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    mock.setVocoderFault('loadFails');
+    const before = await processing(session);
+    const priority = await ok('prefs.set', { renderingPriority: 'cpuFirst' });
+    clock.advance(1);
+    // Both jobs wait for the second reconfiguration, which supersedes the first and cannot load. The job that sees it
+    // first takes its change back, and the vocoder reloads; that reload must not end the other job as a success.
+    const weight = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
+    clock.advance(100);
+    for (const started of [priority, weight]) {
+      const job = await jobOf(session, started);
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({
+        kind: 'MODEL_UNAVAILABLE',
+        reason: 'vocoder_load_failed',
+        executed: false,
+      });
+    }
+    expect(await processing(session)).toEqual(before);
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+  });
+
+  it('keeps a weight another write set while the job waited, and never reports a weight that did not load as ready', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    mock.given({
+      preferences: {
+        vocoderWeight: 'a.onnx',
+        options: { vocoderWeight: ['a.onnx', 'b.onnx', 'c.onnx'], f0Model: ['fcpe'] },
+      },
+    });
+    mock.setVocoderFault('loadFails');
+    const first = await ok('prefs.set', { vocoderWeight: 'b.onnx' });
+    clock.advance(6);
+    // Another write changes the weight while the vocoder reconfigures: its job does not wait, but the vocoder gets c.
+    const second = await ok('prefs.set', { vocoderWeight: 'c.onnx' });
+    clock.advance(0);
+    expect((await jobOf(session, second)).state).toBe('succeeded');
+    clock.advance(100);
+    const job = await jobOf(session, first);
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ reason: 'vocoder_load_failed', executed: true });
+    expect(String(job.error?.data.detail)).toContain('vocoderWeight');
+    // c keeps the other write's value; the vocoder could not load it and does not report it ready.
+    expect(await processing(session)).toMatchObject({ vocoderWeight: 'c.onnx' });
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: false });
+  });
+
+  it.each([
+    ['stays busy past the wait limit', 'stuck', 'vocoder_not_ready'],
+    ['cannot load the new weight', 'loadFails', 'vocoder_load_failed'],
+  ] as const)(
+    'keeps the notes that the switch to openDyne generated, and reports executed true, when the vocoder %s',
+    async (_, fault, reason) => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock, vocoder: { waitLimitMs: 1000 } });
+      const { mock, ok } = session;
+      const ids = mock.given({
+        clips: [{ bind: 'clip', trackId: 0, startTimelineSec: 0, durationSec: 6, analysis: 'ready' }],
+      });
+      await ok('ui.setSelection', { placementId: ids['clip.placementId'], openEditor: true });
+      expect(mock.snapshot().contents[0]?.notes).toEqual([]);
+      mock.setVocoderFault(fault);
+      const before = await processing(session);
+      const started = await ok('prefs.set', { editingScheme: 'openDyne', vocoderWeight: 'hifigan_coulin9.onnx' });
+      clock.advance(1000);
+      const job = await jobOf(session, started);
+      expect(job.state).toBe('failed');
+      expect(job.error?.data).toMatchObject({ kind: 'MODEL_UNAVAILABLE', reason, executed: true });
+      expect(String(job.error?.data.detail)).toContain(
+        `the notes that the switch to openDyne generated for content ${String(ids['clip.contentId'])} cannot be undone`,
+      );
+      // The preferences went back, but the generated notes cannot be taken back: they and the unsaved changes stay.
+      expect(await processing(session)).toEqual(before);
+      expect(mock.snapshot().contents[0]?.notes.length).toBeGreaterThan(0);
+      expect(field(await ok('project.get'), 'project', 'dirty')).toBe(true);
+    },
+  );
 
   it('refuses an unlisted vocoder weight or pitch model even when it equals the current value, and changes nothing', async () => {
     const clock = new ManualClock();

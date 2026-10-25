@@ -15,6 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ManualClock } from '../../mock/clock.js';
 import { EXPORT_POLL_MS, EXPORT_SAMPLE_RATE_HZ, EXPORT_WAIT_LIMIT_MS, EXPORT_WRITE_MS } from '../../mock/export.js';
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
+import { otcpSpec } from '../support/otcp-spec.js';
 
 const sessions = new Sessions();
 afterEach(async () => {
@@ -313,6 +314,39 @@ describe('analysis and rendering', () => {
 });
 
 describe('the job', () => {
+  it('reports a vocoder weight that the wire cannot carry as null with its reason, as prefs.get does', async () => {
+    const { clock, session } = await open();
+    const ids = session.mock.given({ ...clipGiven, files: [{ bind: 'out', kind: 'absent' }] });
+    const dir = path.dirname(ids.out ?? '');
+    const exported = async (name: string) => {
+      const job = await finish(session, clock, await start(session, { kind: 'master', path: path.join(dir, name) }));
+      expect(job.state).toBe('succeeded');
+      expect(otcpSpec().validate('methods/export.start.schema.json#/$defs/jobResult', job.result)).toEqual([]);
+      return job.result?.processing;
+    };
+    expect(await exported('short.wav')).toEqual({
+      vocoderWeight: 'hifigan.onnx',
+      hybridMode: false,
+      backend: null,
+      tuningHz: 440,
+      nullReasons: { backend: 'unavailable' },
+    });
+    // 65 code points: longer than the wire carries.
+    session.mock.given({ preferences: { vocoderWeight: 'w'.repeat(65) } });
+    const processing = await exported('long.wav');
+    expect(processing).toEqual({
+      vocoderWeight: null,
+      hybridMode: false,
+      backend: null,
+      tuningHz: 440,
+      nullReasons: { vocoderWeight: 'unavailable', backend: 'unavailable' },
+    });
+    expect((await session.ok('prefs.get')).processing).toMatchObject({
+      vocoderWeight: null,
+      nullReasons: { vocoderWeight: 'unavailable' },
+    });
+  });
+
   it('can be cancelled until the final rename, which deletes the temporary file', async () => {
     const { clock, session } = await open();
     const ids = session.mock.given({ ...clipGiven, files: [{ bind: 'out', kind: 'absent' }] });

@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "prefs/set-vocoder-weight",
   "type": "scenario",
-  "description": "Switching to another vocoder weight that the installation offers. OpenTune reconfigures its vocoder asynchronously, so the call hands the change to a prefsApply job, which ends when the vocoder is ready again (PROTOCOL.md section 12.7); the job result is the write envelope: the change, the warning GLOBAL_PREFERENCE, the side effect reRenderQueued (a new weight makes OpenTune render every content again, and the job reports it because it waited for the vocoder, which was ready before the call) and the revert recipe with the previous weight. prefs.get then reports the new weight.",
+  "description": "Switching to another vocoder weight that the installation offers. OpenTune reconfigures its vocoder asynchronously, so the call hands the change to a prefsApply job, which ends when the vocoder is ready again (PROTOCOL.md section 12.7); the job result is the write envelope: the change, the warning GLOBAL_PREFERENCE, the side effect reRenderQueued (a new weight makes OpenTune render every content again once the vocoder has loaded it, and the job reports it for every change of the weight, whether or not it waited for the vocoder) and the revert recipe with the previous weight. prefs.get then reports the new weight.",
   "capability": "prefs.write",
   "extraCapabilities": ["jobs.v1"],
   "since": "1.0",

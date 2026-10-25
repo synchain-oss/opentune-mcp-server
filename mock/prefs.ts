@@ -49,6 +49,9 @@ const SETTINGS: readonly Setting[] = [
 /** The members that make OpenTune apply the change asynchronously, so that the call hands them to a job. */
 const JOB_MEMBERS: readonly Name[] = ['editingScheme', 'vocoderWeight', 'renderingPriority'];
 
+/** The members whose change makes OpenTune reconfigure its vocoder. */
+const VOCODER_MEMBERS: readonly Name[] = ['vocoderWeight', 'renderingPriority'];
+
 /** The members whose values must be among the installation's options. */
 const OPTION_MEMBERS = ['vocoderWeight', 'f0Model'] as const;
 
@@ -108,11 +111,8 @@ function checkF0Model({ world }: MethodContext, planned: readonly Planned[]): vo
   }
 }
 
-/**
- * Makes the changes of `planned` and reports them. `waited` tells that the job waits for the vocoder (it was ready
- * before the call): only then is the render that a new vocoder weight causes reported.
- */
-function commit(context: MethodContext, planned: readonly Planned[], waited: boolean): Record<string, unknown> {
+/** Makes the changes of `planned` and reports them. */
+function commit(context: MethodContext, planned: readonly Planned[]): Record<string, unknown> {
   const { world } = context;
   const dirtyBefore = world.project.dirty;
   const before = world.capture();
@@ -149,14 +149,14 @@ function commit(context: MethodContext, planned: readonly Planned[], waited: boo
   if (has('referenceAlignMode')) warnings.push(warning('EXPERIMENTAL_FEATURE', { preference: 'referenceAlignMode' }));
   const sideEffects: Record<string, unknown> = {};
   const touched = [];
-  // A new vocoder weight clears the caches and renders every clip again, which the result reports only when the job
-  // waited for the vocoder; a new rendering priority only resets the inference backend, which invalidates nothing.
+  // Hybrid mode renders every content again at once. A new vocoder weight does so once the vocoder has loaded it
+  // (World.reconfigureVocoder), which the result reports whether or not the job waits for the vocoder; a weight that
+  // cannot be loaded renders nothing. A new rendering priority only resets the inference backend, which invalidates
+  // nothing.
   if ((has('hybridMode') || has('vocoderWeight')) && world.contents.size > 0) {
     const contents = [...world.contents.values()];
-    for (const content of contents) world.queueRender(content);
-    if (has('hybridMode') || waited) {
-      sideEffects.reRenderQueued = { contentIds: contents.map((c) => c.id), revert: null };
-    }
+    if (has('hybridMode')) for (const content of contents) world.queueRender(content);
+    sideEffects.reRenderQueued = { contentIds: contents.map((c) => c.id), revert: null };
   }
   const open = world.pianoRollContent;
   if (has('editingScheme') && world.editingScheme === 'openDyne' && open !== null && needsGeneratedNotes(open)) {
@@ -187,31 +187,47 @@ function commit(context: MethodContext, planned: readonly Planned[], waited: boo
 
 /**
  * Takes the changes of `planned` back, as a job that ran into its limit does: a preference that another write changed
- * meanwhile keeps that write's value. Returns the names of those preferences.
+ * meanwhile keeps that write's value. A previous vocoder weight or rendering priority that is put back goes to the
+ * vocoder, which loads again (a preference that keeps another write's value was handed to it by that write). Returns
+ * the names of the preferences that keep another write's value.
  */
 function withdraw(context: MethodContext, planned: readonly Planned[]): string[] {
   const kept: string[] = [];
+  const restored: Name[] = [];
   for (const { setting, was, wanted } of planned) {
-    if (currentValue(context, setting.name) === wanted) assign(context, setting.name, was);
-    else kept.push(setting.name);
+    if (currentValue(context, setting.name) === wanted) {
+      assign(context, setting.name, was);
+      restored.push(setting.name);
+    } else kept.push(setting.name);
+  }
+  if (restored.some((name) => VOCODER_MEMBERS.includes(name))) {
+    context.world.reconfigureVocoder(restored.includes('vocoderWeight'));
   }
   return kept;
 }
 
+/** The content whose notes the switch to openDyne generated in `result`, or null. */
+function generatedNotesOf(result: Record<string, unknown>): string | null {
+  const effect = (result.sideEffects as { notesGenerated?: { contentId: string } } | undefined)?.notesGenerated;
+  return effect?.contentId ?? null;
+}
+
 /**
  * The prefsApply job (PROTOCOL.md section 12.7). Its first step checks the busy state again, makes every change
- * (the pitch model first) and, after a change of the vocoder weight or the rendering priority of a vocoder that was
- * ready, starts the reconfiguration and waits for it. The vocoder reports ready for a moment after the command, so the
- * job waits until the vocoder is ready, not reconfiguring and nothing is queued. When the wait limit passes, it takes
- * its changes back and fails with MODEL_UNAVAILABLE(vocoder_not_ready). A vocoder that is not ready although its
- * command has ended could not load the new weight: the job does not wait for the limit and fails at once with
- * MODEL_UNAVAILABLE(vocoder_load_failed).
+ * (the pitch model first) and, after a change of the vocoder weight or the rendering priority, hands it to the
+ * vocoder, which reconfigures; it waits for that only when the vocoder was ready before. The vocoder reports ready for
+ * a moment after the command, so the job waits until the vocoder is ready, not reconfiguring and nothing is queued.
+ * When the wait limit passes, it takes its changes back and fails with MODEL_UNAVAILABLE(vocoder_not_ready). A vocoder
+ * that is not ready although its command has ended could not load the new weight or backend: the job does not wait for
+ * the limit and fails at once with MODEL_UNAVAILABLE(vocoder_load_failed). Notes that the switch to openDyne generated
+ * cannot be taken back: a failed job keeps them, says so and reports executed true.
  */
 function prefsApplyDriver(context: MethodContext): JobDriver {
   const { world } = context;
   let started = false;
   let planned: Planned[] = [];
   let result: Record<string, unknown> = {};
+  let generated: string | null = null;
   let deadline = 0;
   return () => {
     if (!started) {
@@ -219,15 +235,20 @@ function prefsApplyDriver(context: MethodContext): JobDriver {
         checkNotBusy(context);
         planned = plan(context);
         checkF0Model(context, planned);
+        // Decided from what the vocoder reports, as OpenTune's implementation decides it. A reconfiguration that an
+        // earlier job issued and the runtime has not started yet still reports a ready vocoder, so this job waits as
+        // well; that is intended: the later reconfiguration supersedes the earlier one, and both jobs end with it.
         const vocoderWasReady = world.vocoder.ready && !world.vocoder.reconfiguring;
-        const changesVocoder = planned.some(
-          ({ setting }) => setting.name === 'vocoderWeight' || setting.name === 'renderingPriority',
-        );
+        const changesVocoder = planned.some(({ setting }) => VOCODER_MEMBERS.includes(setting.name));
         const waits = changesVocoder && vocoderWasReady;
-        result = commit(context, planned, waits);
+        result = commit(context, planned);
+        generated = generatedNotesOf(result);
         started = true;
+        // The vocoder gets the new weight or priority whether or not the job waits for it.
+        if (changesVocoder) {
+          world.reconfigureVocoder(planned.some(({ setting }) => setting.name === 'vocoderWeight'));
+        }
         if (!waits) return { done: { state: 'succeeded', result } };
-        world.reconfigureVocoder();
         deadline = world.now() + world.vocoderTiming.waitLimitMs;
         return { next: VOCODER_POLL_MS };
       } catch (error) {
@@ -240,14 +261,19 @@ function prefsApplyDriver(context: MethodContext): JobDriver {
     const left = deadline - world.now();
     if (!loadFailed && left > 0) return { next: Math.min(VOCODER_POLL_MS, left) };
     const kept = withdraw(context, planned);
-    // The runtime is asked for the previous weight or priority again, which loads.
-    if (loadFailed) world.finishVocoder();
-    const why = loadFailed ? 'the vocoder could not load the new weight' : 'the vocoder did not become ready in time';
-    const detail =
+    const why = loadFailed
+      ? 'the vocoder could not load the new weight or backend'
+      : 'the vocoder did not become ready in time';
+    const restored =
       kept.length === 0
         ? `${why}; the previous preferences were restored`
         : `${why}; the previous preferences were restored except those another write changed while the job waited, ` +
           `which keep that write's value: ${kept.join(' ')}`;
+    const detail =
+      generated === null
+        ? restored
+        : `${restored}; the notes that the switch to openDyne generated for content ${generated} cannot be undone ` +
+          'and are kept';
     return {
       done: {
         state: 'failed',
@@ -255,7 +281,7 @@ function prefsApplyDriver(context: MethodContext): JobDriver {
           kind: 'MODEL_UNAVAILABLE',
           reason: loadFailed ? 'vocoder_load_failed' : 'vocoder_not_ready',
           detail,
-          executed: kept.length > 0,
+          executed: kept.length > 0 || generated !== null,
         },
       },
     };
@@ -275,7 +301,7 @@ const set: Handler = (context) => {
     return jobStartedResult(world, job);
   }
   checkF0Model(context, planned);
-  return commit(context, planned, false);
+  return commit(context, planned);
 };
 
 export const prefsHandlers: Readonly<Record<string, Handler>> = { 'prefs.set': set };

@@ -352,11 +352,16 @@ export class World {
   /** How a reference analysis that has to compute alignment data ends, or null when it completes. */
   referenceFault: 'stalled' | 'timeout' | 'failed' | null = null;
   readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
-  /**
-   * Test interface: `stuck` makes a reconfiguration of the vocoder never finish, so that a wait for it passes its
-   * limit; `loadFails` makes the command finish but leave the vocoder not ready (it could not load the new weight).
-   */
-  vocoderFault: 'stuck' | 'loadFails' | null = null;
+  /** The fault the vocoder runs into (setVocoderFault). */
+  #vocoderFault: 'stuck' | 'loadFails' | null = null;
+  /** Under the fault `loadFails`: the only weight and rendering priority the vocoder can still load. */
+  #vocoderLoadable: { weight: string; priority: string } | null = null;
+  /** Counts the reconfigurations of the vocoder: only the latest one can end it. */
+  #vocoderSeq = 0;
+  /** The latest reconfiguration ran into the fault `stuck` and ends once the fault is gone. */
+  #vocoderStuck = false;
+  /** A reconfiguration since the vocoder last finished one changed the weight, so its completion renders again. */
+  #vocoderRenders = false;
   /** Test interface: the pitch models that OpenTune cannot load (prefs.set then fails with model_missing). */
   readonly unloadableF0Models = new Set<string>();
   /** How long the vocoder takes to start and to finish a reconfiguration; test hooks change it. */
@@ -583,37 +588,62 @@ export class World {
   }
 
   /**
-   * OpenTune reconfigures its vocoder for a new weight or rendering priority. It starts asynchronously: the command
-   * waits in a queue first, so for `queuedMs` the vocoder still reports ready and not reconfiguring; then it reports
-   * reconfiguring for `reconfiguringMs`, and is ready again after that (never under the fault `stuck`; under `loadFails`
-   * the command ends but the vocoder stays not ready).
+   * OpenTune reconfigures its vocoder for the current weight and rendering priority, after a change of either. It
+   * starts asynchronously: the command waits in a queue first, so for `queuedMs` the vocoder still reports ready and
+   * not reconfiguring; then it reports reconfiguring for `reconfiguringMs`, and ends after that (never under the fault
+   * `stuck`). A later reconfiguration supersedes an earlier one that has not ended: only the latest one ends the
+   * vocoder's reconfiguration, so an earlier one's timer cannot report it finished while a later one still runs. With
+   * `weightChanged` the completion renders every content again, as OpenTune's completion of a weight switch does.
    */
-  reconfigureVocoder(): void {
+  reconfigureVocoder(weightChanged: boolean): void {
     const { vocoder, vocoderTiming } = this;
+    const seq = ++this.#vocoderSeq;
+    this.#vocoderStuck = false;
+    this.#vocoderRenders ||= weightChanged;
     vocoder.commandPending = true;
     this.after(vocoderTiming.queuedMs, () => {
       vocoder.ready = false;
       vocoder.reconfiguring = true;
       this.after(vocoderTiming.reconfiguringMs, () => {
-        if (this.vocoderFault === 'stuck') return;
-        if (this.vocoderFault === 'loadFails') this.failVocoderLoad();
-        else this.finishVocoder();
+        if (seq !== this.#vocoderSeq) return;
+        if (this.#vocoderFault === 'stuck') this.#vocoderStuck = true;
+        else this.#endReconfiguration();
       });
     });
   }
 
-  /** The command for the vocoder has finished, but the vocoder could not load the new weight and is not ready. */
-  failVocoderLoad(): void {
-    this.vocoder.ready = false;
+  /**
+   * The latest reconfiguration ends: the vocoder is ready if it can load the current weight and rendering priority,
+   * and otherwise stays not ready. A weight it loaded clears the render caches and renders every content again; a
+   * weight it could not load renders nothing.
+   */
+  #endReconfiguration(): void {
+    const loadable = this.#vocoderLoadable;
+    const loads =
+      this.#vocoderFault !== 'loadFails' ||
+      (loadable !== null &&
+        this.prefs.vocoderWeight === loadable.weight &&
+        this.prefs.renderingPriority === loadable.priority);
+    const renders = this.#vocoderRenders;
+    this.#vocoderStuck = false;
+    this.#vocoderRenders = false;
+    this.vocoder.ready = loads;
     this.vocoder.reconfiguring = false;
     this.vocoder.commandPending = false;
+    if (loads && renders) for (const content of this.contents.values()) this.queueRender(content);
   }
 
-  /** The vocoder is ready again; a reconfiguration that was stuck ends. */
-  finishVocoder(): void {
-    this.vocoder.ready = true;
-    this.vocoder.reconfiguring = false;
-    this.vocoder.commandPending = false;
+  /**
+   * Test interface: `stuck` makes a reconfiguration of the vocoder never end, so that a wait for it passes its limit;
+   * `loadFails` leaves the vocoder able to load only the weight and rendering priority in use now, so that a
+   * reconfiguration to any other ends with the vocoder not ready. A reconfiguration that was stuck ends once the
+   * fault is no longer `stuck`.
+   */
+  setVocoderFault(fault: 'stuck' | 'loadFails' | null): void {
+    this.#vocoderFault = fault;
+    this.#vocoderLoadable =
+      fault === 'loadFails' ? { weight: this.prefs.vocoderWeight, priority: this.prefs.renderingPriority } : null;
+    if (fault !== 'stuck' && this.#vocoderStuck) this.#endReconfiguration();
   }
 
   /** The vocoder is not ready although nothing about it is queued or running any more: it could not load. */

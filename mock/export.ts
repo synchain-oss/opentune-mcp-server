@@ -18,7 +18,7 @@ import type { WorkFiles } from './files.js';
 import { exists, identityOf, sameFile } from './identity.js';
 import { jobStartedResult } from './job-reply.js';
 import type { JobOutcome, JobStore, JobStep } from './jobs.js';
-import { TRACK_SLOTS, type ContentRec, type PlacementRec, type World } from './model.js';
+import { TRACK_SLOTS, carries, type ContentRec, type PlacementRec, type World } from './model.js';
 import { checkPath } from './paths.js';
 
 /** How often the main-thread timer of section 19 rule 6 looks at the contents. */
@@ -359,6 +359,8 @@ export class ExportService {
     recorded: ReadonlyMap<number, string>,
     dry: readonly { contentId: string; reason: string }[],
   ) {
+    // A weight whose name the wire cannot carry is reported as null, as prefs.get and session.info report it.
+    const weight = this.world.prefs.vocoderWeight;
     return {
       path: written,
       sampleRateHz: EXPORT_SAMPLE_RATE_HZ,
@@ -370,11 +372,13 @@ export class ExportService {
       contents: plan.contents.map((c) => ({ contentId: c.id, revision: recorded.get(c.objectId) ?? c.revision })),
       dryContents: [...dry],
       processing: {
-        vocoderWeight: this.world.prefs.vocoderWeight,
+        vocoderWeight: carries(weight) ? weight : null,
         hybridMode: this.world.prefs.hybridMode,
         backend: null,
         tuningHz: this.world.prefs.tuningHz,
-        nullReasons: { backend: 'unavailable' },
+        nullReasons: carries(weight)
+          ? { backend: 'unavailable' }
+          : { vocoderWeight: 'unavailable', backend: 'unavailable' },
       },
     };
   }
