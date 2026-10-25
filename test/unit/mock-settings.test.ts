@@ -383,6 +383,83 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
     expect(await processing(session)).toMatchObject({ vocoderWeight: 'hifigan.onnx', tuningHz: 450 });
   });
 
+  it('reports the render of a new vocoder weight only when the job waited for the vocoder', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    mock.given({ clips: [clip()] });
+    // A vocoder that is not ready (a reconfiguration that never finishes) is not waited for.
+    mock.setVocoderFault('stuck');
+    await ok('prefs.set', { renderingPriority: 'cpuFirst' });
+    clock.advance(20);
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    const started = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
+    clock.advance(0);
+    const job = await jobOf(session, started);
+    expect(job).toMatchObject({ state: 'succeeded', result: { applied: true } });
+    expect(job.result?.sideEffects).toEqual({});
+    // Hybrid mode reports its render whatever the vocoder does.
+    const hybrid = await ok('prefs.set', { hybridMode: true });
+    expect(field(hybrid, 'sideEffects', 'reRenderQueued', 'contentIds')).toHaveLength(1);
+  });
+
+  it('refuses an unlisted vocoder weight or pitch model even when it equals the current value, and changes nothing', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, fails } = session;
+    // The weight in use is no longer on offer, for example because its file was removed.
+    mock.given({ preferences: { vocoderWeight: 'removed.onnx', f0Model: 'gone' } });
+    const before = await processing(session);
+    for (const params of [
+      { vocoderWeight: 'removed.onnx' },
+      { f0Model: 'gone', tuningHz: 432 },
+      { vocoderWeight: 'removed.onnx', renderingPriority: 'cpuFirst' },
+    ]) {
+      expect((await fails('prefs.set', params)).data).toMatchObject({
+        reason: 'option_unavailable',
+        executed: false,
+      });
+    }
+    clock.advance(1000);
+    expect(await processing(session)).toEqual(before);
+  });
+
+  it('leaves a previous vocoder weight that the wire cannot carry out of the revert recipe, and reports before null', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    const long = 'w'.repeat(65);
+    mock.given({
+      preferences: {
+        vocoderWeight: long,
+        options: { vocoderWeight: ['hifigan.onnx', '', long, 'ok.onnx'], f0Model: ['fcpe'] },
+      },
+    });
+    // The lists leave out the names that cannot be carried, and a weight in use with such a name is reported as null.
+    expect(await processing(session)).toMatchObject({
+      vocoderWeight: null,
+      nullReasons: { vocoderWeight: 'unavailable' },
+    });
+    expect(((await ok('session.info')).processing as Record<string, unknown>).vocoderWeight).toBeNull();
+    expect(field(await processing(session), 'options', 'vocoderWeight')).toEqual(['hifigan.onnx', 'ok.onnx']);
+    const only = await ok('prefs.set', { vocoderWeight: 'ok.onnx' });
+    clock.advance(1000);
+    const alone = await jobOf(session, only);
+    expect(alone.state).toBe('succeeded');
+    expect(alone.result?.changes).toMatchObject([{ fields: { vocoderWeight: { before: null, after: 'ok.onnx' } } }]);
+    expect(field(alone.result, 'undo', 'revert')).toBeNull();
+    // With another member the recipe holds that member only.
+    mock.given({ preferences: { vocoderWeight: '' } });
+    const both = await ok('prefs.set', { vocoderWeight: 'hifigan.onnx', tuningHz: 432 });
+    clock.advance(1000);
+    const job = await jobOf(session, both);
+    expect(job.result?.changes).toMatchObject([
+      { fields: { tuningHz: { before: 440, after: 432 } } },
+      { fields: { vocoderWeight: { before: null, after: 'hifigan.onnx' } } },
+    ]);
+    expect(field(job.result, 'undo', 'revert', 'params')).toEqual({ tuningHz: 440 });
+  });
+
   it('is refused while a dialog is open, for the new members too', async () => {
     const session = await sessions.open();
     session.mock.given({ dialogs: [{ kind: 'preferences' }] });

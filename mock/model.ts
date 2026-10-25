@@ -166,6 +166,14 @@ export const AUDIO_AVAILABLE = {
   outputChannelPairCount: 1,
 } as const;
 
+/** The longest name that processing.options and the vocoder weight members carry, in code points, and the longest list. */
+export const OPTION_TEXT_MAX = 64;
+export const OPTION_LIST_MAX = 64;
+
+/** Whether a name can go on the wire: not empty, well-formed Unicode and at most OPTION_TEXT_MAX code points. */
+export const carries = (name: string): boolean =>
+  name.length > 0 && name.isWellFormed() && Array.from(name).length <= OPTION_TEXT_MAX;
+
 /** The output devices a device type offers. */
 export const outputDevicesOf = (deviceType: string): readonly string[] =>
   AUDIO_AVAILABLE.outputDevicesByType[deviceType] ?? [];

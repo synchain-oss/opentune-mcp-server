@@ -12,6 +12,7 @@ import { checkNotBusy, envelope, type Handler, type MethodContext } from './cont
 import { MockError, refuse } from './errors.js';
 import { jobStartedResult } from './job-reply.js';
 import type { JobDriver } from './jobs.js';
+import { carries } from './model.js';
 import { generateNotes, needsGeneratedNotes } from './notegen.js';
 import { EMPTY_DIFF } from './writes.js';
 
@@ -89,7 +90,7 @@ function plan(context: MethodContext): Planned[] {
 function checkOptions({ world, params }: MethodContext): void {
   for (const name of OPTION_MEMBERS) {
     const wanted = params[name];
-    if (typeof wanted === 'string' && !world.prefs.options[name].includes(wanted)) {
+    if (typeof wanted === 'string' && !world.prefs.options[name].filter(carries).includes(wanted)) {
       throw refuse(
         'INVALID_ARGUMENT',
         'option_unavailable',
@@ -107,8 +108,11 @@ function checkF0Model({ world }: MethodContext, planned: readonly Planned[]): vo
   }
 }
 
-/** Makes the changes of `planned` and reports them. */
-function commit(context: MethodContext, planned: readonly Planned[]): Record<string, unknown> {
+/**
+ * Makes the changes of `planned` and reports them. `waited` tells that the job waits for the vocoder (it was ready
+ * before the call): only then is the render that a new vocoder weight causes reported.
+ */
+function commit(context: MethodContext, planned: readonly Planned[], waited: boolean): Record<string, unknown> {
   const { world } = context;
   const dirtyBefore = world.project.dirty;
   const before = world.capture();
@@ -126,12 +130,14 @@ function commit(context: MethodContext, planned: readonly Planned[]): Record<str
   const revert: Record<string, Value> = {};
   for (const { setting, was, wanted } of planned) {
     assign(context, setting.name, wanted);
-    revert[setting.name] = was;
+    // A previous name that the wire cannot carry is reported as null and has no value to revert to.
+    const before = setting.name === 'vocoderWeight' && !carries(String(was)) ? null : was;
+    if (before !== null) revert[setting.name] = before;
     changes.push({
       entity: 'preference',
       ref: { preference: setting.name },
       label: setting.label,
-      fields: { [setting.name]: { before: was, after: wanted, unit: setting.unit } },
+      fields: { [setting.name]: { before, after: wanted, unit: setting.unit } },
     });
   }
   const has = (name: Name) => planned.some(({ setting }) => setting.name === name);
@@ -143,12 +149,14 @@ function commit(context: MethodContext, planned: readonly Planned[]): Record<str
   if (has('referenceAlignMode')) warnings.push(warning('EXPERIMENTAL_FEATURE', { preference: 'referenceAlignMode' }));
   const sideEffects: Record<string, unknown> = {};
   const touched = [];
-  // A new vocoder weight clears the caches and renders every clip again; a new rendering priority only resets the
-  // inference backend, which invalidates nothing.
+  // A new vocoder weight clears the caches and renders every clip again, which the result reports only when the job
+  // waited for the vocoder; a new rendering priority only resets the inference backend, which invalidates nothing.
   if ((has('hybridMode') || has('vocoderWeight')) && world.contents.size > 0) {
     const contents = [...world.contents.values()];
     for (const content of contents) world.queueRender(content);
-    sideEffects.reRenderQueued = { contentIds: contents.map((c) => c.id), revert: null };
+    if (has('hybridMode') || waited) {
+      sideEffects.reRenderQueued = { contentIds: contents.map((c) => c.id), revert: null };
+    }
   }
   const open = world.pianoRollContent;
   if (has('editingScheme') && world.editingScheme === 'openDyne' && open !== null && needsGeneratedNotes(open)) {
@@ -166,7 +174,11 @@ function commit(context: MethodContext, planned: readonly Planned[]): Record<str
     changes,
     diff: world.diff(before, world.capture()),
     contents: touched,
-    undo: { undoable: false, reason: 'ui_parity', revert: { method: 'prefs.set', params: revert } },
+    undo: {
+      undoable: false,
+      reason: 'ui_parity',
+      revert: Object.keys(revert).length === 0 ? null : { method: 'prefs.set', params: revert },
+    },
     dirtyBefore,
     sideEffects,
     warnings,
@@ -206,12 +218,13 @@ function prefsApplyDriver(context: MethodContext): JobDriver {
         planned = plan(context);
         checkF0Model(context, planned);
         const vocoderWasReady = world.vocoder.ready && !world.vocoder.reconfiguring;
-        result = commit(context, planned);
-        started = true;
         const changesVocoder = planned.some(
           ({ setting }) => setting.name === 'vocoderWeight' || setting.name === 'renderingPriority',
         );
-        if (!changesVocoder || !vocoderWasReady) return { done: { state: 'succeeded', result } };
+        const waits = changesVocoder && vocoderWasReady;
+        result = commit(context, planned, waits);
+        started = true;
+        if (!waits) return { done: { state: 'succeeded', result } };
         world.reconfigureVocoder();
         deadline = world.now() + world.vocoderTiming.waitLimitMs;
         return { next: VOCODER_POLL_MS };
@@ -251,7 +264,7 @@ const set: Handler = (context) => {
     return jobStartedResult(world, job);
   }
   checkF0Model(context, planned);
-  return commit(context, planned);
+  return commit(context, planned, false);
 };
 
 export const prefsHandlers: Readonly<Record<string, Handler>> = { 'prefs.set': set };

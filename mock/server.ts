@@ -32,7 +32,7 @@ import { IMPORT_LIMITS, ImportService } from './import.js';
 import { JobStore, oneShot, UnsupportedPrecondition, type JobSpec } from './jobs.js';
 import { prefsHandlers } from './prefs.js';
 import { ProjectService } from './project.js';
-import { TRACK_SLOTS, World, type Analysis, type BusyState } from './model.js';
+import { TRACK_SLOTS, World, carries, type Analysis, type BusyState } from './model.js';
 import {
   classify,
   errorLine,
@@ -321,7 +321,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       tuningHz: world.prefs.tuningHz,
       editingScheme: world.editingScheme,
       hybridMode: world.prefs.hybridMode,
-      vocoderWeight: world.prefs.vocoderWeight,
+      vocoderWeight: carries(world.prefs.vocoderWeight) ? world.prefs.vocoderWeight : null,
       f0Model: world.prefs.f0Model,
       renderingPriority: world.prefs.renderingPriority,
       backend: null,
@@ -329,7 +329,10 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       vocoderReconfiguring: world.vocoder.reconfiguring,
       experimentalFeatures: world.prefs.experimentalFeatures,
       referenceAlignMode: world.prefs.referenceAlignMode,
-      nullReasons: { backend: 'unavailable' },
+      nullReasons: {
+        backend: 'unavailable',
+        ...(carries(world.prefs.vocoderWeight) ? {} : { vocoderWeight: 'unavailable' }),
+      },
     },
     language: world.prefs.language,
     capabilities: [...capabilities],
