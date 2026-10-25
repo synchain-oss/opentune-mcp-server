@@ -78,7 +78,10 @@ const linesOf = (step: string) => step.split('\n').map((line) => line.trim());
 function topLevelPermissions(text: string): string | undefined {
   const header = text.split('\n').filter((line) => line.startsWith('permissions:'));
   if (header.length !== 1) return undefined;
-  if (header[0] === 'permissions: {}') return '{}';
+  if (header[0]?.trimEnd() === 'permissions: {}') return '{}';
+  // An inline value other than `{}` (`write-all`, `read-all`, ...) is not a bare header: return the line itself,
+  // which then matches neither accepted grant.
+  if (!/^permissions:\s*$/.test(header[0] ?? '')) return header[0];
   return blockUnder(text, /^permissions:\s*$/).join('\n');
 }
 
@@ -86,7 +89,7 @@ function topLevelPermissions(text: string): string | undefined {
  * Top-level grant is either nothing (`{}`) or exactly read-only contents; write access is per job.
  * A bare `permissions:` (YAML null) grants nothing as well, but it does not say so: it is neither
  * the declared empty map nor the read-only grant, so it is rejected here — the file has to write
- * down what it grants.
+ * down what it grants. A workflow without any top-level `permissions:` key is rejected for the same reason.
  */
 const isAllowedTopLevel = (text: string) => {
   const granted = topLevelPermissions(text);
@@ -138,12 +141,16 @@ describe('every workflow', () => {
     expect(isAllowedTopLevel(text)).toBe(true);
   });
 
-  // A bare `permissions:` (YAML null) grants nothing as well, but it does not say so: it is
-  // neither the declared empty map nor the read-only grant, so the file has to write down what it
-  // grants. A workflow without any top-level `permissions:` key is rejected for the same reason.
-  it('rejects a top-level permissions: key that is not `{}` or exactly `contents: read`', () => {
+  // The rule is documented on isAllowedTopLevel; these cases pin both sides of it.
+  it('accepts a top-level permissions: key that is `{}` (trailing spaces aside) or exactly `contents: read`', () => {
     expect(isAllowedTopLevel('name: x\npermissions: {}\non: push\n')).toBe(true);
+    expect(isAllowedTopLevel('name: x\npermissions: {}   \non: push\n')).toBe(true);
     expect(isAllowedTopLevel('name: x\npermissions:\n  contents: read\non: push\n')).toBe(true);
+  });
+
+  it('rejects any other top-level permissions: key, an inline grant included, and a workflow without one', () => {
+    expect(isAllowedTopLevel('name: x\npermissions: write-all\non: push\n')).toBe(false);
+    expect(isAllowedTopLevel('name: x\npermissions: read-all\non: push\n')).toBe(false);
     expect(isAllowedTopLevel('name: x\npermissions:\non: push\n')).toBe(false);
     expect(isAllowedTopLevel('name: x\npermissions:\n  contents: write\non: push\n')).toBe(false);
     expect(isAllowedTopLevel('name: x\npermissions:\n  contents: read\n  issues: write\non: push\n')).toBe(false);

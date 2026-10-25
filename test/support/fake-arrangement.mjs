@@ -732,7 +732,7 @@ export function createArrangement(mode) {
       contents.set(copied.id, copied);
       const start = params.startTimelineSec + (src.startTimelineSec - earliest);
       const copy = copyOf(src, copied.id, target.trackId, start, window ? 0 : src.clipInContentSec);
-      // The defect of the copy checks: the copy sounds one sample late.
+      // The defect of the copy checks: the copy sounds two samples late.
       if (mode === 'arrangement-copy-offset') copy.audioShiftSamples = 2;
       const others = [...placements.values()].filter((p) => p.trackId === target.trackId);
       if (others.some((p) => p.startTimelineSec === copy.startTimelineSec && p.id === src.id)) {
