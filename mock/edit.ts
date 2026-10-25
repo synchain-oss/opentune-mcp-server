@@ -74,7 +74,7 @@ const NOTE_FIELDS = [
   ['offsetCents', 'cents'],
   ['retuneSpeed', null],
   ['vibratoDepth', null],
-  ['vibratoRateHz', null],
+  ['vibratoRateHz', 'hz'],
   ['pitchDriftScale', null],
 ] as const satisfies readonly (readonly [keyof NoteRec, string | null])[];
 

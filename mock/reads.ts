@@ -372,16 +372,18 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
       tuningHz: world.prefs.tuningHz,
       editingScheme: world.editingScheme,
       hybridMode: world.prefs.hybridMode,
-      vocoderWeight: null,
-      f0Model: null,
-      renderingPriority: null,
+      vocoderWeight: world.prefs.vocoderWeight,
+      f0Model: world.prefs.f0Model,
+      renderingPriority: world.prefs.renderingPriority,
       experimentalFeatures: world.prefs.experimentalFeatures,
-      referenceAlignMode: null,
-      nullReasons: {
-        vocoderWeight: 'unavailable',
-        f0Model: 'unavailable',
-        renderingPriority: 'unavailable',
-        referenceAlignMode: 'unavailable',
+      referenceAlignMode: world.prefs.referenceAlignMode,
+      // The values prefs.set accepts; session.info does not report them. The state of the vocoder is not part of
+      // prefs.get either (session.info reports it).
+      options: {
+        vocoderWeight: [...world.prefs.options.vocoderWeight],
+        f0Model: [...world.prefs.options.f0Model],
+        renderingPriority: ['gpuFirst', 'cpuFirst'],
+        referenceAlignMode: ['standardAuto', 'game'],
       },
     },
     onboardingShown: world.prefs.onboardingShown,

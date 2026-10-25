@@ -370,11 +370,11 @@ export class ExportService {
       contents: plan.contents.map((c) => ({ contentId: c.id, revision: recorded.get(c.objectId) ?? c.revision })),
       dryContents: [...dry],
       processing: {
-        vocoderWeight: null,
+        vocoderWeight: this.world.prefs.vocoderWeight,
         hybridMode: this.world.prefs.hybridMode,
         backend: null,
         tuningHz: this.world.prefs.tuningHz,
-        nullReasons: { vocoderWeight: 'unavailable', backend: 'unavailable' },
+        nullReasons: { backend: 'unavailable' },
       },
     };
   }

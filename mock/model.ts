@@ -19,6 +19,16 @@ export const INITIAL_VISIBLE_TRACKS = 4;
 export const RENDER_SETTLE_MS = 30;
 /** Time the mock needs to compute the reference alignment data of a content. */
 export const ALIGNMENT_SETTLE_MS = 30;
+/**
+ * How the mock reconfigures its vocoder after a new weight or rendering priority, and how long a prefsApply job waits
+ * for it (60 s, the default of the real implementation); test hooks change them.
+ */
+export const VOCODER_RECONFIGURE = { queuedMs: 5, reconfiguringMs: 10, waitLimitMs: 60_000 } as const;
+/** The vocoder weights and pitch models the mock's installation offers, as prefs.get lists them. */
+export const DEFAULT_OPTIONS = {
+  vocoderWeight: ['hifigan.onnx', 'hifigan_coulin9.onnx'],
+  f0Model: ['fcpe'],
+} as const;
 /** Default note parameters of the note generator. */
 export const DEFAULT_NOTE_PARAMS = { retuneSpeed: 0.5, vibratoDepth: 0, vibratoRateHz: 6, pitchDriftScale: 1 } as const;
 
@@ -141,16 +151,37 @@ export interface AudioRec {
 }
 
 /**
- * What the audio settings page offers: one device type with two output devices (so that a test can
- * switch the output device), two sample rates and two buffer sizes.
+ * What the audio settings page offers: two device types, the first with two output devices (so that a test can
+ * switch the output device or the device type), two sample rates, two buffer sizes and one output channel pair.
  */
 export const AUDIO_AVAILABLE = {
-  deviceTypes: ['Mock Audio'],
-  outputDevices: ['Mock Output', 'Mock Output 2'],
+  deviceTypes: ['Mock Audio', 'Mock Audio 2'],
+  /** The output devices of each device type; opening a type opens its first device. */
+  outputDevicesByType: {
+    'Mock Audio': ['Mock Output', 'Mock Output 2'],
+    'Mock Audio 2': ['Mock B Output'],
+  } as Readonly<Record<string, readonly string[]>>,
   sampleRatesHz: [44100, 48000],
   bufferSizesFrame: [256, 512],
   outputChannelPairCount: 1,
 } as const;
+
+/** The output devices a device type offers. */
+export const outputDevicesOf = (deviceType: string): readonly string[] =>
+  AUDIO_AVAILABLE.outputDevicesByType[deviceType] ?? [];
+
+const FIRST_DEVICE_TYPE = AUDIO_AVAILABLE.deviceTypes[0];
+const FIRST_OUTPUT_DEVICE = 'Mock Output';
+
+/** The vocoder as OpenTune's runtime reports it (session.info, processing). */
+export interface VocoderRec {
+  /** The vocoder is loaded and can render. */
+  ready: boolean;
+  /** OpenTune is loading a new weight or a new backend. */
+  reconfiguring: boolean;
+  /** A reconfiguration was issued and has not finished: OpenTune starts it asynchronously, so until it begins the vocoder still reports ready. */
+  commandPending: boolean;
+}
 
 /** The state an undo or redo step puts back. */
 export interface Patch {
@@ -265,8 +296,8 @@ export class World {
   uiScale: { root: number; scale: string } = { root: 0, scale: 'major' };
   readonly audio: AudioRec = {
     running: false,
-    deviceType: AUDIO_AVAILABLE.deviceTypes[0],
-    outputDevice: AUDIO_AVAILABLE.outputDevices[0],
+    deviceType: FIRST_DEVICE_TYPE,
+    outputDevice: FIRST_OUTPUT_DEVICE,
     sampleRateHz: 44100,
     bufferSizeFrame: 512,
     outputChannelPair: 0,
@@ -289,6 +320,15 @@ export class World {
     tuningHz: TUNING_HZ,
     hybridMode: false,
     experimentalFeatures: false,
+    vocoderWeight: DEFAULT_OPTIONS.vocoderWeight[0] as string,
+    renderingPriority: 'gpuFirst',
+    f0Model: DEFAULT_OPTIONS.f0Model[0] as string,
+    referenceAlignMode: 'standardAuto',
+    /** What the installation offers (prefs.get, processing.options): the weight files and the pitch models. */
+    options: {
+      vocoderWeight: [...DEFAULT_OPTIONS.vocoderWeight],
+      f0Model: [...DEFAULT_OPTIONS.f0Model],
+    } as { vocoderWeight: string[]; f0Model: string[] },
     onboardingShown: true,
     language: 'en',
     /** The most recent first; user-global, so opening another project leaves it alone. */
@@ -303,6 +343,15 @@ export class World {
   readonly referenceJobs = new Map<string, string>();
   /** How a reference analysis that has to compute alignment data ends, or null when it completes. */
   referenceFault: 'stalled' | 'timeout' | 'failed' | null = null;
+  readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
+  /** Test interface: a reconfiguration of the vocoder never finishes, so that a wait for it passes its limit. */
+  vocoderStuck = false;
+  /** Test interface: the pitch models that OpenTune cannot load (prefs.set then fails with model_missing). */
+  readonly unloadableF0Models = new Set<string>();
+  /** How long the vocoder takes to start and to finish a reconfiguration; test hooks change it. */
+  readonly vocoderTiming: { queuedMs: number; reconfiguringMs: number; waitLimitMs: number } = {
+    ...VOCODER_RECONFIGURE,
+  };
   #tick = 0;
   #contentSeq = 0;
   #placementSeq = 0;
@@ -520,6 +569,36 @@ export class World {
       content.alignmentReady = true;
       this.touch(content, 'reference');
     });
+  }
+
+  /**
+   * OpenTune reconfigures its vocoder for a new weight or rendering priority. It starts asynchronously: the command
+   * waits in a queue first, so for `queuedMs` the vocoder still reports ready and not reconfiguring; then it reports
+   * reconfiguring for `reconfiguringMs`, and is ready again after that (never, under `vocoderStuck`).
+   */
+  reconfigureVocoder(): void {
+    const { vocoder, vocoderTiming } = this;
+    vocoder.commandPending = true;
+    this.after(vocoderTiming.queuedMs, () => {
+      vocoder.ready = false;
+      vocoder.reconfiguring = true;
+      this.after(vocoderTiming.reconfiguringMs, () => {
+        if (!this.vocoderStuck) this.finishVocoder();
+      });
+    });
+  }
+
+  /** The vocoder is ready again; a reconfiguration that was stuck ends. */
+  finishVocoder(): void {
+    this.vocoder.ready = true;
+    this.vocoder.reconfiguring = false;
+    this.vocoder.commandPending = false;
+  }
+
+  /** The vocoder is ready and nothing about it is queued or running (OpenTune's control worker is idle). */
+  get vocoderSettled(): boolean {
+    const { ready, reconfiguring, commandPending } = this.vocoder;
+    return ready && !reconfiguring && !commandPending;
   }
 
   capture(): Vector {

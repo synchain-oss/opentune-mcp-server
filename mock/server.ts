@@ -108,6 +108,12 @@ export interface MockOptions {
   readonly clock?: Clock;
   /** Where the files of clips and of the `files` precondition go; a temporary directory by default. */
   readonly workDir?: string;
+  /**
+   * How the vocoder reconfigures after a new weight or rendering priority: how long a command waits before the
+   * vocoder reports it (`queuedMs`), how long it then reconfigures (`reconfiguringMs`), and how long a prefsApply job
+   * waits for it (`waitLimitMs`, 60 s by default).
+   */
+  readonly vocoder?: Partial<{ queuedMs: number; reconfiguringMs: number; waitLimitMs: number }>;
 }
 
 export interface GivenJob extends JobSpec {
@@ -162,6 +168,13 @@ export interface OtcpMock {
   setReferenceFault(fault: 'stalled' | 'timeout' | 'failed' | null): void;
   /** The alignment data of every content is gone, so that a reference analysis has to compute it again. */
   forgetAlignment(): void;
+  /**
+   * `stuck`: a reconfiguration of the vocoder never finishes, so that a prefsApply job passes its wait limit and fails
+   * with MODEL_UNAVAILABLE(vocoder_not_ready); null lets a stuck reconfiguration finish.
+   */
+  setVocoderFault(fault: 'stuck' | null): void;
+  /** OpenTune cannot load these pitch models: prefs.set of one of them (it must be among the options) fails with model_missing. */
+  failF0Model(...models: readonly string[]): void;
   /**
    * The first-run overlay starts, as OpenTune starts it while onboarding is not marked as shown. With
    * `choiceShown` the overlay has shown its choice, which marks onboarding as shown, as OpenTune does.
@@ -220,6 +233,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
 
   const jobs = new JobStore(spec, clock, instanceId.slice(0, 8));
   const world = new World(instanceId, clock);
+  Object.assign(world.vocoderTiming, options.vocoder);
   const files = new WorkFiles(options.workDir);
   const exporter = new ExportService(world, jobs, files, clock);
   const importer = new ImportService(world, jobs, files, clock, spec);
@@ -307,21 +321,15 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       tuningHz: world.prefs.tuningHz,
       editingScheme: world.editingScheme,
       hybridMode: world.prefs.hybridMode,
-      vocoderWeight: null,
-      f0Model: null,
-      renderingPriority: null,
+      vocoderWeight: world.prefs.vocoderWeight,
+      f0Model: world.prefs.f0Model,
+      renderingPriority: world.prefs.renderingPriority,
       backend: null,
-      vocoderReady: false,
-      vocoderReconfiguring: false,
+      vocoderReady: world.vocoder.ready,
+      vocoderReconfiguring: world.vocoder.reconfiguring,
       experimentalFeatures: world.prefs.experimentalFeatures,
-      referenceAlignMode: null,
-      nullReasons: {
-        vocoderWeight: 'unavailable',
-        f0Model: 'unavailable',
-        renderingPriority: 'unavailable',
-        backend: 'unavailable',
-        referenceAlignMode: 'unavailable',
-      },
+      referenceAlignMode: world.prefs.referenceAlignMode,
+      nullReasons: { backend: 'unavailable' },
     },
     language: world.prefs.language,
     capabilities: [...capabilities],
@@ -723,6 +731,14 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     forgetAlignment() {
       for (const content of world.contents.values()) content.alignmentReady = false;
+    },
+    setVocoderFault(fault) {
+      world.vocoderStuck = fault === 'stuck';
+      // A reconfiguration that has begun and was stuck ends once the fault is gone.
+      if (fault === null && world.vocoder.reconfiguring) world.finishVocoder();
+    },
+    failF0Model(...models) {
+      for (const model of models) world.unloadableF0Models.add(model);
     },
     showOnboarding(choiceShown) {
       world.onboardingShowing = true;

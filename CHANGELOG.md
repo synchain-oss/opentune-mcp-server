@@ -62,6 +62,12 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- OTCP specification `1.0.0-rc.6` (unreleased), proposed as the text of 1.0.0: `prefs.set` also changes the vocoder
+  weight, the rendering priority, the pitch model and the reference alignment mode (the first two are applied by the
+  `prefsApply` job, which waits until the vocoder is ready again), `prefs.get` lists the accepted values in
+  `processing.options`, two reasons are appended (`option_unavailable`, `vocoder_not_ready`), and 14 vectors cover the
+  new members and settings that were specified but not shown. The mock follows (test hooks `setVocoderFault` and `failF0Model`); its
+  `vibratoRateHz` change now reports the unit `hz`. The tools are unchanged.
 - OTCP specification `1.0.0-rc.5` (unreleased), proposed as the text of 1.0.0: the methods that need the OpenTune
   editor window answer `UNSUPPORTED(no_editor_window)` (a new reason) while there is none, the `prefsApply` job of `prefs.set`
   checks the busy state again (`BUSY` in its job errors), duplicating a hidden track fails with `track_hidden`,

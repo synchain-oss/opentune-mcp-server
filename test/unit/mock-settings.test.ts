@@ -120,6 +120,299 @@ describe('prefs.set', () => {
   });
 });
 
+interface JobView {
+  state: string;
+  result: Record<string, unknown> | null;
+  error: { data: Record<string, unknown> } | null;
+}
+
+const jobOf = async (session: TestSession, started: Record<string, unknown>): Promise<JobView> =>
+  ((await session.ok('job.get', { jobId: field(started, 'job', 'jobId') })) as { job: JobView }).job;
+
+const vocoderOf = async (session: TestSession) => {
+  const { processing: info } = (await session.ok('session.info')) as {
+    processing: { vocoderReady: boolean; vocoderReconfiguring: boolean };
+  };
+  return { ready: info.vocoderReady, reconfiguring: info.vocoderReconfiguring };
+};
+
+const OPTIONS = { vocoderWeight: ['hifigan.onnx', 'hifigan_coulin9.onnx'], f0Model: ['fcpe', 'rmvpe'] };
+
+describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch model, reference alignment mode', () => {
+  it('lists the values prefs.set accepts in processing.options, which session.info does not report', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    expect(await processing(session)).toMatchObject({
+      vocoderWeight: 'hifigan.onnx',
+      renderingPriority: 'gpuFirst',
+      f0Model: 'fcpe',
+      referenceAlignMode: 'standardAuto',
+      options: {
+        vocoderWeight: ['hifigan.onnx', 'hifigan_coulin9.onnx'],
+        f0Model: ['fcpe'],
+        renderingPriority: ['gpuFirst', 'cpuFirst'],
+        referenceAlignMode: ['standardAuto', 'game'],
+      },
+    });
+    const info = (await ok('session.info')).processing as Record<string, unknown>;
+    expect(info).toMatchObject({ vocoderWeight: 'hifigan.onnx', vocoderReady: true, vocoderReconfiguring: false });
+    expect(info).not.toHaveProperty('options');
+    // A test can describe a different installation.
+    mock.given({ preferences: { options: { vocoderWeight: ['a.onnx'], f0Model: ['fcpe', 'rmvpe'] } } });
+    expect(field(await processing(session), 'options')).toMatchObject({
+      vocoderWeight: ['a.onnx'],
+      f0Model: ['fcpe', 'rmvpe'],
+    });
+  });
+
+  it('lists the changes of a call in the order of the schema, whatever order the members came in', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    mock.given({ clips: [clip()] });
+    const started = await ok('prefs.set', {
+      referenceAlignMode: 'game',
+      renderingPriority: 'cpuFirst',
+      vocoderWeight: 'hifigan_coulin9.onnx',
+      hybridMode: true,
+      tuningHz: 432,
+    });
+    expect(started).toMatchObject({ applied: false, changes: [], job: { kind: 'prefsApply' } });
+    clock.advance(1000);
+    const job = await jobOf(session, started);
+    expect(job.state).toBe('succeeded');
+    const names = ['tuningHz', 'hybridMode', 'vocoderWeight', 'renderingPriority', 'referenceAlignMode'];
+    expect((job.result?.changes as { ref: { preference: string } }[]).map((c) => c.ref.preference)).toEqual(names);
+    expect(job.result?.warnings).toMatchObject([
+      { code: 'GLOBAL_PREFERENCE', data: { preferences: names } },
+      { code: 'NOT_RETROACTIVE', subject: { preference: 'tuningHz' } },
+      { code: 'EXPERIMENTAL_FEATURE', subject: { preference: 'referenceAlignMode' }, data: null },
+    ]);
+    expect(field(job.result, 'undo', 'revert', 'params')).toEqual({
+      tuningHz: 440,
+      hybridMode: false,
+      vocoderWeight: 'hifigan.onnx',
+      renderingPriority: 'gpuFirst',
+      referenceAlignMode: 'standardAuto',
+    });
+  });
+
+  it('queues a render only for a vocoder weight and hybrid mode, not for a rendering priority', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const ids = session.mock.given({ clips: [clip()] });
+    const start = async (params: Record<string, unknown>) => {
+      const started = await session.ok('prefs.set', params);
+      clock.advance(1000);
+      return jobOf(session, started);
+    };
+    const priority = await start({ renderingPriority: 'cpuFirst' });
+    expect(priority.state).toBe('succeeded');
+    expect(priority.result?.sideEffects).toEqual({});
+    const weight = await start({ vocoderWeight: 'hifigan_coulin9.onnx' });
+    expect(field(weight.result, 'sideEffects', 'reRenderQueued', 'contentIds')).toEqual([ids['clip.contentId']]);
+    // The reference alignment mode takes effect at the next AUTO Ref: nothing is rendered.
+    const mode = await session.ok('prefs.set', { referenceAlignMode: 'game' });
+    expect(mode.job).toBeNull();
+    expect(mode.sideEffects).toEqual({});
+  });
+
+  it('applies the pitch model, the reference alignment mode and the experimental features without a job', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ preferences: { options: OPTIONS } });
+    const set = await ok('prefs.set', { f0Model: 'rmvpe', referenceAlignMode: 'game', experimentalFeatures: true });
+    expect(set).toMatchObject({ applied: true, job: null });
+    expect(await processing(session)).toMatchObject({
+      f0Model: 'rmvpe',
+      referenceAlignMode: 'game',
+      experimentalFeatures: true,
+    });
+    await revert(session, set);
+    expect(await processing(session)).toMatchObject({
+      f0Model: 'fcpe',
+      referenceAlignMode: 'standardAuto',
+      experimentalFeatures: false,
+    });
+    // The values it already has: nothing to do, and no job.
+    expect(
+      await ok('prefs.set', { f0Model: 'fcpe', vocoderWeight: 'hifigan.onnx', renderingPriority: 'gpuFirst' }),
+    ).toMatchObject({ noOp: true, job: null, changes: [] });
+  });
+
+  it('refuses a vocoder weight or pitch model the installation does not offer, with nothing changed and no job', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { fails } = session;
+    const before = await processing(session);
+    for (const params of [
+      { vocoderWeight: 'missing.onnx' },
+      { f0Model: 'missing' },
+      { tuningHz: 432, vocoderWeight: 'missing.onnx' },
+    ]) {
+      const error = await fails('prefs.set', params);
+      expect(error).toMatchObject({ code: -32602 });
+      expect(error.data).toMatchObject({
+        kind: 'INVALID_ARGUMENT',
+        reason: 'option_unavailable',
+        retryable: false,
+        executed: false,
+      });
+    }
+    clock.advance(1000);
+    expect(await processing(session)).toEqual(before);
+  });
+
+  it('fails a pitch model OpenTune cannot load with MODEL_UNAVAILABLE(model_missing), with nothing changed', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok, fails } = session;
+    mock.given({ preferences: { options: OPTIONS } });
+    mock.failF0Model('rmvpe');
+    const before = await processing(session);
+    const direct = await fails('prefs.set', { f0Model: 'rmvpe', tuningHz: 432 });
+    expect(direct.data).toMatchObject({ kind: 'MODEL_UNAVAILABLE', reason: 'model_missing', executed: false });
+    expect(await processing(session)).toEqual(before);
+    // Inside a job the pitch model is applied first, so the weight of the same call is not applied either.
+    const started = await ok('prefs.set', { f0Model: 'rmvpe', vocoderWeight: 'hifigan_coulin9.onnx' });
+    clock.advance(1000);
+    const job = await jobOf(session, started);
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ kind: 'MODEL_UNAVAILABLE', reason: 'model_missing', executed: false });
+    expect(await processing(session)).toEqual(before);
+  });
+
+  it('waits until the vocoder is ready again, which it reports for a moment after the command', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { ok } = session;
+    const started = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
+    clock.advance(0);
+    // The change is made, but the command is still queued: the vocoder reports ready and not reconfiguring, and the
+    // job must not take that for done.
+    expect(await processing(session)).toMatchObject({ vocoderWeight: 'hifigan_coulin9.onnx' });
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+    clock.advance(4);
+    expect((await jobOf(session, started)).state).toBe('running');
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+    clock.advance(1);
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    clock.advance(9);
+    expect((await jobOf(session, started)).state).toBe('running');
+    clock.advance(1);
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+    expect(await jobOf(session, started)).toMatchObject({ state: 'succeeded', result: { applied: true } });
+  });
+
+  it('does not wait for a vocoder that was not ready, nor for a scheme change alone', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    // A reconfiguration that never finishes leaves the vocoder not ready.
+    mock.setVocoderFault('stuck');
+    const stuck = await ok('prefs.set', { renderingPriority: 'cpuFirst' });
+    clock.advance(20);
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    // The next job commits and ends at once: there is no ready vocoder to wait for.
+    const next = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
+    clock.advance(0);
+    expect(await jobOf(session, next)).toMatchObject({ state: 'succeeded', result: { applied: true } });
+    expect(await processing(session)).toMatchObject({
+      renderingPriority: 'cpuFirst',
+      vocoderWeight: 'hifigan_coulin9.onnx',
+    });
+    // Once the fault is gone, the first job sees the vocoder ready and ends too.
+    mock.setVocoderFault(null);
+    clock.advance(10);
+    expect((await jobOf(session, stuck)).state).toBe('succeeded');
+    // A scheme change alone reconfigures nothing.
+    const scheme = await ok('prefs.set', { editingScheme: 'openDyne' });
+    clock.advance(0);
+    expect((await jobOf(session, scheme)).state).toBe('succeeded');
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+  });
+
+  it('fails with MODEL_UNAVAILABLE(vocoder_not_ready) when the vocoder stays busy past the wait limit, and takes the call back', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock, vocoder: { waitLimitMs: 1000 } });
+    const { mock, ok } = session;
+    mock.setVocoderFault('stuck');
+    const before = await processing(session);
+    const started = await ok('prefs.set', {
+      vocoderWeight: 'hifigan_coulin9.onnx',
+      renderingPriority: 'cpuFirst',
+      tuningHz: 442,
+    });
+    clock.advance(999);
+    expect((await jobOf(session, started)).state).toBe('running');
+    // The changes are in place while the job waits.
+    expect(await processing(session)).toMatchObject({ vocoderWeight: 'hifigan_coulin9.onnx', tuningHz: 442 });
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    clock.advance(1);
+    const job = await jobOf(session, started);
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({
+      kind: 'MODEL_UNAVAILABLE',
+      reason: 'vocoder_not_ready',
+      retryable: true,
+      executed: false,
+    });
+    expect(await processing(session)).toEqual(before);
+    // The vocoder is released once the fault is gone, and a new request waits again from the start.
+    mock.setVocoderFault(null);
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+    const again = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
+    clock.advance(1000);
+    expect((await jobOf(session, again)).state).toBe('succeeded');
+  });
+
+  it('reports executed true when another write changed a preference of the call while the job waited', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock, vocoder: { waitLimitMs: 1000 } });
+    const { mock, ok } = session;
+    mock.setVocoderFault('stuck');
+    const started = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx', tuningHz: 442 });
+    clock.advance(500);
+    await ok('prefs.set', { tuningHz: 450 });
+    clock.advance(500);
+    const job = await jobOf(session, started);
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ reason: 'vocoder_not_ready', executed: true });
+    expect(String(job.error?.data.detail)).toContain('tuningHz');
+    // The weight went back; the tuning keeps the other write's value.
+    expect(await processing(session)).toMatchObject({ vocoderWeight: 'hifigan.onnx', tuningHz: 450 });
+  });
+
+  it('is refused while a dialog is open, for the new members too', async () => {
+    const session = await sessions.open();
+    session.mock.given({ dialogs: [{ kind: 'preferences' }] });
+    for (const params of [
+      { vocoderWeight: 'hifigan_coulin9.onnx' },
+      { renderingPriority: 'cpuFirst' },
+      { f0Model: 'fcpe' },
+      { referenceAlignMode: 'game' },
+    ]) {
+      expect((await session.fails('prefs.set', params)).data).toMatchObject({ reason: 'modal_open' });
+    }
+  });
+
+  it('fails the job with BUSY when a dialog opened after the call, for a vocoder weight and a rendering priority too', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    const before = await processing(session);
+    const started = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx', renderingPriority: 'cpuFirst' });
+    mock.setBusy({ modalOpen: true });
+    clock.advance(1000);
+    const job = await jobOf(session, started);
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({ kind: 'BUSY', reason: 'modal_open', executed: false });
+    mock.setBusy({ modalOpen: false });
+    expect(await processing(session)).toEqual(before);
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+  });
+});
+
 describe('audio.get and audio.set', () => {
   it('reports no device, opens one with the setup asked for, and its revert recipe restores the previous setup', async () => {
     const session = await sessions.open();
@@ -175,6 +468,56 @@ describe('audio.get and audio.set', () => {
       executed: false,
     });
     expect(await ok('audio.get')).toEqual(before);
+  });
+
+  it('offers two device types; another type opens its own default output device, and the revert recipe names both', async () => {
+    const session = await sessions.open();
+    const { mock, ok, fails } = session;
+    mock.given({ audio: { running: true } });
+    const running = await ok('audio.get');
+    expect(running.available).toMatchObject({
+      deviceTypes: ['Mock Audio', 'Mock Audio 2'],
+      outputDevices: ['Mock Output', 'Mock Output 2'],
+      outputChannelPairCount: 1,
+    });
+    // An output device of the other type is not offered while the current type runs, and vice versa.
+    expect((await fails('audio.set', { outputDevice: 'Mock B Output' })).data).toMatchObject({
+      reason: 'audio_setting_unavailable',
+    });
+    await ok('audio.set', { outputDevice: 'Mock Output 2' });
+    const switched = await ok('audio.set', { deviceType: 'Mock Audio 2' });
+    expect(switched.device).toMatchObject({ deviceType: 'Mock Audio 2', outputDevice: 'Mock B Output' });
+    expect(switched.changes).toMatchObject([
+      {
+        fields: {
+          deviceType: { before: 'Mock Audio', after: 'Mock Audio 2' },
+          outputDevice: { before: 'Mock Output 2', after: 'Mock B Output' },
+        },
+      },
+    ]);
+    expect((await ok('audio.get')).available).toMatchObject({ outputDevices: ['Mock B Output'] });
+    expect((await fails('audio.set', { outputDevice: 'Mock Output' })).data).toMatchObject({
+      reason: 'audio_setting_unavailable',
+    });
+    // Naming a device of the new type in the same call is checked against that type.
+    await revert(session, switched);
+    expect((await ok('audio.get')).device).toMatchObject({ deviceType: 'Mock Audio', outputDevice: 'Mock Output 2' });
+    const both = await ok('audio.set', { deviceType: 'Mock Audio 2', outputDevice: 'Mock B Output' });
+    expect(both.device).toMatchObject({ deviceType: 'Mock Audio 2', outputDevice: 'Mock B Output' });
+    expect((await fails('audio.set', { deviceType: 'Mock Audio 2', outputDevice: 'Mock Output' })).data).toMatchObject({
+      reason: 'audio_setting_unavailable',
+    });
+  });
+
+  it('offers one output channel pair only: pair 0 is the current setup, any other is refused', async () => {
+    const session = await sessions.open();
+    const { mock, ok, fails } = session;
+    mock.given({ audio: { running: true } });
+    expect(await ok('audio.set', { outputChannelPair: 0 })).toMatchObject({ noOp: true, changes: [] });
+    expect((await fails('audio.set', { outputChannelPair: 1 })).data).toMatchObject({
+      reason: 'audio_setting_unavailable',
+      executed: false,
+    });
   });
 
   it('lets playback start without the no-device warning once a device runs', async () => {
