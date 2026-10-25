@@ -5,7 +5,9 @@
 // arrangement or track write reports is what the instance then holds, and that the write changed the
 // exported master mix exactly as it says and nothing else. It does not judge how the audio sounds.
 //
-// Four checks, each against a baseline master export of the same two clips:
+// Checks, each against a baseline master export of the same two clips (clip A at 0 to 2.4 s on track
+// 0, clip B at 3.6 to 5.6 s on track 1). Every check puts the project back and the export after it
+// must equal the baseline bit for bit:
 //
 // - Clip gain. `arrangement.edit` op setGain takes clip A to its gain - 6 dB; the RMS level over
 //   clip A's region falls by 6 dB (GAIN_TOLERANCE_DB) and clip B's region is bit-identical. The
@@ -22,12 +24,42 @@
 //   remaining clip is bit-identical. Each call returns a revert recipe, which is sent exactly as
 //   given; the old mute/solo values must be read back and the master must equal the baseline again.
 //   A revert that does not restore stops the checks after it.
-// - Split boundary. Last, because a split cannot be undone (upstream_undo_defect). op split cuts
+// - Move. op move takes clip B MOVE_DELTA_SEC later; the envelope cross-correlation of the old clip B
+//   region against the new one reads that shift within MOVE_SHIFT_TOLERANCE_SEC, the old place is
+//   silent and the new place holds the baseline's clip B samples (SHIFTED_MAX_ABS_DIFF), at a start
+//   within POSITION_QUANTUM_SAMPLES of the named one. Undo as above.
+// - Trim. op trim cuts TRIM_CUT_SEC off the end of clip A; the master is silent after the new end and
+//   bit-identical before it. Undo as above.
+// - Copy, window and full. `arrangement.copy` puts a copy of clip A COPY_GAP_SEC after the end of the
+//   baseline on the same track. The copy sounds as clip A does (SHIFTED_MAX_ABS_DIFF) and the rest is
+//   the baseline; the result's created entries are compared with `project.get`. The revert recipe
+//   (a delete) is sent with the consent the scenario gives for what it made itself.
+// - Delete a copy. A copy the scenario made is deleted with op delete: refused without `confirm`,
+//   accepted with it; the master equals the baseline again. The original clip is never deleted.
+// - Track volume. `track.set` volumeDb -6 and volumeLinear 0.5 lower the level over the track's clip
+//   by 6.02 dB within TRACK_VOLUME_TOLERANCE_DB and leave the other clip bit-identical. The revert
+//   recipe restores the volume.
+// - Duplicate track, clone and share. `track.duplicate` copies the track of clip A to a hidden slot;
+//   the two tracks play the same samples, so the master over clip A is the sum of two equal signals
+//   (+6 dB, COHERENT_SUM_TOLERANCE_DB and COHERENT_SUM_MAX_ABS_DIFF). A shared copy keeps the notes
+//   of the source and the source's content stays as it was. The revert recipe (a track delete) is
+//   sent with the scenario's consent; the track list and the master must equal what they were.
+// - Delete a duplicated track. `track.delete` with `confirm` (not through the revert recipe) removes
+//   the duplicate a step made; `trackIdMap` must agree with the following `project.get`.
+// - Split boundary. A split cannot be undone (upstream_undo_defect). op split cuts
 //   clip A inside a voiced note. The result's created / removed / idMap entries are compared with a
 //   fresh `project.get`, and the whole master must stay bit-identical to the baseline (same length);
 //   if not, the report holds the largest difference, its time and its distance from the split. The
 //   returned revert recipe (a merge) is sent as given; its export must equal the baseline again. A
 //   refused merge is reported, not failed.
+// - Batch import, last. `import.start` with layout sequential puts two clips on one track, the second
+//   where the first ends (the project's positions and the onsets in the master agree within
+//   ONSET_TOLERANCE_SEC, and the master equals the baseline plus the sources, IMPORT_MAX_ABS_DIFF);
+//   separateTracks puts both at 0 on two tracks and the master is their sum. It runs last because an
+//   import shows hidden track slots and nothing hides them again, so these two cases compare the
+//   project without the track visibility flag. The specification gives an import a revert recipe
+//   (a delete) when the instance reports arrangement.v1; a result without one fails the check, and
+//   the scenario then deletes the clips with a call it builds itself and goes on measuring.
 //
 // The audio is generated (test/support/harmonic-tone.ts): two clips on two tracks that do not overlap
 // in time, at different pitches. Only generated audio is used; no file name or path reaches the
@@ -37,18 +69,20 @@
 // Steps and their results follow the smoke scenario (test/e2e/smoke.ts): PASS, FAIL, SKIP (a
 // capability the check needs is not reported) and FLAKY-SKIP (only an inference backend that cannot
 // be initialised). A failed set-up step stops the scenario; a failed check does not stop the checks
-// after it unless a track revert could not restore the state, or a write took effect without a usable
-// undoId. The requirement checks export the master mix only; a clip or track export is not used.
+// after it unless a revert could not restore the state, or a write took effect without a usable
+// undo or revert. The requirement checks export the master mix only; a clip or track export is not used.
 
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 
 import { parseDiscoveryFile } from '../../src/discovery/file.js';
+import { OtcpError } from '../../src/errors/tool-error.js';
 import { OtcpSession, type HelloInfo, type Json } from '../../src/otcp/client.js';
 import { checkDataTemplate, exeConfigFromEnv, exeTarget, type ExeTargetOptions } from '../contract/exe-target.js';
 import type { TargetInstance } from '../contract/target.js';
 import { generateTone, writeToneFiles, type Tone, type ToneFiles } from '../support/harmonic-tone.js';
+import { SHIFT_ERROR_SEC, estimateShift } from '../support/time-shift.js';
 import { decodeWav, type DecodedWav } from '../support/wav-decode.js';
 import { compareSamples, peakOf, round, same, scrubText, waitForAnalysis } from './effects.js';
 import {
@@ -146,6 +180,123 @@ export const SPLIT_OFFSET_SEC = 0.003;
 
 /** A voiced note must be at least this long to hold a split with room at both ends. */
 const MIN_SPLIT_NOTE_SEC = 0.2;
+
+/**
+ * How far op move takes clip B later, in seconds. It is 25 times the 20 ms the envelope estimator
+ * resolves comfortably, so a move that did nothing or a tenth of the distance cannot pass; it is
+ * shorter than clip B (2 s), so the old and the new position overlap and both an old-only and a
+ * new-only part of the master exist; and 22 050 samples at 44.1 kHz, a whole number of samples.
+ */
+export const MOVE_DELTA_SEC = 0.5;
+
+/**
+ * How far the measured shift of clip B may lie from MOVE_DELTA_SEC. A clip is moved as it is, so the
+ * envelope of the moved clip is that of the original; the estimator is within SHIFT_ERROR_SEC
+ * (0.04 ms for the same waveform, 1 ms at most for another phase) and this is that bound.
+ */
+export const MOVE_SHIFT_TOLERANCE_SEC = SHIFT_ERROR_SEC;
+
+/**
+ * How much of the end of clip A the trim check cuts off: 1 s of its 2.4 s. The cut part holds the
+ * sustained note (RMS 0.23), so a trim that is not rendered leaves a level 100 times the noise floor.
+ */
+export const TRIM_CUT_SEC = 1;
+
+/**
+ * The copy checks put their copy this long after the end of the baseline master, on the track of
+ * the source, so the target is empty on that track and on every other and no copy overlaps a clip
+ * (no OVERLAPS_CLIP or STACKED_ON_SOURCE warning is expected).
+ */
+export const COPY_GAP_SEC = 0.4;
+
+/**
+ * How many samples a clip may start before or after the sample that its start in seconds names.
+ * OpenTune turns a position in seconds into a whole sample by truncating: a clip moved to 4.1 s
+ * sounds from sample 180809, not 180810, because 4.1 * 44100 is 180809.99999999997 in floating point.
+ * The specification does not say which way a position is rounded, and one sample is 23 microseconds,
+ * so the checks accept a start within one sample of the named one, in either direction; a clip two
+ * samples away, or a clip that is not the source, still fails.
+ */
+export const POSITION_QUANTUM_SAMPLES = 1;
+
+/**
+ * The largest sample difference allowed between a moved or copied clip in the master and its source
+ * in the baseline (full scale 1.0), at the best start within POSITION_QUANTUM_SAMPLES. The dry audio
+ * of a content is copied into the master, so the clip equals its source sample for sample and none is
+ * expected: the same rule as the regions the other checks hold bit-identical, and far below what a
+ * shift of two samples (about 0.1 for these tones) or a gain of 1 % (5e-3) leaves.
+ */
+export const SHIFTED_MAX_ABS_DIFF = 0;
+
+/** The track volume the volume check asks for with volumeDb. */
+export const TRACK_VOLUME_DB = -6;
+
+/** The volume the second case asks for with volumeLinear. */
+export const TRACK_VOLUME_LINEAR = 0.5;
+
+/** What volumeLinear 0.5 is in dB: 20 * log10(0.5) = -6.02 dB. */
+export const TRACK_VOLUME_LINEAR_DB = 20 * Math.log10(TRACK_VOLUME_LINEAR);
+
+/**
+ * How far the measured level change of a track volume may lie from the expected one: a volume is a
+ * multiplication of samples, so the level change is exact up to how the master sums the track with
+ * the others (nothing else sounds there); 0.5 dB is the bound of the clip gain check and separates
+ * the 6 dB of the check from no change (0 dB) or a wrong half of it (3 dB).
+ */
+export const TRACK_VOLUME_TOLERANCE_DB = 0.5;
+
+/** The level of two identical, coherent signals added: 20 * log10(2). */
+export const COHERENT_SUM_DB = 20 * Math.log10(2);
+
+/**
+ * How far the level over a duplicated track's clip may lie from COHERENT_SUM_DB. The exact check
+ * below is stricter; this bound only keeps the reported level honest, with the 0.5 dB of the other
+ * level checks.
+ */
+export const COHERENT_SUM_TOLERANCE_DB = 0.5;
+
+/**
+ * The largest difference allowed between the master over a duplicated track's clip and twice the
+ * baseline there (full scale 1.0). The copy has the same samples, so the sum is an exact doubling up
+ * to float32 rounding; 1e-6 is about 30 times the rounding at the tone's level (peak 0.5) and 100
+ * times below the generator's noise floor (1e-4), so a copy that is off by one sample or by a gain
+ * of 1 % (5e-3) cannot pass.
+ */
+export const COHERENT_SUM_MAX_ABS_DIFF = 1e-6;
+
+/**
+ * Where the sequential import starts, in seconds: past the end of every clip the scenario holds
+ * (the longest is a copy that ends at 8.4 s), so the two imported clips sound alone and their
+ * onsets can be measured in the master.
+ */
+export const IMPORT_START_SEC = 10;
+
+/**
+ * An onset is the first window of ONSET_WINDOW_SEC (2 ms, a few periods of the lowest generated note)
+ * whose RMS reaches ONSET_LEVEL (0.02, 8 % of the generated tone's RMS of about 0.25, 200 times its
+ * noise floor). The generated tone fades in over 10 ms, so the onset lies about 1 ms after the clip
+ * start; the expected onset of an imported clip is the same measure on its source, scaled by the
+ * mixer gain and placed where the project says the clip starts.
+ */
+export const ONSET_WINDOW_SEC = 0.002;
+export const ONSET_LEVEL = 0.02;
+
+/**
+ * How far an onset in the master may lie from the onset of the clip's source placed where
+ * `project.get` says: a clip is placed on a whole sample (23 microseconds), so 1 ms allows for the
+ * position being rounded to a frame of the renderer and still catches a clip that is a 10 ms
+ * analysis frame or more out of place.
+ */
+export const ONSET_TOLERANCE_SEC = 0.001;
+
+/**
+ * The largest difference allowed between the master after an import and the baseline plus the
+ * imported sources, placed where `project.get` says and scaled by the gain the baseline shows for
+ * its own sources (full scale 1.0). Dry audio is copied into the mix, so the sum is exact up to
+ * float32 rounding: the same bound as COHERENT_SUM_MAX_ABS_DIFF, and a clip a sample out of place
+ * cannot pass.
+ */
+export const IMPORT_MAX_ABS_DIFF = 1e-6;
 
 const DEFAULT_STEP_TIMEOUT_MS = 180_000;
 const BASE_CAPABILITIES = ['session.v1', 'jobs.v1', 'read.v1', 'import.v1', 'export.v1'] as const;
@@ -283,12 +434,18 @@ export interface PlacementRead {
   readonly geometryHash: string;
 }
 
-/** One track of the project, as far as the checks read it. */
+/** One track slot of the project, as far as the checks read it. */
 export interface TrackRead {
   readonly trackId: number;
+  /** Whether the slot is shown; a hidden slot is where track.duplicate and a clip moved onto it reveal a track. */
+  readonly visible: boolean;
   readonly muted: boolean;
   readonly solo: boolean;
   readonly audible: boolean;
+  /** The volume in dB; null for a volume of 0 (minus infinity dB). */
+  readonly volumeDb: number | null;
+  readonly volumeLinear: number;
+  readonly colour: string;
 }
 
 /** What the scenario reads of the project after a write. */
@@ -340,9 +497,13 @@ function parsePlacement(value: unknown): PlacementRead {
 function parseTrack(value: unknown): TrackRead {
   return {
     trackId: num(value, 'trackId', 'a track'),
+    visible: booleanField(value, 'visible', 'a track'),
     muted: booleanField(value, 'muted', 'a track'),
     solo: booleanField(value, 'solo', 'a track'),
     audible: booleanField(value, 'audible', 'a track'),
+    volumeDb: nullableNumber(value, 'volumeDb', 'a track'),
+    volumeLinear: num(value, 'volumeLinear', 'a track'),
+    colour: text(value, 'colour', 'a track'),
   };
 }
 
@@ -509,7 +670,15 @@ export function writeConsistency(result: Json, state: ProjectState): WriteConsis
       if (track === undefined) {
         problems.push(`track ${String(trackId)} of the changes is not there afterwards`);
       } else {
-        readBack = { muted: track.muted, solo: track.solo, audible: track.audible };
+        readBack = {
+          visible: track.visible,
+          muted: track.muted,
+          solo: track.solo,
+          audible: track.audible,
+          volumeDb: track.volumeDb,
+          volumeLinear: track.volumeLinear,
+          colour: track.colour,
+        };
       }
     } else if (entity === 'content') {
       const contentId = text(ref, 'contentId', 'a content reference');
@@ -541,8 +710,26 @@ export function writeConsistency(result: Json, state: ProjectState): WriteConsis
   return { problems, unreadFields: [...unread].sort() };
 }
 
-/** Problems between two snapshots of the project: placements, their fields, tracks and contents. */
-export function projectSnapshotProblems(before: ProjectState, after: ProjectState): string[] {
+/** What a comparison of two project snapshots leaves out. */
+export interface SnapshotOptions {
+  /**
+   * Which track slots are shown. A batch import fills the tracks it needs and shows them; deleting
+   * its clips does not hide them again, so the import checks do not compare this.
+   */
+  readonly ignoreTrackVisibility?: boolean;
+}
+
+/**
+ * Problems between two snapshots of the project: placements, their fields, tracks and contents. A
+ * track slot that was shown before the step is compared with its mute, solo, volume and colour; one
+ * that was hidden only with whether it is shown again, because OpenTune resets a slot that stops
+ * being shown.
+ */
+export function projectSnapshotProblems(
+  before: ProjectState,
+  after: ProjectState,
+  options: SnapshotOptions = {},
+): string[] {
   const problems: string[] = [];
   const beforeIds = before.placements.map((p) => p.placementId).sort();
   const afterIds = after.placements.map((p) => p.placementId).sort();
@@ -581,8 +768,11 @@ export function projectSnapshotProblems(before: ProjectState, after: ProjectStat
       problems.push(`track ${String(track.trackId)} is gone`);
       continue;
     }
-    for (const name of ['muted', 'solo', 'audible'] as const) {
-      if (track[name] !== read[name]) {
+    const names: ('visible' | 'muted' | 'solo' | 'audible' | 'volumeDb' | 'volumeLinear' | 'colour')[] = [];
+    if (options.ignoreTrackVisibility !== true) names.push('visible');
+    if (track.visible) names.push('muted', 'solo', 'audible', 'volumeDb', 'volumeLinear', 'colour');
+    for (const name of names) {
+      if (!same(track[name], read[name])) {
         problems.push(
           `track ${String(track.trackId)} ${name}: ${String(track[name])} before, ${String(read[name])} after`,
         );
@@ -917,6 +1107,174 @@ export function silenceOf(wav: DecodedWav, span: Span): Silence {
   return { maxAbs, nonZeroSamples, samples };
 }
 
+/**
+ * The largest |wet[to + n] - factor * base[from + n]| over the samples n of `source`, every channel,
+ * where `to` is `targetStartSec` plus `lagSamples` samples: how well the master over a moved or
+ * copied clip equals the source's part of the baseline (factor 1), or the sum of the source and an
+ * identical copy (factor 2). A sample beyond the end of a file counts as 0, so a master that stops
+ * early differs.
+ */
+export function shiftedDifference(
+  base: DecodedWav,
+  wet: DecodedWav,
+  source: Span,
+  targetStartSec: number,
+  factor = 1,
+  lagSamples = 0,
+): number {
+  const rate = base.sampleRateHz;
+  const from = Math.round(source.startSec * rate);
+  const count = Math.max(0, Math.round((source.endSec - source.startSec) * rate));
+  const to = Math.round(targetStartSec * rate) + lagSamples;
+  let largest = 0;
+  for (let c = 0; c < Math.max(base.channels.length, wet.channels.length); c++) {
+    const a = base.channels[c];
+    const b = wet.channels[c];
+    for (let n = 0; n < count; n++) {
+      largest = Math.max(largest, Math.abs((b?.[to + n] ?? 0) - factor * (a?.[from + n] ?? 0)));
+    }
+  }
+  return largest;
+}
+
+/**
+ * shiftedDifference at the best start within POSITION_QUANTUM_SAMPLES of the one named, with that
+ * start as samples early (negative) or late (positive) of the named sample; the start nearest to the
+ * named one wins a tie.
+ */
+export function placedDifference(
+  base: DecodedWav,
+  wet: DecodedWav,
+  source: Span,
+  targetStartSec: number,
+  factor = 1,
+): { readonly maxAbsDiff: number; readonly lagSamples: number } {
+  let best = { maxAbsDiff: Number.POSITIVE_INFINITY, lagSamples: 0 };
+  for (let lag = -POSITION_QUANTUM_SAMPLES; lag <= POSITION_QUANTUM_SAMPLES; lag++) {
+    const maxAbsDiff = shiftedDifference(base, wet, source, targetStartSec, factor, lag);
+    if (maxAbsDiff < best.maxAbsDiff || (maxAbsDiff === best.maxAbsDiff && Math.abs(lag) < Math.abs(best.lagSamples))) {
+      best = { maxAbsDiff, lagSamples: lag };
+    }
+  }
+  return best;
+}
+
+/** An audio file placed on the timeline: its samples and where its first sample plays. */
+export interface PlacedSource {
+  readonly samples: Float64Array;
+  readonly startSec: number;
+}
+
+/**
+ * The gain g with the smallest error of wet = g * source over the length of `source`, wet read from
+ * `wetFromSec` on (least squares). It is the factor the mixer applies to a mono source, such as the
+ * pan law, and it needs no model of the mixer: the scenario reads it off a clip it knows.
+ */
+export function fitGain(source: Float64Array, wet: Float64Array, wetFromSec: number, rate: number): number {
+  const from = Math.round(wetFromSec * rate);
+  let cross = 0;
+  let energy = 0;
+  for (let i = 0; i < source.length; i++) {
+    const x = source[i] ?? 0;
+    cross += x * (wet[from + i] ?? 0);
+    energy += x * x;
+  }
+  return energy > 0 ? cross / energy : 0;
+}
+
+/**
+ * The largest |wet[from + n] - gain * source[n]| over the samples n of `source`, wet read from
+ * `wetFromSec` on: how well a clip of the master is a scaled copy of its source.
+ */
+export function fitError(
+  source: Float64Array,
+  wet: Float64Array,
+  wetFromSec: number,
+  gain: number,
+  rate: number,
+): number {
+  const from = Math.round(wetFromSec * rate);
+  let largest = 0;
+  for (let i = 0; i < source.length; i++) {
+    largest = Math.max(largest, Math.abs((wet[from + i] ?? 0) - gain * (source[i] ?? 0)));
+  }
+  return largest;
+}
+
+/**
+ * The largest |wet - (base + gain * the sum of the placed sources)| over `span`, on the mean of the
+ * channels, and where it is. It is how well the master after an import equals the baseline with the
+ * imported audio added where the project says the clips are.
+ */
+export function sumDifference(
+  base: DecodedWav,
+  wet: DecodedWav,
+  placed: readonly PlacedSource[],
+  gain: number,
+  span: Span,
+  lagSamples: readonly number[] = [],
+): { readonly maxAbsDiff: number; readonly timeSec: number | null } {
+  const rate = base.sampleRateHz;
+  const from = Math.max(0, Math.round(span.startSec * rate));
+  const to = Math.round(span.endSec * rate);
+  const starts = placed.map((p, k) => Math.round(p.startSec * rate) + (lagSamples[k] ?? 0));
+  let maxAbsDiff = 0;
+  let at: number | null = null;
+  for (let i = from; i < to; i++) {
+    let expected = base.mono[i] ?? 0;
+    for (const [k, p] of placed.entries()) expected += gain * (p.samples[i - (starts[k] ?? 0)] ?? 0);
+    const d = Math.abs((wet.mono[i] ?? 0) - expected);
+    if (d > maxAbsDiff) {
+      maxAbsDiff = d;
+      at = i;
+    }
+  }
+  return { maxAbsDiff, timeSec: at === null ? null : round(at / rate, 6) };
+}
+
+/**
+ * sumDifference with the start of every source at the best of the samples within
+ * POSITION_QUANTUM_SAMPLES of the named one (each source on its own), and those starts.
+ */
+export function bestSumDifference(
+  base: DecodedWav,
+  wet: DecodedWav,
+  placed: readonly PlacedSource[],
+  gain: number,
+  span: Span,
+): { readonly maxAbsDiff: number; readonly timeSec: number | null; readonly lagSamples: readonly number[] } {
+  const lags: number[] = [];
+  for (let lag = -POSITION_QUANTUM_SAMPLES; lag <= POSITION_QUANTUM_SAMPLES; lag++) lags.push(lag);
+  const combinations = (n: number): number[][] =>
+    n === 0 ? [[]] : combinations(n - 1).flatMap((rest) => lags.map((lag) => [...rest, lag]));
+  let best:
+    | { readonly maxAbsDiff: number; readonly timeSec: number | null; readonly lagSamples: readonly number[] }
+    | undefined;
+  for (const combination of combinations(placed.length)) {
+    const found = sumDifference(base, wet, placed, gain, span, combination);
+    if (best === undefined || found.maxAbsDiff < best.maxAbsDiff) best = { ...found, lagSamples: combination };
+  }
+  return best ?? { maxAbsDiff: 0, timeSec: null, lagSamples: [] };
+}
+
+/**
+ * The first time in [fromSec, toSec) at which a window of ONSET_WINDOW_SEC has an RMS of at least
+ * `level` (on the mean of the channels), the window's start; null when none does.
+ */
+export function onsetOf(wav: DecodedWav, fromSec: number, toSec: number, level: number): number | null {
+  const rate = wav.sampleRateHz;
+  const window = Math.max(1, Math.round(ONSET_WINDOW_SEC * rate));
+  const from = Math.max(0, Math.round(fromSec * rate));
+  const to = Math.min(wav.mono.length, Math.round(toSec * rate));
+  let sum = 0;
+  for (let i = from; i < Math.min(to, from + window); i++) sum += (wav.mono[i] ?? 0) ** 2;
+  for (let i = from; i + window <= to; i++) {
+    if (Math.sqrt(Math.max(0, sum) / window) >= level) return i / rate;
+    sum += (wav.mono[i + window] ?? 0) ** 2 - (wav.mono[i] ?? 0) ** 2;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------------------------------------
 // reading notes
 
@@ -993,8 +1351,28 @@ interface CheckFrame {
   readonly before: ProjectState;
   /** The undoId of the write that took effect, recorded before anything else is read from its result. */
   undoId: string | undefined;
+  /**
+   * The revert recipe of a write that cannot be undone but can be reverted (a copy, a duplicated
+   * track, an import), recorded like the undoId. The check clears it once it has taken the write back
+   * itself (an explicit delete).
+   */
+  revert: Revert | undefined;
+  /** What the comparison of the project after the restore leaves out. */
+  readonly snapshot: SnapshotOptions;
+  /**
+   * A check of what the restore must have left alone (the notes of a shared content), run once the
+   * project is back; it returns its problems.
+   */
+  afterRestore: (() => Promise<readonly string[]>) | undefined;
   /** The fields its results reported that the scenario does not read back. */
   readonly unread: Set<string>;
+}
+
+/** What the work of a check hands back: the note of a pass, its problems and its report. */
+interface Outcome {
+  readonly note: string;
+  readonly problems: readonly string[];
+  readonly report: Record<string, unknown>;
 }
 
 /** The message of anything that ended a step, without letting an object stringify as `[object Object]`. */
@@ -1032,6 +1410,409 @@ export function revertOf(
   const params = isObject(revert.params) ? revert.params : undefined;
   if (method === undefined || params === undefined) return undefined;
   return { method, params, requiresConsent: revert.requiresConsent === true };
+}
+
+/** Whether a write result's changes report one of the fields `names` for the clip `placementId`. */
+export function changesPlacementField(result: Json, placementId: string, names: readonly string[]): boolean {
+  if (!Array.isArray(result.changes)) return false;
+  return (result.changes as unknown[]).some(
+    (change) =>
+      isObject(change) &&
+      change.entity === 'placement' &&
+      isObject(change.ref) &&
+      change.ref.placementId === placementId &&
+      isObject(change.fields) &&
+      names.some((name) => isObject(change.fields) && Object.hasOwn(change.fields, name)),
+  );
+}
+
+/**
+ * How well the master over `span` is the sum of two identical signals: the largest difference from
+ * twice the baseline there, the level change, and the problems when either is out of its bound.
+ */
+export function coherentSumOf(
+  base: DecodedWav,
+  wet: DecodedWav,
+  span: Span,
+): { readonly maxAbsDiff: number; readonly levelDb: number | null; readonly problems: string[] } {
+  const maxAbsDiff = shiftedDifference(base, wet, span, span.startSec, 2);
+  const levelDb = levelDifferenceDb(base, wet, span);
+  const problems: string[] = [];
+  if (maxAbsDiff > COHERENT_SUM_MAX_ABS_DIFF) {
+    problems.push(`the master over clip A differs from twice the baseline by up to ${maxAbsDiff.toExponential(2)}`);
+  }
+  if (levelDb === null || Math.abs(levelDb - COHERENT_SUM_DB) > COHERENT_SUM_TOLERANCE_DB) {
+    problems.push(
+      `the level over clip A changed by ${levelDb === null ? 'an unmeasurable amount' : `${String(round(levelDb))} dB`}, ` +
+        `expected ${String(round(COHERENT_SUM_DB, 2))} +- ${String(COHERENT_SUM_TOLERANCE_DB)} dB`,
+    );
+  }
+  return { maxAbsDiff, levelDb, problems };
+}
+
+/** A revert recipe as `revertOf` reads it. */
+export type Revert = NonNullable<ReturnType<typeof revertOf>>;
+
+/**
+ * The methods whose revert recipe asks for the end user's consent (PROTOCOL.md section 15.2 rule 4)
+ * and that the scenario sends anyway. The scenario made every clip and track such a recipe deletes (a
+ * copy, a duplicated track, the clips of an import), so it plays the end user for these and adds
+ * `confirm` itself, as the tour of the contract does.
+ */
+const CONSENT_METHODS: ReadonlySet<string> = new Set(['arrangement.edit', 'track.delete']);
+
+/**
+ * The params to send for a revert recipe: as given, plus `confirm: true` for a recipe that asks for
+ * consent; undefined for a recipe that asks for consent for a method the scenario made no object of.
+ * A recipe that carries a consent member itself is a problem (rule 4), added to `problems`.
+ */
+export function revertRequest(revert: Revert, problems: string[] = []): Json | undefined {
+  if (Object.hasOwn(revert.params, 'confirm')) {
+    problems.push(`the revert recipe of ${revert.method} carries confirm, which only the end user may give`);
+  }
+  if (!revert.requiresConsent) return revert.params;
+  return CONSENT_METHODS.has(revert.method) ? { ...revert.params, confirm: true } : undefined;
+}
+
+/** The codes of the warnings of a write result. */
+export function warningCodes(result: Json): string[] {
+  const list = result.warnings;
+  if (!Array.isArray(list)) return [];
+  return (list as unknown[]).flatMap((warning) =>
+    isObject(warning) && typeof warning.code === 'string' ? [warning.code] : [],
+  );
+}
+
+/** The placementIds (or contentIds) of the entries of one list of a write result (`created`, `removed`). */
+export function entityIds(result: Json, list: 'created' | 'removed', entity: 'placement' | 'content'): string[] {
+  const entries = result[list];
+  if (!Array.isArray(entries)) return [];
+  const key = entity === 'placement' ? 'placementId' : 'contentId';
+  return (entries as unknown[]).flatMap((raw) => {
+    if (!isObject(raw) || raw.entity !== entity || !isObject(raw.ref)) return [];
+    const id = raw.ref[key];
+    return typeof id === 'string' ? [id] : [];
+  });
+}
+
+/** The placements an idMap of the relation `copy` relates: the source's id and the copy's. */
+export function copyPairs(result: Json): { readonly from: string; readonly to: string }[] {
+  const maps = Array.isArray(result.idMap) ? (result.idMap as unknown[]) : [];
+  const idsOf = (list: unknown): string[] =>
+    Array.isArray(list)
+      ? (list as unknown[]).flatMap((raw) =>
+          isObject(raw) && typeof raw.placementId === 'string' ? [raw.placementId] : [],
+        )
+      : [];
+  const pairs: { from: string; to: string }[] = [];
+  for (const map of maps) {
+    if (!isObject(map) || map.relation !== 'copy' || map.entity !== 'placement') continue;
+    const from = idsOf(map.from);
+    const to = idsOf(map.to);
+    for (const [i, source] of from.entries()) {
+      const copy = to[i];
+      if (copy !== undefined) pairs.push({ from: source, to: copy });
+    }
+  }
+  return pairs;
+}
+
+/**
+ * What an arrangement.copy result and a fresh read must agree on: one new clip on the asked track at
+ * the asked time, as long as its source with its gain and fades, with a content of its own (and
+ * created, idMap and the warnings saying so), and no warning that the copy lands on another clip or on
+ * a hidden track, which the scenario's choice of the target excludes.
+ */
+export function copyConsistency(
+  result: Json,
+  state: ProjectState,
+  source: PlacementRead,
+  mode: 'window' | 'full',
+  toTrackId: number,
+  startTimelineSec: number,
+): string[] {
+  const problems: string[] = [];
+  const created = entityIds(result, 'created', 'placement');
+  if (created.length !== 1) problems.push(`created must name the one copy (it says ${String(created.length)})`);
+  const copy = created.length === 1 ? state.placements.find((p) => p.placementId === created[0]) : undefined;
+  if (copy === undefined) {
+    problems.push('the copy is not there afterwards');
+    return problems;
+  }
+  if (copy.trackId !== toTrackId) {
+    problems.push(`the copy is on track ${String(copy.trackId)}, not ${String(toTrackId)}`);
+  }
+  if (!same(copy.startTimelineSec, startTimelineSec)) {
+    problems.push(`the copy starts at ${String(copy.startTimelineSec)} s, not ${String(startTimelineSec)} s`);
+  }
+  if (!same(copy.durationSec, source.durationSec)) {
+    problems.push(`the copy is ${String(copy.durationSec)} s long, its source ${String(source.durationSec)} s`);
+  }
+  for (const name of ['gainDb', 'gainLinear', 'fadeInSec', 'fadeOutSec'] as const) {
+    if (!same(copy[name], source[name])) problems.push(`the copy does not keep the ${name} of its source`);
+  }
+  if (copy.contentId === source.contentId)
+    problems.push('the copy shows the content of its source, not one of its own');
+  if (!entityIds(result, 'created', 'content').includes(copy.contentId)) {
+    problems.push('created does not name the content of the copy');
+  }
+  if (mode === 'full' && !same(copy.clipInContentSec, source.clipInContentSec)) {
+    problems.push('a full copy does not show the same part of its content as its source');
+  }
+  if (!copyPairs(result).some((pair) => pair.from === source.placementId && pair.to === copy.placementId)) {
+    problems.push('idMap does not relate the source to its copy');
+  }
+  const codes = warningCodes(result);
+  for (const code of ['STACKED_ON_SOURCE', 'OVERLAPS_CLIP', 'TRACK_AUTO_REVEALED']) {
+    if (codes.includes(code))
+      problems.push(`the copy carries the warning ${code}, though its target is empty and shown`);
+  }
+  return problems.slice(0, 8);
+}
+
+/**
+ * What a track.duplicate result and the projects before and after it must agree on: exactly the
+ * track newTrackId was shown, it takes mute, solo, volume and colour of its source, holds a copy of
+ * every clip of the source at the same place with the same gain and fades, and its clips show contents
+ * of their own (clone) or those of their sources (share, with the warning SHARED_CONTENT).
+ */
+export function duplicateConsistency(
+  result: Json,
+  before: ProjectState,
+  after: ProjectState,
+  sourceTrackId: number,
+  mode: 'clone' | 'share',
+): string[] {
+  const newTrackId = typeof result.newTrackId === 'number' ? result.newTrackId : undefined;
+  if (newTrackId === undefined) return ['the result has no newTrackId'];
+  const problems: string[] = [];
+  const shown = after.tracks
+    .filter((t) => t.visible && before.tracks.find((b) => b.trackId === t.trackId)?.visible !== true)
+    .map((t) => t.trackId);
+  if (shown.length !== 1 || shown[0] !== newTrackId) {
+    problems.push(
+      `the tracks the duplicate shows are ${shown.join(', ') || 'none'}, newTrackId says ${String(newTrackId)}`,
+    );
+  }
+  const source = after.tracks.find((t) => t.trackId === sourceTrackId);
+  const track = after.tracks.find((t) => t.trackId === newTrackId);
+  if (source !== undefined && track !== undefined) {
+    for (const name of ['muted', 'solo', 'volumeDb', 'volumeLinear', 'colour'] as const) {
+      if (!same(source[name], track[name])) problems.push(`the new track does not take the ${name} of its source`);
+    }
+  }
+  const sources = before.placements.filter((p) => p.trackId === sourceTrackId);
+  const copies = after.placements.filter((p) => p.trackId === newTrackId);
+  if (copies.length !== sources.length) {
+    problems.push(`the new track holds ${String(copies.length)} clip(s), its source ${String(sources.length)}`);
+  }
+  const pairs = copyPairs(result);
+  for (const original of sources) {
+    const copy = copies.find(
+      (p) => same(p.startTimelineSec, original.startTimelineSec) && same(p.endTimelineSec, original.endTimelineSec),
+    );
+    if (copy === undefined) {
+      problems.push(`the new track has no copy of clip ${original.placementId} at its place`);
+      continue;
+    }
+    for (const name of ['gainDb', 'gainLinear', 'fadeInSec', 'fadeOutSec', 'clipInContentSec'] as const) {
+      if (!same(copy[name], original[name])) problems.push(`the copy does not keep the ${name} of its source`);
+    }
+    const sharesContent = copy.contentId === original.contentId;
+    if (mode === 'share' && !sharesContent) problems.push('a shared copy shows a content of its own');
+    if (mode === 'clone' && sharesContent) problems.push('a cloned copy shows the content of its source');
+    if (!pairs.some((pair) => pair.from === original.placementId && pair.to === copy.placementId)) {
+      problems.push('idMap does not relate a clip to its copy');
+    }
+  }
+  const added = after.contents.length - before.contents.length;
+  const expectedAdded = mode === 'share' ? 0 : sources.length;
+  if (added !== expectedAdded) {
+    problems.push(`${mode} left ${String(added)} new content(s) in the project, expected ${String(expectedAdded)}`);
+  }
+  if (mode === 'share' && !warningCodes(result).includes('SHARED_CONTENT')) {
+    problems.push('a shared copy carries no SHARED_CONTENT warning');
+  }
+  return problems.slice(0, 8);
+}
+
+/**
+ * What a track.delete result and the projects before and after it must agree on: trackIdMap lists the
+ * deleted track as gone and every later shown track with its new place; the clips of the deleted
+ * track are gone (and `removed` names them), the clips of a moved track and its settings are on its new
+ * place; one track fewer is shown.
+ */
+export function trackDeleteConsistency(
+  result: Json,
+  before: ProjectState,
+  after: ProjectState,
+  deletedTrackId: number,
+): string[] {
+  const map = result.trackIdMap;
+  if (!Array.isArray(map)) return ['trackIdMap is not an array'];
+  const problems: string[] = [];
+  const entries = (map as unknown[]).flatMap((raw) =>
+    isObject(raw) && typeof raw.before === 'number' && (typeof raw.after === 'number' || raw.after === null)
+      ? [{ before: raw.before, after: raw.after }]
+      : [],
+  );
+  if (entries.length !== map.length) problems.push('a trackIdMap entry has no before or no after');
+  const shown = before.tracks
+    .filter((t) => t.visible)
+    .map((t) => t.trackId)
+    .sort((a, b) => a - b);
+  const index = shown.indexOf(deletedTrackId);
+  if (index < 0) return [...problems, `track ${String(deletedTrackId)} was not shown before the delete`];
+  const expected = new Map<number, number | null>([[deletedTrackId, null]]);
+  for (let j = index + 1; j < shown.length; j++) {
+    const moved = shown[j];
+    const place = shown[j - 1];
+    if (moved !== undefined && place !== undefined) expected.set(moved, place);
+  }
+  for (const [trackId, place] of expected) {
+    const entry = entries.find((e) => e.before === trackId);
+    if (entry?.after !== place) {
+      problems.push(
+        `trackIdMap should map track ${String(trackId)} to ${place === null ? 'null' : String(place)}, ` +
+          `it says ${entry === undefined ? 'nothing' : String(entry.after)}`,
+      );
+    }
+  }
+  for (const entry of entries) {
+    if (!expected.has(entry.before))
+      problems.push(`trackIdMap lists track ${String(entry.before)}, which does not move`);
+  }
+  const held = before.placements.filter((p) => p.trackId === deletedTrackId).map((p) => p.placementId);
+  const removed = entityIds(result, 'removed', 'placement');
+  if (held.slice().sort().join('|') !== removed.slice().sort().join('|')) {
+    problems.push(`removed names ${String(removed.length)} clip(s), the deleted track held ${String(held.length)}`);
+  }
+  for (const clip of before.placements) {
+    const place = expected.get(clip.trackId);
+    const now = after.placements.find((p) => p.placementId === clip.placementId);
+    if (place === null) {
+      if (now !== undefined) problems.push(`clip ${clip.placementId} of the deleted track is still there`);
+    } else if (now?.trackId !== (place ?? clip.trackId)) {
+      problems.push(
+        `clip ${clip.placementId} is on track ${now === undefined ? 'nowhere' : String(now.trackId)}, ` +
+          `expected ${String(place ?? clip.trackId)}`,
+      );
+    }
+  }
+  for (const [trackId, place] of expected) {
+    if (place === null) continue;
+    const was = before.tracks.find((t) => t.trackId === trackId);
+    const now = after.tracks.find((t) => t.trackId === place);
+    for (const name of ['muted', 'solo', 'volumeDb', 'volumeLinear', 'colour'] as const) {
+      if (was !== undefined && now !== undefined && !same(was[name], now[name])) {
+        problems.push(`track ${String(place)} does not take the ${name} of track ${String(trackId)}`);
+      }
+    }
+  }
+  const shownAfter = after.tracks.filter((t) => t.visible).length;
+  if (shownAfter !== shown.length - 1) {
+    problems.push(`${String(shownAfter)} track(s) are shown afterwards, expected ${String(shown.length - 1)}`);
+  }
+  if (after.tracks.find((t) => t.trackId === deletedTrackId)?.visible === true && index === shown.length - 1) {
+    problems.push(`track ${String(deletedTrackId)} is still shown`);
+  }
+  return problems.slice(0, 8);
+}
+
+/** One clip of an import result. */
+export interface ImportedClip {
+  readonly placementId: string;
+  readonly trackId: number;
+  readonly startTimelineSec: number;
+  readonly durationSec: number;
+}
+
+/** The clips an import job result reports, in the order of the files; throws for a file that was not imported. */
+export function importedClips(result: Json): ImportedClip[] {
+  const items = member(result, 'items', 'the import result');
+  if (!Array.isArray(items)) throw new Error('the import result has no items array');
+  return (items as unknown[]).map((item, i) => {
+    if (!isObject(item) || item.imported !== true)
+      throw new Error(`file ${String(i + 1)} of the import was not imported`);
+    return {
+      placementId: text(item, 'placementId', 'the import item'),
+      trackId: num(item, 'trackId', 'the import item'),
+      startTimelineSec: num(item, 'startTimelineSec', 'the import item'),
+      durationSec: num(item, 'durationSec', 'the import item'),
+    };
+  });
+}
+
+/**
+ * What an import of two files in one layout must leave on the timeline, by what the result says and
+ * what a fresh read holds: sequential puts the second clip where the first ends, on the same track,
+ * the first at `startTimelineSec`; separateTracks puts them on two successive tracks, both at 0.
+ */
+export function importLayoutProblems(
+  layout: 'sequential' | 'separateTracks',
+  clips: readonly ImportedClip[],
+  state: ProjectState,
+  startTimelineSec: number | undefined,
+): string[] {
+  const problems: string[] = [];
+  const [first, second] = clips;
+  if (clips.length !== 2 || first === undefined || second === undefined) {
+    return [`the import reports ${String(clips.length)} clip(s), expected 2`];
+  }
+  for (const clip of clips) {
+    const read = state.placements.find((p) => p.placementId === clip.placementId);
+    if (read === undefined) {
+      problems.push(`imported clip ${clip.placementId} is not in the project`);
+      continue;
+    }
+    if (read.trackId !== clip.trackId)
+      problems.push(
+        `clip ${clip.placementId} is on track ${String(read.trackId)}, the result says ${String(clip.trackId)}`,
+      );
+    if (!same(read.startTimelineSec, clip.startTimelineSec)) {
+      problems.push(
+        `clip ${clip.placementId} starts at ${String(read.startTimelineSec)} s, the result says ${String(clip.startTimelineSec)} s`,
+      );
+    }
+    if (!same(read.durationSec, clip.durationSec)) {
+      problems.push(
+        `clip ${clip.placementId} is ${String(read.durationSec)} s long, the result says ${String(clip.durationSec)} s`,
+      );
+    }
+  }
+  if (layout === 'sequential') {
+    if (second.trackId !== first.trackId) problems.push('the sequential clips are on two tracks');
+    if (startTimelineSec !== undefined && !same(first.startTimelineSec, startTimelineSec)) {
+      problems.push(`the first clip starts at ${String(first.startTimelineSec)} s, not ${String(startTimelineSec)} s`);
+    }
+    const joined = first.startTimelineSec + first.durationSec;
+    if (Math.abs(second.startTimelineSec - joined) > TIMELINE_EPSILON_SEC) {
+      problems.push(
+        `the second clip starts at ${String(second.startTimelineSec)} s, where the first ends at ${String(round(joined, 6))} s`,
+      );
+    }
+  } else {
+    if (second.trackId !== first.trackId + 1) {
+      problems.push(
+        `the clips are on tracks ${String(first.trackId)} and ${String(second.trackId)}, not two successive ones`,
+      );
+    }
+    for (const clip of clips) {
+      if (Math.abs(clip.startTimelineSec) > TIMELINE_EPSILON_SEC) {
+        problems.push(`a clip on its own track starts at ${String(clip.startTimelineSec)} s, not 0`);
+      }
+    }
+  }
+  return problems.slice(0, 8);
+}
+
+/** `samples` with zeros appended so that it lasts at least `seconds`; the array itself when it is long enough. */
+export function paddedTo(samples: Float64Array, seconds: number, rate: number): Float64Array {
+  const length = Math.ceil(seconds * rate);
+  if (samples.length >= length) return samples;
+  const out = new Float64Array(length);
+  out.set(samples);
+  return out;
 }
 
 /** The applied split position from a result's SPLIT_SNAPPED warning, else the requested one. */
@@ -1258,6 +2039,8 @@ export async function runArrangementEffects(
   let trackAId = -1;
   let trackBId = -1;
   let baseline: DecodedWav | undefined;
+  /** Where clip A and clip B lie in the baseline; the ids of the clips change once a split has been merged. */
+  let baselineSpans: { readonly a: Span; readonly b: Span } | undefined;
   let exportCount = 0;
   target.labelNext?.('arrangement-effects');
 
@@ -1347,30 +2130,59 @@ export async function runArrangementEffects(
     return { wav, result, dry: dry.length };
   };
 
-  /** A write that must have taken effect; returns the result and the project read right after it. */
+  /**
+   * A write that must have taken effect; returns the result and the project read right after it.
+   * `restore` says how the check takes the write back, and records that in the frame before anything
+   * else is read from the result: with the undoId of the write (`undo`) or with its revert recipe
+   * (`revert`). A write that gives neither stops the checks after it, as they would run on a
+   * changed project.
+   */
   const write = async (
-    method: 'arrangement.edit' | 'track.set',
+    method: 'arrangement.edit' | 'arrangement.copy' | 'track.set' | 'track.duplicate' | 'track.delete',
     params: Json,
-    options: { readonly frame?: CheckFrame; readonly undoable?: boolean } = {},
+    options: { readonly frame?: CheckFrame; readonly restore?: 'undo' | 'revert' } = {},
   ) => {
     const result = await need().call(method, params, 60_000);
     if (result.applied === false || result.dryRun === true) {
       throw new Error(`${method} changed nothing (applied ${String(result.applied)}, dryRun ${String(result.dryRun)})`);
     }
-    if (options.undoable === true && options.frame !== undefined) {
-      try {
-        options.frame.undoId = undoIdOf(result);
-      } catch (error) {
-        throw new Unrestored(
-          `${method} took effect, but ${error instanceof Error ? error.message : String(error)}: ` +
+    if (options.restore !== undefined && options.frame !== undefined) {
+      const cannot = (why: string) =>
+        new Unrestored(
+          `${method} took effect, but ${why}: ` +
             'the check cannot take it back, and the checks after it would run on a changed project',
         );
+      if (options.restore === 'undo') {
+        try {
+          options.frame.undoId = undoIdOf(result);
+        } catch (error) {
+          throw cannot(error instanceof Error ? error.message : String(error));
+        }
+      } else {
+        options.frame.revert = revertOf(result);
+        if (options.frame.revert === undefined) throw cannot('its result gives no revert recipe');
       }
     }
     const state = await readProject(need());
     const consistency = writeConsistency(result, state);
     for (const field of consistency.unreadFields) options.frame?.unread.add(field);
     return { result, state, consistency };
+  };
+
+  /** A call that must be refused, with the kind and reason given; the problem is empty when it was. */
+  const refusedWith = async (
+    method: string,
+    params: Json,
+    kind: string,
+    reason: string,
+  ): Promise<string | undefined> => {
+    try {
+      await need().call(method, params, 60_000);
+    } catch (error) {
+      if (error instanceof OtcpError && error.data.kind === kind && error.data.reason === reason) return undefined;
+      return `${method} was refused with ${classify(error).note}, expected ${kind}(${reason})`;
+    }
+    return `${method} was not refused, expected ${kind}(${reason})`;
   };
 
   /** Exports the master and compares it with the baseline; the result is a check problem or empty. */
@@ -1387,39 +2199,80 @@ export async function runArrangementEffects(
     return { ...cmp, dry: after.dry };
   };
 
-  /** Takes a write back with edit.undo and verifies the project, then the master. */
-  const undoAndVerify = async (frame: CheckFrame): Promise<string[]> => {
-    if (frame.undoId === undefined) throw new Error('there is no undoId to take the write back with');
-    const result = await need().call('edit.undo', { expectedUndoId: frame.undoId }, 60_000);
-    if (result.applied === false || result.dryRun === true) throw new Error('edit.undo did not apply');
+  /**
+   * Takes a write back with edit.undo, or with its revert recipe (sent as given, plus the consent the
+   * scenario gives for what it made itself), and verifies the project, then the master against the
+   * baseline. A project that is not as it was stops the checks after it; the problems returned are
+   * those of the restore itself.
+   */
+  const restoreAndVerify = async (frame: CheckFrame): Promise<{ by: string; problems: string[] }> => {
+    const problems: string[] = [];
+    let result: Json;
+    let by: string;
+    let exportLabel: string;
+    if (frame.undoId !== undefined) {
+      result = await need().call('edit.undo', { expectedUndoId: frame.undoId }, 60_000);
+      if (result.applied === false || result.dryRun === true) throw new Error('edit.undo did not apply');
+      by = 'edit.undo';
+      exportLabel = 'after undo';
+    } else if (frame.revert !== undefined) {
+      const { method } = frame.revert;
+      const params = revertRequest(frame.revert, problems);
+      if (params === undefined) {
+        throw new Unrestored(
+          `the revert recipe of the write is a ${method} call that needs consent, which the scenario cannot give`,
+        );
+      }
+      try {
+        result = await need().call(method, params, 60_000);
+      } catch (error) {
+        throw new Unrestored(`the revert (${method}) failed: ${classify(error).note}`, { cause: error });
+      }
+      if (result.applied === false || result.dryRun === true)
+        throw new Unrestored(`the revert (${method}) did not apply`);
+      by = `the revert (${method})`;
+      exportLabel = 'after revert';
+    } else {
+      throw new Error('there is nothing to take the write back with');
+    }
     const state = await readProject(need());
-    const left = projectSnapshotProblems(frame.before, state);
-    if (left.length > 0) throw new Unrestored(`after edit.undo the project is not as it was: ${left.join('; ')}`);
+    const left = projectSnapshotProblems(frame.before, state, frame.snapshot);
+    if (left.length > 0) throw new Unrestored(`after ${by} the project is not as it was: ${left.join('; ')}`);
     frame.undoId = undefined;
-    const problems = tokensProblems(result, state).map((p) => `undo: ${p}`);
+    frame.revert = undefined;
+    problems.push(...tokensProblems(result, state).map((p) => `${by === 'edit.undo' ? 'undo' : 'revert'}: ${p}`));
+    if (frame.afterRestore !== undefined) {
+      try {
+        problems.push(...(await frame.afterRestore()));
+      } catch (error) {
+        problems.push(`what the restore had to leave alone could not be read: ${classify(error).note}`);
+      }
+    }
     try {
-      await compareWithBaseline('after undo', problems, 'the master after edit.undo');
+      await compareWithBaseline(exportLabel, problems, `the master after ${by}`);
     } catch (error) {
       // The project is back; a failed export is a problem of the check, not a reason to stop the rest.
-      problems.push(`the master after edit.undo could not be exported: ${classify(error).note}`);
+      problems.push(`the master after ${by} could not be exported: ${classify(error).note}`);
     }
-    return problems;
+    return { by, problems };
   };
 
   /**
-   * A check that writes and takes the write back: snapshot, work, edit.undo and the comparison with
-   * the snapshot, also when the work failed half-way (the undoId is recorded first). Any problem,
-   * including one of the undo, fails the check; a project the undo did not restore stops the checks
-   * after it.
+   * Runs the work of a check, then takes back what it wrote, also when the work failed half-way (the
+   * undoId or the revert recipe is recorded first). An error of the work is returned, not thrown,
+   * unless it ends the scenario (a skip, or a project that is not as it was); `unrestored` is set when
+   * the restore could not put the project back.
    */
-  const undoableCheck = async (
-    name: string,
-    work: (
-      frame: CheckFrame,
-    ) => Promise<{ note: string; problems: readonly string[]; report: Record<string, unknown> }>,
-  ): Promise<string> => {
-    const frame: CheckFrame = { before: await readProject(need()), undoId: undefined, unread: new Set() };
-    let outcome: Awaited<ReturnType<typeof work>> | undefined;
+  const guarded = async (
+    frame: CheckFrame,
+    work: (frame: CheckFrame) => Promise<Outcome>,
+  ): Promise<{
+    readonly outcome: Outcome | undefined;
+    readonly failure: unknown;
+    readonly restore: { by: string; problems: string[] } | undefined;
+    readonly unrestored: Unrestored | undefined;
+  }> => {
+    let outcome: Outcome | undefined;
     let failure: unknown;
     try {
       outcome = await work(frame);
@@ -1427,30 +2280,66 @@ export async function runArrangementEffects(
       failure = error;
     }
     if (failure instanceof Unrestored || failure instanceof StepSkip) throw failure;
-    let undoProblems: string[] = [];
-    if (frame.undoId !== undefined) {
+    let restore: { by: string; problems: string[] } | undefined;
+    if (frame.undoId !== undefined || frame.revert !== undefined) {
       try {
-        undoProblems = await undoAndVerify(frame);
+        restore = await restoreAndVerify(frame);
       } catch (error) {
-        checks[name] = {
-          ...(outcome?.report ?? {}),
-          ...(frame.unread.size === 0 ? {} : { unreadFields: [...frame.unread].sort() }),
-          error: scrub(messageOf(error)),
-        };
-        throw new Unrestored(messageOf(error), { cause: error });
+        // Whatever went wrong while taking the write back, the project is not known to be as it was.
+        const unrestored = error instanceof Unrestored ? error : new Unrestored(messageOf(error), { cause: error });
+        return { outcome, failure, restore: undefined, unrestored };
       }
     }
+    return { outcome, failure, restore, unrestored: undefined };
+  };
+
+  /** A new frame: the project as it is, and nothing written yet. */
+  const newFrame = async (snapshot: SnapshotOptions = {}): Promise<CheckFrame> => ({
+    before: await readProject(need()),
+    undoId: undefined,
+    revert: undefined,
+    snapshot,
+    afterRestore: undefined,
+    unread: new Set(),
+  });
+
+  /** What the report holds about a restore: that it worked (undoRestored, revertRestored), or its problems. */
+  const restoreReport = (restore: { readonly by: string; readonly problems: readonly string[] } | undefined) => {
+    if (restore === undefined) return {};
+    const undo = restore.by === 'edit.undo';
+    if (restore.problems.length > 0) return { [undo ? 'undo' : 'revert']: restore.problems };
+    return { ...(undo ? { undoRestored: true } : { revertRestored: true }), restoredBy: restore.by };
+  };
+
+  /**
+   * A check that writes and takes the write back: snapshot, work, edit.undo or the revert recipe and
+   * the comparison with the snapshot, also when the work failed half-way (the undoId or the recipe is
+   * recorded first). Any problem, including one of the restore, fails the check; a project the
+   * restore did not put back stops the checks after it.
+   */
+  const undoableCheck = async (
+    name: string,
+    work: (frame: CheckFrame) => Promise<Outcome>,
+    snapshot: SnapshotOptions = {},
+  ): Promise<string> => {
+    const frame = await newFrame(snapshot);
+    const { outcome, failure, restore, unrestored } = await guarded(frame, work);
     const unread = frame.unread.size === 0 ? {} : { unreadFields: [...frame.unread].sort() };
-    const problems = [...(outcome?.problems ?? []), ...undoProblems];
+    if (unrestored !== undefined) {
+      checks[name] = { ...(outcome?.report ?? {}), ...unread, error: scrub(unrestored.message) };
+      throw unrestored;
+    }
+    const restoreProblems = restore?.problems ?? [];
+    const problems = [...(outcome?.problems ?? []), ...restoreProblems];
     checks[name] = {
       ...(outcome?.report ?? {}),
       ...unread,
-      ...(undoProblems.length === 0 ? { undoRestored: true } : { undo: undoProblems }),
+      ...restoreReport(restore),
       ...(failure === undefined ? {} : { error: scrub(messageOf(failure)) }),
     };
     if (failure !== undefined) {
       throw new Error(
-        undoProblems.length === 0 ? messageOf(failure) : `${messageOf(failure)}; ${undoProblems.join('; ')}`,
+        restoreProblems.length === 0 ? messageOf(failure) : `${messageOf(failure)}; ${restoreProblems.join('; ')}`,
         { cause: failure },
       );
     }
@@ -1459,6 +2348,57 @@ export async function runArrangementEffects(
     return frame.unread.size === 0
       ? note
       : `${note}; ${String(frame.unread.size)} reported field(s) not compared, as the scenario does not read them`;
+  };
+
+  /** Skips the step when the instance does not report the capability. */
+  const requires = (capability: string, why?: string) => {
+    if (!has(capability)) {
+      throw new StepSkip('SKIP', `the instance does not report ${capability}${why === undefined ? '' : `, ${why}`}`);
+    }
+  };
+
+  const needBaseline = (): DecodedWav => {
+    if (baseline === undefined) throw new Error('no baseline');
+    return baseline;
+  };
+
+  /** The seconds a master lasts. */
+  const lengthSec = (wav: DecodedWav) => wav.mono.length / wav.sampleRateHz;
+
+  /**
+   * One case of a step that has several (a volume, a layout), with its own frame and restore. Its
+   * problems and report are added to `problems` and `cases` under the label, and the step's check
+   * report is set as far as it got when a case could not restore the project. Returns the outcome
+   * of the work, when it ended.
+   */
+  const runCase = async (
+    name: string,
+    cases: Record<string, unknown>[],
+    problems: string[],
+    label: string,
+    work: (frame: CheckFrame) => Promise<Outcome>,
+    snapshot: SnapshotOptions = {},
+  ): Promise<Outcome | undefined> => {
+    const frame = await newFrame(snapshot);
+    const { outcome, failure, restore, unrestored } = await guarded(frame, work);
+    const unread = frame.unread.size === 0 ? {} : { unreadFields: [...frame.unread].sort() };
+    if (unrestored !== undefined) {
+      checks[name] = {
+        cases: [...cases, { case: label, ...(outcome?.report ?? {}), error: scrub(unrestored.message) }],
+      };
+      throw unrestored;
+    }
+    const prefix = (list: readonly string[]) => list.map((p) => `${label}: ${p}`);
+    problems.push(...prefix(outcome?.problems ?? []), ...prefix(restore?.problems ?? []));
+    if (failure !== undefined) problems.push(`${label}: ${scrub(messageOf(failure))}`);
+    cases.push({
+      case: label,
+      ...(outcome?.report ?? {}),
+      ...unread,
+      ...restoreReport(restore),
+      ...(failure === undefined ? {} : { error: scrub(messageOf(failure)) }),
+    });
+    return outcome;
   };
 
   // --- set-up ---------------------------------------------------------------------------------
@@ -1633,6 +2573,11 @@ export async function runArrangementEffects(
     baseline = first.wav;
     const seconds = first.wav.mono.length / first.wav.sampleRateHz;
     if (!(seconds > 0)) throw new Error('the baseline export is empty');
+    const project = await readProject(need());
+    baselineSpans = {
+      a: clipSpan(placementOf(project, clipAId)),
+      b: clipSpan(placementOf(project, clipBId)),
+    };
     checks['baseline master export'] = {
       seconds: round(seconds, 3),
       sampleRateHz: first.wav.sampleRateHz,
@@ -1665,7 +2610,7 @@ export async function runArrangementEffects(
             expectedArrangementRevision: frame.before.arrangementRevision,
             ops: [{ op: 'setGain', placementId: clipAId, gainDb: wantedGainDb }],
           },
-          { frame, undoable: true },
+          { frame, restore: 'undo' },
         );
         const problems = [...consistency.problems];
         const afterClip = placementOf(state, clipAId);
@@ -1737,7 +2682,7 @@ export async function runArrangementEffects(
             expectedArrangementRevision: frame.before.arrangementRevision,
             ops: [{ op: 'setFade', placementId: clipAId, fadeInSec: FADE_SEC, fadeOutSec: FADE_SEC }],
           },
-          { frame, undoable: true },
+          { frame, restore: 'undo' },
         );
         const problems = [...consistency.problems];
         const afterClip = placementOf(state, clipAId);
@@ -1956,6 +2901,617 @@ export async function runArrangementEffects(
     { check: true },
   );
 
+  // --- clips: move, trim, copy, delete -----------------------------------------------------------
+
+  await step(
+    'move clip B 0.5 s later',
+    async () =>
+      undoableCheck('move clip B 0.5 s later', async (frame) => {
+        requires('arrangement.v1');
+        requires('history.v1', 'which edit.undo needs');
+        const base = needBaseline();
+        const rate = base.sampleRateHz;
+        const quantumSec = POSITION_QUANTUM_SAMPLES / rate;
+        const oldB = placementOf(frame.before, clipBId);
+        const oldSpan = clipSpan(oldB);
+        const wantedStart = round(oldB.startTimelineSec + MOVE_DELTA_SEC, 6);
+        const { result, state, consistency } = await write(
+          'arrangement.edit',
+          {
+            expectedArrangementRevision: frame.before.arrangementRevision,
+            ops: [{ op: 'move', placementId: clipBId, startTimelineSec: wantedStart }],
+          },
+          { frame, restore: 'undo' },
+        );
+        const problems = [...consistency.problems];
+        const moved = placementOf(state, clipBId);
+        if (!same(moved.startTimelineSec, wantedStart)) {
+          problems.push(`clip B starts at ${String(moved.startTimelineSec)} s, not ${String(wantedStart)} s`);
+        }
+        if (moved.trackId !== oldB.trackId) problems.push('clip B changed its track');
+        if (!same(moved.durationSec, oldB.durationSec) || !same(moved.clipInContentSec, oldB.clipInContentSec)) {
+          problems.push('moving clip B changed its length or the part of its content it shows');
+        }
+        if (!changesPlacementField(result, clipBId, ['startTimelineSec', 'endTimelineSec'])) {
+          problems.push('its changes do not report the new place of clip B');
+        }
+        const wet = await exportMaster('move');
+        // Only the old and the new place of clip B may differ: everything before it is the baseline.
+        const untouched = compareSamples(base, wet.wav, [{ startSec: 0, endSec: oldSpan.startSec }]);
+        if (untouched.bitIdentical !== 1) {
+          problems.push(
+            `the master before the old place of clip B differs from the baseline by up to ${untouched.maxAbsDiff.toExponential(2)}`,
+          );
+        }
+        const vacated = silenceOf(wet.wav, {
+          startSec: oldSpan.startSec,
+          endSec: Math.min(oldSpan.endSec, moved.startTimelineSec - quantumSec),
+        });
+        if (vacated.maxAbs > SILENCE_MAX_ABS) {
+          problems.push(`clip B is still heard at its old place (up to ${vacated.maxAbs.toExponential(2)})`);
+        }
+        const placedAt = placedDifference(base, wet.wav, oldSpan, moved.startTimelineSec);
+        const exact = placedAt.maxAbsDiff;
+        if (exact > SHIFTED_MAX_ABS_DIFF) {
+          problems.push(
+            `the master at the new place differs from clip B in the baseline by up to ${exact.toExponential(2)}`,
+          );
+        }
+        // How far clip B moved, from the envelopes alone, as the timing check measures a shift.
+        let shift: { readonly lagSec: number; readonly peak: number } | null = null;
+        try {
+          const maxLagSec = MOVE_DELTA_SEC + 0.1;
+          const padSec = oldSpan.endSec + maxLagSec + 0.1;
+          shift = estimateShift(
+            paddedTo(base.mono, padSec, rate),
+            paddedTo(wet.wav.mono, padSec, rate),
+            rate,
+            oldSpan,
+            { maxLagSec },
+          );
+          if (Math.abs(shift.lagSec - MOVE_DELTA_SEC) > MOVE_SHIFT_TOLERANCE_SEC) {
+            problems.push(
+              `clip B moved by ${String(round(shift.lagSec * 1000, 1))} ms, expected ${String(MOVE_DELTA_SEC * 1000)} ms ` +
+                `+- ${String(MOVE_SHIFT_TOLERANCE_SEC * 1000)} ms`,
+            );
+          }
+        } catch (error) {
+          problems.push(`the shift of clip B cannot be measured: ${messageOf(error)}`);
+        }
+        if (Math.abs(lengthSec(wet.wav) - moved.endTimelineSec) > 1 / rate + TIMELINE_EPSILON_SEC) {
+          problems.push(
+            `the master lasts ${String(round(lengthSec(wet.wav), 4))} s, clip B ends at ${String(moved.endTimelineSec)} s`,
+          );
+        }
+        return {
+          note:
+            `clip B moved ${shift === null ? 'by an unmeasured time' : `${String(round(shift.lagSec * 1000, 1))} ms`} ` +
+            `(asked ${String(MOVE_DELTA_SEC * 1000)} ms); its old place is silent, its new place equals the baseline; ` +
+            'undo restored the clip and the master',
+          problems,
+          report: {
+            deltaSec: MOVE_DELTA_SEC,
+            requestedStartSec: wantedStart,
+            startTimelineSec: moved.startTimelineSec,
+            tolerance: {
+              shiftSec: MOVE_SHIFT_TOLERANCE_SEC,
+              maxAbsDiff: SHIFTED_MAX_ABS_DIFF,
+              silenceMaxAbs: SILENCE_MAX_ABS,
+            },
+            measuredShiftSec: shift === null ? null : round(shift.lagSec, 5),
+            correlationPeak: shift === null ? null : round(shift.peak, 4),
+            newPlaceMaxAbsDiff: exact,
+            startLagSamples: placedAt.lagSamples,
+            oldPlaceMaxAbs: vacated.maxAbs,
+            beforeOldPlaceBitIdentical: untouched.bitIdentical === 1,
+            consistency: consistency.problems,
+          },
+        };
+      }),
+    { check: true },
+  );
+
+  await step(
+    'trim clip A end by 1 s',
+    async () =>
+      undoableCheck('trim clip A end by 1 s', async (frame) => {
+        requires('arrangement.v1');
+        requires('history.v1', 'which edit.undo needs');
+        const base = needBaseline();
+        const quantumSec = POSITION_QUANTUM_SAMPLES / base.sampleRateHz;
+        const oldA = placementOf(frame.before, clipAId);
+        const oldB = placementOf(frame.before, clipBId);
+        const wantedEnd = round(oldA.endTimelineSec - TRIM_CUT_SEC, 6);
+        if (!(wantedEnd > oldA.startTimelineSec))
+          throw new Error('clip A is not longer than the part the trim cuts off');
+        const cut: Span = { startSec: wantedEnd, endSec: oldA.endTimelineSec };
+        const cutRms = rmsOf(base, cut);
+        if (cutRms <= SIGNAL_FLOOR_RMS) throw new Error('clip A has no sound in the part the trim cuts off');
+        const { result, state, consistency } = await write(
+          'arrangement.edit',
+          {
+            expectedArrangementRevision: frame.before.arrangementRevision,
+            ops: [{ op: 'trim', placementId: clipAId, edge: 'end', toTimelineSec: wantedEnd }],
+          },
+          { frame, restore: 'undo' },
+        );
+        const problems = [...consistency.problems];
+        const trimmed = placementOf(state, clipAId);
+        if (!same(trimmed.endTimelineSec, wantedEnd)) {
+          problems.push(`clip A ends at ${String(trimmed.endTimelineSec)} s, not ${String(wantedEnd)} s`);
+        }
+        if (
+          !same(trimmed.startTimelineSec, oldA.startTimelineSec) ||
+          !same(trimmed.clipInContentSec, oldA.clipInContentSec)
+        ) {
+          problems.push('trimming the end of clip A moved its start or the part of its content it shows');
+        }
+        if (!changesPlacementField(result, clipAId, ['endTimelineSec', 'durationSec'])) {
+          problems.push('its changes do not report the new end of clip A');
+        }
+        const wet = await exportMaster('trim');
+        // Before the new end, and all of clip B, are the baseline; after the new end clip A is gone. The
+        // end is a position in seconds like a start, so one sample either side of it is not judged.
+        const kept = compareSamples(base, wet.wav, [{ startSec: 0, endSec: wantedEnd - quantumSec }, clipSpan(oldB)]);
+        if (kept.bitIdentical !== 2) {
+          problems.push(
+            `the kept part of clip A or clip B differs from the baseline by up to ${kept.maxAbsDiff.toExponential(2)}`,
+          );
+        }
+        const after = silenceOf(wet.wav, { startSec: wantedEnd + quantumSec, endSec: oldB.startTimelineSec });
+        if (after.maxAbs > SILENCE_MAX_ABS) {
+          problems.push(`clip A is still heard after its new end (up to ${after.maxAbs.toExponential(2)})`);
+        }
+        return {
+          note:
+            `clip A ends at ${String(trimmed.endTimelineSec)} s (cut ${String(TRIM_CUT_SEC)} s, level ${String(round(20 * Math.log10(cutRms), 1))} dBFS before); ` +
+            'silent after the new end, the rest bit-identical; undo restored the clip and the master',
+          problems,
+          report: {
+            cutSec: TRIM_CUT_SEC,
+            newEndSec: trimmed.endTimelineSec,
+            cutPartBaselineRms: round(cutRms, 6),
+            tolerance: { silenceMaxAbs: SILENCE_MAX_ABS },
+            keptBitIdentical: kept.bitIdentical === 2,
+            keptMaxAbsDiff: kept.maxAbsDiff,
+            afterEnd: { maxAbs: after.maxAbs, nonZeroSamples: after.nonZeroSamples },
+            warnings: warningCodes(result),
+            consistency: consistency.problems,
+          },
+        };
+      }),
+    { check: true },
+  );
+
+  /**
+   * A copy of clip A to an empty place after the end of the baseline, taken back by the revert recipe
+   * of the copy: the end user's consent that the recipe asks for is given by the scenario, which made
+   * the copy itself.
+   */
+  const copyCheck = (mode: 'window' | 'full') => async () =>
+    undoableCheck(`copy ${mode} of clip A`, async (frame) => {
+      requires('arrangement.v1');
+      const base = needBaseline();
+      const rate = base.sampleRateHz;
+      const quantumSec = POSITION_QUANTUM_SAMPLES / rate;
+      const source = placementOf(frame.before, clipAId);
+      const sourceSpan = clipSpan(source);
+      const baselineSec = lengthSec(base);
+      const startSec = round(baselineSec + COPY_GAP_SEC, 6);
+      const { result, state, consistency } = await write(
+        'arrangement.copy',
+        {
+          sources: [{ placementId: clipAId }],
+          mode,
+          toTrackId: source.trackId,
+          startTimelineSec: startSec,
+          expectedArrangementRevision: frame.before.arrangementRevision,
+        },
+        { frame, restore: 'revert' },
+      );
+      const problems = [
+        ...consistency.problems,
+        ...copyConsistency(result, state, source, mode, source.trackId, startSec),
+      ];
+      const wet = await exportMaster(`copy ${mode}`);
+      const untouched = compareSamples(base, wet.wav, [{ startSec: 0, endSec: baselineSec }]);
+      if (untouched.bitIdentical !== 1) {
+        problems.push(
+          `the master up to the end of the baseline differs from it by up to ${untouched.maxAbsDiff.toExponential(2)}`,
+        );
+      }
+      const gap = silenceOf(wet.wav, { startSec: baselineSec, endSec: startSec - quantumSec });
+      if (gap.maxAbs > SILENCE_MAX_ABS) {
+        problems.push(`the gap before the copy is not silent (up to ${gap.maxAbs.toExponential(2)})`);
+      }
+      const placedAt = placedDifference(base, wet.wav, sourceSpan, startSec);
+      const exact = placedAt.maxAbsDiff;
+      if (exact > SHIFTED_MAX_ABS_DIFF) {
+        problems.push(
+          `the copy in the master differs from its source in the baseline by up to ${exact.toExponential(2)}`,
+        );
+      }
+      const copySpan: Span = { startSec, endSec: startSec + source.durationSec };
+      const levelDb = levelRatioDb(rmsOf(base, sourceSpan), rmsOf(wet.wav, copySpan));
+      if (Math.abs(lengthSec(wet.wav) - copySpan.endSec) > 1 / rate + TIMELINE_EPSILON_SEC) {
+        problems.push(
+          `the master lasts ${String(round(lengthSec(wet.wav), 4))} s, the copy ends at ${String(round(copySpan.endSec, 4))} s`,
+        );
+      }
+      const recipe = frame.revert;
+      return {
+        note:
+          `the ${mode} copy sounds at ${String(startSec)} s as clip A does (${levelDb === null ? 'level unmeasured' : `${String(round(levelDb, 2))} dB`}, ` +
+          'bit-identical); the part before it is the baseline; the revert recipe removed it again',
+        problems,
+        report: {
+          mode,
+          startTimelineSec: startSec,
+          durationSec: source.durationSec,
+          tolerance: { maxAbsDiff: SHIFTED_MAX_ABS_DIFF, silenceMaxAbs: SILENCE_MAX_ABS },
+          copyMaxAbsDiff: exact,
+          startLagSamples: placedAt.lagSamples,
+          copyLevelDb: levelDb === null ? null : round(levelDb, 3),
+          baselinePartBitIdentical: untouched.bitIdentical === 1,
+          gapMaxAbs: gap.maxAbs,
+          revert: recipe === undefined ? null : { method: recipe.method, requiresConsent: recipe.requiresConsent },
+          warnings: warningCodes(result),
+          consistency: consistency.problems,
+        },
+      };
+    });
+
+  await step('copy window of clip A', copyCheck('window'), { check: true });
+  await step('copy full of clip A', copyCheck('full'), { check: true });
+
+  await step(
+    'delete a copy of clip A',
+    async () =>
+      undoableCheck('delete a copy of clip A', async (frame) => {
+        requires('arrangement.v1');
+        const base = needBaseline();
+        const source = placementOf(frame.before, clipAId);
+        const sourceSpan = clipSpan(source);
+        const startSec = round(lengthSec(base) + COPY_GAP_SEC, 6);
+        // The clip to delete is a copy this check made: the delete of an original clip would leave the
+        // scenario without it (OpenTune cannot undo a delete). The copy's own revert recipe stays in
+        // the frame until the delete has taken the copy away, so that a check that fails half-way
+        // does not leave the copy behind.
+        const copied = await write(
+          'arrangement.copy',
+          {
+            sources: [{ placementId: clipAId }],
+            mode: 'window',
+            toTrackId: source.trackId,
+            startTimelineSec: startSec,
+            expectedArrangementRevision: frame.before.arrangementRevision,
+          },
+          { frame, restore: 'revert' },
+        );
+        const problems = [
+          ...copied.consistency.problems,
+          ...copyConsistency(copied.result, copied.state, source, 'window', source.trackId, startSec),
+        ];
+        const copyId = entityIds(copied.result, 'created', 'placement')[0];
+        if (copyId === undefined) throw new Error('the copy made for the delete has no placementId');
+        const heard = await exportMaster('before delete');
+        const heardDiff = placedDifference(base, heard.wav, sourceSpan, startSec).maxAbsDiff;
+        if (heardDiff > SHIFTED_MAX_ABS_DIFF) {
+          problems.push(
+            `the copy made for the delete is not heard as clip A (up to ${heardDiff.toExponential(2)} off)`,
+          );
+        }
+        // Without the end user's consent the delete is refused and changes nothing.
+        const refused = await refusedWith(
+          'arrangement.edit',
+          {
+            expectedArrangementRevision: copied.state.arrangementRevision,
+            ops: [{ op: 'delete', placementIds: [copyId] }],
+          },
+          'INVALID_ARGUMENT',
+          'confirm_required',
+        );
+        if (refused !== undefined) problems.push(refused);
+        const afterRefusal = await readProject(need());
+        const stillThere = afterRefusal.placements.some((p) => p.placementId === copyId);
+        if (!stillThere) {
+          frame.revert = undefined;
+          problems.push('the delete without confirm removed the copy');
+        } else {
+          problems.push(
+            ...projectSnapshotProblems(copied.state, afterRefusal).map((p) => `delete without confirm: ${p}`),
+          );
+        }
+        let deleted: Awaited<ReturnType<typeof write>> | undefined;
+        if (stillThere) {
+          deleted = await write('arrangement.edit', {
+            expectedArrangementRevision: afterRefusal.arrangementRevision,
+            ops: [{ op: 'delete', placementIds: [copyId] }],
+            confirm: true,
+          });
+          frame.revert = undefined;
+          problems.push(...deleted.consistency.problems);
+          const removed = entityIds(deleted.result, 'removed', 'placement');
+          if (removed.length !== 1 || removed[0] !== copyId) {
+            problems.push(`removed must name the copy once (it says ${removed.join(', ') || 'nothing'})`);
+          }
+        }
+        const state = deleted?.state ?? afterRefusal;
+        const left = projectSnapshotProblems(frame.before, state);
+        if (left.length > 0) throw new Unrestored(`after the delete the project is not as it was: ${left.join('; ')}`);
+        const after = await compareWithBaseline('after delete', problems, 'the master after the delete');
+        const undoRaw = deleted?.result.undo;
+        const undo = isObject(undoRaw) ? undoRaw : undefined;
+        return {
+          note:
+            `the copy at ${String(startSec)} s was heard (bit-identical to clip A), the delete without confirm was refused, ` +
+            `the delete with confirm took it away and the master equals the baseline${after.bitIdentical ? ' bit for bit' : ''}`,
+          problems,
+          report: {
+            startTimelineSec: startSec,
+            copyBeforeDeleteMaxAbsDiff: heardDiff,
+            refusedWithoutConfirm: refused === undefined,
+            afterDelete: {
+              bitIdentical: after.bitIdentical,
+              maxAbsDiff: after.maxAbsDiff,
+              lengthsEqual: after.lengthsEqual,
+            },
+            undo:
+              undo === undefined
+                ? null
+                : {
+                    undoable: undo.undoable === true,
+                    reason: typeof undo.reason === 'string' ? undo.reason : null,
+                    revert: isObject(undo.revert),
+                  },
+            warnings: deleted === undefined ? [] : warningCodes(deleted.result),
+          },
+        };
+      }),
+    { check: true },
+  );
+
+  // --- track volume and the duplicate and delete of a track ---------------------------------------
+
+  await step(
+    'track volume -6 dB',
+    async () => {
+      requires('tracks.v1');
+      const base = needBaseline();
+      const before = await readProject(need());
+      const clipA = placementOf(before, clipAId);
+      const spanA = clipSpan(clipA);
+      const spanB = clipSpan(placementOf(before, clipBId));
+      const trackA = clipA.trackId;
+      const problems: string[] = [];
+      const cases: Record<string, unknown>[] = [];
+      const name = 'track volume -6 dB';
+      // Only clip A sounds on its track, so the level over clip A is the level of the track.
+      const volumeCase = async (label: string, setting: Json, expectedDb: number) =>
+        runCase(name, cases, problems, label, async (frame) => {
+          const { consistency, state } = await write(
+            'track.set',
+            { tracks: [{ trackId: trackA, ...setting }] },
+            { frame, restore: 'revert' },
+          );
+          const found = [...consistency.problems];
+          const track = trackOf(state, trackA);
+          const wantedLinear = 10 ** (expectedDb / 20);
+          if (Math.abs(track.volumeLinear - wantedLinear) > 1e-4) {
+            found.push(
+              `the track reads back a volume of ${String(track.volumeLinear)}, expected ${String(round(wantedLinear, 4))}`,
+            );
+          }
+          if (track.volumeDb === null || Math.abs(track.volumeDb - expectedDb) > 1e-3) {
+            found.push(
+              `the track reads back ${String(track.volumeDb)} dB, expected ${String(round(expectedDb, 3))} dB`,
+            );
+          }
+          const wet = await exportMaster(label);
+          const measuredDb = levelDifferenceDb(base, wet.wav, spanA);
+          if (measuredDb === null) {
+            found.push('clip A is silent in the baseline but not in the export');
+          } else if (Math.abs(measuredDb - expectedDb) > TRACK_VOLUME_TOLERANCE_DB) {
+            found.push(
+              `clip A changed by ${String(round(measuredDb))} dB, expected ${String(round(expectedDb, 2))} +- ${String(TRACK_VOLUME_TOLERANCE_DB)} dB`,
+            );
+          }
+          const other = compareSamples(base, wet.wav, [spanB]);
+          if (other.bitIdentical !== 1) {
+            found.push(`clip B differs from the baseline by up to ${other.maxAbsDiff.toExponential(2)}`);
+          }
+          return {
+            note: label,
+            problems: found,
+            report: {
+              expectedDb: round(expectedDb, 4),
+              toleranceDb: TRACK_VOLUME_TOLERANCE_DB,
+              measuredDb: measuredDb === null ? null : round(measuredDb, 3),
+              volumeDb: track.volumeDb,
+              volumeLinear: track.volumeLinear,
+              clipB: { bitIdentical: other.bitIdentical === 1, maxAbsDiff: other.maxAbsDiff },
+              consistency: consistency.problems,
+            },
+          };
+        });
+      const first = await volumeCase(
+        `volumeDb ${String(TRACK_VOLUME_DB)}`,
+        { volumeDb: TRACK_VOLUME_DB },
+        TRACK_VOLUME_DB,
+      );
+      const second = await volumeCase(
+        `volumeLinear ${String(TRACK_VOLUME_LINEAR)}`,
+        { volumeLinear: TRACK_VOLUME_LINEAR },
+        TRACK_VOLUME_LINEAR_DB,
+      );
+      checks[name] = { trackId: trackA, cases };
+      if (problems.length > 0) throw new Error(problems.join('; '));
+      const measured = (outcome: Outcome | undefined) => {
+        const value = outcome?.report.measuredDb;
+        return typeof value === 'number' ? `${String(value)} dB` : 'unmeasured';
+      };
+      return `volumeDb ${String(TRACK_VOLUME_DB)} measured ${measured(first)}, volumeLinear ${String(TRACK_VOLUME_LINEAR)} measured ${measured(second)}; clip B untouched; each revert restored the track and the master`;
+    },
+    { check: true },
+  );
+
+  /**
+   * A duplicate of the track of clip A, taken back by the revert recipe of the duplicate (a
+   * track.delete, for which the scenario gives the consent: it made the track). The master over clip
+   * A is the sum of two identical signals, and the notes of the content of clip A read back as before.
+   */
+  const duplicateCheck = (mode: 'clone' | 'share') => async () =>
+    undoableCheck(`duplicate track ${mode}`, async (frame) => {
+      requires('tracks.v1');
+      const base = needBaseline();
+      const rate = base.sampleRateHz;
+      const clipA = placementOf(frame.before, clipAId);
+      const spanA = clipSpan(clipA);
+      const notesBefore = await readNotes(need(), clipA.contentId);
+      frame.afterRestore = async () => {
+        const notesAfter = await readNotes(need(), clipA.contentId);
+        return JSON.stringify(notesAfter) === JSON.stringify(notesBefore)
+          ? []
+          : ['the notes of the content of clip A read back differently after the revert'];
+      };
+      const { result, state, consistency } = await write(
+        'track.duplicate',
+        { trackId: clipA.trackId, mode },
+        { frame, restore: 'revert' },
+      );
+      const problems = [
+        ...consistency.problems,
+        ...duplicateConsistency(result, frame.before, state, clipA.trackId, mode),
+      ];
+      const recipe = frame.revert;
+      if (recipe?.method !== 'track.delete')
+        problems.push('the revert recipe of the duplicate is not a track.delete call');
+      const wet = await exportMaster(`duplicate track ${mode}`);
+      const coherent = coherentSumOf(base, wet.wav, spanA);
+      problems.push(...coherent.problems);
+      const rest = compareSamples(base, wet.wav, [{ startSec: spanA.endSec, endSec: lengthSec(base) }]);
+      if (rest.bitIdentical !== 1) {
+        problems.push(`the master after clip A differs from the baseline by up to ${rest.maxAbsDiff.toExponential(2)}`);
+      }
+      if (Math.abs(lengthSec(wet.wav) - lengthSec(base)) > 1 / rate + TIMELINE_EPSILON_SEC) {
+        problems.push('the duplicate changed the length of the master');
+      }
+      return {
+        note:
+          `${mode}: the master over clip A is ${coherent.levelDb === null ? 'unmeasured' : `${String(round(coherent.levelDb, 2))} dB`} ` +
+          `above the baseline (the sum of two equal signals, ${String(round(COHERENT_SUM_DB, 2))} dB), the rest is the baseline; ` +
+          'the revert recipe deleted the new track and the notes of clip A read back as before',
+        problems,
+        report: {
+          mode,
+          newTrackId: typeof result.newTrackId === 'number' ? result.newTrackId : null,
+          tolerance: { levelDb: COHERENT_SUM_TOLERANCE_DB, maxAbsDiff: COHERENT_SUM_MAX_ABS_DIFF },
+          clipALevelDb: coherent.levelDb === null ? null : round(coherent.levelDb, 3),
+          clipAMaxAbsDiffFromTwiceBaseline: coherent.maxAbsDiff,
+          restBitIdentical: rest.bitIdentical === 1,
+          revert: recipe === undefined ? null : { method: recipe.method, requiresConsent: recipe.requiresConsent },
+          warnings: warningCodes(result),
+          noteCount: notesBefore.length,
+          consistency: consistency.problems,
+        },
+      };
+    });
+
+  await step('duplicate track clone', duplicateCheck('clone'), { check: true });
+  await step('duplicate track share', duplicateCheck('share'), { check: true });
+
+  await step(
+    'delete a duplicated track',
+    async () =>
+      undoableCheck('delete a duplicated track', async (frame) => {
+        requires('tracks.v1');
+        const base = needBaseline();
+        const clipA = placementOf(frame.before, clipAId);
+        const spanA = clipSpan(clipA);
+        // The track to delete is a duplicate this check made, and the delete is called as itself, not
+        // through the revert recipe of the duplicate, which stays in the frame until the delete has
+        // taken the track away.
+        const duplicated = await write(
+          'track.duplicate',
+          { trackId: clipA.trackId, mode: 'clone' },
+          { frame, restore: 'revert' },
+        );
+        const problems = [
+          ...duplicated.consistency.problems,
+          ...duplicateConsistency(duplicated.result, frame.before, duplicated.state, clipA.trackId, 'clone'),
+        ];
+        const newTrackId = num(duplicated.result, 'newTrackId', 'the track.duplicate result');
+        const heard = await exportMaster('before track delete');
+        const coherent = coherentSumOf(base, heard.wav, spanA);
+        problems.push(...coherent.problems.map((p) => `before the delete: ${p}`));
+        const refused = await refusedWith(
+          'track.delete',
+          { trackId: newTrackId, expectedArrangementRevision: duplicated.state.arrangementRevision },
+          'INVALID_ARGUMENT',
+          'confirm_required',
+        );
+        if (refused !== undefined) problems.push(refused);
+        const afterRefusal = await readProject(need());
+        const stillShown = afterRefusal.tracks.find((t) => t.trackId === newTrackId)?.visible === true;
+        if (!stillShown) {
+          frame.revert = undefined;
+          problems.push('the delete without confirm removed the track');
+        } else {
+          problems.push(
+            ...projectSnapshotProblems(duplicated.state, afterRefusal).map((p) => `delete without confirm: ${p}`),
+          );
+        }
+        let deleted: Awaited<ReturnType<typeof write>> | undefined;
+        if (stillShown) {
+          deleted = await write('track.delete', {
+            trackId: newTrackId,
+            expectedArrangementRevision: afterRefusal.arrangementRevision,
+            confirm: true,
+          });
+          frame.revert = undefined;
+          problems.push(
+            ...deleted.consistency.problems,
+            ...trackDeleteConsistency(deleted.result, afterRefusal, deleted.state, newTrackId),
+          );
+        }
+        const state = deleted?.state ?? afterRefusal;
+        const left = projectSnapshotProblems(frame.before, state);
+        if (left.length > 0) throw new Unrestored(`after the delete the project is not as it was: ${left.join('; ')}`);
+        const after = await compareWithBaseline('after track delete', problems, 'the master after the delete');
+        const undoRaw = deleted?.result.undo;
+        const undo = isObject(undoRaw) ? undoRaw : undefined;
+        return {
+          note:
+            `the track duplicate of track ${String(clipA.trackId)} (track ${String(newTrackId)}) was heard (+${String(round(coherent.levelDb ?? Number.NaN, 2))} dB), ` +
+            'the delete without confirm was refused, the delete with confirm removed it, trackIdMap agrees with the project, ' +
+            `and the master equals the baseline${after.bitIdentical ? ' bit for bit' : ''}`,
+          problems,
+          report: {
+            deletedTrackId: newTrackId,
+            trackIdMap: deleted === undefined ? null : (deleted.result.trackIdMap ?? null),
+            refusedWithoutConfirm: refused === undefined,
+            duplicateLevelDb: coherent.levelDb === null ? null : round(coherent.levelDb, 3),
+            afterDelete: {
+              bitIdentical: after.bitIdentical,
+              maxAbsDiff: after.maxAbsDiff,
+              lengthsEqual: after.lengthsEqual,
+            },
+            undo:
+              undo === undefined
+                ? null
+                : {
+                    undoable: undo.undoable === true,
+                    reason: typeof undo.reason === 'string' ? undo.reason : null,
+                    revert: isObject(undo.revert),
+                  },
+            possiblyStaleEntries: deleted?.result.possiblyStaleEntries ?? null,
+            warnings: deleted === undefined ? [] : warningCodes(deleted.result),
+          },
+        };
+      }),
+    { check: true },
+  );
+
   await step(
     'split boundary is seamless',
     async () => {
@@ -2076,6 +3632,190 @@ export async function runArrangementEffects(
     { check: true },
   );
 
+  // The batch imports come last: they add tracks and their revert (a delete) leaves the imported
+  // tracks shown, so no check after them could compare the track list with its first state. They
+  // take their own imports back with the revert recipe and compare the project and the master with
+  // the baseline, so the order costs the checks before nothing. They do not use the ids of clip A and
+  // clip B, which a merge after the split check replaces; the baseline remembers where the clips lie.
+  await step(
+    'batch import sequential and separateTracks',
+    async () => {
+      requires('arrangement.v1', 'whose delete the revert of an import needs');
+      const base = needBaseline();
+      if (toneA === undefined || toneB === undefined || filesA === undefined || filesB === undefined) {
+        throw new Error('no generated audio');
+      }
+      if (baselineSpans === undefined) throw new Error('no baseline spans');
+      const spanA = baselineSpans.a;
+      const rate = base.sampleRateHz;
+      const sources = [decodeWav(toneA.wav), decodeWav(toneB.wav)];
+      const [sourceA, sourceB] = sources;
+      if (sourceA === undefined || sourceB === undefined) throw new Error('no decoded audio');
+      if (sourceA.sampleRateHz !== rate || sourceB.sampleRateHz !== rate) {
+        throw new Error('the generated audio and the master have different sample rates');
+      }
+      // The mixer scales a mono source (for example by a pan law); the factor is read off clip A of the
+      // baseline, which holds nothing else, and the scenario checks that clip A really is a scaled copy
+      // of its source, so the sum an import must give can be predicted from the sources alone.
+      const lengthA = Math.round((spanA.endSec - spanA.startSec) * rate);
+      const gain = fitGain(sourceA.mono.subarray(0, lengthA), base.mono, spanA.startSec, rate);
+      const fitMaxAbsDiff = fitError(sourceA.mono.subarray(0, lengthA), base.mono, spanA.startSec, gain, rate);
+      if (fitMaxAbsDiff > IMPORT_MAX_ABS_DIFF) {
+        throw new Error(
+          `clip A in the baseline master is not a scaled copy of its source (up to ${fitMaxAbsDiff.toExponential(2)} off ` +
+            `with a factor of ${String(round(gain, 6))}), so the sum of an import cannot be predicted`,
+        );
+      }
+      const pathA = filesA.wavPath;
+      const pathB = filesB.wavPath;
+      const name = 'batch import sequential and separateTracks';
+      const cases: Record<string, unknown>[] = [];
+      const problems: string[] = [];
+      const importCase = (layout: 'sequential' | 'separateTracks', startTimelineSec: number | undefined) =>
+        runCase(
+          name,
+          cases,
+          problems,
+          layout,
+          async (frame) => {
+            const result = await runJob(
+              need(),
+              'import.start',
+              {
+                items: [{ path: pathA }, { path: pathB }],
+                layout,
+                newTrack: true,
+                ...(startTimelineSec === undefined ? {} : { startTimelineSec }),
+                generateNotes: false,
+                focus: false,
+              },
+              'import',
+              timeoutMs,
+            );
+            if (!isObject(result)) throw new Error('the import result is not an object');
+            // The clips are in the project from here on: whatever goes wrong, the revert removes them.
+            const created = entityIds(result, 'created', 'placement');
+            let state: ProjectState;
+            try {
+              state = await readProject(need());
+            } catch (error) {
+              throw new Unrestored(`the project cannot be read after the import: ${messageOf(error)}`);
+            }
+            const found: string[] = [];
+            let recipe = revertOf(result);
+            const givenByInstance = recipe !== undefined;
+            if (recipe === undefined) {
+              // The specification gives an import a revert recipe (a delete) when the instance reports
+              // arrangement.v1. A result without one is a finding; the scenario made these clips, so it
+              // takes them back with the delete itself and goes on measuring.
+              const undo = isObject(result.undo) ? result.undo : {};
+              found.push(
+                `import.start gives no revert recipe (undo reason ${typeof undo.reason === 'string' ? undo.reason : 'missing'}, ` +
+                  `warnings ${warningCodes(result).join(', ') || 'none'}) although the instance reports arrangement.v1, ` +
+                  'whose delete the specification names as the revert; the clips were deleted by a call the scenario built',
+              );
+              if (created.length === 0) {
+                throw new Unrestored('import.start gives no revert recipe and names no created clip to delete');
+              }
+              recipe = {
+                method: 'arrangement.edit',
+                params: {
+                  expectedArrangementRevision: state.arrangementRevision,
+                  ops: [{ op: 'delete', placementIds: created }],
+                },
+                requiresConsent: true,
+              };
+            }
+            frame.revert = recipe;
+            const clips = importedClips(result);
+            found.push(
+              ...writeConsistency(result, state).problems,
+              ...importLayoutProblems(layout, clips, state, startTimelineSec),
+            );
+            const wet = await exportMaster(`import ${layout}`);
+            const placed = clips.flatMap((clip, k) => {
+              const read = state.placements.find((p) => p.placementId === clip.placementId);
+              const source = sources[k];
+              return read === undefined || source === undefined
+                ? []
+                : [{ samples: source.mono, startSec: read.startTimelineSec }];
+            });
+            const sum = bestSumDifference(base, wet.wav, placed, gain, { startSec: 0, endSec: lengthSec(wet.wav) });
+            if (sum.maxAbsDiff > IMPORT_MAX_ABS_DIFF) {
+              found.push(
+                `the master differs from the baseline plus the imported audio by up to ${sum.maxAbsDiff.toExponential(2)} at ${String(sum.timeSec)} s`,
+              );
+            }
+            const onsets: Record<string, unknown>[] = [];
+            if (layout === 'sequential') {
+              // Each clip sounds alone, so its first sound is where the project says the clip starts.
+              for (const [k, clip] of clips.entries()) {
+                const source = sources[k];
+                if (source === undefined) continue;
+                // The same measure on the source, scaled and put where the project says the clip starts:
+                // the window that finds an onset reaches a little before the sound in both.
+                const expected = new Float64Array(Math.ceil((clip.startTimelineSec + clip.durationSec + 0.1) * rate));
+                expected.set(
+                  source.mono.map((v) => v * gain),
+                  Math.round(clip.startTimelineSec * rate),
+                );
+                const search = [clip.startTimelineSec - 0.05, clip.startTimelineSec + 1] as const;
+                const expectedSec = onsetOf(
+                  { ...source, channels: [expected], mono: expected },
+                  ...search,
+                  ONSET_LEVEL,
+                );
+                const heard = onsetOf(wet.wav, ...search, ONSET_LEVEL);
+                if (expectedSec === null || heard === null) {
+                  found.push(`the first sound of imported clip ${String(k + 1)} cannot be found`);
+                  onsets.push({ clip: k + 1, expectedSec: null, measuredSec: null });
+                  continue;
+                }
+                if (Math.abs(heard - expectedSec) > ONSET_TOLERANCE_SEC) {
+                  found.push(
+                    `imported clip ${String(k + 1)} starts sounding at ${String(round(heard, 5))} s, expected ${String(round(expectedSec, 5))} s ` +
+                      `+- ${String(ONSET_TOLERANCE_SEC * 1000)} ms`,
+                  );
+                }
+                onsets.push({ clip: k + 1, expectedSec: round(expectedSec, 5), measuredSec: round(heard, 5) });
+              }
+            }
+            return {
+              note: layout,
+              problems: found,
+              report: {
+                layout,
+                requestedStartSec: startTimelineSec ?? null,
+                clips: clips.map((clip) => ({
+                  trackId: clip.trackId,
+                  startTimelineSec: clip.startTimelineSec,
+                  durationSec: clip.durationSec,
+                })),
+                tolerance: { maxAbsDiff: IMPORT_MAX_ABS_DIFF, onsetSec: ONSET_TOLERANCE_SEC },
+                sumMaxAbsDiff: sum.maxAbsDiff,
+                startLagSamples: sum.lagSamples,
+                onsets,
+                revert: { method: recipe.method, requiresConsent: recipe.requiresConsent, givenByInstance },
+                warnings: warningCodes(result),
+              },
+            };
+          },
+          // A batch import shows the tracks it needs and a delete does not hide them again.
+          { ignoreTrackVisibility: true },
+        );
+      await importCase('sequential', IMPORT_START_SEC);
+      await importCase('separateTracks', undefined);
+      checks[name] = { gainFactor: round(gain, 6), gainFitMaxAbsDiff: fitMaxAbsDiff, cases };
+      if (problems.length > 0) throw new Error(problems.join('; '));
+      return (
+        `sequential: the second clip starts where the first ends and both sound where the project says, from ${String(IMPORT_START_SEC)} s; ` +
+        'separateTracks: both clips start at 0 on two successive tracks and the master is the baseline plus both; ' +
+        'each revert removed the clips and restored the master'
+      );
+    },
+    { check: true },
+  );
+
   await step(
     'shutdown',
     async () => {
@@ -2132,6 +3872,23 @@ export async function runArrangementEffects(
       silenceMaxAbs: SILENCE_MAX_ABS,
       timelineEpsilonSec: TIMELINE_EPSILON_SEC,
       splitOffsetSec: SPLIT_OFFSET_SEC,
+      moveDeltaSec: MOVE_DELTA_SEC,
+      moveShiftToleranceSec: MOVE_SHIFT_TOLERANCE_SEC,
+      trimCutSec: TRIM_CUT_SEC,
+      copyGapSec: COPY_GAP_SEC,
+      shiftedMaxAbsDiff: SHIFTED_MAX_ABS_DIFF,
+      positionQuantumSamples: POSITION_QUANTUM_SAMPLES,
+      trackVolumeDb: TRACK_VOLUME_DB,
+      trackVolumeLinear: TRACK_VOLUME_LINEAR,
+      trackVolumeToleranceDb: TRACK_VOLUME_TOLERANCE_DB,
+      coherentSumDb: round(COHERENT_SUM_DB, 4),
+      coherentSumToleranceDb: COHERENT_SUM_TOLERANCE_DB,
+      coherentSumMaxAbsDiff: COHERENT_SUM_MAX_ABS_DIFF,
+      importStartSec: IMPORT_START_SEC,
+      onsetWindowSec: ONSET_WINDOW_SEC,
+      onsetLevel: ONSET_LEVEL,
+      onsetToleranceSec: ONSET_TOLERANCE_SEC,
+      importMaxAbsDiff: IMPORT_MAX_ABS_DIFF,
     },
     checks,
     timings,

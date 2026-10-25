@@ -57,8 +57,11 @@ versioned separately and has its own changelog.
   that the agent closes it with `opentune_manage_ui`; closing a confirmation box cancels the action it asked about,
   and a dialog which commits its value on close needs the user's agreement (`accept_commit`).
 - An end-to-end arrangement effects scenario (`test/e2e/arrangement-effects.ts`) for a real OpenTune build: clip gain,
-  fade ramps, track mute/solo and a clip split must change the exported master mix exactly as their results report,
-  and nothing else; unit tests prove each check against a stand-in.
+  fade ramps, track mute/solo, a clip split, a clip move and trim, a copy (modes `window` and `full`), the delete of
+  a copy, a track volume, a track duplicate (`clone` and `share`), the delete of a track and a batch import (layouts
+  `sequential` and `separateTracks`) must change the exported master mix exactly as their results report, and nothing
+  else; every write is taken back and the restored export must equal the baseline. Unit tests prove each check against
+  a stand-in, and a stand-in with one defect fails exactly the check that notices it.
 
 ### Changed
 
@@ -151,6 +154,15 @@ versioned separately and has its own changelog.
   reference audio checked.
 - A tool error for an instance that does not serve this server's protocol major (`PROTOCOL_MISMATCH`) now lists the majors
   the instance's discovery file announces, in the optional member `protocolMajors`, as the status already did.
+
+### Security
+
+- Upgraded `zod` from 4.6.5 to 4.6.7 (pinned exactly) to fix GHSA-mrhx-c7xc-m3w5, where validating an oversized
+  constrained collection could exhaust memory. `zod` is a development dependency, but esbuild bundles it into the
+  published single file, so the fix reaches the release bundle (and its entry in `THIRD-PARTY-NOTICES.md`).
+- Updated the transitive dependency `fast-uri` (via `ajv`, development only) from 3.1.8 to 3.1.9 for the four 3.0.0 to
+  3.1.8 advisories (GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr, GHSA-333x-w4r6-6crp). `npm audit`
+  reports no vulnerabilities.
 
 ## [0.1.0] - 2026-10-17
 

@@ -9,7 +9,7 @@ dependencies; `npm run gates` fails while it is out of date.
 | --- | --- | --- |
 | @modelcontextprotocol/core | 2.3.1 | Apache-2.0 |
 | @modelcontextprotocol/server | 2.3.1 | Apache-2.0 |
-| zod | 4.6.5 | MIT |
+| zod | 4.6.7 | MIT |
 
 ## @modelcontextprotocol/core 2.3.1
 
@@ -465,11 +465,11 @@ CC-BY-4.0. See https://creativecommons.org/licenses/by/4.0/legalcode for
 the full license text.
 ```
 
-## zod 4.6.5
+## zod 4.6.7
 
 License: MIT
 
-Source: https://www.npmjs.com/package/zod/v/4.6.5
+Source: https://www.npmjs.com/package/zod/v/4.6.7
 
 ### LICENSE
 
