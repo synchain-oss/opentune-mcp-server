@@ -88,8 +88,16 @@ describe('effects scenario against the stand-in', () => {
         'AUTO regenerate pulls the sharp note back': 'PASS',
         'AUTO snapNotes pulls the sharp note back': 'PASS',
         'setParams retuneSpeed 1': 'PASS',
+        'snapToScale returns an off-scale note to the scale': 'PASS',
+        'prefs.set tuningHz 442': 'PASS',
         'race: +100 cents, export, -100 cents': 'PASS',
         'shiftTiming +30 ms': 'PASS',
+        'moveHandles +30 ms': 'PASS',
+        'extra clips for the note-split, vibrato and drift checks': 'PASS',
+        'AUTO regenerate noteSplitCents': 'PASS',
+        'setParams vibratoDepth and vibratoRateHz': 'PASS',
+        'setParams pitchDriftScale 0': 'PASS',
+        'prefs.set hybridMode': 'PASS',
         'timing 3 s': 'PASS',
         shutdown: 'PASS',
       });
@@ -140,6 +148,96 @@ describe('effects scenario against the stand-in', () => {
       expect(report.noiseFloor).toMatchObject({ repeatExport: { bitIdentical: true } });
       expect(report.timings).toMatchObject({ lengths: [{ autoMode: 'regenerate' }] });
       expect(report.tolerances.pitchCents).toBe(PITCH_TOLERANCE_CENTS);
+      expect(report.tolerances).toMatchObject({
+        splitBoundarySec: 0.1,
+        tuningCents: 3,
+        vibratoRateHz: 0.25,
+        driftZeroMaxFraction: 0.35,
+        sameSoundPitchCents: 2,
+      });
+
+      // The checks of the notes, the scale, the preferences and the time grid.
+      type Measured = { index: number; expectedCents: number; medianCents: number }[];
+      const snap = report.checks['snapToScale returns an off-scale note to the scale'] as {
+        note: number;
+        targetMidi: { before: number; shifted: number; snapped: number };
+        shifted: { notes: Measured };
+        snapped: { notes: Measured };
+      };
+      // Note 3 (62) is shifted by 70 cents, to 62.7, and snapped to the nearest pitch of C major.
+      expect(snap.targetMidi).toEqual({ before: 62, shifted: 62.7, snapped: 62 });
+      expect(snap.shifted.notes.find((n) => n.index === snap.note)?.medianCents).toBeCloseTo(70, 0);
+      expect(snap.snapped.notes.find((n) => n.index === snap.note)?.medianCents).toBeCloseTo(0, 0);
+
+      const tuning = report.checks['prefs.set tuningHz 442'] as {
+        tuningHz: { before: number; set: number };
+        expectedShiftCents: number;
+        notRetroactive: { notes: Measured };
+        auto: { notes: Measured };
+      };
+      expect(tuning.tuningHz).toEqual({ before: 440, set: 442 });
+      expect(tuning.expectedShiftCents).toBeCloseTo(7.85, 2);
+      // Before AUTO nothing moved; after it the notes lie 7.85 cents up, the sharp one 32.15 down.
+      expect(tuning.notRetroactive.notes.every((n) => n.medianCents === 0)).toBe(true);
+      expect(tuning.auto.notes.filter((n) => n.index !== 2).every((n) => Math.abs(n.medianCents - 7.85) < 0.3)).toBe(
+        true,
+      );
+      expect(tuning.auto.notes.find((n) => n.index === 2)?.medianCents).toBeCloseTo(-32.15, 0);
+
+      const split = report.checks['AUTO regenerate noteSplitCents'] as {
+        runs: { noteSplitCents: number; notes: number; paramsUsed: { noteSplitCents: number } }[];
+      };
+      expect(split.runs.map((r) => r.noteSplitCents)).toEqual([30, 160]);
+      expect(split.runs.map((r) => r.paramsUsed.noteSplitCents)).toEqual([30, 160]);
+      expect(split.runs[0]?.notes ?? 0).toBeGreaterThan(split.runs[1]?.notes ?? 99);
+      expect(split.runs[1]?.notes).toBe(2);
+
+      const vibrato = report.checks['setParams vibratoDepth and vibratoRateHz'] as {
+        baseline: { amplitudeCents: number };
+        vibrato: { amplitudeCents: number; rateHz: number };
+      };
+      expect(vibrato.baseline.amplitudeCents).toBeLessThan(1);
+      expect(vibrato.vibrato.rateHz).toBeCloseTo(6, 1);
+      expect(vibrato.vibrato.amplitudeCents).toBeCloseTo(45.5, -1);
+
+      const drift = report.checks['setParams pitchDriftScale 0'] as {
+        baseline: { stdCents: number };
+        driftScale0: { stdCents: number };
+      };
+      expect(drift.baseline.stdCents).toBeGreaterThan(8);
+      expect(drift.driftScale0.stdCents).toBeLessThan(1);
+
+      const moved = report.checks['moveHandles +30 ms'] as {
+        measuredShiftMs: number;
+        handle: { outputSecBefore: number; outputSecAfter: number };
+        notesAway: { index: number; shiftMs: number }[];
+        exportAfterUndo: { bitIdentical: number };
+      };
+      expect(Math.abs(moved.measuredShiftMs - 30)).toBeLessThan(2);
+      expect(moved.handle.outputSecAfter - moved.handle.outputSecBefore).toBeCloseTo(0.03, 6);
+      expect(moved.notesAway.map((n) => n.index)).toEqual([0, 4]);
+      expect(moved.notesAway.every((n) => n.shiftMs === 0)).toBe(true);
+      expect(moved.exportAfterUndo.bitIdentical).toBe(1);
+
+      // Hybrid mode: the scenario switched it on itself, and that stays out of the notice at the top
+      // (checked above: hybridMode false, no notices). The corrections are judged where they should be.
+      const hybrid = report.checks['prefs.set hybridMode'] as {
+        hybridMode: { began: boolean; set: boolean };
+        began: { index: number; medianCents: number }[];
+        flipped: { index: number; medianCents: number }[];
+        differ: { maxAbsDiff: number };
+        putBack: { notes: { bitIdentical: boolean }[] };
+        processing: { hybridMode: boolean }[];
+      };
+      expect(hybrid.hybridMode).toEqual({ began: false, set: true });
+      expect(hybrid.began.find((n) => n.index === 1)?.medianCents).toBeCloseTo(30, 0);
+      expect(hybrid.began.find((n) => n.index === 3)?.medianCents).toBeCloseTo(200, 0);
+      // The lighter path leaves the small correction as it was and the large one applied.
+      expect(hybrid.flipped.find((n) => n.index === 1)?.medianCents ?? 99).toBeLessThan(5);
+      expect(hybrid.flipped.find((n) => n.index === 3)?.medianCents).toBeCloseTo(200, -1);
+      expect(hybrid.differ.maxAbsDiff).toBeGreaterThan(1e-3);
+      expect(hybrid.putBack.notes.every((n) => n.bitIdentical)).toBe(true);
+      expect(hybrid.processing.map((p) => p.hybridMode)).toEqual([false, true, false, false]);
       // Nothing in the report names a file or holds a secret.
       expect(JSON.stringify(report)).not.toMatch(/ot-tone-|\.wav|[0-9a-f]{32}[0-9a-f]{32}/);
     },
@@ -158,8 +256,12 @@ describe('effects scenario against the stand-in', () => {
         'setPitchShift +2 semitones',
         'AUTO regenerate pulls the sharp note back',
         'AUTO snapNotes pulls the sharp note back',
+        'snapToScale returns an off-scale note to the scale',
+        'prefs.set tuningHz 442',
         'race: +100 cents, export, -100 cents',
         'shiftTiming +30 ms',
+        'moveHandles +30 ms',
+        'prefs.set hybridMode',
       ]) {
         expect(r[name], name).toBe('FAIL');
       }
