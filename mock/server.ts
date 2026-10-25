@@ -170,9 +170,11 @@ export interface OtcpMock {
   forgetAlignment(): void;
   /**
    * `stuck`: a reconfiguration of the vocoder never finishes, so that a prefsApply job passes its wait limit and fails
-   * with MODEL_UNAVAILABLE(vocoder_not_ready); null lets a stuck reconfiguration finish.
+   * with MODEL_UNAVAILABLE(vocoder_not_ready); `loadFails`: the next reconfiguration ends with the vocoder not ready
+   * (it could not load the new weight), so that the job takes its changes back at once and fails with
+   * MODEL_UNAVAILABLE(vocoder_load_failed); null lets a stuck reconfiguration finish.
    */
-  setVocoderFault(fault: 'stuck' | null): void;
+  setVocoderFault(fault: 'stuck' | 'loadFails' | null): void;
   /** OpenTune cannot load these pitch models: prefs.set of one of them (it must be among the options) fails with model_missing. */
   failF0Model(...models: readonly string[]): void;
   /**
@@ -736,7 +738,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       for (const content of world.contents.values()) content.alignmentReady = false;
     },
     setVocoderFault(fault) {
-      world.vocoderStuck = fault === 'stuck';
+      world.vocoderFault = fault;
       // A reconfiguration that has begun and was stuck ends once the fault is gone.
       if (fault === null && world.vocoder.reconfiguring) world.finishVocoder();
     },

@@ -203,7 +203,9 @@ function withdraw(context: MethodContext, planned: readonly Planned[]): string[]
  * (the pitch model first) and, after a change of the vocoder weight or the rendering priority of a vocoder that was
  * ready, starts the reconfiguration and waits for it. The vocoder reports ready for a moment after the command, so the
  * job waits until the vocoder is ready, not reconfiguring and nothing is queued. When the wait limit passes, it takes
- * its changes back and fails with MODEL_UNAVAILABLE(vocoder_not_ready).
+ * its changes back and fails with MODEL_UNAVAILABLE(vocoder_not_ready). A vocoder that is not ready although its
+ * command has ended could not load the new weight: the job does not wait for the limit and fails at once with
+ * MODEL_UNAVAILABLE(vocoder_load_failed).
  */
 function prefsApplyDriver(context: MethodContext): JobDriver {
   const { world } = context;
@@ -234,18 +236,27 @@ function prefsApplyDriver(context: MethodContext): JobDriver {
       }
     }
     if (world.vocoderSettled) return { done: { state: 'succeeded', result } };
+    const loadFailed = world.vocoderLoadFailed;
     const left = deadline - world.now();
-    if (left > 0) return { next: Math.min(VOCODER_POLL_MS, left) };
+    if (!loadFailed && left > 0) return { next: Math.min(VOCODER_POLL_MS, left) };
     const kept = withdraw(context, planned);
+    // The runtime is asked for the previous weight or priority again, which loads.
+    if (loadFailed) world.finishVocoder();
+    const why = loadFailed ? 'the vocoder could not load the new weight' : 'the vocoder did not become ready in time';
     const detail =
       kept.length === 0
-        ? 'the vocoder did not become ready in time; the previous preferences were restored'
-        : 'the vocoder did not become ready in time; the previous preferences were restored except those another ' +
-          `write changed while the job waited, which keep that write's value: ${kept.join(' ')}`;
+        ? `${why}; the previous preferences were restored`
+        : `${why}; the previous preferences were restored except those another write changed while the job waited, ` +
+          `which keep that write's value: ${kept.join(' ')}`;
     return {
       done: {
         state: 'failed',
-        error: { kind: 'MODEL_UNAVAILABLE', reason: 'vocoder_not_ready', detail, executed: kept.length > 0 },
+        error: {
+          kind: 'MODEL_UNAVAILABLE',
+          reason: loadFailed ? 'vocoder_load_failed' : 'vocoder_not_ready',
+          detail,
+          executed: kept.length > 0,
+        },
       },
     };
   };

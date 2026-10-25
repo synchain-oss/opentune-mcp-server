@@ -352,8 +352,11 @@ export class World {
   /** How a reference analysis that has to compute alignment data ends, or null when it completes. */
   referenceFault: 'stalled' | 'timeout' | 'failed' | null = null;
   readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
-  /** Test interface: a reconfiguration of the vocoder never finishes, so that a wait for it passes its limit. */
-  vocoderStuck = false;
+  /**
+   * Test interface: `stuck` makes a reconfiguration of the vocoder never finish, so that a wait for it passes its
+   * limit; `loadFails` makes the command finish but leave the vocoder not ready (it could not load the new weight).
+   */
+  vocoderFault: 'stuck' | 'loadFails' | null = null;
   /** Test interface: the pitch models that OpenTune cannot load (prefs.set then fails with model_missing). */
   readonly unloadableF0Models = new Set<string>();
   /** How long the vocoder takes to start and to finish a reconfiguration; test hooks change it. */
@@ -582,7 +585,8 @@ export class World {
   /**
    * OpenTune reconfigures its vocoder for a new weight or rendering priority. It starts asynchronously: the command
    * waits in a queue first, so for `queuedMs` the vocoder still reports ready and not reconfiguring; then it reports
-   * reconfiguring for `reconfiguringMs`, and is ready again after that (never, under `vocoderStuck`).
+   * reconfiguring for `reconfiguringMs`, and is ready again after that (never under the fault `stuck`; under `loadFails`
+   * the command ends but the vocoder stays not ready).
    */
   reconfigureVocoder(): void {
     const { vocoder, vocoderTiming } = this;
@@ -591,9 +595,18 @@ export class World {
       vocoder.ready = false;
       vocoder.reconfiguring = true;
       this.after(vocoderTiming.reconfiguringMs, () => {
-        if (!this.vocoderStuck) this.finishVocoder();
+        if (this.vocoderFault === 'stuck') return;
+        if (this.vocoderFault === 'loadFails') this.failVocoderLoad();
+        else this.finishVocoder();
       });
     });
+  }
+
+  /** The command for the vocoder has finished, but the vocoder could not load the new weight and is not ready. */
+  failVocoderLoad(): void {
+    this.vocoder.ready = false;
+    this.vocoder.reconfiguring = false;
+    this.vocoder.commandPending = false;
   }
 
   /** The vocoder is ready again; a reconfiguration that was stuck ends. */
@@ -601,6 +614,12 @@ export class World {
     this.vocoder.ready = true;
     this.vocoder.reconfiguring = false;
     this.vocoder.commandPending = false;
+  }
+
+  /** The vocoder is not ready although nothing about it is queued or running any more: it could not load. */
+  get vocoderLoadFailed(): boolean {
+    const { ready, reconfiguring, commandPending } = this.vocoder;
+    return !ready && !reconfiguring && !commandPending;
   }
 
   /** The vocoder is ready and nothing about it is queued or running (OpenTune's control worker is idle). */

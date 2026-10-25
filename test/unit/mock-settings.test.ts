@@ -366,6 +366,56 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
     expect((await jobOf(session, again)).state).toBe('succeeded');
   });
 
+  it('fails at once with MODEL_UNAVAILABLE(vocoder_load_failed) when the vocoder cannot load the new weight, and takes the call back', async () => {
+    const clock = new ManualClock();
+    // A wait limit far away: the job must not need it.
+    const session = await sessions.open({ clock, vocoder: { waitLimitMs: 1_000_000 } });
+    const { mock, ok } = session;
+    mock.setVocoderFault('loadFails');
+    const before = await processing(session);
+    const started = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx', tuningHz: 442 });
+    clock.advance(14);
+    expect((await jobOf(session, started)).state).toBe('running');
+    expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+    // The command ends with the vocoder not ready: the job does not wait for its limit.
+    clock.advance(1);
+    const job = await jobOf(session, started);
+    expect(job.state).toBe('failed');
+    expect(job.error?.data).toMatchObject({
+      kind: 'MODEL_UNAVAILABLE',
+      reason: 'vocoder_load_failed',
+      retryable: false,
+      executed: false,
+    });
+    expect(await processing(session)).toEqual(before);
+    // The runtime is asked for the previous weight again, which loads.
+    expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+    // A rendering priority fails the same way while the fault lasts, and succeeds once it is gone.
+    const priority = await ok('prefs.set', { renderingPriority: 'cpuFirst' });
+    clock.advance(15);
+    expect((await jobOf(session, priority)).error?.data).toMatchObject({ reason: 'vocoder_load_failed' });
+    expect(await processing(session)).toMatchObject({ renderingPriority: 'gpuFirst' });
+    mock.setVocoderFault(null);
+    const again = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx' });
+    clock.advance(100);
+    expect((await jobOf(session, again)).state).toBe('succeeded');
+  });
+
+  it('reports executed true when another write changed a preference of the call before the vocoder failed to load', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    mock.setVocoderFault('loadFails');
+    const started = await ok('prefs.set', { vocoderWeight: 'hifigan_coulin9.onnx', tuningHz: 442 });
+    clock.advance(6);
+    await ok('prefs.set', { tuningHz: 450 });
+    clock.advance(9);
+    const job = await jobOf(session, started);
+    expect(job.error?.data).toMatchObject({ reason: 'vocoder_load_failed', retryable: false, executed: true });
+    expect(String(job.error?.data.detail)).toContain('tuningHz');
+    expect(await processing(session)).toMatchObject({ vocoderWeight: 'hifigan.onnx', tuningHz: 450 });
+  });
+
   it('reports executed true when another write changed a preference of the call while the job waited', async () => {
     const clock = new ManualClock();
     const session = await sessions.open({ clock, vocoder: { waitLimitMs: 1000 } });
