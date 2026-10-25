@@ -48,18 +48,21 @@ export function deviceView(audio: AudioRec) {
 }
 
 /** What the setup offers for the current device type. */
-const available = (audio: AudioRec) => ({
+const available = (audio: AudioRec, outputChannelPairCount: number) => ({
   deviceTypes: [...AUDIO_AVAILABLE.deviceTypes],
   outputDevices: [...outputDevicesOf(audio.deviceType)],
   sampleRatesHz: [...AUDIO_AVAILABLE.sampleRatesHz],
   bufferSizesFrame: [...AUDIO_AVAILABLE.bufferSizesFrame],
-  outputChannelPairCount: AUDIO_AVAILABLE.outputChannelPairCount,
+  outputChannelPairCount,
 });
 
-const get: Handler = ({ world }) => ({ device: deviceView(world.audio), available: available(world.audio) });
+const get: Handler = ({ world }) => ({
+  device: deviceView(world.audio),
+  available: available(world.audio, world.outputChannelPairCount),
+});
 
 /** Whether the setup offers the value the call asks for; output devices are those of the device type that will run. */
-function offered(name: Member, value: string | number, deviceType: string): boolean {
+function offered(name: Member, value: string | number, deviceType: string, outputChannelPairCount: number): boolean {
   switch (name) {
     case 'deviceType':
       return (AUDIO_AVAILABLE.deviceTypes as readonly (string | number)[]).includes(value);
@@ -70,7 +73,7 @@ function offered(name: Member, value: string | number, deviceType: string): bool
     case 'bufferSizeFrame':
       return (AUDIO_AVAILABLE.bufferSizesFrame as readonly (string | number)[]).includes(value);
     case 'outputChannelPair':
-      return typeof value === 'number' && value < AUDIO_AVAILABLE.outputChannelPairCount;
+      return typeof value === 'number' && value < outputChannelPairCount;
   }
 }
 
@@ -83,7 +86,7 @@ const set: Handler = (context) => {
     return value === undefined ? [] : [{ name, value }];
   });
   const targetType = typeof params.deviceType === 'string' ? params.deviceType : audio.deviceType;
-  const unavailable = given.find(({ name, value }) => !offered(name, value, targetType));
+  const unavailable = given.find(({ name, value }) => !offered(name, value, targetType, world.outputChannelPairCount));
   if (unavailable !== undefined) {
     throw refuse(
       'INVALID_ARGUMENT',

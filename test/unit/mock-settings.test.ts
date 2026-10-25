@@ -800,6 +800,13 @@ describe('audio.get and audio.set', () => {
       reason: 'audio_setting_unavailable',
       executed: false,
     });
+    // A test can offer a second pair, which audio.get then lists and audio.set opens.
+    mock.setOutputChannelPairCount(2);
+    expect(field(await ok('audio.get'), 'available', 'outputChannelPairCount')).toBe(2);
+    expect(await ok('audio.set', { outputChannelPair: 1 })).toMatchObject({
+      noOp: false,
+      device: { outputChannelPair: 1 },
+    });
   });
 
   it('lets playback start without the no-device warning once a device runs', async () => {

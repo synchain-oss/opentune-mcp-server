@@ -20,12 +20,14 @@ import {
   REFERENCE_WAIT_LIMIT_MS,
   chooseAudioSwitch,
   isKnownStalledDefect,
+  isSafeDeviceType,
   refusalIsDefect,
   runWaveBTour,
   type WaveBTourHooks,
   type WaveBTourReport,
 } from '../e2e/wave-b-tour.js';
 import { INITIALIZE, mcpClient, testContext, type TestContext } from '../support/context.js';
+import { wrapSession, type BeforeCall, type SessionDefect } from '../support/wrap-session.js';
 
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
@@ -41,34 +43,8 @@ const config: SmokeConfig = {
 const isObject = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
-/** Changes one OTCP reply before the tour sees it. */
-type SessionDefect = (method: string, result: Json, params: Json) => Json | undefined;
 /** Changes one MCP tool result before the tour sees it. */
 type ToolDefect = (tool: string, body: Json) => unknown;
-
-/** Runs before a call is sent to the instance. */
-type BeforeCall = (method: string, params: Json) => void;
-
-/** A session that answers like `session`, with `defect` applied to every reply. */
-function wrapSession(session: OtcpSession, defect: SessionDefect, before?: BeforeCall): OtcpSession {
-  const wrapped = {
-    get hello() {
-      return session.hello;
-    },
-    get closed() {
-      return session.closed;
-    },
-    async call(method: string, params: Json, timeoutMs: number): Promise<Json> {
-      before?.(method, params);
-      const result = await session.call(method, params, timeoutMs);
-      return defect(method, structuredClone(result), params) ?? result;
-    },
-    close() {
-      session.close();
-    },
-  };
-  return wrapped as unknown as OtcpSession;
-}
 
 /** The real tools over an in-process MCP client, as the built bundle would answer. */
 async function fakeMcp(
@@ -114,6 +90,10 @@ interface FixtureOptions {
   readonly before?: BeforeCall;
   readonly clock?: Clock;
   readonly tool?: ToolDefect;
+  /** How long the transport plays before the tour pauses it (default: not at all, a mock does not wait for audio). */
+  readonly playMs?: number;
+  /** How long the first step waits for the first-run overlay (default: not at all). */
+  readonly onboardingWaitMs?: number;
 }
 
 /** A hook set whose instance and MCP server are the mock and the in-process tools. */
@@ -147,6 +127,8 @@ function fixture(options: FixtureOptions = {}): {
           session: (session: OtcpSession) => wrapSession(session, options.reply ?? (() => undefined), options.before),
         }),
     mcp: (env) => fakeMcp(env, contexts, options.tool),
+    playMs: options.playMs ?? 0,
+    onboardingWaitMs: options.onboardingWaitMs ?? 0,
   };
   cleanup.push(async () => {
     for (const ctx of contexts) ctx.instances.close();
@@ -157,6 +139,9 @@ function fixture(options: FixtureOptions = {}): {
 
 const withAudio = (mock: OtcpMock): void => {
   mock.given({ audio: { running: true } });
+  // OpenTune's Standalone offers the output channel pair 0 only, and so does the mock by default; a second pair lets
+  // the tour switch it too.
+  mock.setOutputChannelPairCount(2);
 };
 
 const stepResult = (report: WaveBTourReport, name: string) =>
@@ -238,7 +223,13 @@ describe('the wave-B tour against a correct fake', () => {
     ]);
     expect(report.tools.every((tool) => tool.outcome === 'ok')).toBe(true);
     expect(report.facts.preferencesTouched).toBe('tuningHz');
-    expect(report.facts.audioSetting).toBeTruthy();
+    expect(report.facts.audioSwitched).toEqual([
+      'bufferSizeFrame',
+      'sampleRateHz',
+      'outputChannelPair',
+      'outputDevice',
+      'deviceType',
+    ]);
     expect(report.facts.onboardingDismissed).toBeUndefined();
     expect(report.facts.readCalls).toBeGreaterThan(0);
     expect(report.manualChecks).toHaveLength(1);
@@ -648,6 +639,7 @@ describe('the reference analysis of the locked OpenTune', () => {
     expect(step?.result).toBe('PASS');
     expect(step?.note).toContain(DEFECT_NOTE);
     expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
+    expect(report.result).toBe('PASS');
   }, 120_000);
 
   it('does not list the defect when the same step fails the undo check', async () => {
@@ -761,82 +753,184 @@ describe('the reference analysis of the locked OpenTune', () => {
   });
 });
 
+type AudioList = 'bufferSizesFrame' | 'sampleRatesHz' | 'outputDevices' | 'deviceTypes' | 'outputChannelPairCount';
+
+/** audio.get offers nothing but the current values of the listed lists (one output channel pair is the current one). */
+const offerOnlyCurrent =
+  (...lists: readonly AudioList[]): SessionDefect =>
+  (method, result) => {
+    if (method !== 'audio.get' || !isObject(result.device) || !isObject(result.available)) return undefined;
+    const current: Record<string, unknown> = {
+      bufferSizesFrame: result.device.bufferSizeFrame,
+      sampleRatesHz: result.device.sampleRateHz,
+      outputDevices: result.device.outputDevice,
+      deviceTypes: result.device.deviceType,
+    };
+    for (const list of lists) {
+      result.available[list] = list === 'outputChannelPairCount' ? 1 : [current[list]];
+    }
+    return result;
+  };
+
+/** The values of the audio setup the mock starts with (sample rate, buffer size, pair and names). */
+const START_SETUP = {
+  deviceType: 'Mock Audio',
+  outputDevice: 'Mock Output',
+  sampleRateHz: 44100,
+  bufferSizeFrame: 512,
+  outputChannelPair: 0,
+};
+
 describe('the audio step of the tour', () => {
   const STEP = 'audio.get and audio.set';
 
-  /** audio.get offers nothing but the current values of the listed lists. */
-  const offerOnlyCurrent =
-    (...lists: readonly ('bufferSizesFrame' | 'sampleRatesHz' | 'outputDevices' | 'deviceTypes')[]): SessionDefect =>
-    (method, result) => {
-      if (method !== 'audio.get' || !isObject(result.device) || !isObject(result.available)) return undefined;
-      const current: Record<string, unknown> = {
-        bufferSizesFrame: result.device.bufferSizeFrame,
-        sampleRatesHz: result.device.sampleRateHz,
-        outputDevices: result.device.outputDevice,
-        deviceTypes: result.device.deviceType,
-      };
-      for (const list of lists) result.available[list] = [current[list]];
-      return result;
+  /** Records the parameters of every audio.set the tour sends, and lets `each` look at the call (1, 2, ...) first. */
+  const recording = (each?: (n: number, mock: OtcpMock | undefined) => void) => {
+    const sent: Json[] = [];
+    let mock: OtcpMock | undefined;
+    const options = {
+      prepare: (m: OtcpMock) => {
+        withAudio(m);
+        mock = m;
+      },
+      before: (method: string, params: Json) => {
+        if (method !== 'audio.set') return;
+        sent.push(structuredClone(params));
+        each?.(sent.length, mock);
+      },
     };
+    return { sent, options };
+  };
 
-  it('changes a buffer size of the current device first and compares the whole setup after the revert', async () => {
-    const { hooks } = fixture({ prepare: withAudio });
+  it('switches every field the device offers, the device type last, and compares the whole setup after each', async () => {
+    const { sent, options } = recording();
+    const { hooks } = fixture(options);
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('PASS');
-    expect(report.facts.audioSetting).toBe('bufferSizeFrame');
-    expect(report.facts.audioSwitched).toBe('another buffer size or sample rate');
+    // Every switch is followed by the revert recipe of its result, which names the members it changed: only the one
+    // asked for, except for the device type, which also opened the other type's default output device.
+    expect(sent).toEqual([
+      { bufferSizeFrame: 256 },
+      { bufferSizeFrame: 512 },
+      { sampleRateHz: 48000 },
+      { sampleRateHz: 44100 },
+      { outputChannelPair: 1 },
+      { outputChannelPair: 0 },
+      { outputDevice: 'Mock Output 2' },
+      { outputDevice: 'Mock Output' },
+      { deviceType: 'Mock Audio 2' },
+      { deviceType: 'Mock Audio', outputDevice: 'Mock Output' },
+    ]);
+    for (const field of ['bufferSizeFrame', 'sampleRateHz', 'outputChannelPair', 'outputDevice', 'deviceType']) {
+      expect(report.facts[`audio.${field}`], field).toBe('PASS');
+    }
+    expect(report.facts.audioSwitched).toEqual([
+      'bufferSizeFrame',
+      'sampleRateHz',
+      'outputChannelPair',
+      'outputDevice',
+      'deviceType',
+    ]);
+    expect(step?.note).toContain('bufferSizeFrame 512 -> 256 and back');
+    expect(step?.note).toContain('deviceType "Mock Audio" -> "Mock Audio 2" and back');
     expect(step?.note).toContain('the setup read back equals the one at the start (6 members compared)');
   }, 120_000);
 
-  it('switches to another output device when the device offers no other buffer size or sample rate', async () => {
+  it('tries what the first device type does not offer in the other type, then takes the type switch back', async () => {
+    const { sent, options } = recording();
+    // The first type offers one buffer size and one sample rate (as the shared mode of Windows Audio does).
     const { hooks } = fixture({
-      prepare: withAudio,
-      reply: offerOnlyCurrent('bufferSizesFrame', 'sampleRatesHz'),
+      ...options,
+      reply: (method, result, params) =>
+        isObject(result.device) && result.device.deviceType === 'Mock Audio'
+          ? offerOnlyCurrent('bufferSizesFrame', 'sampleRatesHz')(method, result, params)
+          : undefined,
     });
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('PASS');
-    expect(report.facts.audioSetting).toBe('outputDevice');
-    expect(report.facts.audioSwitched).toBe('another device');
-    expect(step?.note).toContain('outputDevice "Mock Output" -> "Mock Output 2" and back');
+    expect(sent).toEqual([
+      { outputChannelPair: 1 },
+      { outputChannelPair: 0 },
+      { outputDevice: 'Mock Output 2' },
+      { outputDevice: 'Mock Output' },
+      { deviceType: 'Mock Audio 2' },
+      { bufferSizeFrame: 256 },
+      { bufferSizeFrame: 512 },
+      { sampleRateHz: 48000 },
+      { sampleRateHz: 44100 },
+      { deviceType: 'Mock Audio', outputDevice: 'Mock Output' },
+    ]);
+    expect(report.facts['audio.bufferSizeFrame']).toBe('PASS');
+    expect(report.facts['audio.sampleRateHz']).toBe('PASS');
+    expect(step?.note).toContain('bufferSizeFrame 512 -> 256 in "Mock Audio 2" and back');
+    expect(step?.note).toContain('sampleRateHz 44100 -> 48000 in "Mock Audio 2" and back');
+  }, 120_000);
+
+  it('skips a field the device offers no other value of, with the reason, and switches the others', async () => {
+    const { sent, options } = recording();
+    const { hooks } = fixture({
+      ...options,
+      reply: offerOnlyCurrent('bufferSizesFrame', 'outputChannelPairCount'),
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('PASS');
+    expect(report.facts['audio.bufferSizeFrame']).toBe('SKIP: audio.get offers no other bufferSizeFrame than 512');
+    expect(report.facts['audio.outputChannelPair']).toBe('SKIP: audio.get offers no other output channel pair than 0');
+    expect(report.facts['audio.sampleRateHz']).toBe('PASS');
+    expect(sent.some((params) => 'bufferSizeFrame' in params || 'outputChannelPair' in params)).toBe(false);
+    expect(step?.note).toContain('skipped: bufferSizeFrame (audio.get offers no other bufferSizeFrame than 512)');
+  }, 120_000);
+
+  it('never switches to ASIO or an exclusive mode, whatever audio.get lists', async () => {
+    const { sent, options } = recording();
+    const { hooks } = fixture({
+      ...options,
+      reply: (method, result) => {
+        if (method !== 'audio.get' || !isObject(result.available) || !isObject(result.device)) return undefined;
+        result.available.deviceTypes = [result.device.deviceType, 'ASIO', 'Windows Audio (Exclusive Mode)'];
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.result).toBe('PASS');
+    expect(String(report.facts['audio.deviceType'])).toMatch(/^SKIP: .*safe to switch to \(ASIO and exclusive modes/);
+    expect(sent.some((params) => 'deviceType' in params)).toBe(false);
   }, 120_000);
 
   it('skips with its reason when audio.get offers nothing but the current setup', async () => {
     const { hooks } = fixture({
       prepare: withAudio,
-      reply: offerOnlyCurrent('bufferSizesFrame', 'sampleRatesHz', 'outputDevices', 'deviceTypes'),
+      reply: offerOnlyCurrent(
+        'bufferSizesFrame',
+        'sampleRatesHz',
+        'outputDevices',
+        'deviceTypes',
+        'outputChannelPairCount',
+      ),
     });
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('SKIP');
     expect(step?.note).toContain('nothing to switch');
-    expect(report.facts.audioSetting).toBeUndefined();
+    for (const field of ['bufferSizeFrame', 'sampleRateHz', 'outputChannelPair', 'outputDevice', 'deviceType']) {
+      expect(String(report.facts[`audio.${field}`]), field).toMatch(/^SKIP: audio.get offers no other/);
+    }
+    expect(report.facts.audioSwitched).toEqual([]);
   }, 120_000);
 
   /** The switch works; the revert (the second audio.set) fails to open; the retry is the third. */
-  const failingRevert = (retryWorks: boolean) => {
-    let writes = 0;
-    let mock: OtcpMock | undefined;
-    const sent: Json[] = [];
-    const { hooks } = fixture({
-      prepare: (m) => {
-        withAudio(m);
-        mock = m;
-      },
-      before: (method, params) => {
-        if (method !== 'audio.set') return;
-        writes += 1;
-        sent.push(structuredClone(params));
-        if (writes === 2) mock?.given({ audio: { running: true, failsToOpen: true } });
-        if (writes === 3 && retryWorks) mock?.given({ audio: { running: true, failsToOpen: false } });
-      },
+  const failingRevert = (retryWorks: boolean) =>
+    recording((n, mock) => {
+      if (n === 2) mock?.given({ audio: { running: true, failsToOpen: true } });
+      if (n === 3 && retryWorks) mock?.given({ audio: { running: true, failsToOpen: false } });
     });
-    return { hooks, sent };
-  };
 
   it('sends the values of the start once more when the revert fails, and fails when that fails too', async () => {
-    const { hooks, sent } = failingRevert(false);
+    const { sent, options } = failingRevert(false);
+    const { hooks } = fixture(options);
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('FAIL');
@@ -845,11 +939,12 @@ describe('the audio step of the tour', () => {
     expect(step?.note).toContain('set it back by hand');
     expect(step?.note).toContain('could not be set back with the start values either');
     expect(sent).toHaveLength(3);
-    expect(sent[2]).toMatchObject({ bufferSizeFrame: 512, sampleRateHz: 44100, outputDevice: 'Mock Output' });
+    expect(sent[2]).toEqual(START_SETUP);
   }, 120_000);
 
   it('fails too when the retry with the values of the start works, and says so', async () => {
-    const { hooks, sent } = failingRevert(true);
+    const { sent, options } = failingRevert(true);
+    const { hooks } = fixture(options);
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('FAIL');
@@ -857,36 +952,859 @@ describe('the audio step of the tour', () => {
     expect(step?.note).not.toContain('either');
     expect(step?.note).toContain('the setup at the start was');
     expect(sent).toHaveLength(3);
-    expect(sent[2]).toMatchObject({ bufferSizeFrame: 512 });
+    expect(sent[2]).toEqual(START_SETUP);
   }, 120_000);
 
-  it('picks buffer size, sample rate, output device, device type in that order', () => {
+  it('sends the values of the start once more when something other than the revert goes wrong, and fails', async () => {
+    let writes = 0;
+    let thrown = false;
+    const sent: Json[] = [];
+    const { hooks } = fixture({
+      prepare: withAudio,
+      before: (method, params) => {
+        if (method === 'audio.set') {
+          writes += 1;
+          sent.push(structuredClone(params));
+        } else if (method === 'audio.get' && writes === 2 && !thrown) {
+          // The read that compares the setup after the first revert fails: not an Unrestored, a plain error.
+          thrown = true;
+          throw new Error('the read after the revert failed');
+        }
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('the read after the revert failed');
+    expect(sent).toHaveLength(3);
+    expect(sent[2]).toEqual(START_SETUP);
+    // The setup was set back, so the tour goes on with the steps after this one.
+    expect(stepResult(report, 'arrangement.edit: move, trim, gain and fade')?.result).toBe('PASS');
+  }, 120_000);
+
+  it('names the start values when they cannot be sent back after another error either', async () => {
+    let writes = 0;
+    const sent: Json[] = [];
+    const { hooks } = fixture({
+      prepare: withAudio,
+      before: (method, params) => {
+        if (method === 'audio.set') {
+          writes += 1;
+          sent.push(structuredClone(params));
+        } else if (method === 'audio.get' && (writes === 2 || writes === 3)) {
+          // The read after the revert fails, and so does the read that checks the start values sent back.
+          throw new Error(`the read after audio.set number ${String(writes)} failed`);
+        }
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('the read after audio.set number 2 failed');
+    expect(step?.note).toContain('the start values could not be sent back either');
+    expect(step?.note).toContain('the setup at the start was');
+    // The setup could not be checked after it was put back, so nothing runs after it.
+    expect(stepResult(report, 'arrangement.edit: move, trim, gain and fade')?.result).toBe('SKIP');
+  }, 120_000);
+
+  it('fails and sends the start values when the revert of the device type switch fails', async () => {
+    // Eight sends for the four fields, the ninth switches the type, the tenth is its revert, the eleventh the retry.
+    const { sent, options } = recording((n, mock) => {
+      if (n === 10) mock?.given({ audio: { running: true, failsToOpen: true } });
+      if (n === 11) mock?.given({ audio: { running: true, failsToOpen: false } });
+    });
+    const { hooks } = fixture(options);
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('device_open_failed');
+    expect(sent).toHaveLength(11);
+    expect(sent[8]).toEqual({ deviceType: 'Mock Audio 2' });
+    expect(sent[10]).toEqual(START_SETUP);
+  }, 120_000);
+
+  it('fails the device type when the switch itself is refused, and has nothing to put back', async () => {
+    const { sent, options } = recording((n, mock) => {
+      if (n === 9) mock?.given({ audio: { running: true, failsToOpen: true } });
+    });
+    const { hooks } = fixture(options);
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('device_open_failed');
+    expect(report.facts['audio.deviceType']).toBe('FAIL');
+    expect(report.facts['audio.bufferSizeFrame']).toBe('PASS');
+    expect(sent).toHaveLength(9);
+  }, 120_000);
+
+  it('picks another sample rate, buffer size, output device, channel pair or safe device type', () => {
     const device = {
       bufferSizeFrame: 256,
       sampleRateHz: 48000,
       outputDevice: 'A',
       deviceType: 'T',
+      outputChannelPair: 0,
     };
     const offer = (extra: Json = {}): Json => ({
       bufferSizesFrame: [256],
       sampleRatesHz: [48000],
       outputDevices: ['A'],
       deviceTypes: ['T'],
+      outputChannelPairCount: 1,
       ...extra,
     });
-    expect(chooseAudioSwitch(device, offer())).toBeNull();
-    expect(chooseAudioSwitch(device, offer({ deviceTypes: ['T', 'U'] }))).toEqual({ field: 'deviceType', value: 'U' });
-    expect(chooseAudioSwitch(device, offer({ outputDevices: ['A', 'B'], deviceTypes: ['T', 'U'] }))).toEqual({
-      field: 'outputDevice',
-      value: 'B',
-    });
-    expect(chooseAudioSwitch(device, offer({ sampleRatesHz: [48000, 44100], outputDevices: ['A', 'B'] }))).toEqual({
-      field: 'sampleRateHz',
-      value: 44100,
-    });
-    expect(chooseAudioSwitch(device, offer({ bufferSizesFrame: [256, 512], sampleRatesHz: [44100] }))).toEqual({
+    for (const field of [
+      'bufferSizeFrame',
+      'sampleRateHz',
+      'outputDevice',
+      'deviceType',
+      'outputChannelPair',
+    ] as const) {
+      expect(chooseAudioSwitch(field, device, offer()), field).toBeNull();
+    }
+    expect(chooseAudioSwitch('bufferSizeFrame', device, offer({ bufferSizesFrame: [256, 512] }))).toEqual({
       field: 'bufferSizeFrame',
       value: 512,
     });
+    expect(chooseAudioSwitch('sampleRateHz', device, offer({ sampleRatesHz: [48000, 44100] }))).toEqual({
+      field: 'sampleRateHz',
+      value: 44100,
+    });
+    expect(chooseAudioSwitch('outputDevice', device, offer({ outputDevices: ['A', 'B'] }))).toEqual({
+      field: 'outputDevice',
+      value: 'B',
+    });
+    expect(chooseAudioSwitch('outputChannelPair', device, offer({ outputChannelPairCount: 3 }))).toEqual({
+      field: 'outputChannelPair',
+      value: 1,
+    });
+    expect(
+      chooseAudioSwitch('outputChannelPair', { ...device, outputChannelPair: 1 }, offer({ outputChannelPairCount: 2 })),
+    ).toEqual({
+      field: 'outputChannelPair',
+      value: 0,
+    });
+    // DirectSound first; ASIO and the exclusive modes never.
+    expect(
+      chooseAudioSwitch(
+        'deviceType',
+        device,
+        offer({ deviceTypes: ['T', 'ASIO', 'Windows Audio (Exclusive Mode)', 'Windows Audio', 'DirectSound'] }),
+      ),
+    ).toEqual({ field: 'deviceType', value: 'DirectSound' });
+    expect(
+      chooseAudioSwitch(
+        'deviceType',
+        device,
+        offer({ deviceTypes: ['T', 'ASIO', 'Windows Audio (Exclusive Mode)', 'Windows Audio'] }),
+      ),
+    ).toEqual({ field: 'deviceType', value: 'Windows Audio' });
+    expect(
+      chooseAudioSwitch('deviceType', device, offer({ deviceTypes: ['T', 'ASIO', 'WASAPI Exclusive'] })),
+    ).toBeNull();
+    expect(isSafeDeviceType('ASIO')).toBe(false);
+    expect(isSafeDeviceType('Windows Audio (Exclusive Mode)')).toBe(false);
+    expect(isSafeDeviceType('DirectSound')).toBe(true);
+    expect(isSafeDeviceType('Windows Audio (Low Latency Mode)')).toBe(true);
   });
+});
+
+describe('the transport step of the tour', () => {
+  const STEP = 'transport.get, transport.setTempo';
+  /** Timeline seconds per second while the mock plays: fast, so that a short wait moves the position a lot. */
+  const RATE = 20;
+  const moving = (mock: OtcpMock): void => {
+    withAudio(mock);
+    mock.setTransportRate(RATE);
+  };
+
+  /** The actions of every transport.control call, and the last one (for a defect that starts after an action). */
+  const tracking = () => {
+    const actions: string[] = [];
+    return {
+      actions,
+      before: (method: string, params: Json): void => {
+        if (method === 'transport.control') actions.push(String(params.action));
+      },
+      last: () => actions[actions.length - 1],
+    };
+  };
+
+  it('pauses, plays from the last start, pauses at it, and plays from the last start after a seek', async () => {
+    const { actions, before } = tracking();
+    const { hooks } = fixture({ prepare: moving, playMs: 100, before });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    expect(actions).toEqual([
+      'seek',
+      'play',
+      'pause',
+      'playFromLastStart',
+      'pauseAtLastStart',
+      'seek',
+      'playFromLastStart',
+      'stop',
+      'seek',
+    ]);
+    expect(report.facts.transportPositionAdvances).toBe('yes');
+    expect(step?.note).toContain('pause, playFromLastStart (also after a seek) and pauseAtLastStart');
+    expect(report.result).toBe('PASS');
+  }, 120_000);
+
+  it('passes where the position does not move, and says so', async () => {
+    const { actions, before } = tracking();
+    const { hooks } = fixture({ prepare: withAudio, before });
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.result).toBe('PASS');
+    expect(actions).toContain('pauseAtLastStart');
+    expect(report.facts.transportPositionAdvances).toBe('no (the position did not move while playing)');
+  }, 120_000);
+
+  it('passes without an audio device, expecting the NO_AUDIO_DEVICE warning on every play', async () => {
+    const { hooks } = fixture();
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('PASS');
+    expect(step?.note).toContain('(no audio device)');
+    expect(report.facts.transportPositionAdvances).toBe('no audio device');
+  }, 120_000);
+
+  it('fails a play from the last start that does not carry the NO_AUDIO_DEVICE warning without a device', async () => {
+    const { hooks } = fixture({
+      reply: (method, result, params) => {
+        if (method !== 'transport.control' || params.action !== 'playFromLastStart') return undefined;
+        result.warnings = [];
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('no NO_AUDIO_DEVICE warning');
+  }, 120_000);
+
+  it('fails a pause that goes back to where playing began although the position had moved on', async () => {
+    const t = tracking();
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: t.before,
+      reply: (method, result) => {
+        if (method !== 'transport.get' || t.last() !== 'pause' || !isObject(result.transport)) return undefined;
+        result.transport.positionTimelineSec = 0.5;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('action pause moved the position back although playback had moved on');
+  }, 120_000);
+
+  it('fails a pause that leaves the transport playing', async () => {
+    const t = tracking();
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: t.before,
+      reply: (method, result) => {
+        if (method !== 'transport.get' || t.last() !== 'pause' || !isObject(result.transport)) return undefined;
+        result.transport.playing = true;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('the transport still plays after action pause');
+  }, 120_000);
+
+  it('fails a pause that moves the position of the last start', async () => {
+    const t = tracking();
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: t.before,
+      reply: (method, result) => {
+        if (method !== 'transport.get' || t.last() !== 'pause' || !isObject(result.transport)) return undefined;
+        result.transport.playStartTimelineSec = 7;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('action pause moved the position that play from start returns to');
+  }, 120_000);
+
+  it('fails a play from the last start that stays where the pause left the position', async () => {
+    const t = tracking();
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: t.before,
+      reply: (method, result, params) => {
+        if (method !== 'transport.control' || params.action !== 'playFromLastStart' || !isObject(result.transport)) {
+          return undefined;
+        }
+        result.transport.positionTimelineSec = 9;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('action playFromLastStart left the position at 9');
+  }, 120_000);
+
+  it('fails a pause at the last start that leaves the transport elsewhere', async () => {
+    const t = tracking();
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: t.before,
+      reply: (method, result) => {
+        if (method !== 'transport.get' || t.last() !== 'pauseAtLastStart' || !isObject(result.transport)) {
+          return undefined;
+        }
+        result.transport.positionTimelineSec = 3;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('action pauseAtLastStart left the position at 3');
+  }, 120_000);
+
+  it('fails a seek that does not set the position the play from start returns to', async () => {
+    let seeks = 0;
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: (method, params) => {
+        if (method === 'transport.control' && params.action === 'seek') seeks += 1;
+      },
+      reply: (method, result) => {
+        // The reads after the second seek (the one made again) show the old position of the last start.
+        if (method !== 'transport.get' || seeks !== 2 || !isObject(result.transport) || result.transport.playing) {
+          return undefined;
+        }
+        result.transport.playStartTimelineSec = 0.5;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('a seek did not set the position that play from start returns to');
+  }, 120_000);
+
+  it('keeps what each call said and what a read showed in the report, and the lag of a read as a fact', async () => {
+    const t = tracking();
+    let stale = 0;
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: t.before,
+      reply: (method, result) => {
+        // OpenTune applies the return to the last start a moment after it answered: the first reads still show
+        // the position where playback had got to.
+        if (method !== 'transport.get' || t.last() !== 'pauseAtLastStart' || !isObject(result.transport)) {
+          return undefined;
+        }
+        if (stale >= 2) return undefined;
+        stale += 1;
+        result.transport.positionTimelineSec = 3;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    expect(stale).toBe(2);
+    expect(Number(report.facts.transportPositionLagMs)).toBeGreaterThanOrEqual(50);
+    const trace = report.facts.transportTrace;
+    expect(Array.isArray(trace) ? trace.length : 0).toBe(8);
+    expect(String((trace as string[])[3])).toMatch(/^pauseAtLastStart: said false@/);
+  }, 120_000);
+
+  it('fails a position that a read never shows within the wait, and says how long it waited', async () => {
+    const t = tracking();
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: t.before,
+      reply: (method, result) => {
+        if (method !== 'transport.get' || t.last() !== 'pauseAtLastStart' || !isObject(result.transport)) {
+          return undefined;
+        }
+        result.transport.positionTimelineSec = 3;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toMatch(/the result says 0\.\d+, a fresh read says 3 \(\d+ ms later still\)/);
+    expect(step?.note).toContain('action pauseAtLastStart left the position at 3');
+  }, 120_000);
+
+  it('accepts a few microseconds between the result of a pause and a read, as the audio thread ends its block', async () => {
+    const t = tracking();
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: t.before,
+      reply: (method, result) => {
+        if (method !== 'transport.control' || t.last() !== 'pause' || !isObject(result.transport)) return undefined;
+        result.transport.positionTimelineSec = Number(result.transport.positionTimelineSec) + 0.00002;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+  }, 120_000);
+
+  it('fails a result of a pause that is far from the position a read shows', async () => {
+    const t = tracking();
+    const { hooks } = fixture({
+      prepare: moving,
+      playMs: 100,
+      before: t.before,
+      reply: (method, result) => {
+        if (method !== 'transport.control' || t.last() !== 'pause' || !isObject(result.transport)) return undefined;
+        result.transport.positionTimelineSec = Number(result.transport.positionTimelineSec) + 0.5;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('the transport in the result of pause is not the one a fresh read shows');
+  }, 120_000);
+
+  it('changes the time signature together with the tempo, and the revert recipe puts both back', async () => {
+    const sent: Json[] = [];
+    const { hooks } = fixture({
+      prepare: withAudio,
+      before: (method, params) => {
+        if (method === 'transport.setTempo') sent.push(structuredClone(params));
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('PASS');
+    expect(sent).toEqual([
+      { bpm: 121, timeSignature: { numerator: 3, denominator: 4 } },
+      { bpm: 120, timeSignature: { numerator: 4, denominator: 4 } },
+    ]);
+    expect(step?.note).toContain('time signature 4/4 -> 3/4 and back');
+  }, 120_000);
+
+  it('fails a result that does not name the time signature among the changes', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        if (method !== 'transport.setTempo') return undefined;
+        for (const change of Array.isArray(result.changes) ? result.changes.filter(isObject) : []) {
+          if (isObject(change.fields)) delete change.fields.timeSignature;
+        }
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('the result names no timeSignature change');
+  }, 120_000);
+
+  it('fails a revert recipe that puts back the tempo but not the time signature, and stops the tour', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        const undo = isObject(result.undo) ? result.undo : undefined;
+        const revert = undo !== undefined && isObject(undo.revert) ? undo.revert : undefined;
+        if (method !== 'transport.setTempo' || revert === undefined || !isObject(revert.params)) return undefined;
+        delete revert.params.timeSignature;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('differs from before the write');
+    expect(step?.note).toContain('timeSignature');
+  }, 120_000);
+});
+
+describe('the selection step of the tour opens the editor', () => {
+  const STEP = 'ui.getState and ui.setSelection';
+
+  it('selects the clip with openEditor, and a fresh ui.getState shows the piano roll and that clip', async () => {
+    const sent: Json[] = [];
+    const { hooks } = fixture({
+      prepare: withAudio,
+      before: (method, params) => {
+        if (method === 'ui.setSelection') sent.push(structuredClone(params));
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    expect(sent.some((params) => params.openEditor === true && typeof params.placementId === 'string')).toBe(true);
+    expect(report.facts.editorOpened).toBe(true);
+    expect(step?.note).toContain('openEditor showed the clip in the piano roll');
+    // The track is the one of the clip, not track 0 by name.
+    const first = sent[0];
+    expect(first).toBeDefined();
+    expect(typeof first?.trackId).toBe('number');
+  }, 120_000);
+
+  it('fails when the window does not show the piano roll after openEditor', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        if (method !== 'ui.getState' || !isObject(result.ui)) return undefined;
+        result.ui.workspace = 'arrangement';
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('not pianoRoll');
+  }, 120_000);
+
+  it('fails when the piano roll shows another content than the clip', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        if (method !== 'ui.getState' || !isObject(result.ui) || result.ui.workspace !== 'pianoRoll') return undefined;
+        result.ui.pianoRollContentId = 'c:other';
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('another content than the one of the clip');
+  }, 120_000);
+
+  it('fails when the result does not name the window switch', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result, params) => {
+        if (method !== 'ui.setSelection' || params.openEditor !== true || !isObject(result.sideEffects))
+          return undefined;
+        delete result.sideEffects.workspaceSwitched;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('workspaceSwitched');
+  }, 120_000);
+});
+
+describe('the track step of the tour sets a colour and sends the revert recipe', () => {
+  const STEP = 'track.set, track.add, track.duplicate and track.delete';
+
+  it('sets another colour, sends the recipe of the result, and reads the colour of before back', async () => {
+    const sent: Json[] = [];
+    const { hooks, mocks } = fixture({
+      prepare: withAudio,
+      before: (method, params) => {
+        if (method === 'track.set') sent.push(structuredClone(params));
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    const colours = sent.flatMap((params) =>
+      (Array.isArray(params.tracks) ? params.tracks.filter(isObject) : []).flatMap((track) =>
+        typeof track.colour === 'string' ? [track.colour] : [],
+      ),
+    );
+    // The colour that was set, then the one the track had.
+    expect(colours).toHaveLength(2);
+    expect(colours[0]).not.toBe(colours[1]);
+    expect(mocks[0]?.snapshot().tracks.every((track) => !track.muted)).toBe(true);
+  }, 120_000);
+
+  it('fails a revert recipe that puts back another colour, and stops the tour', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result, params) => {
+        const tracks = Array.isArray(params.tracks) ? params.tracks.filter(isObject) : [];
+        const undo = isObject(result.undo) ? result.undo : undefined;
+        const revert = undo !== undefined && isObject(undo.revert) ? undo.revert : undefined;
+        if (method !== 'track.set' || !tracks.some((track) => 'colour' in track)) return undefined;
+        if (revert === undefined || !isObject(revert.params)) return undefined;
+        revert.params = { tracks: [{ trackId: tracks[0]?.trackId, colour: '#000000' }] };
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('differs from before the write');
+    expect(step?.note).toContain('colour');
+  }, 120_000);
+
+  it('fails a result that names no colour change', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result, params) => {
+        const tracks = Array.isArray(params.tracks) ? params.tracks.filter(isObject) : [];
+        if (method !== 'track.set' || !tracks.some((track) => 'colour' in track)) return undefined;
+        // The colour change leaves the list (a result that still validates against the schema).
+        result.changes = (Array.isArray(result.changes) ? result.changes.filter(isObject) : []).filter(
+          (change) => !(isObject(change.fields) && 'colour' in change.fields),
+        );
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('the result names no colour change');
+  }, 120_000);
+});
+
+describe('the first-run overlay in the dismiss step of the tour', () => {
+  const STEP = 'ui.getState and ui.dismiss';
+
+  /** An instance that lists the overlay as a confirm dialog while it shows (a modal), as the measured build does. */
+  const listsOverlayAsDialog = (extra: Json[] = [], staysAfterClose = false): SessionDefect => {
+    let closed = false;
+    return (method, result, params) => {
+      if (method === 'ui.dismiss' && params.target === 'onboarding') closed = true;
+      if (method !== 'ui.getState' || !isObject(result.onboarding) || !Array.isArray(result.dialogs)) return undefined;
+      const overlay = result.onboarding.showing === true || (closed && staysAfterClose);
+      if (overlay) {
+        result.dialogs = [{ kind: 'confirm', title: '', closeCommits: false, trackId: null }, ...extra];
+      } else if (extra.length > 0) {
+        result.dialogs = [...extra];
+      }
+      return result;
+    };
+  };
+
+  it('treats the confirm dialog that lists the overlay as the overlay, and closes both', async () => {
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.showOnboarding(true);
+      },
+      reply: listsOverlayAsDialog(),
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    expect(report.facts).toMatchObject({ onboarding: 'showing', openDialogs: 1, onboardingDismissed: true });
+    expect(report.result).toBe('PASS');
+  }, 120_000);
+
+  it('skips with the kind of a dialog that is not the overlay, and dismisses nothing', async () => {
+    const dismissed: Json[] = [];
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.showOnboarding(true);
+      },
+      reply: listsOverlayAsDialog([{ kind: 'message', title: 'x', closeCommits: false, trackId: null }]),
+      before: (method, params) => {
+        if (method === 'ui.dismiss') dismissed.push(structuredClone(params));
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('SKIP');
+    expect(step?.note).toContain('1 dialog(s) open that this scenario did not open (kind: message)');
+    expect(dismissed).toEqual([]);
+  }, 120_000);
+
+  it('skips for a confirm dialog while no overlay shows, since it is not the overlay', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        if (method !== 'ui.getState' || !Array.isArray(result.dialogs)) return undefined;
+        result.dialogs = [{ kind: 'confirm', title: '', closeCommits: false, trackId: null }];
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('SKIP');
+    expect(step?.note).toContain('(kind: confirm)');
+  }, 120_000);
+
+  it('fails when ui.getState still lists the dialog of the overlay after it was closed', async () => {
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.showOnboarding(true);
+      },
+      reply: listsOverlayAsDialog([], true),
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('ui.getState still lists 1 dialog(s) (confirm)');
+  }, 120_000);
+
+  it('closes the overlay of an instance whose data folder never showed it, and onboarding is marked as shown', async () => {
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.given({ onboarding: 'showing' });
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    expect(step?.note).toContain('the call marked onboarding as shown: IRREVERSIBLE');
+    expect(report.facts).toMatchObject({
+      onboarding: 'showing',
+      onboardingDismissed: true,
+      onboardingMarkedByDismiss: true,
+    });
+    expect(report.result).toBe('PASS');
+  }, 120_000);
+
+  it('closes an overlay that OpenTune had marked as shown already, which changes the view only', async () => {
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.showOnboarding(true);
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    expect(step?.note).toContain('OpenTune had marked it already: the view changed only');
+    expect(report.facts).toMatchObject({ onboarding: 'showing', onboardingMarkedByDismiss: false });
+  }, 120_000);
+
+  it('prevents the overlay when onboarding is not marked as shown and no overlay comes up', async () => {
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.given({ onboarding: 'notShown' });
+      },
+      onboardingWaitMs: 300,
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    expect(step?.note).toContain('ui.dismiss target onboarding marked it (IRREVERSIBLE)');
+    expect(report.facts).toMatchObject({ onboarding: 'notShown', onboardingDismissed: true });
+  }, 120_000);
+
+  it('waits for the overlay of an instance that has not shown it yet, and closes it', async () => {
+    let mock: OtcpMock | undefined;
+    let reads = 0;
+    const { hooks } = fixture({
+      prepare: (m) => {
+        withAudio(m);
+        m.given({ onboarding: 'notShown' });
+        mock = m;
+      },
+      onboardingWaitMs: 5_000,
+      before: (method) => {
+        // The overlay comes up on the third look, a moment after the instance is up.
+        if (method === 'ui.getState' && ++reads === 3) mock?.showOnboarding(false);
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    expect(report.facts).toMatchObject({ onboarding: 'showing', onboardingMarkedByDismiss: true });
+  }, 120_000);
+
+  it('passes the call as a no-op when onboarding is marked as shown already', async () => {
+    const { hooks } = fixture({ prepare: withAudio });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('PASS');
+    expect(step?.note).toContain('ui.dismiss target onboarding was a no-op');
+    expect(report.facts.onboarding).toBe('shown');
+  }, 120_000);
+
+  it('fails when ui.getState still shows the overlay after it was closed', async () => {
+    let closed = false;
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.showOnboarding(true);
+      },
+      before: (method, params) => {
+        if (method === 'ui.dismiss' && params.target === 'onboarding') closed = true;
+      },
+      reply: (method, result) => {
+        if (method !== 'ui.getState' || !closed || !isObject(result.onboarding)) return undefined;
+        result.onboarding.showing = true;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('ui.getState still shows the first-run overlay');
+  }, 120_000);
+
+  it('fails a result that lists the preference without saying that it cannot be undone', async () => {
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.given({ onboarding: 'showing' });
+      },
+      reply: (method, result, params) => {
+        if (method !== 'ui.dismiss' || params.target !== 'onboarding') return undefined;
+        result.warnings = [];
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('the preference is listed, but there is no IRREVERSIBLE warning');
+  }, 120_000);
+
+  it('fails a result that lists nothing but warns about IRREVERSIBLE', async () => {
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.showOnboarding(true);
+      },
+      reply: (method, result, params) => {
+        if (method !== 'ui.dismiss' || params.target !== 'onboarding') return undefined;
+        result.warnings = [{ code: 'IRREVERSIBLE', subject: null, data: null }];
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('nothing is listed, but there is an IRREVERSIBLE warning');
+  }, 120_000);
+
+  it('fails an already-shown onboarding when the call is not a no-op', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result, params) => {
+        if (method !== 'ui.dismiss' || params.target !== 'onboarding') return undefined;
+        result.noOp = false;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('noOp is false, expected true');
+  }, 120_000);
 });

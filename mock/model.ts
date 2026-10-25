@@ -163,6 +163,7 @@ export const AUDIO_AVAILABLE = {
   } as Readonly<Record<string, readonly string[]>>,
   sampleRatesHz: [44100, 48000],
   bufferSizesFrame: [256, 512],
+  /** OpenTune's Standalone offers the pair 0 only; a test can offer more (World.outputChannelPairCount). */
   outputChannelPairCount: 1,
 } as const;
 
@@ -311,6 +312,8 @@ export class World {
     outputChannelPair: 0,
     failsToOpen: false,
   };
+  /** Test interface: the output channel pairs the device offers (OpenTune's Standalone offers one). */
+  outputChannelPairCount: number = AUDIO_AVAILABLE.outputChannelPairCount;
   readonly contents = new Map<number, ContentRec>();
   readonly placements = new Map<number, PlacementRec>();
   selectedPlacementIds: string[] = [];
@@ -387,6 +390,23 @@ export class World {
   /** Milliseconds since the Unix epoch, from the injectable clock. */
   now(): number {
     return this.clock.now();
+  }
+
+  /**
+   * Test interface: timeline seconds that pass per second while the transport plays on a running device.
+   * 0 (the default) leaves the position where it is, which is what most tests want.
+   */
+  transportRate = 0;
+  #transportSettledAt: number | null = null;
+
+  /** Moves the position on by the time since the last call, when the transport plays at a rate. */
+  settleTransport(): void {
+    const now = this.now();
+    const t = this.transport;
+    if (t.playing && t.audioDeviceRunning && this.transportRate > 0 && this.#transportSettledAt !== null) {
+      t.positionTimelineSec += ((now - this.#transportSettledAt) / 1000) * this.transportRate;
+    }
+    this.#transportSettledAt = now;
   }
 
   /** A new token. Tokens are opaque, never repeat, and are only compared for equality. */
