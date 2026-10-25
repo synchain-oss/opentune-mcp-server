@@ -261,6 +261,8 @@ describe('opentune_analyze_pitch phrases and notes', () => {
     expect((second.notes as { index: number }[]).map((n) => n.index)).toEqual([2, 3]);
   });
 
+  // No real wait in this test: it is a few socket round trips to the mock and an edit. Under the load of the full
+  // unit run they took more than the default 5 s now and then (it passes alone), so this one test gets 20 s.
   it('still notices a change when the instance reports no revision for the content', async () => {
     let hide = true;
     const { ctx, placement } = await setup({}, (method, result) =>
@@ -278,7 +280,7 @@ describe('opentune_analyze_pitch phrases and notes', () => {
       kind: 'REVISION_CONFLICT',
       reason: 'cursor_stale',
     });
-  });
+  }, 20_000);
 
   it('refuses a cursor whose position lies beyond the entries', async () => {
     const { ctx, placement } = await setup();

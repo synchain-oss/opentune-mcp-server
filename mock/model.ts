@@ -354,6 +354,8 @@ export class World {
   readonly referenceJobs = new Map<string, string>();
   /** How a reference analysis that has to compute alignment data ends, or null when it completes. */
   referenceFault: 'stalled' | 'timeout' | 'failed' | null = null;
+  /** No OpenTune editor window exists, as in a window-less run: the methods that act through it refuse (PROTOCOL.md section 7 rule 6). */
+  noEditor = false;
   readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
   /** The fault the vocoder runs into (setVocoderFault). */
   #vocoderFault: 'stuck' | 'loadFails' | null = null;

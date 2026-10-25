@@ -102,7 +102,9 @@ export function redactHome(
   platform: NodeJS.Platform = process.platform,
 ): string {
   let redacted = message;
-  for (const home of homes) {
+  // A home folder can sit inside another one (USERPROFILE under HOME, or the reverse). The longer one goes first,
+  // whatever the order of `homes`, or the shorter one would rewrite a part of the longer path.
+  for (const home of [...homes].sort((a, b) => b.length - a.length)) {
     const parts = home.split(/[\\/]+/).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
     if (parts.every((part) => part === '')) continue;
     const pattern = new RegExp(`(?<![\\w.~-])${parts.join('[\\\\/]+')}(?![\\w.-])`, platform === 'win32' ? 'gi' : 'g');

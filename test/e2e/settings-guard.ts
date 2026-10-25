@@ -44,8 +44,8 @@ export async function withUserSettingsWatch<T extends Summarised>(
     problems = [`the real user settings could not be compared: ${why}`];
   }
   if (failed) {
-    const why = failure instanceof Error ? failure.message : 'the scenario failed';
-    if (problems.length === 0) throw failure instanceof Error ? failure : new Error(why);
+    const why = failure instanceof Error ? redactHome(failure.message) : 'the scenario failed';
+    if (problems.length === 0) throw failure instanceof Error ? new Error(why, { cause: failure }) : new Error(why);
     throw new Error(`${why}; ${USER_SETTINGS_STEP}: ${problems.join('; ')}`, { cause: failure });
   }
   if (report === undefined) throw new Error('the scenario returned no report');
