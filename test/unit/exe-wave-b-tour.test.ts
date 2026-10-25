@@ -139,6 +139,9 @@ function fixture(options: FixtureOptions = {}): {
 
 const withAudio = (mock: OtcpMock): void => {
   mock.given({ audio: { running: true } });
+  // OpenTune's Standalone offers the output channel pair 0 only, and so does the mock by default; a second pair lets
+  // the tour switch it too.
+  mock.setOutputChannelPairCount(2);
 };
 
 const stepResult = (report: WaveBTourReport, name: string) =>
@@ -805,7 +808,8 @@ describe('the audio step of the tour', () => {
     const report = await runWaveBTour(config, hooks);
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('PASS');
-    // Every switch is followed by the revert recipe of its result, which names only the member it changed.
+    // Every switch is followed by the revert recipe of its result, which names the members it changed: only the one
+    // asked for, except for the device type, which also opened the other type's default output device.
     expect(sent).toEqual([
       { bufferSizeFrame: 256 },
       { bufferSizeFrame: 512 },
@@ -816,7 +820,7 @@ describe('the audio step of the tour', () => {
       { outputDevice: 'Mock Output 2' },
       { outputDevice: 'Mock Output' },
       { deviceType: 'Mock Audio 2' },
-      { deviceType: 'Mock Audio' },
+      { deviceType: 'Mock Audio', outputDevice: 'Mock Output' },
     ]);
     for (const field of ['bufferSizeFrame', 'sampleRateHz', 'outputChannelPair', 'outputDevice', 'deviceType']) {
       expect(report.facts[`audio.${field}`], field).toBe('PASS');
@@ -856,7 +860,7 @@ describe('the audio step of the tour', () => {
       { bufferSizeFrame: 512 },
       { sampleRateHz: 48000 },
       { sampleRateHz: 44100 },
-      { deviceType: 'Mock Audio' },
+      { deviceType: 'Mock Audio', outputDevice: 'Mock Output' },
     ]);
     expect(report.facts['audio.bufferSizeFrame']).toBe('PASS');
     expect(report.facts['audio.sampleRateHz']).toBe('PASS');

@@ -12,7 +12,7 @@ import type { Handler } from './context.js';
 import { refuse } from './errors.js';
 import { historyView } from './history.js';
 import type { ContentRec, NoteRec, PlacementRec, World } from './model.js';
-import { round6 } from './model.js';
+import { OPTION_LIST_MAX, carries, round6 } from './model.js';
 import { MIN_HANDLE_SPACING_SEC } from './timing.js';
 import {
   DEFAULT_NOTE_SPLIT_CENTS,
@@ -376,16 +376,20 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
       tuningHz: world.prefs.tuningHz,
       editingScheme: world.editingScheme,
       hybridMode: world.prefs.hybridMode,
-      vocoderWeight: null,
-      f0Model: null,
-      renderingPriority: null,
+      // A weight whose name the wire cannot carry is reported as null.
+      vocoderWeight: carries(world.prefs.vocoderWeight) ? world.prefs.vocoderWeight : null,
+      f0Model: world.prefs.f0Model,
+      renderingPriority: world.prefs.renderingPriority,
       experimentalFeatures: world.prefs.experimentalFeatures,
-      referenceAlignMode: null,
-      nullReasons: {
-        vocoderWeight: 'unavailable',
-        f0Model: 'unavailable',
-        renderingPriority: 'unavailable',
-        referenceAlignMode: 'unavailable',
+      referenceAlignMode: world.prefs.referenceAlignMode,
+      ...(carries(world.prefs.vocoderWeight) ? {} : { nullReasons: { vocoderWeight: 'unavailable' } }),
+      // The values prefs.set accepts; session.info does not report them. The state of the vocoder is not part of
+      // prefs.get either (session.info reports it).
+      options: {
+        vocoderWeight: world.prefs.options.vocoderWeight.filter(carries).slice(0, OPTION_LIST_MAX),
+        f0Model: world.prefs.options.f0Model.filter(carries).slice(0, OPTION_LIST_MAX),
+        renderingPriority: ['gpuFirst', 'cpuFirst'],
+        referenceAlignMode: ['standardAuto', 'game'],
       },
     },
     onboardingShown: world.prefs.onboardingShown,

@@ -19,6 +19,16 @@ export const INITIAL_VISIBLE_TRACKS = 4;
 export const RENDER_SETTLE_MS = 30;
 /** Time the mock needs to compute the reference alignment data of a content. */
 export const ALIGNMENT_SETTLE_MS = 30;
+/**
+ * How the mock reconfigures its vocoder after a new weight or rendering priority, and how long a prefsApply job waits
+ * for it (60 s, the default of the real implementation); test hooks change them.
+ */
+export const VOCODER_RECONFIGURE = { queuedMs: 5, reconfiguringMs: 10, waitLimitMs: 60_000 } as const;
+/** The vocoder weights and pitch models the mock's installation offers, as prefs.get lists them. */
+export const DEFAULT_OPTIONS = {
+  vocoderWeight: ['hifigan.onnx', 'hifigan_coulin9.onnx'],
+  f0Model: ['fcpe'],
+} as const;
 /** Default note parameters of the note generator. */
 export const DEFAULT_NOTE_PARAMS = { retuneSpeed: 0.5, vibratoDepth: 0, vibratoRateHz: 6, pitchDriftScale: 1 } as const;
 
@@ -141,17 +151,46 @@ export interface AudioRec {
 }
 
 /**
- * What the audio settings page offers: two device types (so that a test can switch the type), two output
- * devices, two sample rates, two buffer sizes and two output channel pairs. The lists are the same for both
- * types; a test that needs them to differ changes what audio.get reports.
+ * What the audio settings page offers: two device types, the first with two output devices (so that a test can
+ * switch the output device or the device type), two sample rates, two buffer sizes and one output channel pair.
  */
 export const AUDIO_AVAILABLE = {
   deviceTypes: ['Mock Audio', 'Mock Audio 2'],
-  outputDevices: ['Mock Output', 'Mock Output 2'],
+  /** The output devices of each device type; opening a type opens its first device. */
+  outputDevicesByType: {
+    'Mock Audio': ['Mock Output', 'Mock Output 2'],
+    'Mock Audio 2': ['Mock B Output'],
+  } as Readonly<Record<string, readonly string[]>>,
   sampleRatesHz: [44100, 48000],
   bufferSizesFrame: [256, 512],
-  outputChannelPairCount: 2,
+  /** OpenTune's Standalone offers the pair 0 only; a test can offer more (World.outputChannelPairCount). */
+  outputChannelPairCount: 1,
 } as const;
+
+/** The longest name that processing.options and the vocoder weight members carry, in code points, and the longest list. */
+export const OPTION_TEXT_MAX = 64;
+export const OPTION_LIST_MAX = 64;
+
+/** Whether a name can go on the wire: not empty, well-formed Unicode and at most OPTION_TEXT_MAX code points. */
+export const carries = (name: string): boolean =>
+  name.length > 0 && name.isWellFormed() && Array.from(name).length <= OPTION_TEXT_MAX;
+
+/** The output devices a device type offers. */
+export const outputDevicesOf = (deviceType: string): readonly string[] =>
+  AUDIO_AVAILABLE.outputDevicesByType[deviceType] ?? [];
+
+const FIRST_DEVICE_TYPE = AUDIO_AVAILABLE.deviceTypes[0];
+const FIRST_OUTPUT_DEVICE = 'Mock Output';
+
+/** The vocoder as OpenTune's runtime reports it (session.info, processing). */
+export interface VocoderRec {
+  /** The vocoder is loaded and can render. */
+  ready: boolean;
+  /** OpenTune is loading a new weight or a new backend. */
+  reconfiguring: boolean;
+  /** A reconfiguration was issued and has not finished: OpenTune starts it asynchronously, so until it begins the vocoder still reports ready. */
+  commandPending: boolean;
+}
 
 /** The state an undo or redo step puts back. */
 export interface Patch {
@@ -266,13 +305,15 @@ export class World {
   uiScale: { root: number; scale: string } = { root: 0, scale: 'major' };
   readonly audio: AudioRec = {
     running: false,
-    deviceType: AUDIO_AVAILABLE.deviceTypes[0],
-    outputDevice: AUDIO_AVAILABLE.outputDevices[0],
+    deviceType: FIRST_DEVICE_TYPE,
+    outputDevice: FIRST_OUTPUT_DEVICE,
     sampleRateHz: 44100,
     bufferSizeFrame: 512,
     outputChannelPair: 0,
     failsToOpen: false,
   };
+  /** Test interface: the output channel pairs the device offers (OpenTune's Standalone offers one). */
+  outputChannelPairCount: number = AUDIO_AVAILABLE.outputChannelPairCount;
   readonly contents = new Map<number, ContentRec>();
   readonly placements = new Map<number, PlacementRec>();
   selectedPlacementIds: string[] = [];
@@ -290,6 +331,15 @@ export class World {
     tuningHz: TUNING_HZ,
     hybridMode: false,
     experimentalFeatures: false,
+    vocoderWeight: DEFAULT_OPTIONS.vocoderWeight[0] as string,
+    renderingPriority: 'gpuFirst',
+    f0Model: DEFAULT_OPTIONS.f0Model[0] as string,
+    referenceAlignMode: 'standardAuto',
+    /** What the installation offers (prefs.get, processing.options): the weight files and the pitch models. */
+    options: {
+      vocoderWeight: [...DEFAULT_OPTIONS.vocoderWeight],
+      f0Model: [...DEFAULT_OPTIONS.f0Model],
+    } as { vocoderWeight: string[]; f0Model: string[] },
     onboardingShown: true,
     language: 'en',
     /** The most recent first; user-global, so opening another project leaves it alone. */
@@ -306,6 +356,23 @@ export class World {
   referenceFault: 'stalled' | 'timeout' | 'failed' | null = null;
   /** No OpenTune editor window exists, as in a window-less run: the methods that act through it refuse (PROTOCOL.md section 7 rule 6). */
   noEditor = false;
+  readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
+  /** The fault the vocoder runs into (setVocoderFault). */
+  #vocoderFault: 'stuck' | 'loadFails' | null = null;
+  /** Under the fault `loadFails`: the only weight and rendering priority the vocoder can still load. */
+  #vocoderLoadable: { weight: string; priority: string } | null = null;
+  /** Counts the reconfigurations of the vocoder: only the latest one can end it. */
+  #vocoderSeq = 0;
+  /** The latest reconfiguration ran into the fault `stuck` and ends once the fault is gone. */
+  #vocoderStuck = false;
+  /** A reconfiguration since the vocoder last finished one changed the weight, so its completion renders again. */
+  #vocoderRenders = false;
+  /** Test interface: the pitch models that OpenTune cannot load (prefs.set then fails with model_missing). */
+  readonly unloadableF0Models = new Set<string>();
+  /** How long the vocoder takes to start and to finish a reconfiguration; test hooks change it. */
+  readonly vocoderTiming: { queuedMs: number; reconfiguringMs: number; waitLimitMs: number } = {
+    ...VOCODER_RECONFIGURE,
+  };
   #tick = 0;
   #contentSeq = 0;
   #placementSeq = 0;
@@ -540,6 +607,77 @@ export class World {
       content.alignmentReady = true;
       this.touch(content, 'reference');
     });
+  }
+
+  /**
+   * OpenTune reconfigures its vocoder for the current weight and rendering priority, after a change of either. It
+   * starts asynchronously: the command waits in a queue first, so for `queuedMs` the vocoder still reports ready and
+   * not reconfiguring; then it reports reconfiguring for `reconfiguringMs`, and ends after that (never under the fault
+   * `stuck`). A later reconfiguration supersedes an earlier one that has not ended: only the latest one ends the
+   * vocoder's reconfiguration, so an earlier one's timer cannot report it finished while a later one still runs. With
+   * `weightChanged` the completion renders every content again, as OpenTune's completion of a weight switch does.
+   */
+  reconfigureVocoder(weightChanged: boolean): void {
+    const { vocoder, vocoderTiming } = this;
+    const seq = ++this.#vocoderSeq;
+    this.#vocoderStuck = false;
+    this.#vocoderRenders ||= weightChanged;
+    vocoder.commandPending = true;
+    this.after(vocoderTiming.queuedMs, () => {
+      vocoder.ready = false;
+      vocoder.reconfiguring = true;
+      this.after(vocoderTiming.reconfiguringMs, () => {
+        if (seq !== this.#vocoderSeq) return;
+        if (this.#vocoderFault === 'stuck') this.#vocoderStuck = true;
+        else this.#endReconfiguration();
+      });
+    });
+  }
+
+  /**
+   * The latest reconfiguration ends: the vocoder is ready if it can load the current weight and rendering priority,
+   * and otherwise stays not ready. A weight it loaded clears the render caches and renders every content again; a
+   * weight it could not load renders nothing.
+   */
+  #endReconfiguration(): void {
+    const loadable = this.#vocoderLoadable;
+    const loads =
+      this.#vocoderFault !== 'loadFails' ||
+      (loadable !== null &&
+        this.prefs.vocoderWeight === loadable.weight &&
+        this.prefs.renderingPriority === loadable.priority);
+    const renders = this.#vocoderRenders;
+    this.#vocoderStuck = false;
+    this.#vocoderRenders = false;
+    this.vocoder.ready = loads;
+    this.vocoder.reconfiguring = false;
+    this.vocoder.commandPending = false;
+    if (loads && renders) for (const content of this.contents.values()) this.queueRender(content);
+  }
+
+  /**
+   * Test interface: `stuck` makes a reconfiguration of the vocoder never end, so that a wait for it passes its limit;
+   * `loadFails` leaves the vocoder able to load only the weight and rendering priority in use now, so that a
+   * reconfiguration to any other ends with the vocoder not ready. A reconfiguration that was stuck ends once the
+   * fault is no longer `stuck`.
+   */
+  setVocoderFault(fault: 'stuck' | 'loadFails' | null): void {
+    this.#vocoderFault = fault;
+    this.#vocoderLoadable =
+      fault === 'loadFails' ? { weight: this.prefs.vocoderWeight, priority: this.prefs.renderingPriority } : null;
+    if (fault !== 'stuck' && this.#vocoderStuck) this.#endReconfiguration();
+  }
+
+  /** The vocoder is not ready although nothing about it is queued or running any more: it could not load. */
+  get vocoderLoadFailed(): boolean {
+    const { ready, reconfiguring, commandPending } = this.vocoder;
+    return !ready && !reconfiguring && !commandPending;
+  }
+
+  /** The vocoder is ready and nothing about it is queued or running (OpenTune's control worker is idle). */
+  get vocoderSettled(): boolean {
+    const { ready, reconfiguring, commandPending } = this.vocoder;
+    return ready && !reconfiguring && !commandPending;
   }
 
   capture(): Vector {

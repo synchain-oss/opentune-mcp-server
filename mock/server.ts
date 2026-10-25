@@ -32,7 +32,7 @@ import { IMPORT_LIMITS, ImportService } from './import.js';
 import { JobStore, oneShot, UnsupportedPrecondition, type JobSpec } from './jobs.js';
 import { prefsHandlers } from './prefs.js';
 import { ProjectService } from './project.js';
-import { TRACK_SLOTS, World, type Analysis, type BusyState } from './model.js';
+import { TRACK_SLOTS, World, carries, type Analysis, type BusyState } from './model.js';
 import {
   classify,
   errorLine,
@@ -121,6 +121,12 @@ export interface MockOptions {
   readonly clock?: Clock;
   /** Where the files of clips and of the `files` precondition go; a temporary directory by default. */
   readonly workDir?: string;
+  /**
+   * How the vocoder reconfigures after a new weight or rendering priority: how long a command waits before the
+   * vocoder reports it (`queuedMs`), how long it then reconfigures (`reconfiguringMs`), and how long a prefsApply job
+   * waits for it (`waitLimitMs`, 60 s by default).
+   */
+  readonly vocoder?: Partial<{ queuedMs: number; reconfiguringMs: number; waitLimitMs: number }>;
 }
 
 export interface GivenJob extends JobSpec {
@@ -176,6 +182,16 @@ export interface OtcpMock {
   /** The alignment data of every content is gone, so that a reference analysis has to compute it again. */
   forgetAlignment(): void;
   /**
+   * `stuck`: a reconfiguration of the vocoder never finishes, so that a prefsApply job passes its wait limit and fails
+   * with MODEL_UNAVAILABLE(vocoder_not_ready); `loadFails`: the vocoder can load only the weight and rendering priority
+   * in use when the fault is set, so that a reconfiguration to any other ends with the vocoder not ready and the job
+   * takes its changes back at once and fails with MODEL_UNAVAILABLE(vocoder_load_failed); null lets a stuck
+   * reconfiguration finish.
+   */
+  setVocoderFault(fault: 'stuck' | 'loadFails' | null): void;
+  /** OpenTune cannot load these pitch models: prefs.set of one of them (it must be among the options) fails with model_missing. */
+  failF0Model(...models: readonly string[]): void;
+  /**
    * The first-run overlay starts, as OpenTune starts it while onboarding is not marked as shown. With
    * `choiceShown` the overlay has shown its choice, which marks onboarding as shown, as OpenTune does.
    */
@@ -187,6 +203,11 @@ export interface OtcpMock {
   setNoEditor(on: boolean): void;
   /** While the transport plays on a running device, the position advances by `rate` timeline seconds per second (0: it stays). */
   setTransportRate(rate: number): void;
+  /**
+   * The audio device offers `count` output channel pairs. OpenTune's Standalone offers the pair 0 only, which the
+   * mock does by default and the contract vectors assume; a test that switches the pair offers more.
+   */
+  setOutputChannelPairCount(count: number): void;
   /** The pitch analysis of the next `count` imported clips fails. */
   failNextAnalysis(count?: number): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
@@ -240,6 +261,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
 
   const jobs = new JobStore(spec, clock, instanceId.slice(0, 8));
   const world = new World(instanceId, clock);
+  Object.assign(world.vocoderTiming, options.vocoder);
   const files = new WorkFiles(options.workDir);
   const exporter = new ExportService(world, jobs, files, clock);
   const importer = new ImportService(world, jobs, files, clock, spec);
@@ -327,20 +349,17 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       tuningHz: world.prefs.tuningHz,
       editingScheme: world.editingScheme,
       hybridMode: world.prefs.hybridMode,
-      vocoderWeight: null,
-      f0Model: null,
-      renderingPriority: null,
+      vocoderWeight: carries(world.prefs.vocoderWeight) ? world.prefs.vocoderWeight : null,
+      f0Model: world.prefs.f0Model,
+      renderingPriority: world.prefs.renderingPriority,
       backend: null,
-      vocoderReady: false,
-      vocoderReconfiguring: false,
+      vocoderReady: world.vocoder.ready,
+      vocoderReconfiguring: world.vocoder.reconfiguring,
       experimentalFeatures: world.prefs.experimentalFeatures,
-      referenceAlignMode: null,
+      referenceAlignMode: world.prefs.referenceAlignMode,
       nullReasons: {
-        vocoderWeight: 'unavailable',
-        f0Model: 'unavailable',
-        renderingPriority: 'unavailable',
         backend: 'unavailable',
-        referenceAlignMode: 'unavailable',
+        ...(carries(world.prefs.vocoderWeight) ? {} : { vocoderWeight: 'unavailable' }),
       },
     },
     language: world.prefs.language,
@@ -753,6 +772,12 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     forgetAlignment() {
       for (const content of world.contents.values()) content.alignmentReady = false;
     },
+    setVocoderFault(fault) {
+      world.setVocoderFault(fault);
+    },
+    failF0Model(...models) {
+      for (const model of models) world.unloadableF0Models.add(model);
+    },
     showOnboarding(choiceShown) {
       world.onboardingShowing = true;
       // Onboarding counts as shown only once the overlay has shown its choice; without it the flag is cleared.
@@ -764,6 +789,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     setTransportRate(rate) {
       world.settleTransport();
       world.transportRate = rate;
+    },
+    setOutputChannelPairCount(count) {
+      world.outputChannelPairCount = count;
     },
     failNextAnalysis(count = 1) {
       importer.failNextAnalysis(count);
