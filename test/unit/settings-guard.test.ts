@@ -61,6 +61,14 @@ describe('redactHome', () => {
     );
   });
 
+  it('replaces the longer of two nested home folders first, whatever the order of the list', () => {
+    // USERPROFILE below HOME: the outer folder must not take the inner one's prefix away first.
+    const message = `stat '${winHome('data', 'x.settings')}' and '${winHome('a.txt')}'`;
+    const expected = "stat '~\\x.settings' and '~\\a.txt'";
+    expect(redactHome(message, [winHome(), winHome('data')], 'win32')).toBe(expected);
+    expect(redactHome(message, [winHome('data'), winHome()], 'win32')).toBe(expected);
+  });
+
   it('ignores the case on Windows only', () => {
     const shouted = (value: string): string => value.replace(ACCOUNT, ACCOUNT.toUpperCase());
     expect(redactHome(`stat '${shouted(winHome('x'))}'`, [winHome()], 'win32')).toBe("stat '~\\x'");
@@ -136,14 +144,36 @@ describe('withUserSettingsWatch keeps the home folder out of a failed comparison
 
   it('does the same in the message that carries a scenario failure', async () => {
     const dir = await failingSecondReading();
-    const error = await withUserSettingsWatch(() => Promise.reject(new Error('boom')), dir).then(
+    // The scenario's own error names a path in the home folder too; it goes through the same redaction.
+    const scenarioError = new Error(`boom in '${path.join(home, 'x')}'`);
+    const error = await withUserSettingsWatch(() => Promise.reject(scenarioError), dir).then(
       () => undefined,
       (caught: unknown) => caught,
     );
     const message = (error as Error).message;
-    expect(message).toContain('boom');
+    expect(message).toContain(`boom in '~${sep}x'`);
     expect(message).toContain(`'~${sep}AppData`);
     expect(message).not.toContain(home);
     expect(message).not.toMatch(/homes/i);
+  });
+
+  it('redacts the scenario error too when the watch found nothing wrong', async () => {
+    // Both readings succeed, so the rethrown scenario error is the only message that could carry the home folder.
+    const dir = await mkdtemp(path.join(os.tmpdir(), 'ot-settings-guard-'));
+    cleanup.push(dir);
+    await writeFile(path.join(dir, 'app-preferences.settings'), 'x');
+    vi.stubEnv('HOME', home);
+    vi.stubEnv('USERPROFILE', home);
+    const actual = await vi.importActual<SnapshotModule>('../../scripts/e2e/settings-snapshot.mjs');
+    stubbed.watchStats.mockReset();
+    stubbed.watchStats.mockImplementation(actual.watchStats);
+    const scenarioError = new Error(`boom in '${path.join(home, 'x')}'`);
+    const error = await withUserSettingsWatch(() => Promise.reject(scenarioError), dir).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    const message = (error as Error).message;
+    expect(message).toBe(`boom in '~${sep}x'`);
+    expect(message).not.toContain(home);
   });
 });
