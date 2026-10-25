@@ -93,6 +93,19 @@ const LOOPBACK = '127.0.0.1';
 const PROTOCOL = '1.0';
 const PROTOCOL_MAJORS: readonly number[] = [1];
 const PROTOCOL_VERSION_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+/** The methods that act through the OpenTune editor window (PROTOCOL.md section 7 rule 6). */
+const NO_EDITOR_METHODS: ReadonlySet<string> = new Set([
+  'ui.getState',
+  'ui.dismiss',
+  'ui.setSelection',
+  'track.add',
+  'track.duplicate',
+  'track.delete',
+  'project.save',
+  'project.saveAs',
+  'project.open',
+  'audio.set',
+]);
 const APP_VERSION = '0.0.0-mock';
 
 export interface MockOptions {
@@ -167,6 +180,11 @@ export interface OtcpMock {
    * `choiceShown` the overlay has shown its choice, which marks onboarding as shown, as OpenTune does.
    */
   showOnboarding(choiceShown: boolean): void;
+  /**
+   * A window-less run (no OpenTune editor window): the methods that act through the editor window fail with
+   * `UNSUPPORTED(no_editor_window)`, `executed` false, and change nothing (PROTOCOL.md section 7 rule 6).
+   */
+  setNoEditor(on: boolean): void;
   /** While the transport plays on a running device, the position advances by `rate` timeline seconds per second (0: it stays). */
   setTransportRate(rate: number): void;
   /** The pitch analysis of the next `count` imported clips fails. */
@@ -407,6 +425,15 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   const runModel = (conn: Connection, { id, method, params }: Request) => {
     const handler = worldHandlers[method];
     if (handler === undefined) return false;
+    if (world.noEditor && NO_EDITOR_METHODS.has(method)) {
+      reply(conn, id, {
+        kind: 'UNSUPPORTED',
+        reason: 'no_editor_window',
+        detail: `${method} acts through the OpenTune editor window, and this instance has no editor window`,
+        executed: false,
+      });
+      return true;
+    }
     const context: MethodContext = {
       world,
       params: params ?? {},
@@ -728,7 +755,11 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     showOnboarding(choiceShown) {
       world.onboardingShowing = true;
-      if (choiceShown) world.prefs.onboardingShown = true;
+      // Onboarding counts as shown only once the overlay has shown its choice; without it the flag is cleared.
+      world.prefs.onboardingShown = choiceShown;
+    },
+    setNoEditor(on) {
+      world.noEditor = on;
     },
     setTransportRate(rate) {
       world.settleTransport();

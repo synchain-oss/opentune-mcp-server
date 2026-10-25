@@ -53,6 +53,8 @@ ones it needs. A build that lacks one answers the tools that need it with the er
 can give: `opentune_get_settings` returns a section it cannot read as `null` with the reason
 `capability_missing:<capability>`, and `opentune_set_settings` asks only for the capabilities of the groups you give
 it. A test build older than this server may therefore offer fewer tools than [reference.md](reference.md) lists.
+The exception is the job of `opentune_set_settings`: it does not check `jobs.v1` before it sends the change, so on a
+build without `jobs.v1` the change can be applied and the following of its job then fails.
 
 | Capability       | Tools that need it                                                                                                                                                                                                                                                 |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |

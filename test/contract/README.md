@@ -129,8 +129,9 @@ node scripts/vector-coverage.mjs --vectors spec/otcp/v1/vectors --json exe-summa
 ```
 
 It prints the runners with their counts, a table of every vector with the runners that pass it, the vectors no
-runner passes with every runner's reason, vector ids that are not in the directory, and the totals. A vector that
-a runner did not list shows as "not run" there. Exit code 0: every vector passes in at least one runner and none
+runner passes with every runner's reason, vector ids that are not in the directory, and the totals. In the table,
+a runner that did not list a vector is counted ("not listed by N runners") rather than named, so only the runners
+that passed, failed or skipped a vector are named there. Exit code 0: every vector passes in at least one runner and none
 fails; 1: a vector fails somewhere, passes nowhere, or a result names an unknown id; 2: unreadable input or a
 wrong option.
 

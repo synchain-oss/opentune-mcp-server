@@ -319,6 +319,45 @@ describe('ui.dismiss', () => {
   });
 });
 
+describe('showOnboarding', () => {
+  it('without the choice clears the first-run flag, since the overlay has not marked onboarding as shown', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ onboarding: 'shown' });
+    expect((await ok('ui.getState')).onboarding).toEqual({ shown: true, showing: false });
+    mock.showOnboarding(false);
+    expect((await ok('ui.getState')).onboarding).toEqual({ shown: false, showing: true });
+    expect((await ok('prefs.get')).onboardingShown).toBe(false);
+  });
+});
+
+describe('a window-less run (no editor window)', () => {
+  it('refuses the methods that act through the editor window with UNSUPPORTED(no_editor_window), changing nothing', async () => {
+    const session = await sessions.open();
+    const { mock, ok, fails } = session;
+    const ids = mock.given({ clips: [clip({ bind: 'a', trackId: 1 })] });
+    const before = await state(session);
+    mock.setNoEditor(true);
+    const refusals: [string, Record<string, unknown>][] = [
+      ['ui.getState', {}],
+      ['ui.setSelection', { placementId: ids['a.placementId'] }],
+      ['project.save', {}],
+    ];
+    for (const [method, params] of refusals) {
+      expect(await fails(method, params)).toMatchObject({
+        data: { kind: 'UNSUPPORTED', reason: 'no_editor_window', executed: false },
+      });
+    }
+    // A method that works without the editor window still answers.
+    expect(await ok('prefs.get')).toHaveProperty('onboardingShown');
+    mock.setNoEditor(false);
+    expect(await state(session)).toEqual(before);
+    // Back with an editor window, the same selection works again.
+    await ok('ui.setSelection', { placementId: ids['a.placementId'] });
+    expect(await state(session)).toMatchObject({ selectedPlacementIds: [ids['a.placementId']] });
+  });
+});
+
 describe('ui.getState', () => {
   it('reports the busy conditions, including the export lock', async () => {
     const session = await sessions.open();

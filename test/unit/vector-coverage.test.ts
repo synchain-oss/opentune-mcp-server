@@ -118,6 +118,25 @@ describe('mergeCoverage', () => {
     expect(merged.runners.map((r) => r.notRun)).toEqual([1, 1]);
     expect(merged.vectors[0]?.notRunIn).toEqual(['exe']);
     expect(merged.ok).toBe(true);
+    expect(formatReport(merged)).toContain('| a/one | mock | not listed by 1 runner |');
+  });
+
+  it('names only the runners that listed a vector and counts the rest, however many there are', () => {
+    const merged = mergeCoverage(
+      ['a/one'],
+      [
+        result('mock', [['a/one', 'PASS']]),
+        result('exe', [['a/one', 'FAIL', 'wrong answer']]),
+        result('fork', []),
+        result('headless', []),
+        result('other', []),
+      ],
+    );
+    expect(merged.vectors[0]?.notRunIn).toEqual(['fork', 'headless', 'other']);
+    const row = formatReport(merged)
+      .split('\n')
+      .find((line) => line.startsWith('| a/one |'));
+    expect(row).toBe('| a/one | mock | FAIL in exe: wrong answer; not listed by 3 runners |');
   });
 
   it('refuses two files of one runner', () => {

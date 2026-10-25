@@ -709,7 +709,7 @@ describe('arrangement effects scenario against the stand-in', () => {
   );
 
   it(
-    'fails the copy checks when a copy sounds one sample away from where it is, and the delete check that makes a copy too',
+    'fails the copy checks when a copy sounds two samples away from where it is, and the delete check that makes a copy too',
     async () => {
       const report = await runArrangementEffects(config('arrangement-copy-offset'));
       expect(failed(report)).toEqual(['copy window of clip A', 'copy full of clip A', 'delete a copy of clip A']);

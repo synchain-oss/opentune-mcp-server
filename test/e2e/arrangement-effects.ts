@@ -265,9 +265,9 @@ export const COHERENT_SUM_TOLERANCE_DB = 0.5;
 export const COHERENT_SUM_MAX_ABS_DIFF = 1e-6;
 
 /**
- * Where the sequential import starts, in seconds: past the end of every clip the scenario holds
- * (the longest is a copy that ends at 8.4 s), so the two imported clips sound alone and their
- * onsets can be measured in the master.
+ * Where the sequential import starts, in seconds: later than any clip a check can leave behind
+ * (the longest copy ends at 8.4 s), so the two imported clips sound alone and their onsets can be
+ * measured in the master.
  */
 export const IMPORT_START_SEC = 10;
 

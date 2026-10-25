@@ -132,7 +132,10 @@ export function formatReport(merged) {
     const others = [
       ...v.failedIn.map((f) => `FAIL in ${f.runner}${f.reason === '' ? '' : `: ${f.reason}`}`),
       ...v.skippedIn.map((s) => `SKIP in ${s.runner}${s.reason === '' ? '' : `: ${s.reason}`}`),
-      ...v.notRunIn.map((n) => `not run in ${n}`),
+      // The runners that did not list the vector are counted, not named: with many runners the names alone fill the line.
+      ...(v.notRunIn.length === 0
+        ? []
+        : [`not listed by ${v.notRunIn.length} ${v.notRunIn.length === 1 ? 'runner' : 'runners'}`]),
     ];
     lines.push(
       `| ${cell(v.id)} | ${v.passedBy.length === 0 ? '**none**' : cell(v.passedBy.join(', '))} | ${cell(others.join('; '))} |`,

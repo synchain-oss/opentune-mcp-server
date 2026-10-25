@@ -1,6 +1,6 @@
 # CLAUDE.md —— OpenTune MCP Server 工作规范
 
-本文件是在本仓库内工作的 AI 编码代理与贡献者的常驻规范;与维护者的明确指令冲突时以维护者为准。仓库目前只有文档:文中提到的脚本(`npm run gates`、`scripts/*`)、workflow 与检查(`mcp-gate`、`branch-gate` 等)随后续 PR 陆续加入,加入之前按 §2 末条做人工检查。
+本文件是在本仓库内工作的 AI 编码代理与贡献者的常驻规范;与维护者的明确指令冲突时以维护者为准。仓库已包含 MCP 服务、测试、`npm run gates`(§2)与 CI workflow(§4,位于 `.github/workflows/`)。
 
 ## 0. 基本约定
 
@@ -58,7 +58,7 @@ npm run gates
 
 - SKIP 必须写明原因;不得把 FAIL 改成 SKIP 来过关。
 - 新增的守卫要有「删掉它就会变红」的证明;不写恒真的判据。
-- `npm run gates` 加入之前(仓库只有文档时),至少确认:README 中英标题结构一致、无个人路径 / 个人邮箱、无 AI 署名。
+- 若 `npm run gates` 无法运行(例如依赖尚未安装),至少确认:README 中英标题结构一致、无个人路径 / 个人邮箱、无 AI 署名。
 
 ## 3. 评审规则
 
@@ -70,7 +70,7 @@ npm run gates
 
 ## 4. 各 Workflow 触发范围一览
 
-> 规划中的清单;workflow 文件随后加入,以 `.github/workflows/` 实际内容为准。dev / prod 的必需检查只有 `mcp-gate` 与 `branch-gate`;review bot 永不设为必需。
+> 以 `.github/workflows/` 的实际内容为准;表中标注「规划中」的项尚未实现。dev / prod 的必需检查只有 `mcp-gate` 与 `branch-gate`;review bot 永不设为必需。
 
 | workflow | 触发 | 说明 |
 | --- | --- | --- |
