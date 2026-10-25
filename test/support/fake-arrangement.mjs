@@ -21,6 +21,20 @@
 // `arrangement-export-other-path` reports another file than the one asked for.
 // `arrangement-split-extra-part` leaves a third, very quiet clip inside the split clip, so that the project
 // shows three clips where a split leaves two (the merge of the split check cannot find its two clips).
+// The checks for move, trim, copy, delete, track volume, track duplicate, track delete and batch import
+// each have modes that get one thing wrong. `arrangement-move-wrong` renders a moved clip 50 ms late,
+// `arrangement-trim-not-rendered` keeps sounding the cut part of a trimmed clip, `arrangement-copy-offset`
+// renders a copy two samples late, `arrangement-delete-ghost` keeps a deleted clip in the export that
+// follows the delete, `arrangement-delete-unconfirmed` deletes a clip or a track without `confirm`,
+// `arrangement-volume-ignored` ignores the track volume in the export, `arrangement-duplicate-silent`
+// renders a duplicated track without sound, `arrangement-share-copies` gives a shared duplicate a
+// content of its own, `arrangement-share-notes-lost` deletes the notes of a shared content with its
+// duplicate, `arrangement-track-delete-keeps-sound` keeps a deleted track in the export that follows the
+// delete, `arrangement-track-delete-bad-map` reports a wrong `trackIdMap`, `arrangement-import-no-revert`
+// gives an import no revert recipe, `arrangement-import-gap` renders the second sequential clip 10 ms
+// late and `arrangement-import-separate-offset` renders the second separate-track clip 0.1 s late. The
+// stand-in keeps twelve track slots and shows the first; an import, a copy or a duplicate shows the next
+// hidden one. It starts a clip at the sample that truncating its start in seconds names, as OpenTune does.
 // `arrangement-no-arrangement`, `arrangement-no-tracks` and `arrangement-no-history` do not report
 // the capability of that name; `arrangement-backend` fails the import with an unavailable inference
 // backend; `arrangement-hybrid` reports hybrid mode on. Its "analysis" reads the truth file the tone
@@ -36,6 +50,7 @@ const TUNING_HZ = 440;
 const SHORT = '0123abcd';
 const NOTE_PARAMS = { retuneSpeed: 0.5, vibratoDepth: 0, vibratoRateHz: 7.5, pitchDriftScale: 1 };
 const GAIN_RANGE_DB = { min: -60, max: 12 };
+const SLOT_COUNT = 12;
 
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
 const r6 = (v) => Math.round(v * 1e6) / 1e6;
@@ -85,12 +100,18 @@ const clone = (value) => JSON.parse(JSON.stringify(value));
 const clonePlacements = (placements) => new Map([...placements].map(([id, p]) => [id, clone(p)]));
 
 export function createArrangement(mode) {
-  let exportsStarted = 0;
+  let exportFailed = false;
   const contents = new Map();
   const placements = new Map();
-  const tracks = new Map([
-    [0, { trackId: 0, muted: false, solo: false, volumeDb: 0, volumeLinear: 1, colour: '#808080', visible: true }],
-  ]);
+  // OpenTune has twelve track slots and shows the first one only; an import, a copy or a duplicate shows more.
+  const tracks = new Map(
+    Array.from({ length: SLOT_COUNT }, (_, trackId) => [
+      trackId,
+      { trackId, muted: false, solo: false, volumeDb: 0, volumeLinear: 1, colour: '#808080', visible: trackId === 0 },
+    ]),
+  );
+  /** Clips a defect mode keeps in the mix after they have left the project. */
+  const ghosts = [];
   const jobs = new Map();
   const undoStack = [];
   let revision = 0;
@@ -174,95 +195,164 @@ export function createArrangement(mode) {
     ),
   });
 
-  /** The track an import lands on: the named one, the first without clips (newTrack) or the active one. */
+  /** A fresh track slot; the model keeps SLOT_COUNT of them and shows the first one only. */
+  function newSlot(trackId, visible) {
+    return { trackId, muted: false, solo: false, volumeDb: 0, volumeLinear: 1, colour: '#808080', visible };
+  }
+
+  /**
+   * The track an import lands on: the named one, the first without clips (newTrack), which is shown if
+   * it was hidden, or the active one; null when newTrack finds none.
+   */
   function pickTrack(params) {
     if (typeof params.trackId === 'number') return params.trackId;
     if (params.newTrack === true) {
       const used = new Set([...placements.values()].map((p) => p.trackId));
       const free = [...tracks.values()].find((t) => !used.has(t.trackId));
-      if (free !== undefined) return free.trackId;
-      const trackId = tracks.size;
-      tracks.set(trackId, {
-        trackId,
-        muted: false,
-        solo: false,
-        volumeDb: 0,
-        volumeLinear: 1,
-        colour: '#808080',
-        visible: true,
-      });
-      return trackId;
+      if (free === undefined) return null;
+      free.visible = true;
+      return free.trackId;
     }
     return 0;
   }
 
-  function importItem(params) {
-    const item = params.items[0];
-    const truth = JSON.parse(fs.readFileSync(item.path.replace(/\.wav$/i, '.truth.json'), 'utf8'));
-    const samples = readSamples(item.path);
+  /** A content of its own made from the samples of another (or from a window of them). */
+  function newContent(samples, notes) {
     contentSeq += 1;
-    const content = {
+    return {
       id: `c:${SHORT}:0:${String(contentSeq)}`,
       samples,
       durationSec: samples.length / RATE,
       revision: `r${String((revision += 1))}`,
       gridRevision: `g${String((revision += 1))}`,
       keyRevision: `k${String((revision += 1))}`,
-      notes: truth.notes.map((note, index) => ({
-        index,
-        startContentSec: r6(note.startSec),
-        endContentSec: r6(note.endSec),
-        detectedMidi: r4(note.midiExact),
-        targetMidi: r4(note.midiExact),
-        offsetCents: 0,
-        ...NOTE_PARAMS,
-        voiced: true,
-        corrected: false,
-      })),
+      notes,
     };
-    contents.set(content.id, content);
-    const trackId = pickTrack(params);
-    const lastEnd = [...placements.values()]
-      .filter((p) => p.trackId === trackId)
-      .reduce((most, p) => Math.max(most, p.endTimelineSec), 0);
-    const startTimelineSec = typeof params.startTimelineSec === 'number' ? params.startTimelineSec : lastEnd;
-    const placement = {
+  }
+
+  /** The clip a copy of `src` is: same gain and fades, a content of its own, and the place asked for. */
+  function copyOf(src, contentId, trackId, startTimelineSec, clipInContentSec) {
+    const copy = clone(src);
+    delete copy.audioShiftSec;
+    delete copy.audioShiftSamples;
+    delete copy.renderEndSec;
+    delete copy.silent;
+    return {
+      ...copy,
       id: newPlacementId(),
       trackId,
-      contentId: content.id,
+      contentId,
       startTimelineSec: r6(startTimelineSec),
-      endTimelineSec: r6(startTimelineSec + content.durationSec),
-      durationSec: r6(content.durationSec),
-      clipInContentSec: 0,
-      gainDb: 0,
-      gainLinear: 1,
-      fadeInSec: 0,
-      fadeOutSec: 0,
+      endTimelineSec: r6(startTimelineSec + src.durationSec),
+      clipInContentSec,
       geometryHash: newHash(),
     };
-    placements.set(placement.id, placement);
+  }
+
+  const createdEntry = (entity, ref) => ({ entity, ref, label: null });
+
+  /** Imports the files of one import.start in the layout asked for; returns the job result or an error object. */
+  function importItems(params) {
+    const layout = params.layout ?? 'single';
+    const items = Array.isArray(params.items) ? params.items : [];
+    const target = pickTrack(params);
+    if (target === null || (layout === 'separateTracks' && target + items.length > tracks.size)) {
+      return { error: { kind: 'INVALID_ARGUMENT', reason: 'track_capacity' } };
+    }
+    const done = [];
+    const created = [];
+    for (const [k, item] of items.entries()) {
+      const truth = JSON.parse(fs.readFileSync(item.path.replace(/\.wav$/i, '.truth.json'), 'utf8'));
+      const samples = readSamples(item.path);
+      const content = newContent(
+        samples,
+        truth.notes.map((note, index) => ({
+          index,
+          startContentSec: r6(note.startSec),
+          endContentSec: r6(note.endSec),
+          detectedMidi: r4(note.midiExact),
+          targetMidi: r4(note.midiExact),
+          offsetCents: 0,
+          ...NOTE_PARAMS,
+          voiced: true,
+          corrected: false,
+        })),
+      );
+      contents.set(content.id, content);
+      const trackId = layout === 'separateTracks' ? target + k : target;
+      const track = tracks.get(trackId);
+      track.visible = true;
+      const lastEnd = [...placements.values()]
+        .filter((p) => p.trackId === trackId)
+        .reduce((most, p) => Math.max(most, p.endTimelineSec), 0);
+      const startTimelineSec =
+        k === 0 && typeof params.startTimelineSec === 'number' ? params.startTimelineSec : lastEnd;
+      const placement = {
+        id: newPlacementId(),
+        trackId,
+        contentId: content.id,
+        startTimelineSec: r6(startTimelineSec),
+        endTimelineSec: r6(startTimelineSec + content.durationSec),
+        durationSec: r6(content.durationSec),
+        clipInContentSec: 0,
+        gainDb: 0,
+        gainLinear: 1,
+        fadeInSec: 0,
+        fadeOutSec: 0,
+        geometryHash: newHash(),
+      };
+      // The defects of the batch layouts: the second clip sounds later than the project says.
+      if (mode === 'arrangement-import-gap' && layout === 'sequential' && k === 1) placement.audioShiftSec = 0.01;
+      if (mode === 'arrangement-import-separate-offset' && layout === 'separateTracks' && k === 1) {
+        placement.audioShiftSec = 0.1;
+      }
+      placements.set(placement.id, placement);
+      created.push(
+        createdEntry('placement', { placementId: placement.id }),
+        createdEntry('content', { contentId: content.id }),
+      );
+      done.push({
+        path: item.path,
+        imported: true,
+        placementId: placement.id,
+        contentId: content.id,
+        trackId,
+        startTimelineSec: placement.startTimelineSec,
+        durationSec: content.durationSec,
+        channelCount: 1,
+        originalSampleRateHz: RATE,
+        resampled: false,
+        f0State: 'ready',
+        notesGenerated: params.generateNotes === true,
+        notesGeneratedBy: params.generateNotes === true ? 'request' : null,
+        error: null,
+      });
+    }
     bump();
     return {
-      ...envelope({ applied: false, undo: null }),
-      items: [
-        {
-          path: item.path,
-          imported: true,
-          placementId: placement.id,
-          contentId: content.id,
-          trackId,
-          startTimelineSec: placement.startTimelineSec,
-          durationSec: content.durationSec,
-          channelCount: 1,
-          originalSampleRateHz: RATE,
-          resampled: false,
-          f0State: 'ready',
-          notesGenerated: params.generateNotes === true,
-          notesGeneratedBy: params.generateNotes === true ? 'request' : null,
-          error: null,
+      ...envelope({
+        applied: true,
+        created,
+        // The defect of the import check: no revert recipe, though the instance has arrangement.v1.
+        warnings: mode === 'arrangement-import-no-revert' ? [{ code: 'IRREVERSIBLE', subject: null, data: null }] : [],
+        undo: {
+          undoable: false,
+          reason: 'ui_parity',
+          revert:
+            mode === 'arrangement-import-no-revert'
+              ? null
+              : {
+                  method: 'arrangement.edit',
+                  params: {
+                    expectedArrangementRevision: arrangementRevision(),
+                    ops: [{ op: 'delete', placementIds: done.map((d) => d.placementId) }],
+                  },
+                  requiresConsent: true,
+                },
         },
-      ],
-      counts: { requested: 1, imported: 1, failed: 0 },
+      }),
+      items: done,
+      counts: { requested: items.length, imported: done.length, failed: 0 },
     };
   }
 
@@ -275,7 +365,7 @@ export function createArrangement(mode) {
       tracks: [...tracks.values()].map((t) => ({
         trackId: t.trackId,
         label: `Track ${String(t.trackId + 1)}`,
-        visible: true,
+        visible: t.visible,
         muted: t.muted,
         solo: t.solo,
         audible: audibleOf(t),
@@ -285,7 +375,7 @@ export function createArrangement(mode) {
         rmsDb: null,
         placementCount: used(t.trackId),
       })),
-      visibleTrackCount: tracks.size,
+      visibleTrackCount: [...tracks.values()].filter((t) => t.visible).length,
       activeTrackId: 0,
       placements: [...placements.values()].map((p) => ({
         placementId: p.id,
@@ -334,6 +424,10 @@ export function createArrangement(mode) {
     if (edge === 'end') {
       const limit = p.startTimelineSec + (contents.get(p.contentId).durationSec - p.clipInContentSec);
       if (!(toTimelineSec > p.startTimelineSec) || toTimelineSec > limit + 1e-6) return null;
+      // The defect of the trim check: a trim that leaves a clip under 1.5 s is not rendered.
+      if (mode === 'arrangement-trim-not-rendered' && toTimelineSec - p.startTimelineSec < 1.5) {
+        p.renderEndSec = p.endTimelineSec;
+      }
       p.endTimelineSec = r6(toTimelineSec);
       p.durationSec = r6(p.endTimelineSec - p.startTimelineSec);
     } else if (edge === 'start') {
@@ -559,6 +653,268 @@ export function createArrangement(mode) {
     };
   }
 
+  /** Moves one clip in time, to another track, or both; returns the change or an error object. */
+  function applyMove(p, op, warnings) {
+    if (p === undefined) return { error: { kind: 'NOT_FOUND', reason: 'unknown_handle' } };
+    const trackId = typeof op.toTrackId === 'number' ? op.toTrackId : p.trackId;
+    const track = tracks.get(trackId);
+    if (track === undefined) return { error: { kind: 'NOT_FOUND', reason: 'unknown_handle' } };
+    const before = clone(p);
+    const start = typeof op.startTimelineSec === 'number' ? op.startTimelineSec : p.startTimelineSec;
+    p.trackId = trackId;
+    p.startTimelineSec = r6(start);
+    p.endTimelineSec = r6(start + p.durationSec);
+    p.geometryHash = newHash();
+    if (!track.visible) {
+      track.visible = true;
+      warnings.push({ code: 'TRACK_AUTO_REVEALED', subject: { trackId }, data: null });
+    }
+    // The defect of the move check: the clip sounds 50 ms later than the project says.
+    if (mode === 'arrangement-move-wrong' && typeof op.startTimelineSec === 'number') p.audioShiftSec = 0.05;
+    return {
+      change: placementChange(before, p, [
+        ['trackId', null],
+        ['startTimelineSec', 'sec'],
+        ['endTimelineSec', 'sec'],
+      ]),
+    };
+  }
+
+  /** Removes clips (op delete, which needs confirm); returns the write-envelope members or an error object. */
+  function applyDelete(op, params, warnings) {
+    const ids = Array.isArray(op.placementIds) ? op.placementIds : [];
+    const found = ids.map((id) => placements.get(id));
+    if (found.some((p) => p === undefined)) return { error: { kind: 'NOT_FOUND', reason: 'unknown_handle' } };
+    // The defect of the delete checks: a delete is carried out without the end user's consent.
+    if (params.confirm !== true && params.dryRun !== true && mode !== 'arrangement-delete-unconfirmed') {
+      return { error: { kind: 'INVALID_ARGUMENT', reason: 'confirm_required' } };
+    }
+    ghosts.length = 0;
+    for (const p of found) {
+      placements.delete(p.id);
+      // The defect of the delete check: the clip is gone from the project but still sounds in the
+      // export that follows the delete (the one the check compares with the baseline).
+      if (mode === 'arrangement-delete-ghost') ghosts.push(p);
+      warnings.push({ code: 'UPSTREAM_UNDO_DEFECT', subject: { placementId: p.id }, data: null });
+      warnings.push({ code: 'IRREVERSIBLE', subject: { placementId: p.id }, data: null });
+    }
+    bump();
+    return {
+      removed: found.map((p) => createdEntry('placement', { placementId: p.id })),
+      undo: { undoable: false, reason: 'upstream_undo_defect', revert: null },
+    };
+  }
+
+  /** Copies clips to a track, as pasting (window) and duplicating (full) do; returns the result or an error object. */
+  function arrangementCopy(params) {
+    if (params.expectedArrangementRevision !== arrangementRevision()) {
+      return { error: { kind: 'REVISION_CONFLICT', reason: 'arrangement_changed' } };
+    }
+    const target = tracks.get(params.toTrackId);
+    const sources = (Array.isArray(params.sources) ? params.sources : []).map((s) => placements.get(s.placementId));
+    if (target === undefined || sources.length === 0 || sources.some((s) => s === undefined)) {
+      return { error: { kind: 'NOT_FOUND', reason: 'unknown_handle' } };
+    }
+    const earliest = Math.min(...sources.map((s) => s.startTimelineSec));
+    const created = [];
+    const idMap = [];
+    const warnings = [];
+    const newIds = [];
+    for (const src of sources) {
+      const content = contents.get(src.contentId);
+      const window = params.mode === 'window';
+      const from = Math.round(src.clipInContentSec * RATE);
+      const to = from + Math.round(src.durationSec * RATE);
+      const copied = newContent(
+        window ? content.samples.slice(from, to) : content.samples.slice(),
+        content.notes.map((note) => clone(note)),
+      );
+      contents.set(copied.id, copied);
+      const start = params.startTimelineSec + (src.startTimelineSec - earliest);
+      const copy = copyOf(src, copied.id, target.trackId, start, window ? 0 : src.clipInContentSec);
+      // The defect of the copy checks: the copy sounds one sample late.
+      if (mode === 'arrangement-copy-offset') copy.audioShiftSamples = 2;
+      const others = [...placements.values()].filter((p) => p.trackId === target.trackId);
+      if (others.some((p) => p.startTimelineSec === copy.startTimelineSec && p.id === src.id)) {
+        warnings.push({ code: 'STACKED_ON_SOURCE', subject: { placementId: copy.id }, data: null });
+      } else if (
+        others.some((p) => p.startTimelineSec < copy.endTimelineSec && copy.startTimelineSec < p.endTimelineSec)
+      ) {
+        warnings.push({ code: 'OVERLAPS_CLIP', subject: { placementId: copy.id }, data: null });
+      }
+      placements.set(copy.id, copy);
+      newIds.push(copy.id);
+      created.push(
+        createdEntry('placement', { placementId: copy.id }),
+        createdEntry('content', { contentId: copied.id }),
+      );
+      idMap.push({
+        entity: 'placement',
+        relation: 'copy',
+        from: [{ placementId: src.id }],
+        to: [{ placementId: copy.id }],
+      });
+    }
+    const sideEffects = {};
+    if (!target.visible) {
+      target.visible = true;
+      warnings.push({ code: 'TRACK_AUTO_REVEALED', subject: { trackId: target.trackId }, data: null });
+      sideEffects.tracksRevealed = { trackIds: [target.trackId], revert: null };
+    }
+    bump();
+    return envelope({
+      created,
+      idMap,
+      warnings,
+      sideEffects,
+      undo: {
+        undoable: false,
+        reason: 'ui_parity',
+        revert: {
+          method: 'arrangement.edit',
+          params: {
+            expectedArrangementRevision: arrangementRevision(),
+            ops: [{ op: 'delete', placementIds: newIds }],
+          },
+          requiresConsent: true,
+        },
+      },
+    });
+  }
+
+  /** Duplicates a shown track to the first hidden slot; returns the result or an error object. */
+  function trackDuplicate(params) {
+    const source = tracks.get(params.trackId);
+    if (source === undefined) return { error: { kind: 'NOT_FOUND', reason: 'unknown_handle' } };
+    if (!source.visible) return { error: { kind: 'INVALID_ARGUMENT', reason: 'track_hidden' } };
+    const slot = [...tracks.values()].find((t) => !t.visible);
+    if (slot === undefined) return { error: { kind: 'INVALID_ARGUMENT', reason: 'track_limit' } };
+    if ([...placements.values()].some((p) => p.trackId === slot.trackId)) {
+      return { error: { kind: 'INVALID_ARGUMENT', reason: 'target_track_occupied' } };
+    }
+    const share = params.mode === 'share';
+    const hidden = clone(slot);
+    for (const name of ['muted', 'solo', 'volumeDb', 'volumeLinear', 'colour']) slot[name] = source[name];
+    slot.visible = true;
+    const fields = {};
+    for (const name of ['visible', 'muted', 'solo', 'volumeDb', 'volumeLinear', 'colour']) {
+      if (hidden[name] !== slot[name]) fields[name] = { before: hidden[name], after: slot[name], unit: null };
+    }
+    const created = [];
+    const idMap = [];
+    const warnings = [];
+    for (const src of [...placements.values()].filter((p) => p.trackId === source.trackId)) {
+      const content = contents.get(src.contentId);
+      let contentId = src.contentId;
+      // The defect of the share check: a shared duplicate that copies the contents after all.
+      if (!share || mode === 'arrangement-share-copies') {
+        const copied = newContent(
+          content.samples.slice(),
+          content.notes.map((note) => clone(note)),
+        );
+        contents.set(copied.id, copied);
+        contentId = copied.id;
+        created.push(createdEntry('content', { contentId }));
+      }
+      const copy = copyOf(src, contentId, slot.trackId, src.startTimelineSec, src.clipInContentSec);
+      // The defect of the duplicate checks: the copied clips are in the project but not in the mix.
+      if (mode === 'arrangement-duplicate-silent') copy.silent = true;
+      placements.set(copy.id, copy);
+      created.push(createdEntry('placement', { placementId: copy.id }));
+      idMap.push({
+        entity: 'placement',
+        relation: 'copy',
+        from: [{ placementId: src.id }],
+        to: [{ placementId: copy.id }],
+      });
+    }
+    if (share && mode !== 'arrangement-share-copies') {
+      warnings.push({ code: 'SHARED_CONTENT', subject: { trackId: slot.trackId }, data: null });
+    }
+    bump();
+    return {
+      ...envelope({
+        changes: [{ entity: 'track', ref: { trackId: slot.trackId }, label: null, fields }],
+        created,
+        idMap,
+        warnings,
+        undo: {
+          undoable: false,
+          reason: 'ui_parity',
+          revert: {
+            method: 'track.delete',
+            params: { trackId: slot.trackId, expectedArrangementRevision: arrangementRevision() },
+            requiresConsent: true,
+          },
+        },
+      }),
+      newTrackId: slot.trackId,
+    };
+  }
+
+  /** Deletes a shown track; later shown tracks move down by one. Returns the result or an error object. */
+  function trackDelete(params) {
+    if (params.expectedArrangementRevision !== arrangementRevision()) {
+      return { error: { kind: 'REVISION_CONFLICT', reason: 'arrangement_changed' } };
+    }
+    const track = tracks.get(params.trackId);
+    if (track === undefined) return { error: { kind: 'NOT_FOUND', reason: 'unknown_handle' } };
+    if (params.confirm !== true && mode !== 'arrangement-delete-unconfirmed') {
+      return { error: { kind: 'INVALID_ARGUMENT', reason: 'confirm_required' } };
+    }
+    if (!track.visible) return { error: { kind: 'INVALID_ARGUMENT', reason: 'track_hidden' } };
+    const shown = [...tracks.values()]
+      .filter((t) => t.visible)
+      .map((t) => t.trackId)
+      .sort((a, b) => a - b);
+    if (shown.length === 1) return { error: { kind: 'INVALID_ARGUMENT', reason: 'last_track' } };
+    const index = shown.indexOf(params.trackId);
+    const removed = [];
+    ghosts.length = 0;
+    for (const p of [...placements.values()].filter((q) => q.trackId === params.trackId)) {
+      placements.delete(p.id);
+      // The defect of the share check: deleting a shared copy takes the notes of the shared content.
+      if (
+        mode === 'arrangement-share-notes-lost' &&
+        [...placements.values()].some((q) => q.contentId === p.contentId)
+      ) {
+        contents.get(p.contentId).notes = [];
+      }
+      // The defect of the track delete check: the clips of the deleted track still sound.
+      if (mode === 'arrangement-track-delete-keeps-sound') ghosts.push(p);
+      removed.push(createdEntry('placement', { placementId: p.id }));
+    }
+    const changes = [];
+    const trackIdMap = [{ before: params.trackId, after: mode === 'arrangement-track-delete-bad-map' ? 0 : null }];
+    for (let j = index + 1; j < shown.length; j++) {
+      const from = tracks.get(shown[j]);
+      const to = tracks.get(shown[j - 1]);
+      for (const name of ['muted', 'solo', 'volumeDb', 'volumeLinear', 'colour']) to[name] = from[name];
+      for (const p of placements.values()) {
+        if (p.trackId !== shown[j]) continue;
+        const before = clone(p);
+        p.trackId = shown[j - 1];
+        p.geometryHash = newHash();
+        changes.push(placementChange(before, p, [['trackId', null]]));
+      }
+      trackIdMap.push({ before: shown[j], after: shown[j - 1] });
+    }
+    const last = tracks.get(shown.at(-1));
+    Object.assign(last, newSlot(last.trackId, false));
+    bump();
+    return {
+      ...envelope({
+        changes,
+        removed,
+        warnings: [{ code: 'IRREVERSIBLE', subject: { trackId: params.trackId }, data: null }],
+        undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
+      }),
+      trackIdMap,
+      danglingReferences: [],
+      possiblyStaleEntries: { undo: 0, redo: 0 },
+    };
+  }
+
   /** Applies the ops of one arrangement.edit; returns the result members or an error object. */
   function arrangementEdit(params) {
     if (params.expectedArrangementRevision !== arrangementRevision()) {
@@ -585,6 +941,16 @@ export function createArrangement(mode) {
         if (change === null) return { error: { kind: 'INVALID_ARGUMENT', reason: 'trim_out_of_range' } };
         if (Object.keys(change.fields).length > 0) changes.push(change);
         bump();
+      } else if (op.op === 'move') {
+        const moved = applyMove(placements.get(op.placementId), op, warnings);
+        if (moved.error !== undefined) return moved;
+        if (Object.keys(moved.change.fields).length > 0) changes.push(moved.change);
+        bump();
+      } else if (op.op === 'delete') {
+        const deleted = applyDelete(op, params, warnings);
+        if (deleted.error !== undefined) return deleted;
+        removed.push(...deleted.removed);
+        undo = deleted.undo;
       } else if (op.op === 'split') {
         const applied = applySplit(placements.get(op.placementId), op, warnings);
         if (applied.error !== undefined) return applied;
@@ -663,8 +1029,14 @@ export function createArrangement(mode) {
       const before = beforeTracks.get(id);
       if (before === undefined) continue;
       const fields = {};
-      for (const name of ['muted', 'solo']) {
-        if (before[name] !== track[name]) fields[name] = { before: before[name], after: track[name], unit: null };
+      for (const [name, unit] of [
+        ['muted', null],
+        ['solo', null],
+        ['volumeDb', 'db'],
+        ['volumeLinear', 'linear'],
+        ['colour', null],
+      ]) {
+        if (before[name] !== track[name]) fields[name] = { before: before[name], after: track[name], unit };
       }
       const audibleBefore = audibleWith(before, beforeAnySolo);
       const audibleAfter = audibleWith(track, afterAnySolo);
@@ -687,24 +1059,38 @@ export function createArrangement(mode) {
   }
 
   function finishExport(job) {
-    const list = [...placements.values()];
+    // The ghosts of a defect mode sound in the export after the delete they belong to, and only there,
+    // so that the revert recipes of the other checks do not fail with them.
+    const ghostExport = {
+      'arrangement-delete-ghost': /-after-delete.wav$/,
+      'arrangement-track-delete-keeps-sound': /-after-track-delete.wav$/,
+    }[mode];
+    const heard = ghostExport === undefined || ghostExport.test(job.path) ? ghosts : [];
+    const list = [...placements.values(), ...heard];
     if (list.length === 0) return { error: { kind: 'INVALID_ARGUMENT', reason: 'nothing_to_export' } };
-    const durationSec = list.reduce((most, p) => Math.max(most, p.endTimelineSec), 0);
-    const frames = Math.round(durationSec * RATE);
+    // Where a clip sounds: its place, moved by the defects that make it sound elsewhere than it says.
+    const shiftOf = (p) => Math.round((p.audioShiftSec ?? 0) * RATE) + (p.audioShiftSamples ?? 0);
+    // A position in seconds becomes a sample by truncating, as OpenTune does: a clip at 4.1 s sounds
+    // from sample 180809, one sample before the sample that rounding names. The end is rounded.
+    const soundsFrom = (p) => Math.trunc(p.startTimelineSec * RATE) + shiftOf(p);
+    const soundsTo = (p) => Math.round((p.renderEndSec ?? p.endTimelineSec) * RATE) + shiftOf(p);
+    const frames = list.reduce((most, p) => Math.max(most, soundsTo(p)), 0);
     const left = new Float64Array(frames);
     const right = new Float64Array(frames);
     for (const p of list) {
+      if (p.silent === true) continue;
       const track = tracks.get(p.trackId);
       if (track === undefined) continue;
       const audible = audibleOf(track);
       if (!audible && mode !== 'arrangement-mute-leak') continue;
       let gain =
         10 ** ((mode === 'arrangement-gain-wrong' && p.audioGainDb !== undefined ? p.audioGainDb : p.gainDb) / 20);
+      if (mode !== 'arrangement-volume-ignored') gain *= track.volumeLinear;
       if (!audible) gain *= 1e-3;
       const content = contents.get(p.contentId);
       if (content === undefined) continue;
-      const start = Math.round(p.startTimelineSec * RATE);
-      const count = Math.round(p.endTimelineSec * RATE) - start;
+      const start = soundsFrom(p);
+      const count = soundsTo(p) - start;
       const source = Math.round(p.clipInContentSec * RATE);
       for (let n = 0; n < count; n++) {
         const at = start + n;
@@ -713,7 +1099,7 @@ export function createArrangement(mode) {
         let g = gain;
         if (p.fadeInSec > 0 && mode !== 'arrangement-fade-step') g *= Math.min(1, t / p.fadeInSec);
         if (p.fadeOutSec > 0 && mode !== 'arrangement-fade-step') {
-          g *= Math.min(1, (p.durationSec - t) / p.fadeOutSec);
+          g *= Math.max(0, Math.min(1, (p.durationSec - t) / p.fadeOutSec));
         }
         let sample = content.samples[source + n] ?? 0;
         if (mode === 'arrangement-split-gap' && p.skipFirstSample === true && n === 0) sample = 0;
@@ -788,7 +1174,14 @@ export function createArrangement(mode) {
     }
     if (method === 'import.start') {
       if (mode === 'arrangement-backend') return fail(id, 'MODEL_UNAVAILABLE', 'backend_unavailable');
-      const job = startJob('import', () => ({ result: importItem(params) }), 0);
+      const job = startJob(
+        'import',
+        () => {
+          const imported = importItems(params);
+          return imported.error === undefined ? { result: imported } : { error: imported.error };
+        },
+        0,
+      );
       return ok(id, { ...envelope({ applied: false, undo: null }), job });
     }
     if (method === 'job.get') {
@@ -874,15 +1267,25 @@ export function createArrangement(mode) {
       const result = trackSet(params);
       return result.error === undefined ? ok(id, result) : fail(id, result.error.kind, result.error.reason);
     }
+    const routed = {
+      'arrangement.copy': arrangementCopy,
+      'track.duplicate': trackDuplicate,
+      'track.delete': trackDelete,
+    }[method];
+    if (routed !== undefined) {
+      const result = routed(params);
+      return result.error === undefined ? ok(id, result) : fail(id, result.error.kind, result.error.reason);
+    }
     if (method === 'export.start') {
       if (params.kind !== 'master') return fail(id, 'UNSUPPORTED', 'capability_missing');
       if (fs.existsSync(params.path)) return fail(id, 'ALREADY_EXISTS', 'target_exists');
-      exportsStarted += 1;
-      // The sixth export is the one of the first mute case; the thirteenth is the one after the merge.
-      if (mode === 'arrangement-export-fails-in-mute' && exportsStarted === 6) {
+      // The export of the first mute case and the one after the merge fail; the files are named
+      // arrangement-<n>-<label>.wav, so the label tells them apart from the others.
+      if (mode === 'arrangement-export-fails-in-mute' && !exportFailed && /-mute-track-\d+\.wav$/.test(params.path)) {
+        exportFailed = true;
         return fail(id, 'INTERNAL', 'export_failed');
       }
-      if (mode === 'arrangement-export-fails-after-merge' && exportsStarted === 13) {
+      if (mode === 'arrangement-export-fails-after-merge' && /-after-merge\.wav$/.test(params.path)) {
         return fail(id, 'INTERNAL', 'export_failed');
       }
       const job = startJob('export', () => finishExport({ path: params.path }), 0);

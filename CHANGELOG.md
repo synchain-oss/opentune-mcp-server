@@ -57,8 +57,11 @@ versioned separately and has its own changelog.
   that the agent closes it with `opentune_manage_ui`; closing a confirmation box cancels the action it asked about,
   and a dialog which commits its value on close needs the user's agreement (`accept_commit`).
 - An end-to-end arrangement effects scenario (`test/e2e/arrangement-effects.ts`) for a real OpenTune build: clip gain,
-  fade ramps, track mute/solo and a clip split must change the exported master mix exactly as their results report,
-  and nothing else; unit tests prove each check against a stand-in.
+  fade ramps, track mute/solo, a clip split, a clip move and trim, a copy (modes `window` and `full`), the delete of
+  a copy, a track volume, a track duplicate (`clone` and `share`), the delete of a track and a batch import (layouts
+  `sequential` and `separateTracks`) must change the exported master mix exactly as their results report, and nothing
+  else; every write is taken back and the restored export must equal the baseline. Unit tests prove each check against
+  a stand-in, and a stand-in with one defect fails exactly the check that notices it.
 
 ### Changed
 
