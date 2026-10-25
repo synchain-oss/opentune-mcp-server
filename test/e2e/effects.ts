@@ -1751,22 +1751,49 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   /**
    * The preferences a check changes, which edit.undo does not take back. `start` is what they read when
    * the check began. The put-back is registered with the frame at once, so that it runs whatever
-   * happens afterwards; `revert()` runs it on the spot (the recipe the prefs.set result gave, sent as
-   * given, else the previous values), reads the preferences back, and throws when they are not the
-   * ones of the start (the message says what they were).
+   * happens afterwards; `revert()` runs it on the spot, reads the preferences back, and throws when
+   * they are not the ones of the start (the message says what they were).
+   *
+   * What the put-back sends is a prefs.set with the values the result's revert recipe gives for the
+   * preferences watched here and for no other (the recipe is data the instance returned, not a call the
+   * scenario trusts to name the method or to touch only what was changed). A recipe that is missing,
+   * names another method or lacks a watched value is a problem, and the preferences are put back from
+   * what prefs.get read at the start instead; so is a recipe that did not put them back. The problems
+   * are returned by `revert()` and, when it runs as the frame's cleanup (the check failed before it got
+   * there), written to the report as `revertProblems`.
    */
   const watchPrefs = (frame: CheckFrame, keys: readonly PrefKey[], start: PrefsValues) => {
     let recipe: { method: string; params: Json } | null = null;
     const differing = (now: PrefsValues) => keys.filter((k) => !same(now[k], start[k]));
+    const fromStart = (): Json => Object.fromEntries(keys.map((k) => [k, start[k]]));
+    /** The values of the watched preferences in the recipe, or why there are none. */
+    const fromRecipe = (): { params: Json } | { problem: string } => {
+      if (recipe === null) return { problem: 'the prefs.set result gave no revert recipe' };
+      if (recipe.method !== 'prefs.set') return { problem: `the revert recipe calls ${recipe.method}, not prefs.set` };
+      const params: Record<string, unknown> = {};
+      for (const k of keys) {
+        const value = recipe.params[k];
+        if (typeof value !== typeof start[k]) return { problem: `the revert recipe gives no value for ${k}` };
+        params[k] = value;
+      }
+      return { params };
+    };
     const revert = async (): Promise<string[]> => {
       const problems: string[] = [];
       if (differing(await readPrefs()).length === 0) return problems;
-      let call = recipe;
-      if (call === null) {
-        problems.push('the prefs.set result gave no revert recipe');
-        call = { method: 'prefs.set', params: Object.fromEntries(keys.map((k) => [k, start[k]])) };
+      const planned = fromRecipe();
+      if ('problem' in planned) {
+        problems.push(`${planned.problem}; put back from what prefs.get read when the check began`);
+        await need().call('prefs.set', fromStart(), 60_000);
+      } else {
+        await need().call('prefs.set', planned.params, 60_000);
+        if (differing(await readPrefs()).length > 0) {
+          problems.push(
+            'the revert recipe did not put the preference back; put back from what prefs.get read when the check began',
+          );
+          await need().call('prefs.set', fromStart(), 60_000);
+        }
       }
-      await need().call(call.method, call.params, 60_000);
       const after = await readPrefs();
       const left = differing(after);
       if (left.length > 0) {
@@ -1782,7 +1809,11 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       return problems;
     };
     frame.cleanups.push(async () => {
-      await revert();
+      const problems = await revert();
+      if (problems.length > 0) {
+        const earlier = Array.isArray(frame.report.revertProblems) ? (frame.report.revertProblems as unknown[]) : [];
+        frame.report.revertProblems = [...earlier, ...problems];
+      }
     });
     return {
       set: async (params: Json): Promise<Json> => {
@@ -2934,6 +2965,14 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
             // only the notes: a handle that stayed would still be heard).
             const again = await exportWet(`${name}, taken back`);
             const whole = compareSamples(base, again, [{ startSec: 0, endSec: base.mono.length / base.sampleRateHz }]);
+            if (tone === undefined) {
+              // External audio: the grid change rendered the clip again, and so does taking it back, in
+              // another phase (the notes away from the handle are judged by the same criteria above), so
+              // the export is the same sound as the baseline and not the same samples.
+              const same = sameSound(base, again);
+              frame.report.exportAfterUndo = { ...whole, sameSound: same.report };
+              return same.problems.map((p) => `after the undo: ${p}`);
+            }
             frame.report.exportAfterUndo = whole;
             return whole.maxAbsDiff > UNEDITED_MAX_ABS_DIFF_TIMING
               ? [
@@ -3038,38 +3077,43 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     }
   };
 
-  await step('extra clips for the note-split, vibrato and drift checks', async () => {
-    if (tone === undefined) throw new StepSkip('SKIP', 'external audio: the checks use generated tones of their own');
-    steppedTone = makeSteppedTone();
-    stepsClip = await importExtra('steps', steppedTone.tone);
-    const modulationTone = makeModulationTone();
-    const made = await importExtra('modulation', modulationTone);
-    if (made.spans.length !== modulationTone.truth.notes.length) {
-      throw new Error(
-        `OpenTune found ${String(made.spans.length)} voiced notes in the modulation tone, it has ${String(modulationTone.truth.notes.length)}`,
+  // Marked as a check: when it is skipped (external audio) the steps after it still run, the timing steps among them.
+  await step(
+    'extra clips for the note-split, vibrato and drift checks',
+    async () => {
+      if (tone === undefined) throw new StepSkip('SKIP', 'external audio: the checks use generated tones of their own');
+      steppedTone = makeSteppedTone();
+      stepsClip = await importExtra('steps', steppedTone.tone);
+      const modulationTone = makeModulationTone();
+      const made = await importExtra('modulation', modulationTone);
+      if (made.spans.length !== modulationTone.truth.notes.length) {
+        throw new Error(
+          `OpenTune found ${String(made.spans.length)} voiced notes in the modulation tone, it has ${String(modulationTone.truth.notes.length)}`,
+        );
+      }
+      // The same fixed parameters as the main clip, then the baseline of the vibrato and drift checks.
+      modulationClip = made;
+      await useClip(made, async () => {
+        const read = await readState(need(), contentId);
+        await write(
+          'content.editNotes',
+          {
+            contentId,
+            expectedRevision: read.notesRevision,
+            ops: [{ op: 'setParams', select: { all: true }, ...FIXED_PARAMS }],
+          },
+          null,
+        );
+        await settle();
+        made.baseline = await exportWet('modulation baseline');
+      });
+      return (
+        `stepped tone: ${String(stepsClip.spans.length)} voiced notes at the default sensitivity, ` +
+        `steps at ${steppedTone.stepsSec.map((t) => t.toFixed(1)).join(', ')} s; modulation tone: ${String(made.spans.length)} notes, baseline exported`
       );
-    }
-    // The same fixed parameters as the main clip, then the baseline of the vibrato and drift checks.
-    modulationClip = made;
-    await useClip(made, async () => {
-      const read = await readState(need(), contentId);
-      await write(
-        'content.editNotes',
-        {
-          contentId,
-          expectedRevision: read.notesRevision,
-          ops: [{ op: 'setParams', select: { all: true }, ...FIXED_PARAMS }],
-        },
-        null,
-      );
-      await settle();
-      made.baseline = await exportWet('modulation baseline');
-    });
-    return (
-      `stepped tone: ${String(stepsClip.spans.length)} voiced notes at the default sensitivity, ` +
-      `steps at ${steppedTone.stepsSec.map((t) => t.toFixed(1)).join(', ')} s; modulation tone: ${String(made.spans.length)} notes, baseline exported`
-    );
-  });
+    },
+    { check: true },
+  );
 
   await step(
     'AUTO regenerate noteSplitCents',
@@ -3318,6 +3362,12 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       const name = 'prefs.set hybridMode';
       if (!need().hello.capabilities.includes('prefs.write'))
         throw new StepSkip('SKIP', 'the instance does not report prefs.write');
+      if (tone === undefined) {
+        throw new StepSkip(
+          'SKIP',
+          'external audio: the corrections of this check were measured on the generated tones',
+        );
+      }
       if (picks === undefined)
         throw new StepSkip('SKIP', `the audio has fewer than two voiced notes of ${String(MIN_NOTE_SEC)} s`);
       const small = picks.target;

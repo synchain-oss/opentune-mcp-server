@@ -179,6 +179,77 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
     SLOW,
   );
 
+  // The revert recipe of prefs.set is data the instance returns: the scenario uses it only as a prefs.set of
+  // the preferences it changed, else it puts them back from what prefs.get read at the start, and says so.
+  const PREF_CHECKS = [TUNING, HYBRID];
+  const othersPass = (report: EffectsReport, failing: readonly string[]) => {
+    const r = results(report);
+    for (const name of failing) expect(r[name], name).toBe('FAIL');
+    for (const name of NEW_CHECKS.filter((n) => !failing.includes(n))) expect(r[name], name).toBe('PASS');
+    // The preferences were put back: later exports work (an instance left in hybrid mode would differ), the run ends.
+    expect(r['timing 3 s']).toBe('PASS');
+    expect(r.shutdown).toBe('PASS');
+  };
+
+  it(
+    'fails a preference check whose result gives no revert recipe, and puts the preference back from its start value',
+    async () => {
+      const report = await runEffects(config('effects-pref-recipe-missing'));
+      othersPass(report, PREF_CHECKS);
+      for (const name of PREF_CHECKS) {
+        expect(noteOf(report, name), name).toContain(
+          'the prefs.set result gave no revert recipe; put back from what prefs.get read when the check began',
+        );
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    'does not call a method the revert recipe names but prefs.set, and puts the preference back from its start value',
+    async () => {
+      const report = await runEffects(config('effects-pref-recipe-foreign'));
+      othersPass(report, PREF_CHECKS);
+      for (const name of PREF_CHECKS) {
+        const note = noteOf(report, name);
+        expect(note, name).toContain(
+          'the revert recipe calls prefs.wipe, not prefs.set; put back from what prefs.get read',
+        );
+        // Calling it would have failed this way (the stand-in has no such method).
+        expect(note, name).not.toContain('UNSUPPORTED');
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    'sends only the preference it changed from a revert recipe that carries another one too',
+    async () => {
+      const report = await runEffects(config('effects-pref-recipe-extra'));
+      // Every check passes, and the hybrid mode the tuning recipe also names (on) was not switched on.
+      expect(report.steps.filter((s) => s.result === 'FAIL')).toEqual([]);
+      expect(report.hybridMode).toBe(false);
+      expect(report.notices).toEqual([]);
+    },
+    SLOW,
+  );
+
+  it(
+    'writes the problems of a put-back that runs after a failed check to the report',
+    async () => {
+      const report = await runEffects(config('effects-hybrid-export-fails-foreign'));
+      othersPass(report, PREF_CHECKS);
+      // The hybrid check failed half-way, on its export; the put-back ran as its cleanup.
+      expect(noteOf(report, HYBRID)).toContain('INTERNAL(fake_export_failed)');
+      const hybrid = report.checks[HYBRID] as { revertProblems?: string[] };
+      expect(hybrid.revertProblems).toHaveLength(1);
+      expect(hybrid.revertProblems?.[0]).toContain('the revert recipe calls prefs.wipe, not prefs.set');
+      // The tuning check reached its own put-back: its problem is in its note, not in revertProblems.
+      expect((report.checks[TUNING] as { revertProblems?: string[] }).revertProblems).toBeUndefined();
+    },
+    SLOW,
+  );
+
   it(
     'skips the preference checks without prefs.write, and runs the others',
     async () => {

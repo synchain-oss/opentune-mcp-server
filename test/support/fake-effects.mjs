@@ -64,6 +64,18 @@
 // `effects-hybrid-export-fails` fails every export while the hybrid mode is not the one it began with (a
 // check that fails half-way must still put the preference back), and `effects-move-ignored` answers
 // moveHandles with a move it did not make.
+//
+// Modes about the revert recipe of prefs.set (the recipe is data the instance returns; the preference
+// must be put back from what prefs.get read at the start when it is not usable): `effects-pref-recipe-missing`
+// gives none, `effects-pref-recipe-foreign` names another method (`prefs.wipe`, which this stand-in does not
+// have), `effects-pref-recipe-extra` carries the other preference with a value it must not set, and
+// `effects-hybrid-export-fails-foreign` is `effects-hybrid-export-fails` with the foreign recipe (the put-back
+// then runs as the cleanup of a check that failed half-way).
+//
+// Modes about the clip after a time-grid move is taken back: once moveHandles was applied, every export
+// of the clip is rendered again in another phase (`effects-undo-rephased`, as OpenTune renders the whole
+// clip again: the same sound at other samples) or, from the grid being identity again, 10 cents sharp
+// (`effects-undo-detuned`).
 
 import fs from 'node:fs';
 
@@ -304,7 +316,11 @@ function render(content, notes, pitchShift, handles, mode = '', path = {}) {
     }
     const detune = path.lighter ? (LIGHTER_DETUNE_CENTS[i % 2] ?? 0) / 100 : 0;
     const midi = target + pitchShift.semitones + pitchShift.cents / 100 + detune;
-    const { hz, delaySec } = reached(mode, notes, i, TUNING_HZ * 2 ** ((midi - 69) / 12));
+    let { hz, delaySec } = reached(mode, notes, i, TUNING_HZ * 2 ** ((midi - 69) / 12));
+    // effects-undo-rephased: every note in another phase (same pitch and level).
+    if (path.rephase) delaySec = 0.3 / hz;
+    // effects-undo-detuned: every note 10 cents sharp.
+    if (path.detune) hz *= 2 ** (10 / 1200);
     const src = note[SRC];
     const driftGain =
       src === undefined ? 0 : (mode === 'effects-drift-ignored' ? 1 : note.pitchDriftScale) * (1 - note.retuneSpeed);
@@ -374,9 +390,15 @@ export function createEffects(mode) {
   const apiMidi = (stored) => r4(stored + conv());
   const storedMidi = (api) => (conv() === 0 ? r4(api) : api - conv());
   /** The render path: the one the instance started with, or the other one. */
-  const renderPath = () => {
+  const renderPath = (c) => {
     const other = mode !== 'effects-hybrid-ignored' && prefs.hybridMode !== startHybridMode;
-    return { lighter: other, leaveSmall: other && prefs.hybridMode };
+    const identity = c.handles.every((h) => h.contentSec === h.outputSec);
+    return {
+      lighter: other,
+      leaveSmall: other && prefs.hybridMode,
+      rephase: mode === 'effects-undo-rephased' && c.regridded === true,
+      detune: mode === 'effects-undo-detuned' && c.regridded === true && identity,
+    };
   };
 
   const ok = (id, result) => ({ jsonrpc: '2.0', id, result });
@@ -509,7 +531,7 @@ export function createEffects(mode) {
         c.pitchShift,
         c.handles,
       );
-    else samples = render(c, c.notes, c.pitchShift, c.handles, mode, renderPath());
+    else samples = render(c, c.notes, c.pitchShift, c.handles, mode, renderPath(c));
     fs.writeFileSync(job.path, wavBytes(samples));
     return {
       result: {
@@ -613,6 +635,14 @@ export function createEffects(mode) {
       }
       const idle = changes.length === 0;
       const queued = changes.some((ch) => ch.ref.preference === 'hybridMode');
+      let recipe = { method: 'prefs.set', params: revert };
+      if (mode === 'effects-pref-recipe-foreign' || mode === 'effects-hybrid-export-fails-foreign') {
+        recipe = { method: 'prefs.wipe', params: revert };
+      }
+      if (mode === 'effects-pref-recipe-extra') {
+        const other = 'tuningHz' in revert ? 'hybridMode' : 'tuningHz';
+        recipe = { method: 'prefs.set', params: { ...revert, [other]: other === 'hybridMode' ? true : 450 } };
+      }
       return ok(
         id,
         envelope(
@@ -623,7 +653,11 @@ export function createEffects(mode) {
             changes,
             undo: idle
               ? null
-              : { undoable: false, reason: 'ui_parity', revert: { method: 'prefs.set', params: revert } },
+              : {
+                  undoable: false,
+                  reason: 'ui_parity',
+                  revert: mode === 'effects-pref-recipe-missing' ? null : recipe,
+                },
             tokens: { arrangementRevision: 'a1', contents: [], placements: [] },
             sideEffects: queued ? { reRenderQueued: { contentIds: [...contents.keys()], revert: null } } : {},
             warnings,
@@ -670,7 +704,7 @@ export function createEffects(mode) {
     const c = typeof params?.contentId === 'string' ? content(params.contentId) : undefined;
     if (method === 'export.start') {
       // effects-hybrid-export-fails: no export while the hybrid mode is not the one the instance began with.
-      if (mode === 'effects-hybrid-export-fails' && prefs.hybridMode !== startHybridMode) {
+      if (mode.startsWith('effects-hybrid-export-fails') && prefs.hybridMode !== startHybridMode) {
         return fail(id, 'INTERNAL', 'fake_export_failed');
       }
       const target = [...contents.values()].find((x) => x.placementId === params.target?.placementId);
@@ -859,6 +893,8 @@ export function createEffects(mode) {
         });
       }
       c.gridRevision = next('g');
+      // effects-undo-rephased and effects-undo-detuned: from now on the clip is rendered again.
+      c.regridded = true;
       return ok(id, {
         ...envelope(c, {
           changes,

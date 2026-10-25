@@ -603,6 +603,80 @@ describe('effects scenario against the stand-in', () => {
     },
     SLOW,
   );
+
+  // The export after moveHandles is taken back: the clip is rendered again, so with external audio it is
+  // the same sound in another phase and not the same samples; generated audio stays sample by sample.
+  const MOVE = 'moveHandles +30 ms';
+  interface AfterUndo {
+    maxAbsDiff: number;
+    sameSound?: { notes: { bitIdentical: boolean; pitchCents: number }[] };
+  }
+  const afterUndoOf = (report: EffectsReport) =>
+    (report.checks[MOVE] as { exportAfterUndo: AfterUndo }).exportAfterUndo;
+
+  it(
+    'passes the export after the undo of moveHandles on external audio that comes back in another phase',
+    async () => {
+      const report = await externalRun('effects-undo-rephased', FIVE);
+      expect(results(report)[MOVE]).toBe('PASS');
+      expect(report.steps.filter((s) => s.result === 'FAIL')).toEqual([]);
+      const again = afterUndoOf(report);
+      // Sample by sample against the baseline this export would have failed (the tolerance is 1e-3 ...)
+      expect(again.maxAbsDiff).toBeGreaterThan(0.01);
+      // ... it is judged as the same sound: no note has the baseline's samples, every one its pitch.
+      expect(again.sameSound?.notes.length).toBeGreaterThan(0);
+      expect(again.sameSound?.notes.some((n) => !n.bitIdentical)).toBe(true);
+      for (const n of again.sameSound?.notes ?? []) expect(Math.abs(n.pitchCents)).toBeLessThanOrEqual(0.5);
+    },
+    SLOW,
+  );
+
+  it(
+    'fails the export after the undo of moveHandles on external audio that comes back at another pitch',
+    async () => {
+      const report = await externalRun('effects-undo-detuned', FIVE);
+      expect(results(report)[MOVE]).toBe('FAIL');
+      expect(noteOf(report, MOVE)).toMatch(/after the undo: note \d+ is 10(\.\d+)? cents from where it was/);
+      expect(report.steps.filter((s) => s.result === 'FAIL').map((s) => s.name)).toEqual([MOVE]);
+    },
+    SLOW,
+  );
+
+  it(
+    'times the clips after the checks that external audio skips',
+    async () => {
+      const files = await writeToneFiles(generateTone({ seed: 5, notes: FIVE, leadSec: 0.6 }), 'external-take');
+      try {
+        const report = await runEffects(config('effects', { audioPath: files.wavPath, timingLengthsSec: [3] }));
+        const r = results(report);
+        expect(r['extra clips for the note-split, vibrato and drift checks']).toBe('SKIP');
+        expect(r['prefs.set hybridMode']).toBe('SKIP');
+        expect(noteOf(report, 'prefs.set hybridMode')).toContain('external audio');
+        expect(r['timing 3 s']).toBe('PASS');
+        expect(r.shutdown).toBe('PASS');
+        expect(report.steps.filter((s) => s.result === 'FAIL')).toEqual([]);
+      } finally {
+        await files.cleanup();
+      }
+    },
+    SLOW,
+  );
+
+  it(
+    'still compares the generated audio sample by sample after the undo of moveHandles',
+    async () => {
+      const report = await runEffects(config('effects-undo-detuned'));
+      expect(results(report)[MOVE]).toBe('FAIL');
+      expect(noteOf(report, MOVE)).toContain('after the undo the export differs from the baseline by up to');
+      expect(afterUndoOf(report).sameSound).toBeUndefined();
+      // The clip stays detuned, so the hybrid mode check, which compares with the baseline at the end, fails too.
+      expect(report.steps.filter((s) => s.result === 'FAIL').map((s) => s.name)).toEqual([
+        MOVE,
+        'prefs.set hybridMode',
+      ]);
+    },
+    SLOW,
+  );
 });
 
 describe('effects measurements', () => {
