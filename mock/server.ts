@@ -167,6 +167,8 @@ export interface OtcpMock {
    * `choiceShown` the overlay has shown its choice, which marks onboarding as shown, as OpenTune does.
    */
   showOnboarding(choiceShown: boolean): void;
+  /** While the transport plays on a running device, the position advances by `rate` timeline seconds per second (0: it stays). */
+  setTransportRate(rate: number): void;
   /** The pitch analysis of the next `count` imported clips fails. */
   failNextAnalysis(count?: number): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
@@ -727,6 +729,10 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     showOnboarding(choiceShown) {
       world.onboardingShowing = true;
       if (choiceShown) world.prefs.onboardingShown = true;
+    },
+    setTransportRate(rate) {
+      world.settleTransport();
+      world.transportRate = rate;
     },
     failNextAnalysis(count = 1) {
       importer.failNextAnalysis(count);

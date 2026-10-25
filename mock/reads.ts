@@ -144,6 +144,7 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
     const contents = [...world.contents.values()];
     const placements = [...world.placements.values()];
     const hasHistory = hasCapability('history.v1');
+    world.settleTransport();
     return {
       ...readMeta(world, contents, ['tracks[].label']),
       ...(hasHistory ? {} : { nullReasons: { history: 'capability_missing' } }),
@@ -362,10 +363,13 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
     };
   },
 
-  'transport.get': ({ world }) => ({
-    ...readMeta(world, []),
-    transport: { ...world.transport, timeSignature: { ...world.transport.timeSignature } },
-  }),
+  'transport.get': ({ world }) => {
+    world.settleTransport();
+    return {
+      ...readMeta(world, []),
+      transport: { ...world.transport, timeSignature: { ...world.transport.timeSignature } },
+    };
+  },
 
   'prefs.get': ({ world }) => ({
     processing: {

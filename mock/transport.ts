@@ -70,6 +70,7 @@ const control: Handler = (context) => {
   const { world, params } = context;
   checkNotBusy(context);
   const action = params.action as Action;
+  world.settleTransport();
   const t = world.transport;
   const before: TransportState = {
     playing: t.playing,

@@ -82,6 +82,41 @@ describe('snapshot, difference report and restore', () => {
     expect(diffSnapshots(snapshot, await takeSnapshot(dir))).toEqual([]);
   });
 
+  it('reads a file again that is missing or busy for an instant while OpenTune replaces it', async () => {
+    const dir = await tempDir();
+    await fill(dir);
+    const failures: string[] = [];
+    const fails = (code: string) => Object.assign(new Error(`${code}: the file is being replaced`), { code });
+    // The preferences file is gone for the first read and busy for the second; every other file reads at once.
+    const read = (file: string): Promise<Buffer> => {
+      if (file.endsWith('app-preferences.settings') && failures.length < 2) {
+        const code = failures.length === 0 ? 'ENOENT' : 'EBUSY';
+        failures.push(code);
+        return Promise.reject(fails(code));
+      }
+      return readFile(file);
+    };
+    const snapshot = await takeSnapshot(dir, read, 1);
+    expect(failures).toEqual(['ENOENT', 'EBUSY']);
+    expect(Object.keys(snapshot.files)).toEqual(['OpenTune.settings', 'app-preferences.settings']);
+    expect(diffSnapshots(snapshot, await takeSnapshot(dir))).toEqual([]);
+  });
+
+  it('leaves out a file that stays missing, and raises an error that is not about a file in use', async () => {
+    const dir = await tempDir();
+    await fill(dir);
+    const gone = (file: string): Promise<Buffer> =>
+      file.endsWith('OpenTune.settings')
+        ? Promise.reject(Object.assign(new Error('ENOENT: gone'), { code: 'ENOENT' }))
+        : readFile(file);
+    expect(Object.keys((await takeSnapshot(dir, gone, 1)).files)).toEqual(['app-preferences.settings']);
+    // A file that stays busy is an error, not a file that is not there.
+    const busy = (): Promise<Buffer> => Promise.reject(Object.assign(new Error('EBUSY: busy'), { code: 'EBUSY' }));
+    await expect(takeSnapshot(dir, busy, 1)).rejects.toThrow('EBUSY');
+    const broken = (): Promise<Buffer> => Promise.reject(Object.assign(new Error('EIO: broken'), { code: 'EIO' }));
+    await expect(takeSnapshot(dir, broken, 1)).rejects.toThrow('EIO');
+  });
+
   it('reports a changed value, an added value, a changed nested setup, an appeared and a disappeared file', async () => {
     const dir = await tempDir();
     await fill(dir);

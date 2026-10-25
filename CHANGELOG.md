@@ -10,6 +10,14 @@ versioned separately and has its own changelog.
 
 ### Added
 
+- The wave-B tour and boundary scenario now drive the remaining real-machine steps and take each change back by the
+  revert recipe of its result: transport `pause`, `playFromLastStart` (also after a seek) and `pauseAtLastStart` during
+  playback, `setTempo` with a time signature, selecting a clip with `openEditor` (the piano roll shows that clip), a
+  track colour set and sent back, closing or preventing the first-run overlay, switching the output device, buffer
+  size, sample rate, output channel pair and device type (never ASIO or an exclusive mode) with the whole audio setup
+  compared afterwards, `project.save` on a saved project, and the revert recipe of `project.open` after a project with
+  missing media. The mock gains a second device type and a test knob that lets the transport position advance. The
+  settings snapshot reads a file again for a moment when OpenTune is replacing it.
 - A wave-B boundary scenario (`test/e2e/wave-b-boundary.ts`, `npm run e2e:exe`) drives the edge cases of the wave-B
   writes against a started OpenTune: structural edits that cannot be undone, trimming below the fades and its undo,
   the id map and a stale undo entry after a track delete, the `openDyne` side effects of focus and selection, the
