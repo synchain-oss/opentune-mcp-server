@@ -250,7 +250,8 @@ and the step `real user settings untouched` watches that). Each check
 puts its preference back by the recipe the result gave, then reads the preference back with `prefs.get`
 and compares it with the value it started from. The recipe is data the instance returned, so the
 scenario does not call what it says: it sends a `prefs.set` with the recipe's values for the
-preferences the check changed and for no other. With no usable recipe (none, a method other than
+preferences the check changed and for no other. A recipe that names another preference too is a problem of the check (an instance defect: the
+recipe would change something the write did not touch); the put-back does not send it. With no usable recipe (none, a method other than
 `prefs.set`, a value missing, or a recipe that did not put the preference back) it puts the preference
 back from the value `prefs.get` read when the check began, and records a problem, which fails the
 check (when the put-back runs after the check had failed half-way, the problem is in the report as

@@ -35,7 +35,13 @@ import { generateTone } from '../support/harmonic-tone.js';
 import { decodeWav } from '../support/wav-decode.js';
 
 const FAKE = fileURLToPath(new URL('../support/fake-opentune.mjs', import.meta.url));
-const SLOW = 120_000;
+/**
+ * Timeout of a test that runs the whole scenario against the stand-in, once or twice (about 10 s a run on a
+ * developer machine). Measured on the CI runners, with coverage: a run takes about 40 s, the slowest test
+ * (two runs) 98 s, and the whole file 681 s. 330 s is 3.4 times the slowest test, and a test that hangs
+ * still fails.
+ */
+const SCENARIO_TIMEOUT_MS = 330_000;
 
 const config = (mode: string): EffectsConfig => ({
   exe: { exe: process.execPath, args: [FAKE, `--mode=${mode}`], timeoutMs: 15_000 },
@@ -78,7 +84,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       expect(note).toContain("noteSplitCents 160: notes start inside the tone's notes at");
       expect(note).toMatch(/a sensitivity of 30 cents gave 4 notes, 160 cents gave 4: the smaller one should cut more/);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -90,7 +96,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       expect(note).toContain("the note's offsetCents reads back 70, expected 0");
       expect(note).toMatch(/snapped: note 3: 70(\.\d+)? cents, expected 0 \+- 15/);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -103,7 +109,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       const slow = await onlyFails('effects-vibrato-wrong-rate', VIBRATO);
       expect(noteOf(slow, VIBRATO)).toMatch(/the pitch moves at 3(\.\d+)? Hz, expected 6 \+- 0\.25/);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -112,7 +118,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       const report = await onlyFails('effects-drift-ignored', DRIFT);
       expect(noteOf(report, DRIFT)).toMatch(/with pitchDriftScale 0 the note still drifts by [0-9.]+ cents \(std\)/);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -121,7 +127,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       const report = await onlyFails('effects-tuning-ignored', TUNING);
       expect(noteOf(report, TUNING)).toMatch(/note 0: 0 cents, expected 7\.85 \+- 3/);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -132,7 +138,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
         /the clip exports the same in hybrid mode off and hybrid mode on \(samples differ by up to 0\.00e\+0, at least 1e-3 expected\)/,
       );
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -143,7 +149,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       // shiftTiming moved its handle in the same instance.
       expect(results(report)['shiftTiming +30 ms']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -158,7 +164,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       expect(r.shutdown).toBe('PASS');
       for (const name of NEW_CHECKS.filter((n) => n !== HYBRID)) expect(r[name], name).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -176,7 +182,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       expect(r[HYBRID]).toBe('SKIP');
       expect(r.shutdown).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   // The revert recipe of prefs.set is data the instance returns: the scenario uses it only as a prefs.set of
@@ -202,7 +208,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
         );
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -219,19 +225,30 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
         expect(note, name).not.toContain('UNSUPPORTED');
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
-    'sends only the preference it changed from a revert recipe that carries another one too',
+    'fails a preference check whose revert recipe also sets another preference, and sends only the one it changed',
     async () => {
       const report = await runEffects(config('effects-pref-recipe-extra'));
-      // Every check passes, and the hybrid mode the tuning recipe also names (on) was not switched on.
-      expect(report.steps.filter((s) => s.result === 'FAIL')).toEqual([]);
+      othersPass(report, PREF_CHECKS);
+      // The problem names the key the recipe has too much (an instance defect: the recipe would change a
+      // preference the write did not touch).
+      expect(noteOf(report, TUNING)).toContain(
+        'the revert recipe also sets hybridMode, which this write did not change',
+      );
+      expect(noteOf(report, HYBRID)).toContain('the revert recipe also sets tuningHz, which this write did not change');
+      // The extra keys were not executed: the hybrid mode the tuning recipe names (on) was not switched on.
       expect(report.hybridMode).toBe(false);
       expect(report.notices).toEqual([]);
+      // Nothing else is wrong with the recipe: the put-back needed no fallback.
+      for (const name of PREF_CHECKS) {
+        expect(noteOf(report, name), name).not.toContain('put back from what prefs.get read');
+        expect((report.checks[name] as { revertProblems?: string[] }).revertProblems).toBeUndefined();
+      }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -247,7 +264,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       // The tuning check reached its own put-back: its problem is in its note, not in revertProblems.
       expect((report.checks[TUNING] as { revertProblems?: string[] }).revertProblems).toBeUndefined();
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -261,7 +278,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       for (const name of [SNAP, MOVE, SPLIT, VIBRATO, DRIFT]) expect(r[name], name).toBe('PASS');
       expect(report.result).toBe('SKIP');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 });
 

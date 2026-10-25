@@ -45,7 +45,13 @@ import { wavFile } from '../support/wav-file.js';
 const FAKE = fileURLToPath(new URL('../support/fake-opentune.mjs', import.meta.url));
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const VITEST = path.join(ROOT, 'node_modules', 'vitest', 'vitest.mjs');
-const SLOW = 120_000;
+/**
+ * Timeout of a test that runs the whole scenario against the stand-in, once or several times (about 10 s
+ * a run on a developer machine). Measured on the CI runners, with coverage: a run takes about 40 s, the
+ * slowest tests run it two or three times (104 s and 121 s, the latter went over the 120 s this was) and
+ * the whole file takes 840 s. 330 s is 2.7 times the slowest test, and a test that hangs still fails.
+ */
+const SCENARIO_TIMEOUT_MS = 330_000;
 
 const config = (mode: string, extra: Partial<EffectsConfig> = {}): EffectsConfig => ({
   exe: { exe: process.execPath, args: [FAKE, `--mode=${mode}`], timeoutMs: 15_000 },
@@ -241,7 +247,7 @@ describe('effects scenario against the stand-in', () => {
       // Nothing in the report names a file or holds a secret.
       expect(JSON.stringify(report)).not.toMatch(/ot-tone-|\.wav|[0-9a-f]{32}[0-9a-f]{32}/);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -269,7 +275,7 @@ describe('effects scenario against the stand-in', () => {
       expect(noteOf(report, 'setTargetPitch +100 cents')).toMatch(/note 1: 0 cents, expected 100/);
       expect(r.shutdown).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -282,7 +288,7 @@ describe('effects scenario against the stand-in', () => {
       expect(r['setTargetPitch +100 cents']).toBe('PASS');
       expect(r['shiftTiming +30 ms']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -297,7 +303,7 @@ describe('effects scenario against the stand-in', () => {
         'REVISION_CONFLICT(changed_during_export), target untouched',
       );
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -311,7 +317,7 @@ describe('effects scenario against the stand-in', () => {
       expect(noteOf(report, 'shiftCents +100 cents')).toBe('not run: setTargetPitch +100 cents ended with FAIL');
       expect(r.shutdown).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -335,7 +341,7 @@ describe('effects scenario against the stand-in', () => {
         expect(r.shutdown).toBe('PASS');
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -351,7 +357,7 @@ describe('effects scenario against the stand-in', () => {
       expect(r['race: +100 cents, export, -100 cents']).toBe('PASS');
       expect(r['shiftTiming +30 ms']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -366,7 +372,7 @@ describe('effects scenario against the stand-in', () => {
       expect(r['shiftCents +100 cents']).toBe('SKIP');
       expect(r.shutdown).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -383,7 +389,7 @@ describe('effects scenario against the stand-in', () => {
       expect(String((report.checks[name] as { outcome?: string }).outcome)).toContain('-100 cents version in full');
       expect(results(report)['shiftTiming +30 ms']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -402,7 +408,7 @@ describe('effects scenario against the stand-in', () => {
       // Results that report no such field have none in the report.
       expect(report.checks['setPitchShift +2 semitones']).not.toHaveProperty('unreadFields');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   // Hybrid mode on (the notice at the top of the report) is run through the real test file below.
@@ -448,7 +454,7 @@ describe('effects scenario against the stand-in', () => {
         );
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -465,7 +471,7 @@ describe('effects scenario against the stand-in', () => {
       expect(results(timing)['shiftTiming +30 ms']).toBe('SKIP');
       expect(results(timing)['race: +100 cents, export, -100 cents']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -494,7 +500,7 @@ describe('effects scenario against the stand-in', () => {
         await files.cleanup();
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   // External audio: which notes of the unedited export are compared is decided on the source, and the
@@ -545,7 +551,7 @@ describe('effects scenario against the stand-in', () => {
         expect(Math.abs(n.pitchCents as number)).toBeLessThanOrEqual(PITCH_TOLERANCE_CENTS);
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -572,7 +578,7 @@ describe('effects scenario against the stand-in', () => {
       // The checks that follow still run on the same instance.
       expect(results(one)['setTargetPitch +100 cents']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -586,7 +592,7 @@ describe('effects scenario against the stand-in', () => {
       );
       expect(exportCheck(report).external.steadyNotes).toBe(2);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -601,7 +607,7 @@ describe('effects scenario against the stand-in', () => {
       };
       expect(shift.unedited.reach.some((r) => !r.bitIdentical && typeof r.edgeResidualDb === 'number')).toBe(true);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   // The export after moveHandles is taken back: the clip is rendered again, so with external audio it is
@@ -628,7 +634,7 @@ describe('effects scenario against the stand-in', () => {
       expect(again.sameSound?.notes.some((n) => !n.bitIdentical)).toBe(true);
       for (const n of again.sameSound?.notes ?? []) expect(Math.abs(n.pitchCents)).toBeLessThanOrEqual(0.5);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -639,7 +645,7 @@ describe('effects scenario against the stand-in', () => {
       expect(noteOf(report, MOVE)).toMatch(/after the undo: note \d+ is 10(\.\d+)? cents from where it was/);
       expect(report.steps.filter((s) => s.result === 'FAIL').map((s) => s.name)).toEqual([MOVE]);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -659,7 +665,7 @@ describe('effects scenario against the stand-in', () => {
         await files.cleanup();
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -675,7 +681,7 @@ describe('effects scenario against the stand-in', () => {
         'prefs.set hybridMode',
       ]);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 });
 
@@ -1077,7 +1083,7 @@ function runTestFile(env: Record<string, string>) {
   return spawnSync(
     process.execPath,
     [VITEST, 'run', '--project', 'e2e', '--reporter=verbose', 'test/e2e/exe-effects.test.ts'],
-    { cwd: ROOT, env: { ...clean, ...env }, encoding: 'utf8', timeout: 110_000 },
+    { cwd: ROOT, env: { ...clean, ...env }, encoding: 'utf8', timeout: SCENARIO_TIMEOUT_MS - 30_000 },
   );
 }
 
@@ -1092,7 +1098,7 @@ describe('the effects scenario as a test file', () => {
       expect(output).toMatch(/1 skipped/);
       expect(output).not.toMatch(/passed/);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -1130,6 +1136,6 @@ describe('the effects scenario as a test file', () => {
         processing: [{ export: 'shiftCents +100 cents', hybridMode: true, backend: 'fake' }],
       });
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 });

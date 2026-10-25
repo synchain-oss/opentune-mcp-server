@@ -1741,6 +1741,12 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     if (recipe?.method !== 'prefs.set' || !same(recipe.params[key], from)) {
       problems.push(`the revert recipe does not set ${key} back to ${String(from)}`);
     }
+    // The recipe is for the one preference that changed. A recipe that also sets another one would change
+    // something the write did not touch (the put-back still sends the changed preference only, see watchPrefs).
+    const others = recipe === null ? [] : Object.keys(recipe.params).filter((k) => k !== key);
+    if (others.length > 0) {
+      problems.push(`the revert recipe also sets ${others.join(', ')}, which this write did not change`);
+    }
     const codes = new Set(
       (Array.isArray(result.warnings) ? (result.warnings as unknown[]) : []).map((w) => (isObject(w) ? w.code : null)),
     );
@@ -2961,14 +2967,17 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       },
       options.exportAfterUndo
         ? async (frame) => {
-            // The grid is taken back: the clip sounds as it did before the move (the whole file, not
-            // only the notes: a handle that stayed would still be heard).
+            // The grid is taken back and the clip is exported again; what must hold depends on the audio:
+            // - generated audio: the whole file equals the baseline sample by sample (within
+            //   UNEDITED_MAX_ABS_DIFF_TIMING), not only the notes, since a handle that stayed would be
+            //   heard anywhere;
+            // - external audio: taking the grid back renders the clip again in another phase, as the move did,
+            //   so each note (with a margin around it) must be the same sound as in the baseline (sameSound:
+            //   bit-identical, or at most RESYNTH_MAX_RESIDUAL_DB left after aligning its phase, at the same
+            //   pitch). The whole-file comparison is then only written to the report.
             const again = await exportWet(`${name}, taken back`);
             const whole = compareSamples(base, again, [{ startSec: 0, endSec: base.mono.length / base.sampleRateHz }]);
             if (tone === undefined) {
-              // External audio: the grid change rendered the clip again, and so does taking it back, in
-              // another phase (the notes away from the handle are judged by the same criteria above), so
-              // the export is the same sound as the baseline and not the same samples.
               const same = sameSound(base, again);
               frame.report.exportAfterUndo = { ...whole, sameSound: same.report };
               return same.problems.map((p) => `after the undo: ${p}`);
