@@ -53,6 +53,12 @@ versioned separately and has its own changelog.
   and `opentune_manage_ui` (select a clip with a prediction of what selecting does besides selecting, close dialogs,
   mark the first-run onboarding as shown). Results that cannot be undone say so in the first sentence and give the
   call that restores the old values.
+- `opentune_set_settings`: changes the global settings of the OpenTune installation, not of the project: the processing
+  preferences (A4 tuning, editing scheme, hybrid mode, experimental features), the audio device setup, and clearing the
+  recent-projects list (`clear_recent`). OpenTune records no undo entry for these; the result warns `GLOBAL_PREFERENCE`
+  and gives the previous values with the call that restores them. The tool is marked destructive: clearing the list
+  cannot be undone, and an editing-scheme change can generate notes that cannot be undone. A change of the editing
+  scheme runs as a settings job, which the tool follows.
 - `BUSY` with reason `modal_open` now asks the user either to close the dialog in OpenTune or to agree explicitly
   that the agent closes it with `opentune_manage_ui`; closing a confirmation box cancels the action it asked about,
   and a dialog which commits its value on close needs the user's agreement (`accept_commit`).
