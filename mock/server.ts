@@ -185,6 +185,8 @@ export interface OtcpMock {
    * `UNSUPPORTED(no_editor_window)`, `executed` false, and change nothing (PROTOCOL.md section 7 rule 6).
    */
   setNoEditor(on: boolean): void;
+  /** While the transport plays on a running device, the position advances by `rate` timeline seconds per second (0: it stays). */
+  setTransportRate(rate: number): void;
   /** The pitch analysis of the next `count` imported clips fails. */
   failNextAnalysis(count?: number): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
@@ -758,6 +760,10 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     setNoEditor(on) {
       world.noEditor = on;
+    },
+    setTransportRate(rate) {
+      world.settleTransport();
+      world.transportRate = rate;
     },
     failNextAnalysis(count = 1) {
       importer.failNextAnalysis(count);

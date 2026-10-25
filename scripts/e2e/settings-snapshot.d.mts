@@ -22,7 +22,11 @@ export interface FileStat {
 
 export function listSettingsFiles(dir: string, depth?: number, prefix?: string): Promise<string[]>;
 export function settingsEntries(text: string): Record<string, string>;
-export function takeSnapshot(dir: string): Promise<SettingsSnapshot>;
+export function takeSnapshot(
+  dir: string,
+  read?: (file: string) => Promise<Buffer>,
+  waitMs?: number,
+): Promise<SettingsSnapshot>;
 export function compareSnapshots(
   before: SettingsSnapshot,
   after: SettingsSnapshot,

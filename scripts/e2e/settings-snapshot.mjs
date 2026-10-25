@@ -61,11 +61,39 @@ export function settingsEntries(text) {
   return entries;
 }
 
-/** Takes the snapshot of the settings files of `dir`. */
-export async function takeSnapshot(dir) {
+const READ_ATTEMPTS = 5;
+
+/**
+ * Reads a settings file that OpenTune may be replacing at this moment (it writes its preferences through a
+ * temporary file, so that for an instant the file can be missing or busy): a short wait and another try. A file
+ * that is still missing after the last try is gone (undefined); any other error is raised.
+ */
+async function readSettled(file, read, waitMs) {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await read(file);
+    } catch (error) {
+      const code = error !== null && typeof error === 'object' ? error.code : undefined;
+      const transient = code === 'ENOENT' || code === 'EBUSY' || code === 'EPERM' || code === 'EACCES';
+      if (!transient) throw error;
+      if (attempt >= READ_ATTEMPTS) {
+        if (code === 'ENOENT') return undefined;
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+}
+
+/**
+ * Takes the snapshot of the settings files of `dir`. `read` and `waitMs` are for tests (the reader of a file and the
+ * wait between two tries).
+ */
+export async function takeSnapshot(dir, read = readFile, waitMs = 40) {
   const files = {};
   for (const rel of await listSettingsFiles(dir)) {
-    const bytes = await readFile(path.join(dir, ...rel.split('/')));
+    const bytes = await readSettled(path.join(dir, ...rel.split('/')), read, waitMs);
+    if (bytes === undefined) continue;
     files[rel] = {
       size: bytes.length,
       sha256: createHash('sha256').update(bytes).digest('hex'),

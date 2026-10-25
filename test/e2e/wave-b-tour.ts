@@ -11,13 +11,15 @@
 // stdio against the same instance and calls each wave-B tool once.
 //
 // Safety on the machine: the instance runs with a data folder of this run (never the real AppData);
-// playback happens only while every track is muted, and the mute is put back; audio.set changes one
-// value audio.get offers (a buffer size or sample rate of the current device, else another output
-// device or device type), with the maintainer's agreement, and reverts it, comparing the whole setup
-// with the one it found; prefs.set reverts every preference
-// it touched; ui.dismiss runs only when no dialog is open (or closes the first-run overlay this run's
-// own instance started); track.delete and arrangement.edit op delete act only on tracks and clips this
-// scenario created, with confirm true set here. All audio is generated at run time.
+// playback happens only while every track is muted, and the mute is put back; audio.set switches each
+// of the output device, buffer size, sample rate and output channel pair that audio.get offers another
+// value of, and then the device type (never ASIO or an exclusive mode), with the maintainer's
+// agreement, sending the revert recipe of each result and comparing the whole setup with the one it
+// found (the start values are sent once more when anything goes wrong); prefs.set reverts every
+// preference it touched; ui.dismiss runs only when no dialog is open that this scenario did not open
+// (the confirm dialog that lists the first-run overlay is the overlay itself, and is closed with it);
+// track.delete and arrangement.edit op delete act only on tracks and clips this scenario created, with
+// confirm true set here. All audio is generated at run time.
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -94,6 +96,14 @@ const TRANSPORT_MEMBERS = ['playing', 'positionTimelineSec', 'playStartTimelineS
 const SELECTION_MEMBERS = ['workspace', 'activeTrackId', 'selectedPlacementIds', 'pianoRollContentId'] as const;
 
 const READBACK_EPSILON = 1e-6;
+/**
+ * How far the position in the result of a transport call may be from a read of the paused transport, in s. The
+ * audio thread finishes its block after the call has answered, so that a position is not exact to a microsecond.
+ */
+const POSITION_EPSILON_SEC = 0.05;
+/** How long a read of the transport is repeated until it shows the position the call answered with, in ms. */
+const POSITION_SETTLE_MS = 1000;
+const POSITION_POLL_MS = 50;
 
 const isObject = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -107,32 +117,63 @@ const numbersOf = (value: unknown): number[] =>
 const stringsOf = (value: unknown): string[] =>
   (Array.isArray(value) ? (value as unknown[]) : []).filter((item): item is string => typeof item === 'string');
 
-/** The one audio setting the tour changes and puts back. */
+/** The audio fields the tour switches one by one, in this order (the device type comes last, and takes the others along). */
+export const AUDIO_FIELDS = ['bufferSizeFrame', 'sampleRateHz', 'outputChannelPair', 'outputDevice'] as const;
+export type AudioField = (typeof AUDIO_FIELDS)[number] | 'deviceType';
+
+/** The one audio setting a round trip of the tour changes and puts back. */
 export interface AudioSwitch {
-  readonly field: 'bufferSizeFrame' | 'sampleRateHz' | 'outputDevice' | 'deviceType';
+  readonly field: AudioField;
   readonly value: string | number;
 }
 
 /**
- * Picks what audio.set changes in the audio.get answer. A buffer size or sample rate of the current
- * device comes first (nothing else about the setup moves); when the device offers neither, another
- * output device, then another device type. null when audio.get offers nothing but the current setup.
+ * A device type the tour never switches to: ASIO and the exclusive modes of the operating system take the sound
+ * card away from every other program.
  */
-export function chooseAudioSwitch(device: Json, available: Json): AudioSwitch | null {
-  const otherNumber = (offered: unknown, current: unknown): number | undefined =>
-    numbersOf(offered).find((value) => value !== current);
-  const otherText = (offered: unknown, current: unknown): string | undefined =>
-    stringsOf(offered).find((value) => value !== current);
-  const buffer = otherNumber(available.bufferSizesFrame, device.bufferSizeFrame);
-  if (buffer !== undefined) return { field: 'bufferSizeFrame', value: buffer };
-  const rate = otherNumber(available.sampleRatesHz, device.sampleRateHz);
-  if (rate !== undefined) return { field: 'sampleRateHz', value: rate };
-  const output = otherText(available.outputDevices, device.outputDevice);
-  if (output !== undefined) return { field: 'outputDevice', value: output };
-  const type = otherText(available.deviceTypes, device.deviceType);
-  if (type !== undefined) return { field: 'deviceType', value: type };
-  return null;
+export const isSafeDeviceType = (name: string): boolean => !/asio|exclusive/i.test(name);
+
+/**
+ * Picks another value of `field` in the audio.get answer: a sample rate, buffer size, output device or output
+ * channel pair other than the current one, or another device type that is safe to switch to (DirectSound
+ * first, because it offers several rates and buffer sizes where the shared mode of Windows Audio offers one).
+ * null when audio.get offers nothing but the current value.
+ */
+export function chooseAudioSwitch(field: AudioField, device: Json, available: Json): AudioSwitch | null {
+  const found = ((): string | number | undefined => {
+    switch (field) {
+      case 'sampleRateHz':
+        return numbersOf(available.sampleRatesHz).find((value) => value !== device.sampleRateHz);
+      case 'bufferSizeFrame':
+        return numbersOf(available.bufferSizesFrame).find((value) => value !== device.bufferSizeFrame);
+      case 'outputDevice':
+        return stringsOf(available.outputDevices).find((value) => value !== device.outputDevice);
+      case 'outputChannelPair': {
+        const count = typeof available.outputChannelPairCount === 'number' ? available.outputChannelPairCount : 0;
+        return Array.from({ length: count }, (_, pair) => pair).find((pair) => pair !== device.outputChannelPair);
+      }
+      case 'deviceType': {
+        const others = stringsOf(available.deviceTypes).filter(
+          (value) => value !== device.deviceType && isSafeDeviceType(value),
+        );
+        return others.find((value) => /directsound/i.test(value)) ?? others[0];
+      }
+    }
+  })();
+  return found === undefined ? null : { field, value: found };
 }
+
+/** Why `field` cannot be switched: what audio.get offers instead. */
+const noOtherAudioValue = (field: AudioField, device: Json): string => {
+  switch (field) {
+    case 'deviceType':
+      return `audio.get offers no other device type than ${JSON.stringify(device.deviceType)} that is safe to switch to (ASIO and exclusive modes are never used)`;
+    case 'outputChannelPair':
+      return `audio.get offers no other output channel pair than ${JSON.stringify(device.outputChannelPair)}`;
+    default:
+      return `audio.get offers no other ${field} than ${JSON.stringify(device[field])}`;
+  }
+};
 
 /** A member that must be an object. */
 function objectMember(value: unknown, name: string, what: string): Json {
@@ -371,7 +412,15 @@ class Reads {
         return pick(transport, ['bpm', 'timeSignature']);
       }
       case 'transport': {
-        return pick(await this.transportState(), TRANSPORT_MEMBERS);
+        const state = await this.transportState();
+        // While the transport plays, the position moves on between the write and the read, so only the
+        // other members are compared; the steps that play check the position of the result themselves.
+        return pick(
+          state,
+          state.playing === true
+            ? TRANSPORT_MEMBERS.filter((name) => name !== 'positionTimelineSec')
+            : TRANSPORT_MEMBERS,
+        );
       }
       case 'preference': {
         const name = text(ref, 'preference', 'the reference');
@@ -530,6 +579,8 @@ export interface WriteRun {
 class Tour {
   readonly reads: Reads;
   readonly calls: TourCall[] = [];
+  /** How long a read of the transport needed to show the position a call had answered with (only the ones that did not agree at once), in ms. */
+  readonly positionLagsMs: number[] = [];
 
   constructor(
     private readonly session: OtcpSession,
@@ -537,6 +588,27 @@ class Tour {
     private readonly stepName: () => string,
   ) {
     this.reads = new Reads(session);
+  }
+
+  /**
+   * A fresh read of the transport that shows `position` (within POSITION_EPSILON_SEC), as soon as it does: OpenTune
+   * applies a change of the position a moment after it has answered the call, so a read right after the call can
+   * still show the old one. The last read comes back when it never agrees within POSITION_SETTLE_MS.
+   */
+  async settledTransport(position: number): Promise<{ transport: Json; waitedMs: number }> {
+    const started = Date.now();
+    for (;;) {
+      this.reads.clear();
+      const transport = await this.reads.transportState();
+      const waitedMs = Date.now() - started;
+      const at = transport.positionTimelineSec;
+      if (typeof at === 'number' && Math.abs(at - position) <= POSITION_EPSILON_SEC) {
+        if (waitedMs >= POSITION_POLL_MS) this.positionLagsMs.push(waitedMs);
+        return { transport, waitedMs };
+      }
+      if (waitedMs >= POSITION_SETTLE_MS) return { transport, waitedMs };
+      await sleep(POSITION_POLL_MS);
+    }
   }
 
   async call(kind: TourCall['kind'], method: string, params: Json): Promise<Json> {
@@ -660,6 +732,25 @@ class Tour {
           continue;
         }
         const after = isObject(field) ? field.after : undefined;
+        if (
+          entity === 'transport' &&
+          name === 'positionTimelineSec' &&
+          method === 'transport.control' &&
+          typeof after === 'number' &&
+          isObject(envelope.transport) &&
+          envelope.transport.playing === false
+        ) {
+          // A paused or stopped transport has one position, but OpenTune applies a change of it a moment after the
+          // call answered: the read may need a moment to show it (the lag is a fact of the report).
+          const settled = await this.settledTransport(after);
+          const at = settled.transport.positionTimelineSec;
+          if (typeof at !== 'number' || Math.abs(at - after) > POSITION_EPSILON_SEC) {
+            problems.push(
+              `transport.positionTimelineSec: the result says ${JSON.stringify(after)}, a fresh read says ${JSON.stringify(at)} (${String(settled.waitedMs)} ms later still)`,
+            );
+          }
+          continue;
+        }
         if (!sameValue(after, values[name])) {
           problems.push(
             `${entity}.${name}: the result says ${JSON.stringify(after)}, a fresh read says ${JSON.stringify(values[name])}`,
@@ -728,7 +819,7 @@ class Tour {
   }
 
   /** Takes a write back by its undo or revert recipe; null when the result gives neither. */
-  private async restore(step: string, envelope: Json): Promise<string | null> {
+  async restore(step: string, envelope: Json): Promise<string | null> {
     const undo = isObject(envelope.undo) ? envelope.undo : null;
     if (undo === null) return null;
     if (undo.undoable === true) {
@@ -918,7 +1009,24 @@ export interface WaveBTourHooks {
   readonly session?: (session: OtcpSession) => OtcpSession;
   /** For tests: starts the MCP server in place of the built bundle. */
   readonly mcp?: (env: Readonly<Record<string, string>>) => Promise<McpProcess>;
+  /**
+   * How long the transport plays before the tour pauses it, in ms (default 600): long enough for the position
+   * to move on in a real instance. Tests set a short time, because a mock does not wait for audio.
+   */
+  readonly playMs?: number;
+  /**
+   * How long the first step waits for the first-run overlay when onboarding is not marked as shown yet (default
+   * 10 s): an instance starts the overlay a moment after it is up. Tests set a short time for a mock, which never
+   * starts the overlay by itself.
+   */
+  readonly onboardingWaitMs?: number;
 }
+
+/** How long the transport plays before pause in the real tour, and between the pause-related calls after it. */
+const DEFAULT_PLAY_MS = 600;
+const ONBOARDING_WAIT_MS = 10_000;
+/** How far the position of the last play or seek may be from the position right after playFromLastStart, in s. */
+const RESTART_TOLERANCE_SEC = 0.25;
 
 export interface WaveBTourReport extends ScenarioReport {
   /** What session.hello reported; null when the scenario never got that far. */
@@ -1169,45 +1277,135 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     async () => {
       requireCapabilities(['ui.bridge']);
       const problems: string[] = [];
-      const state = await theTour().call('read', 'ui.getState', {});
+      const t = theTour();
+      const state = await t.call('read', 'ui.getState', {});
       problems.push(...schemaProblems(schemaPath('ui.getState', 'result'), state, 'ui.getState'));
-      const dialogs = listOf(member(state, 'dialogs', 'ui.getState'));
-      const onboarding = member(state, 'onboarding', 'ui.getState');
-      const showing = isObject(onboarding) && onboarding.showing === true;
-      scenario.facts.openDialogs = dialogs.length;
-      scenario.facts.onboarding = showing
-        ? 'showing'
-        : isObject(onboarding) && onboarding.shown === true
-          ? 'shown'
-          : 'notShown';
-      if (dialogs.length > 0) {
-        // Closing a dialog this scenario did not open could drop work the user is in the middle of.
+      interface FirstRun {
+        readonly showing: boolean;
+        readonly shown: boolean;
+        readonly preference: boolean;
+        /** The kinds of the dialogs ui.getState lists. */
+        readonly dialogs: readonly string[];
+      }
+      /** The first-run state, read fresh: the overlay on screen, the preference that it was shown, and its mirror in ui.getState. */
+      const onboardingNow = async (): Promise<FirstRun> => {
+        t.reads.clear();
+        const ui = await t.reads.ui();
+        const onboarding = member(ui, 'onboarding', 'ui.getState');
+        const preference = member(await t.reads.prefs(), 'onboardingShown', 'prefs.get');
+        return {
+          showing: isObject(onboarding) && onboarding.showing === true,
+          shown: isObject(onboarding) && onboarding.shown === true,
+          preference: preference === true,
+          dialogs: listOf(member(ui, 'dialogs', 'ui.getState')).map((dialog) => String(dialog.kind)),
+        };
+      };
+      let first = await onboardingNow();
+      // An instance whose data folder never showed the overlay starts it a moment after it is up.
+      const waitUntil = Date.now() + (hooks.onboardingWaitMs ?? ONBOARDING_WAIT_MS);
+      while (!first.showing && !first.shown && Date.now() < waitUntil) {
+        await sleep(250);
+        first = await onboardingNow();
+      }
+      scenario.facts.onboarding = first.showing ? 'showing' : first.shown ? 'shown' : 'notShown';
+      scenario.facts.openDialogs = first.dialogs.length;
+      // While the first-run overlay shows, OpenTune lists it as a confirm dialog (it is modal); that dialog is the
+      // overlay itself and goes with it. Any other dialog is not this scenario's: closing it could drop work the
+      // user is in the middle of.
+      const foreign = first.dialogs.filter((kind) => !(first.showing && kind === 'confirm'));
+      if (foreign.length > 0) {
         throw new StepSkip(
           'SKIP',
-          `the instance has ${String(dialogs.length)} dialog(s) open that this scenario did not open; nothing is dismissed`,
+          `the instance has ${String(foreign.length)} dialog(s) open that this scenario did not open (kind: ${clean(foreign.join(', '))}); nothing is dismissed`,
         );
       }
-      if (showing) {
-        // The overlay blocks writes, and this run's own instance started it; closing it marks
-        // onboardingShown, a preference no request resets (IRREVERSIBLE, confined to this run's
-        // temporary data folder).
+      const done = (after: FirstRun, what: string): void => {
+        if (after.dialogs.length > 0) {
+          problems.push(
+            `${what}: ui.getState still lists ${String(after.dialogs.length)} dialog(s) (${clean(after.dialogs.join(', '))})`,
+          );
+        }
+        if (after.showing) problems.push(`${what}: ui.getState still shows the first-run overlay`);
+        if (!after.shown) problems.push(`${what}: ui.getState does not report onboarding as shown`);
+        if (!after.preference) problems.push(`${what}: prefs.get does not report onboardingShown`);
+      };
+
+      let note: string;
+      if (first.showing) {
+        // The overlay blocks writes. It is the one this run's own instance started, and closing it must leave
+        // onboarding marked as shown. OpenTune usually marks it itself once the overlay shows its choice, so
+        // that closing it changes the view only; the preference is listed (with IRREVERSIBLE) only where it was
+        // not marked yet. Either way the result has to agree with itself.
         requireCapabilities(['ui.onboardingClose']);
-        const overlay = await theTour().write({
+        const overlay = await t.write({
+          step: 'ui.dismiss',
+          method: 'ui.dismiss',
+          params: { target: 'onboarding' },
+          expect: { applied: true, noOp: false, undoable: false, revert: 'none' },
+        });
+        collect('ui.dismiss (onboarding)', problems, overlay);
+        const listed = listOf(member(overlay.envelope, 'changes', 'the result')).some(
+          (change) => change.entity === 'preference',
+        );
+        const undo = isObject(overlay.envelope.undo) ? overlay.envelope.undo : {};
+        const irreversible = codesOf(overlay.envelope).includes('IRREVERSIBLE');
+        if (listed) {
+          if (undo.reason !== 'no_upstream_undo')
+            problems.push(`the preference is listed, but undo.reason is ${String(undo.reason)}`);
+          if (!irreversible) problems.push('the preference is listed, but there is no IRREVERSIBLE warning');
+        } else {
+          if (undo.reason !== 'not_persisted_state') {
+            problems.push(`nothing is listed, so undo.reason must be not_persisted_state, not ${String(undo.reason)}`);
+          }
+          if (irreversible) problems.push('nothing is listed, but there is an IRREVERSIBLE warning');
+        }
+        done(await onboardingNow(), 'after ui.dismiss (onboarding)');
+        scenario.facts.onboardingDismissed = true;
+        scenario.facts.onboardingMarkedByDismiss = listed;
+        note = `the first-run overlay of this run was closed (${listed ? 'the call marked onboarding as shown: IRREVERSIBLE' : 'OpenTune had marked it already: the view changed only'}), onboardingShown is true`;
+      } else if (first.shown) {
+        // Marked already: there is nothing to prevent, and the call says so.
+        const noOp = await t.write({
           step: 'ui.dismiss',
           method: 'ui.dismiss',
           params: { target: 'onboarding' },
           expect: {
             applied: true,
+            noOp: true,
+            undoable: false,
+            undoReason: 'no_op',
+            revert: 'none',
+            absentWarnings: ['IRREVERSIBLE'],
+          },
+        });
+        collect('ui.dismiss (onboarding, already shown)', problems, noOp);
+        done(await onboardingNow(), 'after ui.dismiss (onboarding)');
+        note = 'onboarding was marked as shown already; ui.dismiss target onboarding was a no-op';
+      } else {
+        // Not marked and no overlay: the call prevents the overlay by marking onboarding as shown, which no
+        // request resets (this run's data folder is a copy, so nothing outside the run changes).
+        requireCapabilities(['ui.onboardingClose']);
+        const prevented = await t.write({
+          step: 'ui.dismiss',
+          method: 'ui.dismiss',
+          params: { target: 'onboarding' },
+          expect: {
+            applied: true,
+            noOp: false,
             undoable: false,
             undoReason: 'no_upstream_undo',
             revert: 'none',
             irreversible: true,
           },
         });
-        collect('ui.dismiss (onboarding)', problems, overlay);
+        collect('ui.dismiss (onboarding, prevent)', problems, prevented);
+        done(await onboardingNow(), 'after ui.dismiss (onboarding)');
         scenario.facts.onboardingDismissed = true;
+        scenario.facts.onboardingMarkedByDismiss = true;
+        note =
+          'no overlay was showing and onboarding was not marked as shown: ui.dismiss target onboarding marked it (IRREVERSIBLE)';
       }
-      const dismissed = await theTour().write({
+      const dismissed = await t.write({
         step: 'ui.dismiss',
         method: 'ui.dismiss',
         params: { target: 'dialogs' },
@@ -1224,9 +1422,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       return finish(
         'ui.getState and ui.dismiss',
         problems,
-        showing
-          ? 'the first-run overlay of this run was closed; no dialog was open to dismiss'
-          : 'no dialog is open; ui.dismiss was a no-op',
+        `${note}; no dialog was open, so target dialogs was a no-op`,
       );
     },
     { haltOnSkip: true, haltOnFail: false },
@@ -1274,12 +1470,14 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     const t = theTour();
     const state = await t.call('read', 'ui.getState', {});
     problems.push(...schemaProblems(schemaPath('ui.getState', 'result'), state, 'ui.getState'));
+    // The track of the imported clip: the first track is not always the one that holds it.
+    const clipTrack = Number(placementById(await t.reads.project(), clipId)?.trackId ?? 0);
     // A track first (no clip is selected by that), so that selecting the clip has a previous
     // selection to put back; the selection is view state and its undo reason is not_persisted_state.
     const trackSelection = await t.write({
       step: 'ui.setSelection (track)',
       method: 'ui.setSelection',
-      params: { trackId: 0 },
+      params: { trackId: clipTrack },
       snapshot: ['selection'],
       // Kept: taking it back at once would select the clip again, and the clip selection that follows
       // would be a no-op (PROTOCOL.md: selecting what is already selected is a no-op).
@@ -1312,6 +1510,37 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       expect: { applied: true, noOp: false, absentWarnings: ['IRREVERSIBLE'] },
     });
     collect('ui.setSelection (put the clip back)', problems, putBack);
+    // Open the clip in the piano roll, as double-clicking it does. No request switches the window back (the
+    // revert recipe never does, PROTOCOL.md section 14.6), so the piano roll stays open for the rest of the
+    // run, which only this run's own instance sees; the selection is what stays as it was.
+    const workspaceValue = objectMember(state, 'ui', 'ui.getState').workspace;
+    const workspaceBefore = typeof workspaceValue === 'string' ? workspaceValue : '';
+    const opened = await t.write({
+      step: 'ui.setSelection (open the editor)',
+      method: 'ui.setSelection',
+      params: { placementId: clipId, openEditor: true },
+      restore: 'none',
+      expect: { applied: true, noOp: false, undoable: false, absentWarnings: ['IRREVERSIBLE'] },
+    });
+    collect('ui.setSelection (open the editor)', problems, opened);
+    t.reads.clear();
+    const view = await t.reads.uiState();
+    if (view.workspace !== 'pianoRoll') {
+      problems.push(`ui.getState shows the workspace ${JSON.stringify(view.workspace)}, not pianoRoll`);
+    }
+    if (view.pianoRollContentId !== contentId) {
+      problems.push('ui.getState shows another content than the one of the clip in the piano roll');
+    }
+    if (!Array.isArray(view.selectedPlacementIds) || !view.selectedPlacementIds.includes(clipId)) {
+      problems.push('ui.getState does not show the clip as selected after it was opened');
+    }
+    if (workspaceBefore !== 'pianoRoll') {
+      const switchedTo = isObject(opened.envelope.sideEffects) ? opened.envelope.sideEffects.workspaceSwitched : null;
+      if (!isObject(switchedTo) || switchedTo.to !== 'pianoRoll') {
+        problems.push('the result names no workspaceSwitched side effect to the piano roll');
+      }
+    }
+    scenario.facts.editorOpened = view.workspace === 'pianoRoll';
     // The runner read the selection right after the write and compared the `after` values; by now
     // the previous selection is back. The result itself must name the clip.
     const change = listOf(member(clipSelection.envelope, 'changes', 'the result')).find(
@@ -1327,7 +1556,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       problems,
       `ui.getState read; a track and the clip were selected and the previous selection put back${
         clipSelection.restoredBy === null ? ' (there was none)' : ''
-      }`,
+      }; openEditor showed the clip in the piano roll (ui.getState: workspace, content, selection)`,
     );
   });
 
@@ -1345,6 +1574,35 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       expect: { applied: true, noOp: false, undoable: false, undoReason: 'ui_parity', revert: 'present' },
     });
     collect('track.set', problems, muted);
+
+    // The colour: set another one, send the revert recipe of the result, and read the colour back. The track
+    // keeps the colour it had; the dialog that picks a colour is not opened by any request.
+    const colourOf = async (): Promise<string> =>
+      String(
+        listOf(member(await t.reads.project(), 'tracks', 'project.get')).find((entry) => entry.trackId === sourceTrack)
+          ?.colour,
+      );
+    const colourBefore = await colourOf();
+    const colourWanted = colourBefore.toLowerCase() === '#3366cc' ? '#cc6633' : '#3366cc';
+    const coloured = await t.write({
+      step: 'track.set (colour)',
+      method: 'track.set',
+      params: { tracks: [{ trackId: sourceTrack, colour: colourWanted }] },
+      snapshot: ['tracks'],
+      expect: { applied: true, noOp: false, undoable: false, undoReason: 'ui_parity', revert: 'present' },
+    });
+    collect('track.set (colour)', problems, coloured);
+    if (coloured.envelope.applied === true) {
+      const named = listOf(member(coloured.envelope, 'changes', 'the result')).some(
+        (change) => change.entity === 'track' && isObject(change.fields) && 'colour' in change.fields,
+      );
+      if (!named) problems.push('the result names no colour change');
+      if (coloured.restoredBy === null) problems.push('the colour was not taken back: the result gave no recipe');
+      const colourAfter = await colourOf();
+      if (colourAfter !== colourBefore) {
+        problems.push(`the colour is ${colourAfter} after the revert recipe, not ${colourBefore}`);
+      }
+    }
 
     let added = false;
     try {
@@ -1392,7 +1650,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     return finish(
       'track.set, track.add, track.duplicate and track.delete',
       problems,
-      `track.set and ${added ? 'track.add ran' : 'track.add hit the track limit (skipped)'}; track.duplicate ran and ` +
+      `track.set (mute and colour, each taken back by its revert recipe) and ${added ? 'track.add ran' : 'track.add hit the track limit (skipped)'}; track.duplicate ran and ` +
         'its revert deleted the new track again (track.delete)',
     );
   });
@@ -1410,17 +1668,31 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       loopEnabled: transport.loopEnabled === true,
     };
     const bpmBefore = num(transport, 'bpm', 'transport');
+    const signatureBefore = objectMember(transport, 'timeSignature', 'transport');
     const device = transport.audioDeviceRunning === true;
 
+    // The tempo and the time signature change together, and the revert recipe puts both back.
     const wantedBpm = bpmBefore === 120 ? 121 : 120;
+    const wantedSignature = {
+      numerator: num(signatureBefore, 'numerator', 'timeSignature') === 3 ? 4 : 3,
+      denominator: num(signatureBefore, 'denominator', 'timeSignature'),
+    };
     const tempo = await t.write({
       step: 'transport.setTempo',
       method: 'transport.setTempo',
-      params: { bpm: wantedBpm },
+      params: { bpm: wantedBpm, timeSignature: wantedSignature },
       snapshot: ['tempo'],
       expect: { applied: true, noOp: false, undoable: false, undoReason: 'ui_parity', revert: 'present' },
     });
     collect('transport.setTempo', problems, tempo);
+    if (tempo.envelope.applied === true) {
+      const named = listOf(member(tempo.envelope, 'changes', 'the result')).flatMap((change) =>
+        change.entity === 'tempo' && isObject(change.fields) ? Object.keys(change.fields) : [],
+      );
+      for (const name of ['bpm', 'timeSignature']) {
+        if (!named.includes(name)) problems.push(`the result names no ${name} change`);
+      }
+    }
 
     const loop = await t.write({
       step: 'transport.setLoop',
@@ -1463,26 +1735,55 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       else problems.push('not every visible track is muted; playback is not started');
     }
 
+    const playMs = hooks.playMs ?? DEFAULT_PLAY_MS;
+    const freshTransport = async (): Promise<Json> => {
+      t.reads.clear();
+      return await t.reads.transportState();
+    };
+    /** What each call said and what a fresh read showed right after it and a moment later (the report keeps it). */
+    const trace: string[] = [];
+    const shown = (transport: Json): string =>
+      `${String(transport.playing)}@${String(transport.positionTimelineSec)}(start ${String(transport.playStartTimelineSec)})`;
+    /** One transport call of the tour; the state it leaves is judged by the caller from a fresh read. */
+    const control = async (label: string, params: Json, expect: WriteExpect): Promise<Json> => {
+      const run = await t.writeKept({
+        step: `transport.control (${label})`,
+        method: 'transport.control',
+        params,
+        expect: { undoable: false, undoReason: 'not_persisted_state', revert: 'none', ...expect },
+      });
+      collect(`transport.control (${label})`, problems, run);
+      // A refused call leaves nothing to judge the following calls by: the step ends with what the instance said.
+      if (run.failure !== undefined) throw new Error(run.problems.join('; '));
+      const said = isObject(run.envelope.transport) ? run.envelope.transport : {};
+      // What the call said, what a read shows at once, and what a read shows a moment later: the report keeps the
+      // three, so that a result that is not the state OpenTune comes to can be seen.
+      const now = await freshTransport();
+      let later = '';
+      if (playMs > 0) {
+        await sleep(Math.min(playMs, 250));
+        later = `, a moment later ${shown(await freshTransport())}`;
+      }
+      trace.push(`${label}: said ${shown(said)}, read afterwards ${shown(now)}${later}`);
+      return said;
+    };
+    const warnAudio = device ? [] : ['NO_AUDIO_DEVICE'];
+
     // Whatever fails between the seek and the stop, the transport is stopped and the mute put back.
     let started = false;
     let stopped = false;
     try {
       if (playable) {
         const seekTo = before.positionTimelineSec === 0 ? 0.5 : 0;
-        const seek = await t.writeKept({
-          step: 'transport.control (seek)',
-          method: 'transport.control',
-          params: { action: 'seek', positionTimelineSec: seekTo },
-          expect: {
+        await control(
+          'seek',
+          { action: 'seek', positionTimelineSec: seekTo },
+          {
             applied: true,
             noOp: false,
-            undoable: false,
-            undoReason: 'not_persisted_state',
-            revert: 'none',
             absentWarnings: ['IRREVERSIBLE', 'NO_AUDIO_DEVICE'],
           },
-        });
-        collect('transport.control (seek)', problems, seek);
+        );
 
         const play = await t.writeKept({
           step: 'transport.control (play)',
@@ -1495,7 +1796,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
             undoReason: 'not_persisted_state',
             revert: 'none',
             absentWarnings: ['IRREVERSIBLE'],
-            warnings: device ? [] : ['NO_AUDIO_DEVICE'],
+            warnings: warnAudio,
           },
         });
         collect('transport.control (play)', problems, play);
@@ -1504,24 +1805,138 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
           problems.push('the transport does not play after action play');
         }
 
-        const stop = await t.writeKept({
-          step: 'transport.control (stop)',
-          method: 'transport.control',
-          params: { action: 'stop' },
-          expect: { applied: true, noOp: false, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
-        });
-        collect('transport.control (stop)', problems, stop);
+        // The position moves on while a device runs; whether it did decides how much the calls below can show.
+        if (playMs > 0) await sleep(playMs);
+        const moving = num(await freshTransport(), 'positionTimelineSec', 'transport');
+        const advanced = moving > seekTo + 0.1;
+        scenario.facts.transportPositionAdvances = advanced
+          ? 'yes'
+          : device
+            ? 'no (the position did not move while playing)'
+            : 'no audio device';
+
+        // pause: playback stops and the position stays where it was; the position of the last start is not touched.
+        const pausedResult = await control(
+          'pause',
+          { action: 'pause' },
+          { applied: true, noOp: false, absentWarnings: ['IRREVERSIBLE'] },
+        );
+        const paused = await freshTransport();
+        const pausedAt = num(paused, 'positionTimelineSec', 'transport');
+        if (paused.playing !== false) problems.push('the transport still plays after action pause');
+        if (!sameNumber(num(paused, 'playStartTimelineSec', 'transport'), seekTo)) {
+          problems.push('action pause moved the position that play from start returns to');
+        }
+        if (pausedAt < seekTo - READBACK_EPSILON)
+          problems.push('action pause moved the position before where playing began');
+        if (advanced && pausedAt < moving - READBACK_EPSILON) {
+          problems.push('action pause moved the position back although playback had moved on');
+        }
+        if (
+          pausedResult.playing !== false ||
+          Math.abs(num(pausedResult, 'positionTimelineSec', 'the result transport') - pausedAt) > POSITION_EPSILON_SEC
+        ) {
+          problems.push('the transport in the result of pause is not the one a fresh read shows');
+        }
+        if (playMs > 0) await sleep(playMs / 2);
+        if (!sameNumber(num(await freshTransport(), 'positionTimelineSec', 'transport'), pausedAt)) {
+          problems.push('the position keeps moving after action pause');
+        }
+
+        // playFromLastStart while stopped: goes back to the position of the last play or seek and plays.
+        const restarted = await control(
+          'playFromLastStart',
+          { action: 'playFromLastStart' },
+          {
+            applied: true,
+            noOp: false,
+            absentWarnings: ['IRREVERSIBLE'],
+            warnings: warnAudio,
+          },
+        );
+        const restartedAt = num(restarted, 'positionTimelineSec', 'the result transport');
+        if (restarted.playing !== true) problems.push('the transport does not play after action playFromLastStart');
+        if (!sameNumber(num(restarted, 'playStartTimelineSec', 'the result transport'), seekTo)) {
+          problems.push('action playFromLastStart changed the position of the last start');
+        }
+        if (restartedAt < seekTo - READBACK_EPSILON || restartedAt > seekTo + RESTART_TOLERANCE_SEC) {
+          problems.push(
+            `action playFromLastStart left the position at ${String(restartedAt)}, not at the last start ${String(seekTo)}`,
+          );
+        }
+        if (advanced && restartedAt >= pausedAt) {
+          problems.push('action playFromLastStart did not go back to the position of the last start');
+        }
+        if (member(await freshTransport(), 'playing', 'transport') !== true) {
+          problems.push('a fresh read does not show the transport playing after playFromLastStart');
+        }
+
+        // pauseAtLastStart during playback: pauses and returns to the position of the last start.
+        if (playMs > 0) await sleep(playMs / 2);
+        const returned = await control(
+          'pauseAtLastStart',
+          { action: 'pauseAtLastStart' },
+          {
+            applied: true,
+            noOp: false,
+            absentWarnings: ['IRREVERSIBLE'],
+          },
+        );
+        const settledAtStart = await t.settledTransport(seekTo);
+        const atStart = settledAtStart.transport;
+        if (atStart.playing !== false) problems.push('the transport still plays after action pauseAtLastStart');
+        if (Math.abs(num(atStart, 'positionTimelineSec', 'transport') - seekTo) > POSITION_EPSILON_SEC) {
+          problems.push(
+            `action pauseAtLastStart left the position at ${String(atStart.positionTimelineSec)}, not at the last start ${String(seekTo)} (${String(settledAtStart.waitedMs)} ms later still)`,
+          );
+        }
+        if (
+          returned.playing !== false ||
+          Math.abs(num(returned, 'positionTimelineSec', 'the result transport') - seekTo) > POSITION_EPSILON_SEC
+        ) {
+          problems.push('the transport in the result of pauseAtLastStart is not paused at the last start');
+        }
+
+        // A seek sets the position of the last start, and playFromLastStart plays from there.
+        const seekAgain = seekTo + 0.25;
+        await control('seek again', { action: 'seek', positionTimelineSec: seekAgain }, { applied: true, noOp: false });
+        const afterSeek = await freshTransport();
+        if (!sameNumber(num(afterSeek, 'playStartTimelineSec', 'transport'), seekAgain)) {
+          problems.push('a seek did not set the position that play from start returns to');
+        }
+        const fromSeek = await control(
+          'playFromLastStart after a seek',
+          { action: 'playFromLastStart' },
+          {
+            applied: true,
+            noOp: false,
+            absentWarnings: ['IRREVERSIBLE'],
+            warnings: warnAudio,
+          },
+        );
+        const fromSeekAt = num(fromSeek, 'positionTimelineSec', 'the result transport');
+        if (
+          fromSeek.playing !== true ||
+          fromSeekAt < seekAgain - READBACK_EPSILON ||
+          fromSeekAt > seekAgain + RESTART_TOLERANCE_SEC
+        ) {
+          problems.push(
+            `action playFromLastStart did not play from the position of the seek (${String(seekAgain)}): ${JSON.stringify(pick(fromSeek, ['playing', 'positionTimelineSec']))}`,
+          );
+        }
+
+        await control('stop', { action: 'stop' }, { applied: true, noOp: false });
         stopped = true;
 
-        const back = await t.writeKept({
-          step: 'transport.control (seek back)',
-          method: 'transport.control',
-          params: { action: 'seek', positionTimelineSec: before.positionTimelineSec },
-          expect: { applied: true, undoable: false, undoReason: 'not_persisted_state', revert: 'none' },
-        });
-        collect('transport.control (seek back)', problems, back);
+        await control(
+          'seek back',
+          { action: 'seek', positionTimelineSec: before.positionTimelineSec },
+          { applied: true },
+        );
       }
     } finally {
+      if (trace.length > 0) scenario.facts.transportTrace = trace;
+      if (t.positionLagsMs.length > 0) scenario.facts.transportPositionLagMs = Math.max(...t.positionLagsMs);
       if (started && !stopped) {
         try {
           await t.writeKept({
@@ -1554,8 +1969,10 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     return finish(
       'transport.get, transport.setTempo, transport.setLoop and transport.control',
       problems,
-      `tempo ${String(bpmBefore)} -> ${String(wantedBpm)} and back, loop toggled and back, ` +
-        `${playable ? (tracks.length > 0 ? 'every track muted during' : 'no visible track to mute during') : 'playback not started during'} play${device ? '' : ' (no audio device)'}`,
+      `tempo ${String(bpmBefore)} -> ${String(wantedBpm)} with time signature ${String(signatureBefore.numerator)}/${String(signatureBefore.denominator)} -> ${String(wantedSignature.numerator)}/${String(wantedSignature.denominator)} and back, loop toggled and back, ` +
+        (playable
+          ? `${tracks.length > 0 ? 'every track muted during' : 'no visible track to mute during'} play, pause, playFromLastStart (also after a seek) and pauseAtLastStart${device ? '' : ' (no audio device)'}`
+          : 'playback not started'),
     );
   });
 
@@ -1601,20 +2018,14 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     if (device.running !== true) {
       throw new StepSkip('SKIP', 'no audio device runs in the instance, so no audio setting can be changed');
     }
-    // A buffer size or sample rate of the current device when it offers one, otherwise another output
-    // device or device type (the maintainer agreed to that, provided the setup is put back). The whole
-    // setup is read now and compared with the one read after the revert.
-    const chosen = chooseAudioSwitch(device, available);
-    if (chosen === null) {
-      throw new StepSkip(
-        'SKIP',
-        'audio.get offers no other buffer size, sample rate, output device or device type than the current setup, so there is nothing to switch',
-      );
-    }
-    const { field, value: wanted } = chosen;
+    // Every field audio.get lets the tour switch is switched once to another value it offers and taken back
+    // by the revert recipe of the result, and the whole setup read back is compared with the one at the start
+    // (the maintainer agreed to this, provided the setup is put back). A field the device offers no other
+    // value of is skipped with its reason. The device type is switched last and kept while the fields that the
+    // first type did not offer are tried in the other type (DirectSound offers several rates and buffer sizes
+    // where the shared mode of Windows Audio offers one); then the recipe of that switch takes it all back.
     const startSetup = pick(device, DEVICE_MEMBERS);
     const startNote = `the setup at the start was ${JSON.stringify(startSetup)}; set it back by hand if it is not`;
-    const previous = device[field];
     /** Sends the values read at the start once more and compares the read-back one by one. */
     const putBack = async (): Promise<boolean> => {
       const retry = Object.fromEntries(
@@ -1633,43 +2044,142 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
         return false;
       }
     };
-    let written: WriteRun;
-    try {
-      written = await t.write({
-        step: 'audio.set',
-        method: 'audio.set',
-        params: { [field]: wanted },
-        snapshot: ['audio'],
-        expect: {
-          applied: true,
-          noOp: false,
-          undoable: false,
-          undoReason: 'ui_parity',
-          revert: 'present',
-          warnings: ['GLOBAL_PREFERENCE'],
-        },
-      });
-      collect('audio.set', problems, written);
-    } catch (error) {
-      if (error instanceof Unrestored) {
-        // The runner could not take the change back, or read something else after the revert: send the
-        // values of the start once more before the step stops, and say whether that put them back.
+    /** The errors the start values were already sent for, so that an outer guard does not send them again. */
+    const handled = new WeakSet<object>();
+    /**
+     * Runs `run`; when it throws, whatever the error is (the revert did not work, a read failed), the values
+     * of the start are sent once more before the error goes on, and the note says whether that worked.
+     */
+    const guarded = async <T>(run: () => Promise<T>): Promise<T> => {
+      try {
+        return await run();
+      } catch (error) {
+        if (typeof error === 'object' && error !== null && handled.has(error)) throw error;
         const restoredAgain = await putBack();
-        throw new Unrestored(
-          `${error.message}; ${restoredAgain ? 'it was then set back with the start values' : 'it could not be set back with the start values either'}; ${startNote}`,
-        );
+        let thrown: Error;
+        if (error instanceof Unrestored) {
+          thrown = new Unrestored(
+            `${error.message}; ${restoredAgain ? 'it was then set back with the start values' : 'it could not be set back with the start values either'}; ${startNote}`,
+          );
+        } else if (restoredAgain) {
+          thrown = error instanceof Error ? error : new Error(String(error));
+        } else {
+          stopReason = 'the audio setup could not be put back';
+          thrown = new Error(
+            `${clean(error instanceof Error ? error.message : String(error))}; the start values could not be sent back either; ${startNote}`,
+            { cause: error },
+          );
+        }
+        handled.add(thrown);
+        throw thrown;
       }
-      throw error;
+    };
+
+    const expectation: WriteExpect = {
+      applied: true,
+      noOp: false,
+      undoable: false,
+      undoReason: 'ui_parity',
+      revert: 'present',
+      warnings: ['GLOBAL_PREFERENCE'],
+    };
+    /** What each field came to: PASS (with what was switched), FAIL, or SKIP with the reason. */
+    const outcomes = new Map<AudioField, string>();
+    const switched: string[] = [];
+    /** Switches `field` in the setup `now` (offering `offered`) and takes it back by the recipe; false: nothing to switch. */
+    const roundTrip = async (field: AudioField, now: Json, offered: Json, where: string): Promise<boolean> => {
+      const chosen = chooseAudioSwitch(field, now, offered);
+      if (chosen === null) return false;
+      const label = `audio.set (${field})`;
+      const before = problems.length;
+      const written = await guarded(async () => {
+        const run = await t.write({
+          step: label,
+          method: 'audio.set',
+          params: { [field]: chosen.value },
+          snapshot: ['audio'],
+          expect: expectation,
+        });
+        collect(label, problems, run);
+        return run;
+      });
+      // The runner read the state right after the write and found the requested value there (the `after`
+      // of the change); by now the revert recipe has put the previous value back and the setup was compared.
+      if (written.envelope.applied === true) {
+        const changed = listOf(member(written.envelope, 'changes', 'the result')).some(
+          (change) => isObject(change.fields) && field in change.fields,
+        );
+        if (!changed) problems.push(`the result names no ${field} change`);
+      }
+      const ok = problems.length === before;
+      outcomes.set(field, ok ? 'PASS' : `FAIL${where}`);
+      switched.push(`${field} ${JSON.stringify(now[field])} -> ${JSON.stringify(chosen.value)}${where} and back`);
+      return true;
+    };
+
+    for (const field of AUDIO_FIELDS) await roundTrip(field, device, available, '');
+
+    const type = chooseAudioSwitch('deviceType', device, available);
+    if (type === null) {
+      outcomes.set('deviceType', `SKIP: ${noOtherAudioValue('deviceType', device)}`);
+    } else {
+      const label = 'audio.set (deviceType)';
+      const before = problems.length;
+      const typed = await guarded(async () => {
+        const run = await t.writeKept({
+          step: label,
+          method: 'audio.set',
+          params: { deviceType: type.value },
+          expect: expectation,
+        });
+        collect(label, problems, run);
+        return run;
+      });
+      if (typed.envelope.applied === true) {
+        const where = ` in ${JSON.stringify(type.value)}`;
+        await guarded(async () => {
+          t.reads.clear();
+          const inType = await t.reads.audio();
+          const inDevice = objectMember(inType, 'device', 'audio.get');
+          if (inDevice.deviceType !== type.value) problems.push('a fresh read does not show the new device type');
+          for (const field of AUDIO_FIELDS) {
+            if (!outcomes.has(field))
+              await roundTrip(field, inDevice, objectMember(inType, 'available', 'audio.get'), where);
+          }
+          const restoredBy = await t.restore(label, typed.envelope);
+          if (restoredBy === null) {
+            problems.push(`${label}: the result gives no way to take the change back`);
+          } else {
+            t.reads.clear();
+            const back = pick(objectMember(await t.reads.audio(), 'device', 'audio.get'), DEVICE_MEMBERS);
+            const found = differences(startSetup, back);
+            if (found.length > 0) {
+              stopReason = 'the audio setup could not be put back';
+              throw new Unrestored(
+                `the audio setup after taking back the device type differs from the one at the start: ${found.join('; ')}`,
+              );
+            }
+          }
+        });
+      }
+      outcomes.set('deviceType', problems.length === before ? 'PASS' : 'FAIL');
+      if (problems.length === before)
+        switched.unshift(`deviceType ${JSON.stringify(device.deviceType)} -> ${JSON.stringify(type.value)} and back`);
     }
-    // The runner read the state right after the write and found the requested value there (the
-    // `after` of the change); by now the revert recipe has put the previous value back.
-    if (written.envelope.applied === true) {
-      const changed = listOf(member(written.envelope, 'changes', 'the result')).some(
-        (change) => isObject(change.fields) && field in change.fields,
+    for (const field of AUDIO_FIELDS) {
+      if (!outcomes.has(field)) outcomes.set(field, `SKIP: ${noOtherAudioValue(field, device)}`);
+    }
+    for (const [field, outcome] of outcomes) scenario.facts[`audio.${field}`] = outcome;
+    scenario.facts.audioSwitched = [...outcomes].filter(([, o]) => !o.startsWith('SKIP')).map(([field]) => field);
+
+    if (![...outcomes.values()].some((outcome) => !outcome.startsWith('SKIP'))) {
+      throw new StepSkip(
+        'SKIP',
+        `audio.get offers nothing but the current setup, so there is nothing to switch (${[...outcomes.values()].join('; ')})`,
       );
-      if (!changed) problems.push(`the result names no ${field} change`);
     }
     // The setup as it is now, whatever happened above (a refused or failed switch included).
+    t.reads.clear();
     const now = pick(objectMember(await t.reads.audio(), 'device', 'audio.get'), DEVICE_MEMBERS);
     const moved = differences(startSetup, now);
     if (moved.length > 0) {
@@ -1680,13 +2190,14 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       );
       if (!restored) stopReason = 'the audio setup could not be put back';
     }
-    scenario.facts.audioSetting = field;
-    scenario.facts.audioSwitched =
-      field === 'outputDevice' || field === 'deviceType' ? 'another device' : 'another buffer size or sample rate';
+    const skipped = [...outcomes].filter(([, outcome]) => outcome.startsWith('SKIP'));
     return finish(
       'audio.get and audio.set',
       problems,
-      `${field} ${JSON.stringify(previous)} -> ${JSON.stringify(wanted)} and back; the setup read back equals the one at the start (${String(Object.keys(startSetup).length)} members compared)`,
+      `${switched.join('; ')}; the setup read back equals the one at the start (${String(Object.keys(startSetup).length)} members compared)` +
+        (skipped.length === 0
+          ? ''
+          : `; skipped: ${skipped.map(([field, outcome]) => `${field} (${outcome.slice(6)})`).join('; ')}`),
     );
   });
 
