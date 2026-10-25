@@ -157,8 +157,8 @@ describe('withUserSettingsWatch keeps the home folder out of a failed comparison
     expect(message).not.toMatch(/homes/i);
   });
 
-  it('redacts the scenario error too when the watch found nothing wrong', async () => {
-    // Both readings succeed, so the rethrown scenario error is the only message that could carry the home folder.
+  /** A folder with one settings file, and a second reading that works: the watch finds nothing wrong. */
+  async function quietSecondReading(): Promise<string> {
     const dir = await mkdtemp(path.join(os.tmpdir(), 'ot-settings-guard-'));
     cleanup.push(dir);
     await writeFile(path.join(dir, 'app-preferences.settings'), 'x');
@@ -167,6 +167,12 @@ describe('withUserSettingsWatch keeps the home folder out of a failed comparison
     const actual = await vi.importActual<SnapshotModule>('../../scripts/e2e/settings-snapshot.mjs');
     stubbed.watchStats.mockReset();
     stubbed.watchStats.mockImplementation(actual.watchStats);
+    return dir;
+  }
+
+  it('redacts the scenario error too when the watch found nothing wrong', async () => {
+    // Both readings succeed, so the rethrown scenario error is the only message that could carry the home folder.
+    const dir = await quietSecondReading();
     const scenarioError = new Error(`boom in '${path.join(home, 'x')}'`);
     const error = await withUserSettingsWatch(() => Promise.reject(scenarioError), dir).then(
       () => undefined,
@@ -175,5 +181,51 @@ describe('withUserSettingsWatch keeps the home folder out of a failed comparison
     const message = (error as Error).message;
     expect(message).toBe(`boom in '~${sep}x'`);
     expect(message).not.toContain(home);
+  });
+
+  // Node and vitest print the `cause` of the error they report, so it must not hold the home folder either.
+  it.each([
+    ['the watch failed too', failingSecondReading],
+    ['the watch found nothing wrong', quietSecondReading],
+  ])('hangs a redacted copy of the scenario error on the error as its cause (%s)', async (_case, prepare) => {
+    const dir = await prepare();
+    const scenarioError = new TypeError(`boom in '${path.join(home, 'x')}'`);
+    scenarioError.cause = new RangeError(`deeper in '${path.join(home, 'y')}'`);
+    const error = await withUserSettingsWatch(() => Promise.reject(scenarioError), dir).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    const cause = (error as Error).cause as Error;
+    // The original error is not referenced any more; the copy keeps its kind and its text, with `~` for the home folder.
+    expect(cause).toBeInstanceOf(Error);
+    expect(cause).not.toBe(scenarioError);
+    expect(cause.name).toBe('TypeError');
+    expect(String(cause)).toBe(`TypeError: boom in '~${sep}x'`);
+    expect(cause.stack).toContain(`TypeError: boom in '~${sep}x'`);
+    // A cause of the cause is copied the same way.
+    const deeper = cause.cause as Error;
+    expect(deeper).not.toBe(scenarioError.cause);
+    expect(deeper.name).toBe('RangeError');
+    expect(String(deeper)).toBe(`RangeError: deeper in '~${sep}y'`);
+    expect(deeper.stack).toContain(`RangeError: deeper in '~${sep}y'`);
+    // Neither text names the home folder, in either slash style.
+    for (const text of [String(cause), cause.stack ?? '', String(deeper), deeper.stack ?? '']) {
+      expect(text).not.toContain(home);
+      expect(text).not.toContain(home.replaceAll('\\', '/'));
+    }
+  });
+
+  it('puts no cause on the error of a scenario that threw something that is not an error', async () => {
+    const dir = await quietSecondReading();
+    // A string that names the home folder: neither the message nor a cause may carry it.
+    const thrown: unknown = `boom in '${path.join(home, 'x')}'`;
+    const error = await withUserSettingsWatch(() => {
+      throw thrown;
+    }, dir).then(
+      () => undefined,
+      (caught: unknown) => caught,
+    );
+    expect((error as Error).message).toBe('the scenario failed');
+    expect('cause' in (error as Error)).toBe(false);
   });
 });
