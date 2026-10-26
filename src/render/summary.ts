@@ -9,7 +9,15 @@
 import type { Json } from '../otcp/client.js';
 import { asList, entitiesOf, isObject, methodOmitted, type TableRow } from './changes.js';
 import { revertFlag, revertPlan } from './revert.js';
-import { RE_RENDER_TEXT, SIDE_EFFECT_TEXT, reRenderNote, token, undoReasonText, type ReRenderState } from './text.js';
+import {
+  RE_RENDER_TEXT,
+  SIDE_EFFECT_TEXT,
+  reRenderNote,
+  tempoRoundedWords,
+  token,
+  undoReasonText,
+  type ReRenderState,
+} from './text.js';
 
 /** Warning codes that make a result destructive on their own. */
 export const DESTRUCTIVE_WARNINGS = new Set(['IRREVERSIBLE', 'UPSTREAM_UNDO_DEFECT', 'OVERWROTE_OTHER_PROJECT']);
@@ -129,6 +137,15 @@ function flagsOf(envelope: Json, reRender?: ReRenderState): string[] {
   if (removed > 0 || warningCodes(envelope).some((c) => DESTRUCTIVE_WARNINGS.has(c))) flags.push('destructive');
   const tracks = trackFacts(envelope, envelope.dryRun === true);
   flags.push(...tracks.phrases);
+  // The tempo that OpenTune's tempo field rounded when the window switched view: nobody asked for it, so it is said
+  // with its values here, and the side effect is not listed a second time below.
+  const effectsOf = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
+  const rounded = Object.hasOwn(effectsOf, 'tempoRounded');
+  if (rounded) {
+    const way = revertPlan(isObject(effectsOf.tempoRounded) ? effectsOf.tempoRounded.revert : null);
+    const noWayBack = way.kind === 'none' ? ', and no request can set it back' : '';
+    flags.push(`unrequested: ${tempoRoundedWords(effectsOf.tempoRounded, envelope.dryRun === true)}${noWayBack}`);
+  }
   const undo = isObject(envelope.undo) ? envelope.undo : null;
   // A result that changed nothing has nothing to undo; the no_op reason says only that.
   if (undo !== null && undo.undoable === false && undo.reason !== 'no_op') {
@@ -137,7 +154,7 @@ function flagsOf(envelope: Json, reRender?: ReRenderState): string[] {
   }
   // The side effect tracksRevealed is already said with the tracks it names above.
   const effects = Object.keys(isObject(envelope.sideEffects) ? envelope.sideEffects : {}).filter(
-    (name) => !(name === 'tracksRevealed' && tracks.revealed.length > 0),
+    (name) => !(name === 'tracksRevealed' && tracks.revealed.length > 0) && !(name === 'tempoRounded' && rounded),
   );
   if (effects.length > 0) {
     const names = effects.map((name) =>

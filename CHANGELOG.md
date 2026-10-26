@@ -88,6 +88,16 @@ versioned separately and has its own changelog.
     against the nearest semitone are not directly comparable with a later analysis of the clip with notes.
   - A result that queued a render says that playback can still sound the old way until `render.current` of
     `opentune_get_clip_details` is true, and that an export waits for it.
+- A switch of the view can change the tempo, and the results now say so (OTCP specification `1.0.0-rc.7`, contract
+  change record `docs/contract-changes/20261026-tempo-rounded.md`). The tempo field of the OpenTune transport bar shows
+  one decimal and, each time the window switches view (in both directions), writes that rounded value back and marks the
+  project as changed; so `opentune_manage_ui` with `switch_view`, or with `focus_clip` and `open_editor` that really
+  switches the view, turns a tempo of 120.27 into 120.3, as a click on the view button does. A tempo with one decimal or
+  none is left as it is. Until now the specification, the tool results and the mock said that a switch never changes
+  the project. The first sentence now says that OpenTune changed the tempo from 120.27 to 120.3, which nobody asked
+  for, and a revert line gives the `opentune_transport` call that sets it back (without `transport.v1` it says that no request can). The
+  mock, a contract vector that every target runs, the rendering and tool golden files follow. The mock also loads the
+  clip that an import with focus selects into the piano roll, as the window does.
 
 ## [0.2.0] - 2026-10-26
 
