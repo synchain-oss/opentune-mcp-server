@@ -15,6 +15,7 @@ import type { Json } from '../otcp/client.js';
 import { isObject } from '../render/changes.js';
 import { writeBody } from '../render/index.js';
 import { warningCodes } from '../render/summary.js';
+import { SIDE_EFFECT_TEXT, token, viewName } from '../render/text.js';
 import { INSTANCE_FIELD, invalid } from './clip-write.js';
 import { runWrites, type WriteCall, type WriteResult } from './multi-write.js';
 import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
@@ -36,11 +37,16 @@ const natural = (value: unknown): number | null =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 const count = (n: number, noun: string) => `${String(n)} ${noun}${n === 1 ? '' : 's'}`;
 
+/** Side effects whose words are written out in focusSummary; any other one is named by the fixed table. */
+const WORDED = new Set(['notesGenerated', 'referenceAnalysisQueued', 'uiScaleChanged', 'workspaceSwitched']);
+
 /**
  * The summary of a clip selection. The side effects nobody asked for come first: they are the
- * reason to look at the result. Counts are checked integers; names from OpenTune are never used.
+ * reason to look at the result. Whether there are side effects is read from sideEffects and from
+ * nothing else, and each one is named, also the switch of the view that open_editor asked for.
+ * Counts are checked integers; names from OpenTune are never used.
  */
-export function focusSummary(envelope: Json): string {
+export function focusSummary(envelope: Json, openEditor = false): string {
   const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
   const dry = envelope.dryRun === true;
   const unasked: string[] = [];
@@ -59,20 +65,34 @@ export function focusSummary(envelope: Json): string {
     );
   }
   if (isObject(effects.uiScaleChanged)) unasked.push('the scale shown in the transport bar changes with the clip key');
-  const opened = isObject(effects.workspaceSwitched) ? ' and opens it in the piano roll' : '';
+  // The switch of the view is what open_editor asks for: it is said as part of the selection, not as a surprise.
+  // Without open_editor it is a side effect nobody asked for.
+  const switched = isObject(effects.workspaceSwitched) ? effects.workspaceSwitched : null;
+  const route = switched === null ? '' : `from ${viewName(switched.from)} to ${viewName(switched.to)}`;
+  if (switched !== null && !openEditor) unasked.push(`the window ${dry ? 'switches' : 'switched'} ${route}`);
+  for (const name of Object.keys(effects)) {
+    if (!WORDED.has(name)) {
+      unasked.push(SIDE_EFFECT_TEXT[name] ?? `side effect ${token(name, 'camel') ?? 'with an unrecognized name'}`);
+    }
+  }
+  const asked = switched !== null && openEditor;
   const warnings = warningCodes(envelope);
   const tail = warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
+  const none = Object.keys(effects).length === 0;
   if (dry) {
-    const would =
-      unasked.length === 0
-        ? 'no side effects beyond the selection'
+    const selecting = asked ? `selecting the clip and switching the window ${route}` : 'selecting the clip';
+    const would = none
+      ? 'no side effects beyond the selection'
+      : unasked.length === 0
+        ? 'no other side effects'
         : `these side effects nobody asked for: ${unasked.join('; ')}`;
-    return `${TOOL}: dry run, nothing was selected; selecting the clip${opened} would have ${would}.${tail}`;
+    return `${TOOL}: dry run, nothing was selected; ${selecting} would have ${would}.${tail}`;
   }
   if (envelope.noOp === true) return `${TOOL}: the clip was already selected; nothing was changed.${tail}`;
-  const done = opened === '' ? 'selected the clip' : 'selected the clip and opened it in the piano roll';
+  const done = asked ? `selected the clip and switched the window ${route}, as open_editor asked` : 'selected the clip';
+  if (none) return `${TOOL}: ${done}, with no side effects beyond the selection.${tail}`;
   return unasked.length === 0
-    ? `${TOOL}: ${done}, with no side effects beyond the selection.${tail}`
+    ? `${TOOL}: ${done}, with no other side effects.${tail}`
     : `${TOOL}: ${done}, and ALSO, which nobody asked for: ${unasked.join('; ')}.${tail}`;
 }
 
@@ -131,7 +151,10 @@ export async function manageUi(ctx: ToolContext, args: ManageUiArgs): Promise<Ou
     const rendered = writeBody(result.envelope, { tool: TOOL });
     return {
       ok: true,
-      body: args.op === 'focus_clip' ? { ...rendered, summary: focusSummary(result.envelope) } : rendered,
+      body:
+        args.op === 'focus_clip'
+          ? { ...rendered, summary: focusSummary(result.envelope, args.open_editor === true) }
+          : rendered,
     };
   });
 }

@@ -5,7 +5,7 @@
     "undo_id": "u:01234567:5"
   },
   "result": {
-    "summary": "opentune_undo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_redo, see the revert line; side effects: rendering of one or more contents was queued again).",
+    "summary": "opentune_undo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_redo, see the revert line; side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself.",
     "applied": true,
     "noOp": false,
     "dryRun": false,

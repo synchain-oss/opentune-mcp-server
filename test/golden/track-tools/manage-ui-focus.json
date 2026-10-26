@@ -7,7 +7,7 @@
     "open_editor": true
   },
   "result": {
-    "summary": "opentune_manage_ui: selected the clip and opened it in the piano roll, and ALSO, which nobody asked for: OpenTune generated 11 notes for the clip, with no undo entry, and the project is marked as changed; the scale shown in the transport bar changes with the clip key. Warnings: SELECTION_GENERATED_NOTES, IRREVERSIBLE.",
+    "summary": "opentune_manage_ui: selected the clip and switched the window from the arrangement view to the piano roll, as open_editor asked, and ALSO, which nobody asked for: OpenTune generated 11 notes for the clip, with no undo entry, and the project is marked as changed; the scale shown in the transport bar changes with the clip key. Warnings: SELECTION_GENERATED_NOTES, IRREVERSIBLE.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -227,6 +227,12 @@
           "revert": null
         },
         "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "No tool of this server can switch the window back to the arrangement view yet; the user can click the view buttons in the transport bar (reverts side effect workspaceSwitched).",
+        "revert": null,
+        "restore": null
       },
       {
         "kind": "revert",

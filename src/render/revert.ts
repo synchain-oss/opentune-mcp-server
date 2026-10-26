@@ -338,16 +338,29 @@ function trackOps(params: Json): Mapped | null {
   return { call: { tool: 'opentune_set_tracks', arguments: { ops } }, needsRevision: false };
 }
 
-/** The opentune_transport call that sets the tempo and time signature a transport.setTempo recipe names. */
+/**
+ * The opentune_transport call that sets the tempo and time signature a transport.setTempo recipe names.
+ * OpenTune lists in the recipe the members the call changed, so a call that changed only the tempo (or
+ * only the time signature) gives a recipe with that one member: each of the two alone, or both, can be
+ * carried out. A member that is not in the form the tool takes, or one the tool does not know, makes the
+ * recipe manual rather than leaving it out.
+ */
 function tempoCall(params: Json): Mapped | null {
-  const signature = isObject(params.timeSignature) ? params.timeSignature : {};
-  if (!isNum(params.bpm, 1, 999) || !isInt(signature.numerator, 1, 32)) return null;
-  if (![1, 2, 4, 8, 16, 32].includes(signature.denominator as number)) return null;
-  const time_signature = { numerator: signature.numerator, denominator: signature.denominator };
-  return {
-    call: { tool: 'opentune_transport', arguments: { bpm: params.bpm, time_signature } },
-    needsRevision: false,
-  };
+  const args: Json = {};
+  if (params.bpm !== undefined) {
+    if (!isNum(params.bpm, 1, 999)) return null;
+    args.bpm = params.bpm;
+  }
+  if (params.timeSignature !== undefined) {
+    const signature = isObject(params.timeSignature) ? params.timeSignature : {};
+    if (!isInt(signature.numerator, 1, 32)) return null;
+    if (![1, 2, 4, 8, 16, 32].includes(signature.denominator as number)) return null;
+    args.time_signature = { numerator: signature.numerator, denominator: signature.denominator };
+  }
+  if (Object.keys(args).length === 0 || Object.keys(params).some((key) => key !== 'bpm' && key !== 'timeSignature')) {
+    return null;
+  }
+  return { call: { tool: 'opentune_transport', arguments: args }, needsRevision: false };
 }
 
 /** The tool call for each OTCP method a tool of this server performs, or null for params it cannot take. */

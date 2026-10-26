@@ -14,7 +14,15 @@ import type { Body, Outcome } from '../tools/registry.js';
 import { asList, changeTable, isObject, type ChangeTable } from './changes.js';
 import { restoreCall, revertPlan, revertText, type RestoreCall } from './revert.js';
 import { summarize } from './summary.js';
-import { RE_RENDER_TEXT, SIDE_EFFECT_TEXT, WARNING_TEXT, token, undoReasonText, type ReRenderState } from './text.js';
+import {
+  RE_RENDER_TEXT,
+  SIDE_EFFECT_TEXT,
+  WARNING_TEXT,
+  token,
+  undoReasonText,
+  workspaceRevertText,
+  type ReRenderState,
+} from './text.js';
 import { uiEffects, type UiEffect } from './ui-effects.js';
 
 export type { ChangeTable, TableField, TableRow } from './changes.js';
@@ -96,6 +104,12 @@ function sideEffectLines(envelope: Json, reRender?: ReRenderState): Line[] {
       { kind: 'sideEffect', name, text: `${text[0]?.toUpperCase() ?? ''}${text.slice(1)}.`, details, revert },
     ];
     if (revert !== null) lines.push(revertLine(revert, (s) => `${s} (reverts side effect ${label ?? 'above'})`));
+    else if (name === 'workspaceSwitched') {
+      // The protocol gives no recipe for the switch, but the user can take it back: say how, so the agent does
+      // not leave the user in a view they did not ask for without a word.
+      const from = isObject(details) ? details.from : undefined;
+      lines.push({ kind: 'revert', text: workspaceRevertText(from), revert: null, restore: null });
+    }
     return lines;
   });
 }

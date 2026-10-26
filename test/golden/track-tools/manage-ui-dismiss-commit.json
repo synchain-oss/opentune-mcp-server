@@ -6,7 +6,7 @@
     "accept_commit": true
   },
   "result": {
-    "summary": "opentune_manage_ui: changed 1 track (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line; side effects: a dialog was closed, closing a dialog committed its value). Warnings: DIALOG_CLOSE_COMMITTED.",
+    "summary": "opentune_manage_ui: changed 1 track (the colour of track 1 changed from #64B5F6 to #445566; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line; side effects: a dialog was closed, closing a dialog committed its value). Warnings: DIALOG_CLOSE_COMMITTED.",
     "applied": true,
     "noOp": false,
     "dryRun": false,

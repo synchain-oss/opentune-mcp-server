@@ -14,7 +14,7 @@
     "expected_revision": "<clip_revision of the clip>"
   },
   "result": {
-    "summary": "opentune_set_clip: the key change cannot be undone (restore it as the results say); two requests were made, reported separately in results. Key: changed 1 key (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_clip, see the revert line). Pitch shift: changed 1 pitchShift (side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:2. Warnings: KEY_NOT_TRANSPOSED.",
+    "summary": "opentune_set_clip: the key change cannot be undone (restore it as the results say); two requests were made, reported separately in results. Key: changed 1 key (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_clip, see the revert line). Pitch shift: changed 1 pitchShift (side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:2. Warnings: KEY_NOT_TRANSPOSED.",
     "results": [
       {
         "method": "content.setKey",
@@ -168,7 +168,7 @@
       },
       {
         "method": "content.setPitchShift",
-        "summary": "opentune_set_clip: changed 1 pitchShift (side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:2. Warnings: KEY_NOT_TRANSPOSED.",
+        "summary": "opentune_set_clip: changed 1 pitchShift (side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:2. Warnings: KEY_NOT_TRANSPOSED.",
         "applied": true,
         "noOp": false,
         "dryRun": false,

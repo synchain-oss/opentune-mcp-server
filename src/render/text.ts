@@ -87,6 +87,23 @@ export const SIDE_EFFECT_TEXT = table<string>({
   dialogCommitted: 'closing a dialog committed its value',
 });
 
+/** The views of the OpenTune window, as workspaceSwitched names them. */
+const VIEW_NAME = table<string>({ arrangement: 'the arrangement view', pianoRoll: 'the piano roll' });
+
+/** A view of the window in words; a name this server does not know is "another view", never repeated. */
+export function viewName(value: unknown): string {
+  const name = token(value, 'camel');
+  return (name === null ? undefined : VIEW_NAME[name]) ?? 'another view';
+}
+
+/**
+ * The way back for a switch of the view (sideEffects.workspaceSwitched, whose own revert is null): no tool of
+ * this server switches the window yet, so the user does it with the view buttons of the transport bar.
+ */
+export const workspaceRevertText = (from: unknown): string =>
+  `No tool of this server can switch the window back to ${viewName(from)} yet; the user can click the view buttons in ` +
+  'the transport bar (reverts side effect workspaceSwitched).';
+
 /**
  * What a change of the vocoder weight says about rendering again. OpenTune renders every content again once the
  * new weight has loaded; a job that did not wait for the vocoder (it was not ready before the call) can end before
@@ -102,6 +119,19 @@ export const RE_RENDER_TEXT: Readonly<Record<ReRenderState, string>> = {
     'rendering of one or more contents starts again only after the new vocoder weight has finished loading, and ' +
     'not at all if it cannot be loaded',
 };
+
+/**
+ * What a queued render means for what the user hears, for the sentence after the first one: playback keeps the
+ * old sound until the render is current (opentune_get_clip_details, section render), and an export waits for it
+ * by itself (warning RENDER_NOT_CURRENT). `afterLoad` is the vocoder weight that has not loaded yet.
+ */
+export function reRenderNote(reRender?: ReRenderState): string {
+  return reRender === 'afterLoad'
+    ? 'OpenTune renders again only once the new vocoder weight has loaded: until render.current of ' +
+        'opentune_get_clip_details is true, playback can still sound the old way, and an export waits for the render by itself.'
+    : 'OpenTune is rendering again: playback can still sound the old way until render.current of ' +
+        'opentune_get_clip_details is true, and an export waits for the render by itself.';
+}
 
 /** Not-undoable reasons (`undo` scope of registry/reasons.json). */
 export const UNDO_REASON_TEXT = table<string>({

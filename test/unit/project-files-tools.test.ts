@@ -7,6 +7,7 @@
 // capability, a job that outlives the wait, and the coverage of the project methods of the spec.
 
 import fs from 'node:fs';
+import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -62,6 +63,11 @@ const FILES = [
 ] as const;
 
 const wait = { wait_seconds: 10 };
+
+/** What OpenTune does with the media of the project at every save; a fixed sentence, never built from the result. */
+const MEDIA_COPY =
+  'OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.';
+const mediaFolderOf = (file: string) => path.join(path.dirname(file), 'Project_Media');
 const save = (ctx: ToolContext, args: Parameters<typeof saveProject>[1]) => saveProject(ctx, { ...wait, ...args });
 
 describe('opentune_save_project', () => {
@@ -69,7 +75,23 @@ describe('opentune_save_project', () => {
     const { ctx, mock } = await setup();
     const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true });
     const first = body(await save(ctx, { mode: 'save_as', path: need(ids, 'fresh') }));
-    expect(first.summary).toMatch(/^opentune_save_project: saved the project to the file given/);
+    // A new file replaced nothing: the first sentence says what was written, and not that it cannot be restored.
+    expect(first.summary).toMatch(
+      /^opentune_save_project: wrote a new project file \(path in path\); no existing file was replaced, and from now on it is the project's file\./,
+    );
+    expect(first.summary).not.toMatch(/cannot be restored|irreversible|IRREVERSIBLE/i);
+    // A first save to a new place says at once that the audio is copied next to the file, and where.
+    expect(first.summary).toContain(
+      `from now on it is the project's file. ${MEDIA_COPY} The project is no longer marked as changed`,
+    );
+    expect(first.mediaFolder).toBe(mediaFolderOf(need(ids, 'fresh')));
+    expect(first.summary).not.toContain('Project_Media/');
+    expect(first.summary).not.toContain(need(ids, 'fresh'));
+    // The warnings keep the facts that the protocol states: the write has no undo, and some state is not stored.
+    expect((first.warnings as { code: string }[]).map((w) => w.code)).toEqual(['IRREVERSIBLE', 'NOT_SAVED_IN_PROJECT']);
+    expect(
+      (first.lines as { kind: string; code?: string; text: string }[]).filter((l) => l.kind === 'warning').length,
+    ).toBe(2);
     expect(first.summary).toMatch(/no longer marked as changed/);
     expect(first.summary).toMatch(/Not stored in the project file: which tracks are shown, the undo and redo history/);
     expect(first.summary).not.toContain(need(ids, 'fresh'));
@@ -86,6 +108,25 @@ describe('opentune_save_project', () => {
       /^opentune_save_project: saved the project to its file \(path in path\); the previous/,
     );
     expect(again.path).toBe(need(ids, 'fresh'));
+    // A later save repeats it after the facts of the save, and does not know the folder (the file is OpenTune's).
+    expect(again.summary.endsWith(MEDIA_COPY)).toBe(true);
+    expect(again.summary.indexOf(MEDIA_COPY)).toBeGreaterThan(again.summary.indexOf('cannot be restored'));
+    expect(again.mediaFolder).toBeNull();
+    expect(again.nullReasons).toMatchObject({ mediaFolder: 'project_path_not_given' });
+  });
+
+  it('does not call a save_as onto the file the project already has a new file', async () => {
+    const { ctx, mock } = await setup();
+    const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true });
+    body(await save(ctx, { mode: 'save_as', path: need(ids, 'fresh') }));
+    // The same file again: the project's path does not change, so nothing proves that a file is new.
+    const again = body(await save(ctx, { mode: 'save_as', path: need(ids, 'fresh') }));
+    expect(again.summary).toMatch(/^opentune_save_project: saved the project to the file given \(path in path\)/);
+    expect(again.summary).not.toContain('wrote a new project file');
+    // Another path writes another new file, and the project's file moves to it.
+    const other = body(await save(ctx, { mode: 'save_as', path: need(ids, 'other') }));
+    expect(other.summary).toMatch(/^opentune_save_project: wrote a new project file/);
+    expect(other.path).toBe(need(ids, 'other'));
   });
 
   it('says what to do when the project has no file yet', async () => {
@@ -178,6 +219,8 @@ describe('opentune_save_project_overwrite', () => {
       /^opentune_save_project_overwrite: OVERWROTE another existing project file at the user's request/,
     );
     expect(result.summary).not.toContain(need(ids, 'existing'));
+    expect(result.summary).toContain(`the old file cannot be restored. ${MEDIA_COPY}`);
+    expect(result.mediaFolder).toBe(mediaFolderOf(need(ids, 'existing')));
     expect(result.path).toBe(need(ids, 'existing'));
     expect(fs.readFileSync(need(ids, 'existing'), 'utf8')).not.toBe(before);
   });

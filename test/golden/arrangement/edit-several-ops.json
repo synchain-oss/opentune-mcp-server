@@ -21,7 +21,7 @@
     "expected_revision": "<arrangement_revision>"
   },
   "result": {
-    "summary": "opentune_edit_arrangement: changed 1 placement (side effects: hidden tracks became visible). Undo it as one step with undoId u:01234567:1. Warnings: TRACK_AUTO_REVEALED, TRACK_AUTO_REVEALED.",
+    "summary": "opentune_edit_arrangement: changed 1 placement (revealed the hidden tracks 4, 5). Undo it as one step with undoId u:01234567:1. Warnings: TRACK_AUTO_REVEALED, TRACK_AUTO_REVEALED.",
     "applied": true,
     "noOp": false,
     "dryRun": false,

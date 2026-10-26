@@ -13,7 +13,7 @@ import type { Json, OtcpSession } from '../otcp/client.js';
 import { encodeArrangementRevision } from '../otcp/tokens.js';
 import { isObject } from '../render/changes.js';
 import { writeOutcome } from '../render/index.js';
-import { leadFlags, summarize } from '../render/summary.js';
+import { leadFlags, reRenderSentence, summarize } from '../render/summary.js';
 import { WRITE_TIMEOUT_MS } from './clip-write.js';
 import type { Body, Outcome } from './registry.js';
 
@@ -85,7 +85,7 @@ export function combineResults(tool: string, results: readonly WriteResult[]): B
   return {
     summary:
       `${tool}: ${String(results.length)} requests ran in this order${flagText}, reported separately in ` +
-      `results. ${parts.join(' ')}`,
+      `results. ${parts.join(' ')}${reRenderSentence(results.map((r) => r.envelope))}`,
     results: results.map((r) => ({ method: r.method, ...r.body })),
   };
 }

@@ -116,6 +116,39 @@ describe('opentune_transport', () => {
     expect(restored.tempo).toEqual({ bpm: before.bpm, timeSignature: before.timeSignature });
   });
 
+  it('restores a change of the tempo alone, and one of the time signature alone, with this tool', async () => {
+    const { mock, ctx } = await setup();
+    mock.given({ clips: [clip()] });
+    const before = (await transportOf(ctx)) as unknown as { bpm: number; timeSignature: unknown };
+    interface Line {
+      kind: string;
+      restore: { tool: string; arguments: unknown } | null;
+    }
+    const restoreOf = (result: Body) => (result.lines as Line[]).find((l) => l.kind === 'revert');
+
+    // The recipe OpenTune sends lists only what changed: the tempo alone, here.
+    const tempo = body(await transport(ctx, { bpm: 175 }));
+    expect(tempo.undo).toMatchObject({ revert: { method: 'transport.setTempo', params: { bpm: before.bpm } } });
+    expect(tempo.summary).not.toContain('no tool of this server can restore it');
+    expect(firstSentence(tempo.summary)).toContain('can be restored with opentune_transport');
+    expect(restoreOf(tempo)?.restore).toEqual({ tool: 'opentune_transport', arguments: { bpm: before.bpm } });
+    const back = body(await transport(ctx, transportTool.inputSchema.parse(restoreOf(tempo)?.restore?.arguments)));
+    expect(back.tempo).toEqual({ bpm: before.bpm, timeSignature: before.timeSignature });
+
+    const signature = body(await transport(ctx, { time_signature: { numerator: 7, denominator: 8 } }));
+    expect(signature.undo).toMatchObject({
+      revert: { method: 'transport.setTempo', params: { timeSignature: before.timeSignature } },
+    });
+    expect(restoreOf(signature)?.restore).toEqual({
+      tool: 'opentune_transport',
+      arguments: { time_signature: before.timeSignature },
+    });
+    const undone = body(
+      await transport(ctx, transportTool.inputSchema.parse(restoreOf(signature)?.restore?.arguments)),
+    );
+    expect(undone.tempo).toEqual({ bpm: before.bpm, timeSignature: before.timeSignature });
+  });
+
   it('sets the loop flag and warns that it has no audible effect in the standalone', async () => {
     const { mock, ctx } = await setup();
     mock.given({ clips: [clip()] });
@@ -242,10 +275,51 @@ describe('opentune_manage_ui: focus_clip', () => {
     const { ctx, ids } = await fresh();
     const b = need(ids, 'b.placementId');
     const dry = body(await manageUi(ctx, { op: 'focus_clip', clip: b, open_editor: true, dry_run: true }));
-    expect(dry.summary).toContain('selecting the clip and opens it in the piano roll would have');
+    expect(dry.summary).toContain(
+      'selecting the clip and switching the window from the arrangement view to the piano roll would have',
+    );
     const result = body(await manageUi(ctx, { op: 'focus_clip', clip: b, open_editor: true }));
-    expect(result.summary).toContain('selected the clip and opened it in the piano roll');
+    expect(result.summary).toContain(
+      'selected the clip and switched the window from the arrangement view to the piano roll',
+    );
     expect(result.sideEffects).toMatchObject({ workspaceSwitched: { from: 'arrangement', to: 'pianoRoll' } });
+  });
+
+  it('says there are no side effects only when the result has none, and names each one it has', async () => {
+    const { ctx, ids } = await fresh();
+    const b = need(ids, 'b.placementId');
+    const none = (summary: string) => summary.includes('no side effects beyond the selection');
+    // The window switch is a side effect even though open_editor asked for it: it is named, and the sentence
+    // does not claim that there are none.
+    const editor = body(await manageUi(ctx, { op: 'focus_clip', clip: b, open_editor: true }));
+    expect(Object.keys(editor.sideEffects as object)).toContain('workspaceSwitched');
+    expect(none(editor.summary)).toBe(false);
+    expect(editor.summary).toMatch(/switched the window from the arrangement view to the piano roll/);
+    // Whatever the result holds, the claim follows from sideEffects and from nothing else.
+    for (const args of [
+      { op: 'focus_clip', clip: need(ids, 'a.placementId') },
+      { op: 'focus_clip', clip: b },
+      { op: 'focus_clip', clip: b, dry_run: true },
+      { op: 'focus_clip', clip: need(ids, 'a.placementId'), open_editor: true, dry_run: true },
+    ] as const) {
+      const result = body(await manageUi(ctx, args));
+      expect(none(result.summary), JSON.stringify(args)).toBe(Object.keys(result.sideEffects as object).length === 0);
+    }
+    // A selection that changes nothing else says so.
+    const plain = body(await manageUi(ctx, { op: 'focus_clip', clip: b, dry_run: true }));
+    expect(plain.summary).toBe(
+      'opentune_manage_ui: dry run, nothing was selected; selecting the clip would have no side effects beyond the selection.',
+    );
+  });
+
+  it('gives the way back for a switch of the view as a line, and says no tool can do it yet', async () => {
+    const { ctx, ids } = await fresh();
+    const result = body(await manageUi(ctx, { op: 'focus_clip', clip: need(ids, 'b.placementId'), open_editor: true }));
+    const lines = result.lines as { kind: string; text: string; restore?: unknown; revert?: unknown }[];
+    const line = lines.find((l) => l.kind === 'revert' && l.text.includes('workspaceSwitched'));
+    expect(line).toMatchObject({ restore: null, revert: null });
+    expect(line?.text).toMatch(/No tool of this server can switch the window back to the arrangement view/);
+    expect(line?.text).toMatch(/view buttons in the transport bar/);
   });
 
   it('gives the way back to the previous selection', async () => {
