@@ -70,9 +70,11 @@ still is its own OTCP request and its own undo step, applied in order with the g
   last item only when a move was limited), at most 6,000 characters of rows in all (`moves_omitted` counts the rest;
   `moves_total` and `moves_listed` for the call). The result stays within the output budget; the handle list in the
   result is cut to 40 entries (the count of all of them is given).
-- A call that has run 40 seconds sends no further operation and says so (`stopped`: `reason`, `applied`, `total`,
-  `next_operation`, and the first sentence). What was applied stays applied, and the result has the `clip_revision` to
-  go on with.
+- A call sends no further operation once the time it has used, plus the longest a write may take (20 s) and the longest
+  the read of the handles after it may take (15 s), reaches 60 s, the default wait of an MCP client; so a call is
+  stopped after 25 s of work at the latest, and no call can run past 60 s. It says so (`stopped`: `reason`,
+  `applied`, `total`, `next_operation`, and the first sentence). What was applied stays applied, and the result has the
+  `clip_revision` to go on with. The first operation is always sent.
 - If an operation is refused, the error still says how many were applied and gives `completed` (compact above 8 steps).
 
 ## The beat-grid skill and its script
@@ -95,6 +97,15 @@ still is its own OTCP request and its own undo step, applied in order with the g
   cross-correlated within 2 seconds; the output is the lag in seconds and a confidence (the best peak over the next one,
   confident from 1.5). It reads 16, 24 and 32 bit PCM and 32 bit float WAV with Node's own modules. The skill asks the
   user only when the check is not confident.
+- `analyze`, `timing-plan` and `align` take `--paths-file <json>`: a JSON object of strings (`input` for `analyze`;
+  `grid` and `notes` for `timing-plan`; `vocal` and `backing` for `align`; a command uses its own keys and leaves the
+  others) that the script reads itself. The skill writes the paths that tools returned (`sourcePath`, `output.path`)
+  to such a file, so they are never part of a shell command line, where a name such as `vocal $(...)`.wav would be
+  run. A path given on the command line and the same one in the file is refused, and an unknown key is refused. A path
+  the user typed may still be on the command line.
+- The ranges of two neighbouring operations never overlap: the end of a range is the outward rounding of the chain's
+  end but not more than the inward rounding of the next chain's start (before, the two roundings could overlap by 0.1
+  ms).
 
 ## Installed analyzer: `status` first
 

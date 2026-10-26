@@ -25,15 +25,18 @@ versioned separately and has its own changelog.
   written. Because it can write a file, the tool is no longer annotated read-only. Without `output_path` nothing
   changes.
 - `opentune_edit_timing` takes up to 64 operations in one call (was 8), as many as `moveHandles` of the specification.
-  A call of more than 8 operations returns compact steps (the undo id and the moves of each), and a call that has run
-  40 seconds stops between two operations and says how far it got, with the `clip_revision` to go on with.
+  A call of more than 8 operations returns compact steps (the undo id and the moves of each), and a call stops between
+  two operations once a further write, at the longest it may take, plus the read after it would not end inside the 60
+  seconds a client waits by default, and says how far it got, with the `clip_revision` to go on with.
 - The `beat-grid` skill fixes the timing of a whole song. `timing-plan` reads the file `opentune_get_notes` writes,
   merges the touching fragments that automatic note splitting makes of one sung syllable (gap under 30 ms, pitch within
   300 cents; a lone note under 60 ms gets no suggestion) and compares only the start of each chain with the grid, and
   gives every batch of up to 64 operations in `calls`; the skill applies one batch, reads the notes again and plans
   again. `align --vocal <wav> --backing <wav>` finds the offset between the vocal and the backing track by itself, and
   the user is asked only when it is not confident. Every command takes `--home` (priority `--home`,
-  `OPENTUNE_BEATS_HOME`, `CLAUDE_PLUGIN_DATA`) and `--help`.
+  `OPENTUNE_BEATS_HOME`, `CLAUDE_PLUGIN_DATA`) and `--help`. `analyze`, `timing-plan` and `align` also take
+  `--paths-file`, a JSON file with the paths: the skill puts the paths that tools returned in it, so that a file name
+  is never part of a shell command line.
 
 ### Fixed
 
