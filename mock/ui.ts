@@ -208,17 +208,21 @@ const dismiss: Handler = (context) => {
 // The tempo field ------------------------------------------------------------------------------------
 
 const TEMPO = { singleton: 'tempo' } as const;
+/** A tempo within this many bpm of its one-decimal value counts as that value: float noise is not a rounding. */
+const TEMPO_TOLERANCE = 1e-9;
 
 /**
  * What the tempo field of the transport bar does when the window switches view (section 14.6): it shows the tempo
  * with one decimal, and each switch moves the keyboard focus out of it, which makes it write the value it shows back
  * to the project. So every switch, in either direction, rounds a tempo that has more than one decimal; null when it
- * has at most one. The result describes the rounding; `apply` carries it out, which a dry run does not.
+ * has at most one. A tempo that differs from its rounded value by no more than floating-point noise (120.30000000000001
+ * shows as 120.3) is not rounded: the field writes back what it shows, which is the same number. The result describes
+ * the rounding; `apply` carries it out, which a dry run does not.
  */
 function tempoRounding({ world, hasCapability }: MethodContext) {
   const from = world.transport.bpm;
   const to = Math.round(from * 10) / 10;
-  if (to === from) return null;
+  if (Math.abs(to - from) < TEMPO_TOLERANCE) return null;
   // The recipe needs transport.setTempo; an instance without it can restore nothing (section 15.2 rule 2).
   const revert = hasCapability('transport.v1') ? { method: 'transport.setTempo', params: { bpm: from } } : null;
   return {
@@ -367,12 +371,13 @@ const setSelection: Handler = (context) => {
 
 /**
  * Switches the window between the arrangement view and the piano roll, as the two view buttons of the
- * transport bar do. The workspace is view state: no content, clip or track changes, nothing is generated and
- * the project is not marked as changed. Switching to the piano roll shows the clip that is selected at that
- * moment, or nothing (`pianoRollContent` null) when no clip is selected, even if the piano roll showed another
- * clip before. Switching to the arrangement view leaves `pianoRollContent` as it is, as the editor keeps the
- * content it showed. Each switch also takes the keyboard focus out of the tempo field, which rounds a tempo with
- * more than one decimal and marks the project as changed (tempoRounding).
+ * transport bar do. The workspace is view state: no content, clip or track changes and nothing is generated.
+ * The one thing a switch does besides is the rounding of the tempo: each switch takes the keyboard focus out
+ * of the tempo field, which rounds a tempo with more than one decimal and marks the project as changed
+ * (tempoRounding). Without that rounding the project is not marked as changed. Switching to the piano roll shows
+ * the clip that is selected at that moment, or nothing (`pianoRollContent` null) when no clip is selected, even
+ * if the piano roll showed another clip before. Switching to the arrangement view leaves `pianoRollContent` as it
+ * is, as the editor keeps the content it showed.
  */
 const setWorkspace: Handler = (context) => {
   const { world, params } = context;

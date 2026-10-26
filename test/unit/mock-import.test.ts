@@ -198,6 +198,17 @@ describe('the focused clip', () => {
     });
   });
 
+  it('does not switch the view, so the import reports no switch and does not round the tempo', async () => {
+    const { clock, session, audio } = await open();
+    await session.ok('transport.setTempo', { bpm: 120.27 });
+    const job = await run(session, clock, { items: [{ path: audio('a.wav') }], layout: 'single', trackId: 2 });
+    expect(Object.keys(job.result?.sideEffects ?? {})).not.toContain('workspaceSwitched');
+    expect(Object.keys(job.result?.sideEffects ?? {})).not.toContain('tempoRounded');
+    expect((await session.ok('ui.getState')).ui).toMatchObject({ workspace: 'arrangement' });
+    // The tempo is as it was: asking for it again changes nothing.
+    expect(await session.ok('transport.setTempo', { bpm: 120.27 })).toMatchObject({ noOp: true });
+  });
+
   it('leaves the piano roll and the selection as they were with focus false', async () => {
     const { clock, session, audio } = await open();
     const ids = session.mock.given({ clips: [clip()] });

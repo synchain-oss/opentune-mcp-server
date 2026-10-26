@@ -64,7 +64,8 @@ function warningTail(envelope: Json): string {
 
 /**
  * Side effects whose words are written out in focusSummary, when their details are an object; any other one, and
- * one of these whose details are not an object, is named by the fixed table.
+ * one of these whose details are not an object, is named by the fixed table. The exception is tempoRounded: whether
+ * it is worded is decided by its key, whatever its details are, so the fixed table must not name it a second time.
  */
 const WORDED = new Set(['notesGenerated', 'uiScaleChanged', 'workspaceSwitched', 'tempoRounded']);
 
@@ -78,11 +79,13 @@ export function focusSummary(envelope: Json, openEditor = false): string {
   const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
   const dry = envelope.dryRun === true;
   const unasked: string[] = [];
+  // A real call marks the project as changed; a dry run changes nothing, so it says what would be marked.
+  const marked = `the project ${dry ? 'would be' : 'is'} marked as changed`;
   if (isObject(effects.notesGenerated)) {
     const n = natural(effects.notesGenerated.noteCount);
     unasked.push(
       `OpenTune ${dry ? 'generates' : 'generated'} ${n === null ? 'notes' : count(n, 'note')} for the clip, with ` +
-        'no undo entry, and the project is marked as changed',
+        `no undo entry, and ${marked}`,
     );
   }
   if (isObject(effects.uiScaleChanged)) unasked.push('the scale shown in the transport bar changes with the clip key');
@@ -92,11 +95,15 @@ export function focusSummary(envelope: Json, openEditor = false): string {
   const route = switched === null ? '' : `from ${viewName(switched.from)} to ${viewName(switched.to)}`;
   if (switched !== null && !openEditor) unasked.push(`the window ${dry ? 'switches' : 'switched'} ${route}`);
   // The window moved the keyboard focus away from the tempo field when it switched, and the field rounded the tempo.
-  if (isObject(effects.tempoRounded)) {
-    unasked.push(`${tempoRoundedWords(effects.tempoRounded, dry)}, and the project is marked as changed`);
+  // Whether the effect is there is decided by its key, as in the generic summary: an instance that sends a value that
+  // is not an object (null) still reports it, and tempoRoundedWords leaves the unchecked numbers out of the sentence.
+  if (Object.hasOwn(effects, 'tempoRounded')) {
+    unasked.push(`${tempoRoundedWords(effects.tempoRounded, dry)}, and ${marked}`);
   }
   for (const name of Object.keys(effects)) {
-    if (!(WORDED.has(name) && isObject(effects[name]))) {
+    // tempoRounded is worded above by its key; the others are worded above only when their details are an object.
+    const worded = name === 'tempoRounded' || (WORDED.has(name) && isObject(effects[name]));
+    if (!worded) {
       unasked.push(SIDE_EFFECT_TEXT[name] ?? `side effect ${token(name, 'camel') ?? 'with an unrecognized name'}`);
     }
   }
