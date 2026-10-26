@@ -211,6 +211,11 @@ describe('opentune_set_settings', () => {
     expect(started.summary).toMatch(/started job j:[0-9a-f]{8}:[1-9][0-9]*/);
     expect(started.summary).toContain('Follow it with opentune_get_job');
     expect(started.summary).toContain('1 later setting group(s) were not attempted');
+    // The scheme is the member that brings notes; nothing of the weight or priority is claimed.
+    expect(started.summary).toContain(
+      'an editing-scheme change may generate notes that can be neither undone nor reverted',
+    );
+    expect(started.summary).not.toContain('vocoder');
     const jobId = (started.job as { jobId: string }).jobId;
 
     clock.advance(0);
@@ -467,7 +472,37 @@ describe('opentune_set_settings: vocoder weight, rendering priority, pitch model
     mock.setVocoderFault(null);
   });
 
-  it('words the re-render conditionally when session.info cannot be read afterwards', async () => {
+  it('does not say the weight has loaded when the vocoder reports ready only after a job that did not wait for it', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    // The vocoder is not ready for the call, so the job does not wait for it ...
+    mock.setVocoderFault('stuck');
+    body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' }, wait_seconds: 0 }));
+    await untilVocoder(ctx, false);
+    // ... and the earlier reconfiguration ends once the job has: a read after the call sees "ready, not
+    // reconfiguring", which proves nothing about the weight the job handed over (PROTOCOL.md section 12.7 rule 4).
+    const session = await rawSession(ctx);
+    const original = session.call.bind(session);
+    session.call = async (method: string, params: Json, timeoutMs: number) => {
+      const result = await original(method, params, timeoutMs);
+      if (method === 'job.get' && (result.job as Json | undefined)?.state === 'succeeded') {
+        mock.setVocoderFault(null);
+        for (let i = 0; i < 400; i += 1) {
+          const processing = (await original('session.info', {}, 5000)).processing as Json;
+          if (processing.vocoderReady === true && processing.vocoderReconfiguring === false) break;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      }
+      return result;
+    };
+    const out = body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
+    expect(await processingOf(ctx)).toMatchObject({ vocoderReady: true, vocoderReconfiguring: false });
+    expect(out.summary).toContain('only after the new vocoder weight has finished loading');
+    expect(out.summary).not.toContain('which has loaded');
+    expect(reRenderLine(out)?.text).toContain('not at all if it cannot be loaded');
+  });
+
+  it('words the re-render conditionally when session.info cannot be read before the call', async () => {
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()] });
     const session = await rawSession(ctx);
@@ -480,15 +515,19 @@ describe('opentune_set_settings: vocoder weight, rendering priority, pitch model
     expect(out.summary).toContain('not at all if it cannot be loaded');
   });
 
-  it('reads session.info only for a result that changed the vocoder weight', async () => {
+  it('reads session.info once, before the call, and only for a call that names the vocoder weight', async () => {
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()] });
     const sent = await recordCalls(ctx);
     body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
     body(await setSettings(ctx, { processing: { tuning_hz: 442, hybrid_mode: true } }));
     expect(sent).not.toContain('session.info');
+    sent.length = 0;
     body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
+    // One read, and it comes before the request that changes the weight, not after the job.
     expect(sent.filter((m) => m === 'session.info')).toHaveLength(1);
+    expect(sent.indexOf('session.info')).toBeLessThan(sent.indexOf('prefs.set'));
+    expect(sent.indexOf('session.info')).toBeLessThan(sent.indexOf('job.get'));
   });
 
   it('changes the rendering priority by a job, with no render and nothing but the global warning', async () => {
@@ -509,6 +548,44 @@ describe('opentune_set_settings: vocoder weight, rendering priority, pitch model
       arguments: { processing: { rendering_priority: 'gpuFirst' } },
     });
     expect(await processingOf(ctx)).toMatchObject({ renderingPriority: 'cpuFirst', vocoderReady: true });
+  });
+
+  it('names in the lead of a job that outlives the wait only what the members of the call bring', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    const weight = body(
+      await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' }, wait_seconds: 0 }),
+    );
+    expect(weight.summary).toMatch(/^opentune_set_settings: this changes user-global OpenTune settings/);
+    expect(weight.summary).toContain('Follow it with opentune_get_job');
+    expect(weight.summary).toContain(
+      'a new vocoder weight makes every content render again once it has loaded, and not at all if it cannot be loaded; ' +
+        "the job's result holds the previous values",
+    );
+    expect(weight.summary).not.toContain('generate notes');
+    // The job is followed to its end before the next change, as a user would.
+    const jobId = (weight.job as { jobId: string }).jobId;
+    expect(body(await getJob(ctx, { job_id: jobId, wait_seconds: 10 })).job).toMatchObject({ state: 'succeeded' });
+
+    const priority = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' }, wait_seconds: 0 }));
+    expect(priority.summary).toContain(
+      'a new rendering priority makes the vocoder load again and renders no content again; ' +
+        "the job's result holds the previous values",
+    );
+    expect(priority.summary).not.toContain('generate notes');
+    expect(priority.summary).not.toContain('vocoder weight');
+    await untilVocoder(ctx, true);
+
+    const both = body(
+      await setSettings(ctx, {
+        processing: { editing_scheme: 'openDyne', vocoder_weight: 'hifigan.onnx' },
+        wait_seconds: 0,
+      }),
+    );
+    expect(both.summary).toContain(
+      'an editing-scheme change may generate notes that can be neither undone nor reverted',
+    );
+    expect(both.summary).toContain('a new vocoder weight makes every content render again once it has loaded');
   });
 
   it('changes the pitch model and the reference alignment mode in the call, with EXPERIMENTAL_FEATURE for the mode', async () => {

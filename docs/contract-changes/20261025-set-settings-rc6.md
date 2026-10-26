@@ -31,10 +31,15 @@ the previous values, the call that restores them, the warnings, and the reasons 
   applied the change and the following of the job then failed (documented in `docs/COMPATIBILITY.md`, now rewritten).
 - Results: the revert line restores the four new members as well (a value outside the input schema is left out, as
   before). The sentence that explains the re-render after a new vocoder weight depends on one read of `session.info`
-  after the job: when the vocoder is ready and not loading, the clips render again now; otherwise after the weight has
-  loaded (also when the read fails). The wording is used for the side effect `reRenderQueued` in the side-effects clause
-  of the summary and in its own line; the warning `EXPERIMENTAL_FEATURE` keeps its existing line. The first sentence of
-  a result is chosen by the same rules as before.
+  made before the call, by a call that names `vocoder_weight` and by no other: when the vocoder was ready and not
+  loading, the job waits for the new weight, and when it ends normally the clips render again with it; otherwise (the
+  vocoder was not ready, the job did not end normally, the read fails) the render happens only after the weight has
+  loaded, and not at all if it cannot be loaded. Nothing read after the call decides it, because right after a change
+  the vocoder can still report ready. The wording is used for the side effect `reRenderQueued` in the side-effects
+  clause of the summary and in its own line; the warning `EXPERIMENTAL_FEATURE` keeps its existing line. The first
+  sentence of a result is chosen by the same rules as before, except that the first sentence of a result whose job
+  outlives the wait names only what the members of the call bring: the notes of `editing_scheme`, the render of
+  `vocoder_weight`, the load of `rendering_priority`.
 - Next steps: `INVALID_ARGUMENT(option_unavailable)` (read `processing.options`, call again with one of the values;
   nothing was changed), `MODEL_UNAVAILABLE(vocoder_not_ready)` (retryable; OpenTune took its changes back) and
   `MODEL_UNAVAILABLE(vocoder_load_failed)` (not retryable; tell the user). The retryable flags follow the registry as

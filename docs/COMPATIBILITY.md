@@ -95,7 +95,8 @@ The tools name their fields in snake_case, the specification in camelCase.
 
 A call that changes the editing scheme, the vocoder weight or the rendering priority is handed to a job, which the tool
 follows for `wait_seconds` like any other job. After a new vocoder weight the result says whether the clips render
-again now (the vocoder was ready and has loaded the weight) or after the weight has loaded (it was still busy). Two
+again now (the vocoder was ready before the call, so the job waited for the weight to load) or after the weight has
+loaded (it was not ready before the call, so the job did not wait, or that could not be read). Two
 failures are specific to these jobs, and in both OpenTune takes the changes back: `MODEL_UNAVAILABLE(vocoder_not_ready)`
 (the vocoder stayed busy past OpenTune's wait limit; call again) and `MODEL_UNAVAILABLE(vocoder_load_failed)` (it could
 not load the new weight or backend; this does not go away by calling again, see

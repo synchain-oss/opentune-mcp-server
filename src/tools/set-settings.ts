@@ -178,30 +178,39 @@ const rendersAfterWeight = (envelope: Json): boolean =>
   isObject(envelope.sideEffects) &&
   'reRenderQueued' in envelope.sideEffects;
 
+/** Whether a step changes the vocoder weight: the one case whose wording depends on the vocoder before the call. */
+const namesWeight = (step: Step): boolean => step.method === 'prefs.set' && 'vocoderWeight' in step.params;
+
 /**
- * How a prefs.set result is rendered. A job that did not wait for the vocoder (it was not ready before the call)
- * can end before the new weight has loaded, and the render of every content starts only once it has (PROTOCOL.md
- * section 12.7 rule 4), so the result is worded after one read of session.info: the vocoder is ready (the render
- * will be done), or it is not (yet), and the render happens only if the weight loads. A read that fails leaves the
- * conditional wording, which holds in either case.
+ * Whether the vocoder is ready and not reconfiguring, read from session.info before a call that changes the weight.
+ * A job waits for the vocoder only if it was ready before the call (PROTOCOL.md section 12.7 rule 4), so this is what
+ * tells whether the job waited for the new weight to load. A read that fails counts as not ready: the conditional
+ * wording holds in either case.
  */
-async function renderContext(
-  ctx: ToolContext,
-  session: OtcpSession,
-  method: string,
-  envelope: unknown,
-): Promise<RenderContext> {
-  if (method !== 'prefs.set' || !isObject(envelope) || !rendersAfterWeight(envelope)) return { tool: TOOL };
-  let reRender: ReRenderState = 'afterLoad';
+async function vocoderReadyBefore(ctx: ToolContext, session: OtcpSession): Promise<boolean> {
   try {
     const info = await session.call('session.info', {}, INFO_TIMEOUT_MS);
     const processing = isObject(info.processing) ? info.processing : {};
-    if (processing.vocoderReady === true && processing.vocoderReconfiguring !== true) reRender = 'loaded';
+    return processing.vocoderReady === true && processing.vocoderReconfiguring !== true;
   } catch (error) {
     ctx.logger.warn(
       `reading session.info to word the re-render failed (${error instanceof Error ? error.message : 'unknown error'})`,
     );
+    return false;
   }
+}
+
+/**
+ * How a prefs.set result is rendered. After a weight change OpenTune renders every content again once the new
+ * weight has loaded. That is certain only when the job waited for the vocoder (it was ready before the call) and
+ * ended normally: it then ended after the reconfiguration had finished. A job that did not wait can end before the
+ * new weight has loaded or even started to load, and right after a change the vocoder can still report "ready, not
+ * reconfiguring" (rule 4), so nothing read after the call proves the weight loaded; the render then happens only if
+ * the weight loads, and the wording says so.
+ */
+function renderContext(method: string, envelope: unknown, loaded: boolean): RenderContext {
+  if (method !== 'prefs.set' || !isObject(envelope) || !rendersAfterWeight(envelope)) return { tool: TOOL };
+  const reRender: ReRenderState = loaded ? 'loaded' : 'afterLoad';
   return { tool: TOOL, reRender };
 }
 
@@ -251,11 +260,28 @@ export function settingsLead(body: Body): Body {
   return body.noOp === true ? body : withLead(body, leadSentence([body]));
 }
 
-/** The body of a result that names a started job: it says what the change is before the job's own words. */
-const JOB_LEAD =
-  'this changes user-global OpenTune settings, which belong to the installation and not to the project, and ' +
-  'OpenTune records no undo entry for it, and an editing-scheme change may generate notes that can be neither ' +
-  "undone nor reverted; the job's result holds the previous values and what can be restored.";
+/** What the members that a job applies bring with them, in the order of the protocol. */
+const JOB_MEMBER_TEXT: readonly (readonly [member: string, text: string])[] = [
+  ['editingScheme', 'an editing-scheme change may generate notes that can be neither undone nor reverted'],
+  [
+    'vocoderWeight',
+    'a new vocoder weight makes every content render again once it has loaded, and not at all if it cannot be loaded',
+  ],
+  ['renderingPriority', 'a new rendering priority makes the vocoder load again and renders no content again'],
+];
+
+/**
+ * The lead of a result that names a started job: it says what the change is before the job's own words, and names
+ * only what the members of this call bring with them (a call that changes the rendering priority generates no notes).
+ */
+function jobLead(params: Json): string {
+  const brings = JOB_MEMBER_TEXT.filter(([member]) => member in params).map(([, text]) => `, and ${text}`);
+  return (
+    'this changes user-global OpenTune settings, which belong to the installation and not to the project, and ' +
+    `OpenTune records no undo entry for it${brings.join('')}; the job's result holds the previous values and what ` +
+    'can be restored.'
+  );
+}
 
 const withLead = (body: Body, lead: string): Body => ({
   ...body,
@@ -300,6 +326,8 @@ async function runSteps(
     results.length === 0 ? outcome : failedAfter(outcome.error);
 
   for (const [index, step] of steps.entries()) {
+    // The only extra read of a call, and only for a call that names a weight: whether the job will wait for it.
+    const readyBefore = namesWeight(step) && (await vocoderReadyBefore(ctx, session));
     let run;
     try {
       run = await startAndWait(ctx, session, step.method, step.params, waitSeconds);
@@ -311,10 +339,8 @@ async function runSteps(
     }
     const { started, job, waitFailed } = run;
     if (job === null || !isTerminal(job)) {
-      const outcome = writeOutcome(
-        started,
-        job === null ? await renderContext(ctx, session, step.method, started) : { tool: TOOL },
-      );
+      // No job to wait for (or one that has not ended): nothing says the new weight has loaded.
+      const outcome = writeOutcome(started, job === null ? renderContext(step.method, started, false) : { tool: TOOL });
       if (!outcome.ok) return stop(outcome);
       if (job === null) {
         results.push({ method: step.method, label: step.label, body: outcome.body });
@@ -334,7 +360,7 @@ async function runSteps(
         (remaining > 0
           ? ` The ${String(remaining)} later setting group(s) were not attempted; call again for them.`
           : '');
-      const pending = withLead({ ...outcome.body, summary: outcome.body.summary + note }, JOB_LEAD);
+      const pending = withLead({ ...outcome.body, summary: outcome.body.summary + note }, jobLead(step.params));
       return {
         ok: true,
         body:
@@ -346,7 +372,7 @@ async function runSteps(
     const state = jobState(job);
     if (state === 'failed') return stop(jobFailure(job));
     if (state === 'cancelled') {
-      const outcome = writeOutcome(job.result, await renderContext(ctx, session, step.method, job.result));
+      const outcome = writeOutcome(job.result, renderContext(step.method, job.result, false));
       results.push({
         method: step.method,
         label: step.label,
@@ -366,7 +392,7 @@ async function runSteps(
         }),
       });
     }
-    const outcome = writeOutcome(result, await renderContext(ctx, session, step.method, result));
+    const outcome = writeOutcome(result, renderContext(step.method, result, readyBefore));
     if (!outcome.ok) return stop(outcome);
     results.push({ method: step.method, label: step.label, body: outcome.body });
   }
