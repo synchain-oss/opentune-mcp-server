@@ -70,6 +70,12 @@
       "description": "track.set, track.add, track.duplicate and track.delete."
     },
     {
+      "code": "reference.v1",
+      "since": "1.0",
+      "retiredIn": "1.0.0-rc.7",
+      "description": "Retired in 1.0.0-rc.7 with the reference alignment, and no longer reported. It named content.analyzeReference and the reference mode of content.autoTune, which were removed. An instance of an earlier release candidate may still list it."
+    },
+    {
       "code": "project.io",
       "since": "1.0",
       "description": "project.save, project.saveAs, project.open and project.clearRecent."

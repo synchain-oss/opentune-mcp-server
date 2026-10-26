@@ -36,6 +36,29 @@ const MEMBER: Readonly<Record<Section, string>> = {
 const isObject = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
+/** The modes of content.autoTune, which this server can run. */
+const RUNNABLE_MODES: ReadonlySet<string> = new Set(['regenerate', 'snapNotes', 'notesOnly']);
+/**
+ * What the AUTO button can run besides those, named by a fixed text. A window of a build from before OpenTune's
+ * upstream project removed the reference alignment runs `reference` while a reference track is bound; no mode of
+ * content.autoTune does that, so autoModes.available never lists it. The value is OpenTune's string, so it is
+ * looked up here and never put into the sentence.
+ */
+const OTHER_MODE_LABELS: ReadonlyMap<string, string> = new Map([['reference', 'reference alignment']]);
+const UNKNOWN_MODE_LABEL = 'a mode this server does not know';
+
+/**
+ * The summary part about the mode the AUTO button runs. A mode that content.autoTune has is named as OpenTune
+ * reports it (it is in the fixed list above). Any other value is a mode that this server cannot run: the part says
+ * so, with a fixed label for the value and never the value itself. Null when OpenTune reported no string.
+ */
+function autoButtonSentence(reported: unknown): string | null {
+  if (typeof reported !== 'string' || reported.length === 0) return null;
+  if (RUNNABLE_MODES.has(reported)) return `the AUTO button would run ${reported}`;
+  const label = OTHER_MODE_LABELS.get(reported) ?? UNKNOWN_MODE_LABEL;
+  return `the AUTO button in the OpenTune window would now run ${label}; this server cannot run that mode`;
+}
+
 export interface GetClipDetailsArgs {
   readonly clip: string;
   readonly sections?: readonly Section[] | undefined;
@@ -104,8 +127,10 @@ export async function getClipDetails(ctx: ToolContext, args: GetClipDetailsArgs)
       parts.push(`the pitch analysis state is ${f0State}${failure === null ? '' : ` (failed: ${failure})`}`);
     }
     const autoModes = isObject(details.autoModes) ? details.autoModes : null;
-    const mode = trustedToken(autoModes?.uiButtonRuns, NAME_RE);
-    if (wanted.has('auto_modes') && mode !== null) parts.push(`the AUTO button would run ${mode}`);
+    if (wanted.has('auto_modes')) {
+      const sentence = autoButtonSentence(autoModes?.uiButtonRuns);
+      if (sentence !== null) parts.push(sentence);
+    }
     const summary =
       'Read the details of the clip' +
       (parts.length > 0 ? `: ${parts.join('; ')}` : '') +

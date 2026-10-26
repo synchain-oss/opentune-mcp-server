@@ -32,16 +32,20 @@ versioned separately and has its own changelog.
     `reference_ineligible`.
   - `opentune_set_settings` and `opentune_get_settings`: `reference_align_mode` (the reference alignment mode of the
     processing preferences, and its entry in `options`). The experimental features switch (`experimental_features`)
-    stays.
+    stays. `opentune_get_settings` leaves the mode out also when an instance of the specification `1.0.0-rc.6` still
+    reports it.
   - `opentune_get_clip_details`: the section `reference` (it is no longer a value of `sections`) and the notice about
-    a reference binding that is left over.
+    a reference binding that is left over. The window of a test build from before OpenTune's upstream project removed
+    the feature still runs the reference alignment from its AUTO button once a reference track is bound there, so the
+    summary says when the button would run a mode that this server cannot run (`autoModes.uiButtonRuns` is
+    `reference`, which is not in `autoModes.available`); the server never runs it. See `docs/COMPATIBILITY.md`.
   - The sentences of the results of `opentune_delete_track`, `opentune_open_project` and `opentune_manage_ui` about
     reference bindings that were removed or not restored and about a queued reference analysis, the job kind
     `referenceAnalysis` of the job tools, and the next steps of the reasons `reference_analysis_stalled`,
     `reference_analysis_timeout` and `reference_analysis_failed`.
   - The mock, the contract vectors, the tests, the end-to-end tour and the troubleshooting text of the reference
-    analysis. The registries of the specification keep the reasons and the warning that were sent, marked as retired
-    from `1.0.0-rc.7` on; see `docs/contract-changes/20261026-retire-reference.md`.
+    analysis. The registries of the specification keep the capability `reference.v1`, the reasons and the warning that were
+    sent, marked as retired from `1.0.0-rc.7` on; see `docs/contract-changes/20261026-retire-reference.md`.
 
 ## [0.2.0] - 2026-10-26
 

@@ -83,13 +83,26 @@ refused with `UNSUPPORTED` before anything is sent, so no change is applied that
 
 ### Reference alignment was removed
 
-The experimental reference track and its AUTO Ref button have been retired by OpenTune's upstream project. The window of
-this test build may still show the reference track, but the control interface (specification `1.0.0-rc.7`) neither reads,
-writes nor reports it, and the capability `reference.v1` is gone from the registry. This server therefore has no mode
+OpenTune's upstream project has retired the experimental reference track and its AUTO Ref button, and the control
+interface (specification `1.0.0-rc.7`) no longer reads, writes or reports it. This server therefore has no mode
 `reference` in `opentune_autotune_range`, no `set_reference` in `opentune_edit_arrangement`, no `reference_align_mode`
-in `opentune_set_settings` and no reference section in `opentune_get_clip_details`. An instance that follows `1.0.0-rc.6`
-or earlier still lists `reference.v1` among its capabilities; this server ignores it and never sends the removed members
-to such an instance, so every other tool works with it as before.
+in `opentune_set_settings` (and `opentune_get_settings` does not show it), and no reference section in
+`opentune_get_clip_details`. The registry keeps the capability `reference.v1`, marked as retired; no server of
+`1.0.0-rc.7` reports it and this server never uses it.
+
+The test builds are based on a locked upstream version that still has the feature, so with them:
+
+- The window still has the reference alignment.
+- After the user binds a reference track in the window, its AUTO button runs the reference alignment.
+- This server reports that truthfully through `autoModes.uiButtonRuns`: `opentune_get_clip_details` says that the AUTO
+  button in the OpenTune window would now run reference alignment and that this server cannot run that mode. It never
+  runs the reference alignment itself.
+- Once the server and the test build follow the newer upstream (the final rebase), the feature no longer exists, and the
+  AUTO button runs `regenerate` or `snapNotes` only.
+
+An instance that follows `1.0.0-rc.6` or earlier still lists `reference.v1` among its capabilities and still reports the
+reference alignment mode; this server ignores both, and never sends the removed members to such an instance, so every
+other tool works with it as before.
 
 ## Settings tools and the specification versions
 
