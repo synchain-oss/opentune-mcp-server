@@ -60,6 +60,25 @@ versioned separately and has its own changelog.
   program and the models asked for are there; `status` leaves out the unpublished-release note for an installed
   analyzer; `SKILL.md` skips the install section on `installed: true` and stops for an unpublished release only
   when nothing is installed. An analyzer that is not installed is still refused as before.
+- Text and specification follow-ups of the review of the skill and wording changes (contract change record
+  `docs/contract-changes/20261026-shift-timing-closed-range.md`):
+  - The OTCP specification (`1.0.0-rc.7`) says that the `range` of `content.shiftTiming` is a closed interval: a handle
+    exactly at either end moves, so two ranges that share an end point move the handle there twice. It also says in the
+    `focus` description of `import.start` that the focused clip is loaded into the piano roll without switching the
+    view. Both state what the OpenTune build already does; nothing changes on the wire.
+  - The timing plan of the `beat-grid` skill no longer lets neighbouring ranges meet: a range ends at least 0.1 ms
+    before the next one starts. An onset that has no room left for a range (the next chain starts less than about 0.2 ms
+    after it) is skipped with the warning `RANGE_TOO_NARROW`, which names the note and the shift that was not planned,
+    instead of getting a range that reaches into the next one.
+  - `SKILL.md` of `beat-grid` says that `grid` stays out of the paths file when `--grid` is on the command line (both
+    is refused as "given twice").
+  - `SKILL.md` of `tuning-workflow` tells the first-run welcome page from other dialogs by `blockedBy.kind`
+    (`onboarding` or `dialog`) instead of the English of `hint`; says that a peak above 0 dBFS and samples at full scale
+    without a measured peak (`peakDbfs` null, `clippedSampleCount` above 0) are reported differently; and, when a
+    reopened project lacks corrections, no longer saves over the original file: the agent tells the user what is
+    missing, suggests `save_as` to a new file, and overwrites the original only if the user agrees.
+  - The skill tests: the check that no skill declares `allowed-tools` also sees a quoted key, and every identifier a
+    skill names in backticks as a result field (`peakDbfs`, `blockedBy`) must exist in the code.
 
 ### Security
 
