@@ -10,7 +10,7 @@
 
 import type { Clock, Timer } from './clock.js';
 import { refuse } from './errors.js';
-import { TUNING_HZ } from './music.js';
+import { TUNING_HZ, exceedsHybridLimit } from './music.js';
 
 export const TRACK_SLOTS = 8;
 /** The tracks OpenTune shows before any clip needs more. */
@@ -359,8 +359,8 @@ export class World {
   readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
   /** Test interface: the vocoder loads at the first render (setVocoderLoadOnDemand). */
   vocoderLoadOnDemand = false;
-  /** The contents whose render finished while the vocoder was not ready (on demand): published once it is. */
-  readonly #rendersWaiting = new Set<ContentRec>();
+  /** The contents whose render finished while the vocoder was not ready (on demand), with the render they wait to publish. */
+  readonly #rendersWaiting = new Map<ContentRec, string>();
   /** The fault the vocoder runs into (setVocoderFault). */
   #vocoderFault: 'stuck' | 'loadFails' | null = null;
   /** Under the fault `loadFails`: the only weight and rendering priority the vocoder can still load. */
@@ -584,17 +584,25 @@ export class World {
 
   /**
    * Queues rendering of a content again; it settles RENDER_SETTLE_MS later (section 14.6). With `vocoderLoadOnDemand`
-   * the first render makes OpenTune load the vocoder, as it does when a render first needs it, and no render is
-   * published before the vocoder is ready.
+   * the first render that needs the vocoder makes OpenTune load it, and such a render is not published before the
+   * vocoder is ready. A render needs the vocoder unless hybrid mode is on and no voiced frame is corrected by more than
+   * HYBRID_DSP_LIMIT_CENTS: OpenTune renders such a block by resampling, without the vocoder, which does not load it.
    */
   queueRender(content: ContentRec): void {
     const desired = this.mint('d');
     content.render.desired = desired;
-    if (this.vocoderLoadOnDemand && this.vocoderLoadFailed) this.reconfigureVocoder(false);
+    if (this.vocoderLoadOnDemand && this.vocoderLoadFailed && this.#needsVocoder(content))
+      this.reconfigureVocoder(false);
     this.after(RENDER_SETTLE_MS, () => {
-      if (this.vocoderLoadOnDemand && !this.vocoder.ready) this.#rendersWaiting.add(content);
-      else content.render.published = content.render.desired;
+      if (this.vocoderLoadOnDemand && !this.vocoder.ready && this.#needsVocoder(content)) {
+        this.#rendersWaiting.set(content, content.render.desired);
+      } else content.render.published = content.render.desired;
     });
+  }
+
+  /** The render of the content as it is now needs the vocoder (see queueRender). */
+  #needsVocoder(content: ContentRec): boolean {
+    return !this.prefs.hybridMode || content.notes.some((note) => exceedsHybridLimit(content.durationSec, note));
   }
 
   /**
@@ -610,9 +618,14 @@ export class World {
     if (!on) this.#publishWaitingRenders();
   }
 
-  /** The renders that waited for the vocoder are published. */
+  /**
+   * The renders that waited for the vocoder are published, unless the content was queued for rendering again since:
+   * the timer of that later render publishes it (or waits for the vocoder itself).
+   */
   #publishWaitingRenders(): void {
-    for (const content of this.#rendersWaiting) content.render.published = content.render.desired;
+    for (const [content, desired] of this.#rendersWaiting) {
+      if (content.render.desired === desired) content.render.published = desired;
+    }
     this.#rendersWaiting.clear();
   }
 

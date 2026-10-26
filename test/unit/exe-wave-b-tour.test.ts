@@ -26,6 +26,7 @@ import {
   refusalIsDefect,
   runWaveBTour,
   unofferedWeight,
+  VOCODER_LOAD_SHIFT_CENTS,
   type WaveBTourHooks,
   type WaveBTourReport,
 } from '../e2e/wave-b-tour.js';
@@ -2121,8 +2122,11 @@ describe('the preference step of the tour', () => {
   }, 120_000);
 
   describe('with a vocoder that OpenTune loads at the first render', () => {
+    // Hybrid mode is on, as OpenTune has it by default and the data template of the real run does: a correction of
+    // 75 cents or less is then rendered without the vocoder.
     const onDemand = (mock: OtcpMock): void => {
       twoWeights(mock);
+      mock.given({ preferences: { hybridMode: true } });
       mock.setVocoderLoadOnDemand(true);
     };
     /** The edit that loads the vocoder and its undo, as the report lists them for the step. */
@@ -2132,7 +2136,7 @@ describe('the preference step of the tour', () => {
         .map((call) => `${call.method}/${call.kind}/${call.outcome}`);
     const SKIP_REASON = 'the vocoder was not ready within 0.3 s, so the job would not wait for it';
 
-    it('loads it with one small edit that it takes back, then switches the priority and the weight', async () => {
+    it('loads it with one edit that it takes back, then switches the priority and the weight', async () => {
       const edits: Json[] = [];
       let beforeEdit: unknown;
       let afterUndo: unknown;
@@ -2155,7 +2159,12 @@ describe('the preference step of the tour', () => {
       // One edit of one note and its undo, listed in the report; the notes are as they were before the edit.
       expect(loadCalls(report)).toEqual(['content.editNotes/write/ok', 'edit.undo/undo/ok']);
       expect(edits).toHaveLength(1);
-      expect(edits[0]).toMatchObject({ ops: [{ op: 'shiftCents', select: { indices: [expect.any(Number)] } }] });
+      expect(edits[0]).toMatchObject({
+        ops: [{ op: 'shiftCents', select: { indices: [expect.any(Number)] }, deltaCents: VOCODER_LOAD_SHIFT_CENTS }],
+      });
+      expect(stepResult(report, STEP)?.note).toContain(
+        `one note shifted by ${String(VOCODER_LOAD_SHIFT_CENTS)} cents and taken back with edit.undo`,
+      );
       expect(afterUndo).toBeDefined();
       expect(afterUndo).toEqual(beforeEdit);
       // Both changes that a job applies ran after it, and the one edit served both.
@@ -2237,9 +2246,7 @@ describe('the preference step of the tour', () => {
       const report = await runWaveBTour(config, hooks);
       const step = stepResult(report, STEP);
       expect(step?.result).toBe('FAIL');
-      expect(step?.note).toContain(
-        'content.editNotes (a small edit to load the vocoder): taking the write back failed',
-      );
+      expect(step?.note).toContain('content.editNotes (an edit to load the vocoder): taking the write back failed');
       // Nothing of rc.6 was sent, and the tour stopped before the later steps.
       expect(rc6Sent(seen.sent)).toEqual([]);
       expect(stepResult(report, 'audio.get and audio.set')?.result).toBe('SKIP');
@@ -2255,15 +2262,95 @@ describe('the preference step of the tour', () => {
       const report = await runWaveBTour(config, hooks);
       const step = stepResult(report, STEP);
       expect(step?.result).toBe('FAIL');
-      expect(step?.note).toContain(
-        'content.editNotes (a small edit to load the vocoder): content.editNotes failed with',
-      );
+      expect(step?.note).toContain('content.editNotes (an edit to load the vocoder): content.editNotes failed with');
       expect(loadCalls(report)).toEqual(['content.editNotes/write/error']);
       expect(report.facts['prefs.renderingPriority']).toBe(`SKIP: ${SKIP_REASON}`);
       expect(report.facts['prefs.vocoderWeight']).toBe(`SKIP: ${SKIP_REASON}`);
       expect(rc6Sent(seen.sent).filter((params) => 'renderingPriority' in params)).toEqual([]);
       // The later steps ran.
       expect(stepResult(report, 'the wave-B MCP tools')?.result).toBe('PASS');
+    }, 120_000);
+
+    it('does not load the vocoder with a correction of 10 cents under hybrid mode, as the real run showed', async () => {
+      // The render is done by resampling: it catches up at once, and the vocoder stays unloaded.
+      const seen = watch(undefined, (method, params) => {
+        if (method !== 'content.editNotes' || !Array.isArray(params.ops)) return;
+        for (const op of params.ops) if (isObject(op)) op.deltaCents = 10;
+      });
+      const { hooks } = fixture({ prepare: onDemand, vocoderSettleMs: 300, ...seen.options });
+      const report = await runWaveBTour(config, hooks);
+      expect(stepResult(report, STEP)?.result).toBe('PASS');
+      expect(stepResult(report, STEP)?.note).toContain('but it was not ready after the render');
+      expect(loadCalls(report)).toEqual(['content.editNotes/write/ok', 'edit.undo/undo/ok']);
+      expect(report.facts['prefs.renderingPriority']).toBe(`SKIP: ${SKIP_REASON}`);
+      expect(report.facts['prefs.vocoderWeight']).toBe(`SKIP: ${SKIP_REASON}`);
+    }, 120_000);
+
+    it('moves the note far enough to leave the range that hybrid mode renders without the vocoder', () => {
+      // 75 cents is the limit of the resampling; a generated note can lie 50 cents from the pitch it was sung at.
+      expect(VOCODER_LOAD_SHIFT_CENTS).toBeGreaterThanOrEqual(75 + 50);
+    });
+
+    it('tries nothing, and says so, when the clip has no voiced note', async () => {
+      const seen = watch((method, result) => {
+        if (method !== 'content.getNotes' || !Array.isArray(result.notes)) return undefined;
+        for (const note of result.notes) if (isObject(note)) note.voiced = false;
+        return result;
+      });
+      const { hooks } = fixture({ prepare: onDemand, vocoderSettleMs: 300, ...seen.options });
+      const report = await runWaveBTour(config, hooks);
+      expect(stepResult(report, STEP)?.result).toBe('PASS');
+      expect(stepResult(report, STEP)?.note).toContain(
+        'the clip has no voiced note to edit, so no render was tried to load the vocoder',
+      );
+      // No edit, so no undo; the changes that need the vocoder are skipped for the old reason, once the note is said.
+      expect(loadCalls(report)).toEqual([]);
+      expect(report.facts['prefs.renderingPriority']).toBe(`SKIP: ${SKIP_REASON}`);
+      expect(report.facts['prefs.vocoderWeight']).toBe(`SKIP: ${SKIP_REASON}`);
+      expect(
+        stepResult(report, STEP)?.note.split('the clip has no voiced note to edit').length,
+        'the sentence is written once',
+      ).toBe(2);
+    }, 120_000);
+
+    it('reports a result of the edit that carries no token for the content, and still takes the edit back', async () => {
+      const seen = watch((method, result) => {
+        if (method !== 'content.editNotes' || !isObject(result.tokens)) return undefined;
+        result.tokens.contents = [];
+        return result;
+      });
+      const { hooks } = fixture({ prepare: onDemand, ...seen.options });
+      const report = await runWaveBTour(config, hooks);
+      expect(stepResult(report, STEP)?.result).toBe('FAIL');
+      expect(stepResult(report, STEP)?.note).toContain(
+        'content.editNotes (an edit to load the vocoder): the result of the edit carries no token for the content',
+      );
+      expect(loadCalls(report)).toEqual(['content.editNotes/write/ok', 'edit.undo/undo/ok']);
+      // The revision check did not turn into a pass, and nothing else was reported about the revision.
+      expect(stepResult(report, STEP)?.note).not.toContain('still the one right after the edit');
+    }, 120_000);
+
+    it('reports a project that does not list the content after the undo', async () => {
+      let undone = false;
+      let stripped = false;
+      const seen = watch(
+        (method, result) => {
+          if (method !== 'project.get' || !undone || stripped || !isObject(result.asOf)) return undefined;
+          stripped = true;
+          result.asOf.contents = [];
+          return result;
+        },
+        (method) => {
+          if (method === 'edit.undo') undone = true;
+        },
+      );
+      const { hooks } = fixture({ prepare: onDemand, ...seen.options });
+      const report = await runWaveBTour(config, hooks);
+      expect(stepResult(report, STEP)?.result).toBe('FAIL');
+      expect(stepResult(report, STEP)?.note).toContain(
+        'content.editNotes (an edit to load the vocoder): after the undo, project.get does not list the content',
+      );
+      expect(stepResult(report, STEP)?.note).not.toContain('give the content different revisions');
     }, 120_000);
   });
 

@@ -506,11 +506,16 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
   });
 
   describe('a vocoder that loads at the first render', () => {
-    const shift = (ids: Record<string, string>) => ({
+    const shift = (ids: Record<string, string>, deltaCents = 10, revision = ids['clip.revision']) => ({
       contentId: ids['clip.contentId'],
-      expectedRevision: ids['clip.revision'],
-      ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents: 10 }],
+      expectedRevision: revision,
+      ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents }],
     });
+    /** The revision of the content a write result reports. */
+    const revisionOf = (result: Record<string, unknown>): string =>
+      (field(result, 'tokens', 'contents') as { revision: string }[])[0]?.revision ?? '';
+    /** A clip whose one note sits on the detected pitch of the mock (within about 12 cents of it). */
+    const onPitch = () => clip({ notes: [{ startContentSec: 0.1, endContentSec: 0.5, targetMidi: 64 }] });
     const renderOf = async (session: TestSession, ids: Record<string, string>) =>
       field(await session.ok('content.getDetails', { contentId: ids['clip.contentId'] }), 'render') as {
         current: boolean;
@@ -565,6 +570,67 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
       // Once the fault is gone, the load ends and the render is published.
       mock.setVocoderFault(null);
       expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+      expect((await renderOf(session, ids)).current).toBe(true);
+    });
+
+    it('with hybrid mode on, renders a correction within 75 cents without the vocoder, and loads it for a larger one', async () => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock });
+      const { mock, ok } = session;
+      const ids = mock.given({ clips: [onPitch()], preferences: { hybridMode: true } });
+      mock.setVocoderLoadOnDemand(true);
+      // 10 cents: the render is done by resampling, so it is published and nothing loads the vocoder.
+      const small = await ok('content.editNotes', shift(ids, 10));
+      clock.advance(1000);
+      expect((await renderOf(session, ids)).current).toBe(true);
+      expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: false });
+      // Taking it back is a render of the same kind.
+      await ok('edit.undo', { expectedUndoId: field(small, 'undo', 'undoId') });
+      clock.advance(1000);
+      expect((await renderOf(session, ids)).current).toBe(true);
+      expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: false });
+      // Beyond 75 cents the render needs the vocoder: it loads first, and the render is published once it has.
+      const revision = ((await ok('content.getNotes', { contentId: ids['clip.contentId'] })) as { asOf: unknown }).asOf;
+      const current = (field(revision, 'contents') as { revision: string }[])[0]?.revision;
+      const large = await ok('content.editNotes', shift(ids, 200, current));
+      clock.advance(6);
+      expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+      expect((await renderOf(session, ids)).current).toBe(false);
+      clock.advance(1000);
+      expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+      expect((await renderOf(session, ids)).current).toBe(true);
+      expect(revisionOf(large)).not.toBe(revisionOf(small));
+    });
+
+    it('loads for a small correction when hybrid mode is off', async () => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock });
+      const { mock, ok } = session;
+      const ids = mock.given({ clips: [onPitch()], preferences: { hybridMode: false } });
+      mock.setVocoderLoadOnDemand(true);
+      await ok('content.editNotes', shift(ids, 10));
+      clock.advance(1000);
+      expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+      expect((await renderOf(session, ids)).current).toBe(true);
+    });
+
+    it('leaves a render that was queued again while it waited to the later one', async () => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock, vocoder: { reconfiguringMs: 100 } });
+      const { mock, ok } = session;
+      const ids = mock.given({ clips: [clip()] });
+      mock.setVocoderLoadOnDemand(true);
+      const edited = await ok('content.editNotes', shift(ids));
+      // The first render is done and waits for the vocoder, which loads until 105 ms.
+      clock.advance(100);
+      expect((await renderOf(session, ids)).current).toBe(false);
+      // A second render is queued; its timer fires 30 ms later, after the vocoder has loaded.
+      await ok('edit.undo', { expectedUndoId: field(edited, 'undo', 'undoId') });
+      clock.advance(6);
+      expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+      // The vocoder's completion does not publish the first render over the second one.
+      expect((await renderOf(session, ids)).current).toBe(false);
+      clock.advance(30);
       expect((await renderOf(session, ids)).current).toBe(true);
     });
 

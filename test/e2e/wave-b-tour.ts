@@ -1164,12 +1164,20 @@ export function unofferedWeight(offered: readonly string[]): string {
 const VOCODER_SETTLE_MS = 30_000;
 const VOCODER_POLL_MS = 250;
 /**
- * How long the preference step waits for the vocoder to load after the one small edit that makes OpenTune load it, in
+ * How long the preference step waits for the vocoder to load after the one edit that makes OpenTune load it, in
  * ms: OpenTune loads the vocoder when a render first needs it, and the load can take a while on a cold machine.
  */
 const VOCODER_LOAD_MS = 60_000;
-/** The small correction, in cents, that the preference step makes and takes back so that a render loads the vocoder. */
-const VOCODER_LOAD_SHIFT_CENTS = 10;
+/**
+ * The correction, in cents, that the preference step makes and takes back so that a render loads the vocoder. It has
+ * to be well beyond 75 cents: with hybrid mode on (OpenTune's default, and on in the data template of this run), a
+ * render block whose voiced frames are all corrected by 75 cents or less is done by resampling the audio, which needs
+ * no vocoder and loads none. That is how OpenTune renders, whatever prefs.get reports, so the step does not look at
+ * hybridMode: it always moves a note far enough. The notes OpenTune generates sit on the detected pitch rounded to a
+ * semitone, so a note can already be up to 50 cents from the pitch it was sung at; 200 cents keeps every frame beyond
+ * 75 cents whichever way the note lies, which 100 cents does not.
+ */
+export const VOCODER_LOAD_SHIFT_CENTS = 200;
 
 /** A wait in ms as the seconds a reason names. */
 const secondsText = (ms: number): string => `${String(ms / 1000)} s`;
@@ -2057,7 +2065,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
    * The preferences prefs.set takes since 1.0.0-rc.6. Each one is switched once, read back (prefs.get and
    * session.info) and put back by the revert recipe of the result; a change that a job applies (the vocoder weight and
    * the rendering priority) is followed until the job has ended and the vocoder is ready again; as OpenTune loads the
-   * vocoder only when a render first needs it, a vocoder that is not ready is first loaded by one small edit of the
+   * vocoder only when a render first needs it, a vocoder that is not ready is first loaded by one edit of a voiced note of the
    * imported clip, which is taken back at once (loadVocoderByRender). A value that is not
    * among the options is sent once and must be refused with nothing changed. Whatever goes wrong, the values read at
    * the start are sent once more; when that does not put them back either, the scenario stops. An instance that
@@ -2142,21 +2150,25 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     /**
      * OpenTune loads the vocoder when the first render needs it, and the tour makes no edit that has to be rendered
      * before this step, so session.info reports the vocoder as not ready and a change of the rendering priority or the
-     * weight would not wait for it. As a user does, this makes one small edit to the imported clip (one note shifted by
+     * weight would not wait for it. As a user does, this makes one edit to a voiced note of the imported clip (shifted by
      * VOCODER_LOAD_SHIFT_CENTS), waits for the render to catch up or the vocoder to be ready, and takes the edit back
      * with its undoId, comparing the notes with those before the edit. Nothing is done where the vocoder is ready or is
-     * loading already. A refused edit is a problem of the step; an edit that cannot be taken back stops the scenario.
+     * loading already, and nothing where the clip has no voiced note (an unvoiced note is not rendered, so editing it
+     * loads nothing). A refused edit is a problem of the step; an edit that cannot be taken back stops the scenario.
      */
     const loadVocoderByRender = async (): Promise<void> => {
       if (vocoderLoadTried) return;
       const info = await infoNow();
       if (vocoderReady(info) || info.vocoderReconfiguring === true) return;
       vocoderLoadTried = true;
-      const label = 'content.editNotes (a small edit to load the vocoder)';
+      const label = 'content.editNotes (an edit to load the vocoder)';
       t.reads.clear();
       const listing = await t.reads.notes(contentId);
-      const note = listing.notes.find((candidate) => candidate.voiced === true) ?? listing.notes[0];
-      if (note === undefined) return;
+      const note = listing.notes.find((candidate) => candidate.voiced === true);
+      if (note === undefined) {
+        notes.push('the clip has no voiced note to edit, so no render was tried to load the vocoder');
+        return;
+      }
       const index = num(note, 'index', 'a note');
       const publishedBefore = (await renderNow()).published;
       const afterRender = { ready: false };
@@ -2182,16 +2194,21 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       }
       if (run.failure !== undefined) return;
       // The undo changed the notes again: the revision is not the one right after the edit, and two reads agree on it.
+      // Each check has its own problem when its data is missing, so that a missing token cannot pass for a good one.
       const editedRevision = listOf(objectMember(run.envelope, 'tokens', 'the result').contents).find(
         (entry) => entry.contentId === contentId,
       )?.revision;
       const revisionNow = (await t.reads.notes(contentId)).revision;
       const asOf = objectMember(await t.reads.project(), 'asOf', 'project.get');
       const listed = listOf(member(asOf, 'contents', 'asOf')).find((entry) => entry.contentId === contentId);
-      if (revisionNow === editedRevision) {
+      if (editedRevision === undefined) {
+        problems.push(`${label}: the result of the edit carries no token for the content, so its revision is unknown`);
+      } else if (revisionNow === editedRevision) {
         problems.push(`${label}: after the undo, the revision of the content is still the one right after the edit`);
       }
-      if (listed?.revision !== revisionNow) {
+      if (listed === undefined) {
+        problems.push(`${label}: after the undo, project.get does not list the content`);
+      } else if (listed.revision !== revisionNow) {
         problems.push(
           `${label}: after the undo, content.getNotes and project.get give the content different revisions`,
         );
