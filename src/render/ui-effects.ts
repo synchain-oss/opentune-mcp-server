@@ -24,6 +24,8 @@ interface Where {
   readonly surface: string;
   readonly visible: (ui: Json | null, contentId: string | null, sideEffects: Json) => boolean;
   readonly howToSee: string;
+  /** What the effect is called when it is not "<kind> <entity>"; equal names of one surface list it once. */
+  readonly effect?: string;
 }
 
 const PIANO_ROLL: Where = {
@@ -58,6 +60,9 @@ const BY_ENTITY = table<Where>({
   tempo: ALWAYS('transport bar'),
   transport: ALWAYS('transport bar'),
   dialog: ALWAYS('dialog'),
+  // The only change of the entity ui is the workspace the window shows; the side effect workspaceSwitched of
+  // the same call names it the same way, so the two are one entry.
+  ui: { ...ALWAYS('main window'), effect: 'workspace switched' },
 });
 const UNKNOWN = HIDDEN('unknown', 'Look at the OpenTune window.');
 
@@ -107,7 +112,13 @@ export function uiEffects(envelope: Json): UiEffect[] {
     const where = (entity === null ? undefined : BY_ENTITY[entity]) ?? UNKNOWN;
     const { target, contentId } = targetOf(item.ref);
     const visible = where.visible(ui, contentId, sideEffects);
-    add(where.surface, `${kind} ${entity ?? 'item'}`, target, visible, ui === null ? noEditor : where.howToSee);
+    add(
+      where.surface,
+      where.effect ?? `${kind} ${entity ?? 'item'}`,
+      target,
+      visible,
+      ui === null ? noEditor : where.howToSee,
+    );
   }
 
   const dirty = isObject(envelope.dirty) ? envelope.dirty : {};
