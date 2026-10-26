@@ -23,6 +23,7 @@ versioned separately and has its own changelog.
 ### Changed
 
 - The companion skills `tuning-workflow`, `check-results` and `lyrics-timeline` now treat a clear request from the user as the agreement for that step, ask a question only once and only about what the tools cannot find out, use only the files the user named, confirm that the render is current before a result is called ready to listen to, and compare before and after pitch figures only when they share the same target basis.
+- The `tuning-workflow` and `check-results` skills now tell the agent to check the earlier corrections after reopening a project before saying the content is all there, name the file that holds the version before a risky step, explain an open welcome or dialog window by name and close it only with the user's agreement, read a status again before reporting it as not ready, describe the rendering priority by the backend actually in use, ask before a `regenerate` that resets the notes, give one key confidence figure, mention clipping only when the export result reports it, and state only the range that was checked.
 
 ### Removed
 
