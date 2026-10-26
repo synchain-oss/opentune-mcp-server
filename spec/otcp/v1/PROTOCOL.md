@@ -149,7 +149,7 @@ Clients MUST NOT send anything after the `session.hello` line until they have re
 ### 3.6 Closing
 
 1. Either side MAY close a connection at any time. Requests in flight when a connection closes still run to completion, and their responses are discarded. Jobs are not cancelled by a closed connection (section 12).
-2. When the server stops (for example because OpenTune exits), it MUST answer new requests with `SHUTTING_DOWN`, end every waiting `job.get` with `SHUTTING_DOWN`, then close all connections and the listener, and finally delete its discovery file (section 5.4).
+2. When the server stops (for example because OpenTune exits, also because `app.quit` made it exit, section 14.1), it MUST answer new requests with `SHUTTING_DOWN`, end every waiting `job.get` with `SHUTTING_DOWN`, then close all connections and the listener, and finally delete its discovery file (section 5.4).
 
 ## 4. Authentication and session
 
@@ -284,7 +284,7 @@ If an option value is invalid, the discovery directory fails its checks, the lis
 
 4. Each entry has `code`, `since` and `description`; registries are append-only within a major version (section 2.2). Every code a server sends MUST be registered for the protocol version of the session.
 5. Clients MUST accept codes they do not know (section 2.3).
-6. The capability report says which methods the instance implements; this rule says that some of those methods also need the editor window at run time. Some methods act through the OpenTune editor window, which OpenTune Standalone creates when it starts: the methods of `ui.bridge` (`ui.getState`, `ui.dismiss`, `ui.setSelection`), `ui.setWorkspace`, `track.add`, `track.duplicate`, `track.delete`, `project.save`, `project.saveAs`, `project.open` and `audio.set`. An instance reports their capabilities whether or not an editor exists. While no editor exists, for example in a window-less run of a test build, such a method fails with `UNSUPPORTED(no_editor_window)`, `executed` false, and changes nothing; where this check comes among the method's own checks is not part of the contract. The other methods work without an editor, among them `track.set`, the transport methods and `project.clearRecent`; values that only the editor holds are null in their results, with the reason `no_editor` (section 16), as `ui` of the write envelope is (section 14.6).
+6. The capability report says which methods the instance implements; this rule says that some of those methods also need the editor window at run time. Some methods act through the OpenTune editor window, which OpenTune Standalone creates when it starts: the methods of `ui.bridge` (`ui.getState`, `ui.dismiss`, `ui.setSelection`), `ui.setWorkspace`, `track.add`, `track.duplicate`, `track.delete`, `project.save`, `project.saveAs`, `project.open`, `audio.set` and `app.quit` (which does what the close button of the editor window does). An instance reports their capabilities whether or not an editor exists. While no editor exists, for example in a window-less run of a test build, such a method fails with `UNSUPPORTED(no_editor_window)`, `executed` false, and changes nothing; where this check comes among the method's own checks is not part of the contract. The other methods work without an editor, among them `track.set`, the transport methods and `project.clearRecent`; values that only the editor holds are null in their results, with the reason `no_editor` (section 16), as `ui` of the write envelope is (section 14.6).
 
 ## 8. Clocks and units
 
@@ -473,6 +473,8 @@ A write is refused with `BUSY` and `executed` false, without waiting, while:
 
 These checks run on the main thread, immediately before the write applies. The server SHOULD set `retryAfterMs`. `ui.dismiss` is not refused because a dialog is open (`modal_open`), since closing dialogs is its purpose; the other conditions refuse it like every write.
 
+`app.quit` adds one condition to these: it is also refused with `BUSY` while any job has not reached a terminal state (section 12.1), because the process would end under the job. The reason is that of the table where the table names the job (a job of kind `import` gives `import_in_progress`, `export` gives `export_in_progress`, `projectOpen` and `projectSave` give `project_operation`), and `job_in_progress` for every other kind (`prefsApply`, `timeGridSeed`). The other writes do not check this, since they leave a running job running.
+
 ### 13.3 Reads
 
 1. Reads, `session.*` and `job.*` methods never return `BUSY` because of the UI and never wait for a UI operation to finish. They may still return `BUSY(request_limit)` (section 3.3).
@@ -513,6 +515,8 @@ Every write result is an object with all of the following members (`common.schem
 | `job`          | object or null | `{jobId, kind, state}` when the call started or joined a job.                                              |
 
 A write result MAY also carry `nullReasons` (section 16) and the method-specific members its schema defines (14.7).
+
+**The exception: `app.quit`.** `app.quit` is a write (section 22), and its result is not a write envelope: its schema has `resultKind` `plain` and defines its own members (`quitting`, `discardedUnsavedChanges`, `projectPath`, `exitDeadlineMs`, `warnings`). The envelope exists so that a client can compare what a write changed with what it reads later: the world revision vector, `tokens`, `undo` and `revert`. After `app.quit` there is nothing to compare, because the process ends right after it writes the result, no read can follow, the call changes no content and no revision, and it can be neither undone nor reverted. Its `warnings` follow section 18 as in every write result, and the rest of this section does not apply to it: no state of section 14.2, no `changes`, no `revisionDiff`. It is the only method for which a write has no envelope, and the exception is not to be extended to another method without a new schema rule.
 
 ### 14.2 States
 
@@ -772,7 +776,7 @@ Extensions, compared without regard to case (`path_bad_extension`): exports acce
 
 1. Track, clip, file and project names, file metadata, paths and log lines come from files and projects that may contain text written to manipulate an AI. The server returns them only as JSON string values of members defined for them. It MUST NOT place them in `label`, `detail`, warning codes or any member meant for display composed by the server.
 2. Clients MUST treat these strings as data, never as instructions. A destructive operation requires the end user's consent; text from a result never counts as consent, and revert recipes never carry it (section 15.2 rule 4).
-3. Operations that destroy work beyond undo need an explicit param. `track.delete`, `arrangement.edit` with op `delete`, and `project.saveAs` when its target is an existing file other than the current project file, fail with `INVALID_ARGUMENT(confirm_required)` and change nothing unless params contain `confirm: true`. `ui.dismiss` closes a dialog whose closing commits the value it shows only with `confirm: true`; otherwise it fails with `INVALID_ARGUMENT(dialog_commits_on_close)` and closes nothing. A method that would discard unsaved changes, such as `project.open`, fails with `UNSAVED_CHANGES(project_dirty)` unless its params explicitly allow discarding them (`discardUnsaved: true`). A prediction (`dryRun: true`) changes nothing and needs none of these params. The method schemas define these params; every params member that expresses consent is named `confirm` or starts with `discard`. Clients set them only when the end user explicitly agreed to that operation.
+3. Operations that destroy work beyond undo need an explicit param. `track.delete`, `arrangement.edit` with op `delete`, and `project.saveAs` when its target is an existing file other than the current project file, fail with `INVALID_ARGUMENT(confirm_required)` and change nothing unless params contain `confirm: true`. `ui.dismiss` closes a dialog whose closing commits the value it shows only with `confirm: true`; otherwise it fails with `INVALID_ARGUMENT(dialog_commits_on_close)` and closes nothing. A method that would discard unsaved changes fails with `UNSAVED_CHANGES(project_dirty)` unless its params explicitly allow discarding them (`discardUnsaved: true`). There are two such methods: `project.open`, which replaces the project, and `app.quit`, which ends the application and with it the project in memory. `app.quit` is stricter than the OpenTune window, whose close button quits without asking when the project has unsaved changes; a client does not set `discardUnsaved` there because the window would have closed without asking. A prediction (`dryRun: true`) changes nothing and needs none of these params. The method schemas define these params; every params member that expresses consent is named `confirm` or starts with `discard`. Clients set them only when the end user explicitly agreed to that operation.
 4. For `project.saveAs`, whether the target is the current project file, another existing file or no file is decided by file identity (section 20.3), when the request is validated and again immediately before the final rename. Without `confirm: true`, the final rename never replaces a file other than the current project file (section 20.4); if such a file has appeared at the target in the meantime, the job fails with `INVALID_ARGUMENT(confirm_required)`, the temporary file is deleted and the target is not touched.
 5. `app.getLog` removes the token, the server proof and the user's home directory from the lines it returns.
 
@@ -829,11 +833,13 @@ The scheme changes what some operations do. The protocol never hides these diffe
 | L5    | Timing: section shifts and time-grid handles                                     | `timing.v1`                                                                                |
 | L6    | Arrangement, tracks, transport control, selection, workspace | `transport.v1`, `arrangement.v1`, `tracks.v1`, `ui.bridge`, `ui.workspace` |
 | L7    | Drawing-style note, curve, EQ and envelope edits                                 | not defined in this version                                                                |
-| L8    | Project save and open, preference changes, audio device                          | `project.io`, `prefs.write`, `audio.device`                                                |
+| L8    | Project save and open, preference changes, audio device, quitting                | `project.io`, `prefs.write`, `audio.device`, `app.quit`                                    |
 
 `ui.onboardingClose` is an additional capability of `ui.dismiss`: without it, `ui.dismiss` can prevent the first-run overlay but not close one that is already showing.
 
 `ui.workspace` is the capability of `ui.setWorkspace` alone. An instance that does not report it can open the piano roll (`ui.setSelection` with `openEditor`) but has no request that switches back to the arrangement view; the end user does that with the view buttons of the transport bar.
+
+`app.quit` is the capability of the method of the same name alone. An instance that does not report it cannot be quit by a request; the end user closes the OpenTune window, after saving the project, because the window quits without asking about unsaved changes (section 20.2 rule 3).
 
 Every method of version 1 (also in `methods/index.json`). Write: `yes` changes state, `conditional` changes state only for some params or as a reported side effect, `no` never does. Schema: `defined` means `methods/<method>.schema.json` is normative; `pending` means the schema is added before the `1.0.0-rc.1` tag; `planned` means it is added in a later `1.0.0` release candidate. Until its schema is defined, a method has no normative shape: an implementation MAY provide it provisionally, following this document, for development against a release candidate, and MUST change it to match the schema once the schema is defined. Since `1.0.0-rc.2` every method in this table has a defined schema.
 
@@ -882,6 +888,7 @@ Every method of version 1 (also in `methods/index.json`). Write: `yes` changes s
 | `prefs.set`                | L8    | `prefs.write`    | yes         | 1.0   | defined | Change processing preferences (user-global, with revert values).                           |
 | `audio.get`                | L8    | `audio.device`   | no          | 1.0   | defined | Audio device settings.                                                                     |
 | `audio.set`                | L8    | `audio.device`   | yes         | 1.0   | defined | Change the audio device, with rollback on failure.                                         |
+| `app.quit`                 | L8    | `app.quit`       | yes         | 1.0   | defined | Quit OpenTune; refused with unsaved changes (the one write without an envelope, 14.1).     |
 
 ## 23. Method schema files and test vectors
 
