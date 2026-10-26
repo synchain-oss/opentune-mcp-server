@@ -8,6 +8,16 @@ versioned separately and has its own changelog.
 
 ## Unreleased
 
+## [0.2.0] - 2026-10-26
+
+The second public version of OpenTune MCP Server (by Synchain), and wave B of the control interface: editing the
+arrangement, tracks, transport, the dialogs and the selection in the OpenTune window, opening and saving projects, the
+processing preferences (including the vocoder weight), the audio device setup and reference alignment. It implements
+OTCP specification `spec-v1.0.0-rc.6` and needs the second unofficial OpenTune test build from synchain-oss/OpenTune
+(`synchain-test/v1.8.0-ctl.2`), which has the control interface enabled; the official OpenTune releases do not provide
+it yet. The four packages are built from the same version, as for 0.1.0: the npm package `@synchain/opentune-mcp`, the
+MCPB package, the Claude Code plugin `opentune` and the skills zip.
+
 ### Added
 
 - `opentune_set_settings` also changes the vocoder weight (`vocoder_weight`), the rendering priority
@@ -44,6 +54,12 @@ versioned separately and has its own changelog.
   state behind every `changes[].fields.*.after`, tokens, the undo or revert round trip, the promised warnings and the
   first sentence of a result that cannot be undone, with the latency of every call in its report. Run against a
   correct fake in `test/unit/exe-wave-b-tour.test.ts`; a fake with one defect fails exactly the check that notices it.
+- The contract vectors can now run against a started OpenTune with the state they need: the runner builds the
+  preconditions of a vector (files, plain clips, dirty state, tracks, undo entries and the stale or unknown handles)
+  through public calls and reads each one back, and skips with the reason what it cannot build. Every run writes one
+  result row per vector, and `scripts/vector-coverage.mjs` merges the result files of several runners (the mock, a started
+  OpenTune, the fork's headless runner) into a table of which runner passes which vector. The wave-B tour also judges
+  the reference analysis by the known upstream defect and switches the audio device to another one and back.
 - The `beat-grid` skill (plugin only; it needs Node.js and a local download): measures the tempo and
   beat grid of a song from its backing track or the original mix with `opentune-beats`, reports the
   tempo of each constant-tempo section for the agent and the user to confirm, and turns the grid
@@ -103,18 +119,18 @@ versioned separately and has its own changelog.
 - `opentune_set_settings` now checks `jobs.v1` before it sends a change that OpenTune applies by a job (the editing
   scheme, the vocoder weight, the rendering priority). A build without `jobs.v1` used to apply the change and then fail
   when following the job; now the call is refused with `UNSUPPORTED(capability_missing)` and nothing is changed.
-- OTCP specification `1.0.0-rc.6` (unreleased), proposed as the text of 1.0.0: `prefs.set` also changes the vocoder
+- OTCP specification `1.0.0-rc.6`, proposed as the text of 1.0.0: `prefs.set` also changes the vocoder
   weight, the rendering priority, the pitch model and the reference alignment mode (the first two are applied by the
   `prefsApply` job, which waits until the vocoder is ready again), `prefs.get` lists the accepted values in
   `processing.options`, three reasons are appended (`option_unavailable`, `vocoder_not_ready`, `vocoder_load_failed`), and 16 vectors cover the
   new members and settings that were specified but not shown. The mock follows (test hooks `setVocoderFault` and `failF0Model`); its
   `vibratoRateHz` change now reports the unit `hz`. The tools take the new members in a separate change (see Added).
-- OTCP specification `1.0.0-rc.5` (unreleased), proposed as the text of 1.0.0: the methods that need the OpenTune
+- OTCP specification `1.0.0-rc.5`, proposed as the text of 1.0.0: the methods that need the OpenTune
   editor window answer `UNSUPPORTED(no_editor_window)` (a new reason) while there is none, the `prefsApply` job of `prefs.set`
   checks the busy state again (`BUSY` in its job errors), duplicating a hidden track fails with `track_hidden`,
   closing a first-run overlay that already marked onboarding as shown changes the view only, and two corrections of
   the reference-job and track-id text. The mock follows (test hook `showOnboarding`).
-- OTCP specification `1.0.0-rc.4` (unreleased): the reasons `reference_analysis_stalled`,
+- OTCP specification `1.0.0-rc.4` (not released on its own; its content is part of rc.5): the reasons `reference_analysis_stalled`,
   `reference_analysis_timeout` and `reference_analysis_failed` for the reference analysis jobs, and corrections of
   the selection, track deletion, split and merge text and vectors to what OpenTune does. The mock follows (fault
   mode `setReferenceFault`).
@@ -191,7 +207,13 @@ versioned separately and has its own changelog.
   wait a little and call again, and `reference_analysis_failed` says to choose another reference clip or have the
   reference audio checked.
 - A tool error for an instance that does not serve this server's protocol major (`PROTOCOL_MISMATCH`) now lists the majors
-  the instance's discovery file announces, in the optional member `protocolMajors`, as the status already did.
+  the instance's discovery file announces, in the optional member `protocolMajors`, as the status already did. The error
+  text names the major the instance speaks (`OTCP major 2`) or says that its version is unreadable.
+- `opentune_get_status` reports the reason `major_not_served` for an instance whose answer to `session.hello` names a
+  protocol major this server does not serve; it reported `hello_rejected` for every rejected hello.
+- The watch of the real user's settings files in the real-OpenTune runs passes on a CI runner when no settings file
+  existed before or after the run, as on a clean runner that has never run OpenTune (a file the run creates still
+  fails it); on a machine with no settings file it stays a skip.
 
 ### Security
 
@@ -264,4 +286,5 @@ zip for Claude Desktop.
 - Golden snapshots of `tools/list` and of the instructions, the generated [tool reference](docs/reference.md) and the
   `tools/list` size limits, checked by the tests and by `npm run gates`.
 
+[0.2.0]: https://github.com/synchain-oss/opentune-mcp-server/releases/tag/v0.2.0
 [0.1.0]: https://github.com/synchain-oss/opentune-mcp-server/releases/tag/v0.1.0

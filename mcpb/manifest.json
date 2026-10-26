@@ -2,7 +2,7 @@
   "manifest_version": "0.3",
   "name": "opentune-mcp",
   "display_name": "OpenTune MCP Server (by Synchain)",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Lets AI agents operate OpenTune Standalone, an editor for the pitch and timing of recorded vocals, and reports every result in a clear, structured form.",
   "long_description": "OpenTune MCP Server (by Synchain) is a local MCP server. It talks to a build of OpenTune Standalone that has the control interface, over a loopback-only connection; it listens on no network port. Choose that OpenTune executable in the settings below. Run opentune-mcp doctor from a terminal if something does not work.",
   "author": {

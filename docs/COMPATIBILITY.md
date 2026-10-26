@@ -16,7 +16,12 @@ SPDX-License-Identifier: MIT
 | Node.js                        | 22 or later                                                                                     | Not needed for the MCPB package.                                                                                                                                                                                                                                                                               |
 | Operating system               | Windows x64                                                                                     | macOS: not yet. Linux: not supported. WSL: run the server with Windows Node.js.                                                                                                                                                                                                                                |
 
-The unofficial OpenTune test build that matches this server's 0.1.0 release is tagged `synchain-test/v1.8.0-ctl.1`.
+The unofficial OpenTune test build that matches each release of this server:
+
+| Server | OTCP specification | Unofficial OpenTune test build |
+| ------ | ------------------ | ------------------------------ |
+| 0.2.0  | `1.0.0-rc.6`       | `synchain-test/v1.8.0-ctl.2`   |
+| 0.1.0  | `1.0.0-rc.3`       | `synchain-test/v1.8.0-ctl.1`   |
 
 ## How long to wait
 
