@@ -59,7 +59,15 @@ import { OtcpSession, type HelloInfo, type Json } from '../../src/otcp/client.js
 import { checkDataTemplate, exeConfigFromEnv, exeTarget, type ExeTargetOptions } from '../contract/exe-target.js';
 import type { TargetInstance } from '../contract/target.js';
 import { ESTIMATOR_ERROR_CENTS, centsBetween, estimateF0, median } from '../support/f0-estimator.js';
-import { generateTone, writeToneFiles, type Tone, type ToneFiles } from '../support/harmonic-tone.js';
+import {
+  generateTone,
+  slowDriftCents,
+  steppedCents,
+  writeToneFiles,
+  type Tone,
+  type ToneFiles,
+} from '../support/harmonic-tone.js';
+import { contourOf, modulationOf, spreadOf, type Contour } from '../support/pitch-modulation.js';
 import { SHIFT_ERROR_SEC, estimateShift } from '../support/time-shift.js';
 import { decodeWav, type DecodedWav } from '../support/wav-decode.js';
 import {
@@ -263,6 +271,121 @@ const READBACK_EPSILON = 1e-6;
  */
 const FIXED_PARAMS = { retuneSpeed: 0.5, vibratoDepth: 0, pitchDriftScale: 1 } as const;
 
+// ---------------------------------------------------------------------------------------------
+// the checks of note parameters, scale, preferences and the time grid: stimuli and tolerances.
+// Every tolerance below was measured on the executable the scenario is run against (the generated
+// tones, hybrid mode off, three runs that gave the same values to the last digit, as the two exports of
+// the baseline do) and is frozen with the measurement it rests on; docs/real-opentune-testing.md has
+// the table.
+
+/**
+ * The note-split sensitivities of the AUTO check, in cents. The stepped tone steps by 90, 60 and 60
+ * cents; OpenTune cut at every step with 30 (6 notes, among them a sliver of 10 ms at the glide of the
+ * first step) and cut nothing with 160 (the two tone notes whole). 160 is above the largest step from
+ * the first plateau of a note (120), 30 below the smallest step (60) by half.
+ */
+export const SPLIT_SMALL_CENTS = 30;
+export const SPLIT_LARGE_CENTS = 160;
+/**
+ * How far a note boundary may lie from the step of the stepped tone it follows, in seconds. Measured:
+ * the boundaries lay within 0.01 s of the steps (the glide of a step lasts 0.04 s). 0.1 s is a quarter
+ * of the shortest plateau (1.2 s) and still far from the next step.
+ */
+export const SPLIT_BOUNDARY_TOLERANCE_SEC = 0.1;
+/** The note the vibrato check edits gets this depth (100 is plus or minus one semitone) and rate. */
+export const VIBRATO_DEPTH = 50;
+export const VIBRATO_RATE_HZ = 6;
+/**
+ * How far the measured vibrato rate may lie from the one set, in Hz. Measured: 6.00 Hz for 6 (and
+ * 4.00 and 10.00 for the rates 4 and 10 in the probes). The detrended pitch track is scanned in steps of
+ * 0.02 Hz; its 3 s window resolves 0.33 Hz, so 0.25 Hz is under one resolution cell.
+ */
+export const VIBRATO_RATE_TOLERANCE_HZ = 0.25;
+/**
+ * The measured vibrato amplitude (cents, zero to peak) relative to the depth set, from and to.
+ * Measured: 0.91 for depth 50 at 6 Hz (45.6 cents), 0.78 to 0.96 over depths 30 to 100 at rates 4 to
+ * 10 Hz in the probes. The lower bound keeps clear of the slowest of those, the upper one leaves 15 %.
+ */
+export const VIBRATO_AMPLITUDE_RATIO_MIN = 0.7;
+export const VIBRATO_AMPLITUDE_RATIO_MAX = 1.15;
+/**
+ * A note with no vibrato wavers by less than this amplitude (cents) in the export. Measured: 0.1 to
+ * 0.9 cents at the baseline (the estimator's noise); the vibrato of depth 50 is 45.6.
+ */
+export const VIBRATO_ABSENT_MAX_CENTS = 3;
+/**
+ * The drifting note of the baseline must waver at least this much (std in cents, a straight drift
+ * taken out) for the drift check to say anything. Measured: 10.31 cents for a source that drifts by
+ * plus or minus 30 cents (the std of such a sine is 21 cents; OpenTune renders about half of it with
+ * pitchDriftScale 1 and retuneSpeed 0.5).
+ */
+export const DRIFT_MIN_BASELINE_STD_CENTS = 5;
+/**
+ * With pitchDriftScale 0 the drift (std in cents) is at most this fraction of the drift with 1.
+ * Measured: 0.81 / 10.31 = 0.08 (with retuneSpeed 0: 1.5 / 20.6). 0.35 leaves room for the renderer
+ * and is far from 1 (scale ignored).
+ */
+export const DRIFT_ZERO_MAX_FRACTION = 0.35;
+/** The off-scale shift of the snapToScale check, in cents (between two pitches of C major). */
+const SNAP_SHIFT_CENTS = 70;
+/** The A4 reference the tuning check sets (Hz); from 442 it sets 440 instead. */
+export const TUNING_CHECK_HZ = 442;
+/**
+ * How far the exported pitch change of the tuning check may lie from the expected one, in cents.
+ * 442 Hz is 7.85 cents above 440. Measured against the expected change: within 1.34 cents on the four
+ * notes AUTO moved to the new semitones and the sharp one (the renderer's 1.1 cents of the AUTO
+ * checks); the notes were bit-identical before AUTO. 3 cents is twice that and under half of the
+ * 7.85 that no change would leave.
+ */
+export const TUNING_TOLERANCE_CENTS = 3;
+/**
+ * The corrections of the hybrid mode check, in cents: one small and one large. With hybrid mode on
+ * OpenTune renders a correction below a threshold (between 60 and 100 cents in the measured build) by a
+ * pitch shift of the audio, which may leave it unapplied (+30 and +60 were not applied on the generated
+ * clip, +100 and +150 were), and a larger one with the vocoder as usual. 30 is well below the threshold,
+ * 200 well above it. The large one is judged in both states, the small one only with hybrid mode off.
+ */
+const HYBRID_SMALL_CENTS = 30;
+const HYBRID_LARGE_CENTS = 200;
+/**
+ * Two exports of a clip are the same sound if, note by note, they are bit-identical or leave at most
+ * RESYNTH_MAX_RESIDUAL_DB after aligning the phase, and their pitch lies within this many cents.
+ * Measured on a clip rendered again after hybrid mode was switched on and off: 0.01 cents at most
+ * (-33.5 dB left on the re-synthesised note); a clip still rendered in hybrid mode lies 0.8 to 6.6 cents
+ * off on notes that were not edited. 2 cents is above the renderer's repeatability and under that.
+ */
+export const SAME_SOUND_PITCH_CENTS = 2;
+/**
+ * The exports of two render paths differ if some sample differs by more than this (linear, full scale
+ * 1.0). Measured: 0.73 between hybrid mode off and on; two exports of the same render are bit-identical,
+ * so anything above the format's resolution says the path changed; 1e-3 (-60 dBFS) is far from both.
+ */
+export const HYBRID_DIFFERENT_MIN_ABS_DIFF = 1e-3;
+/** F0 frames of the estimator are this far apart. */
+const F0_HOP_SEC = 0.01;
+
+/** The pitch classes of C major. */
+const C_MAJOR_CLASSES: readonly number[] = [0, 2, 4, 5, 7, 9, 11];
+
+/** The pitch of C major nearest to `midi` (a fractional MIDI note); a tie goes up, as snapToScale does. */
+export const nearestInCMajor = (midi: number): number => {
+  const base = Math.floor(midi / 12) * 12;
+  let best = Number.NaN;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const octave of [-12, 0, 12]) {
+    for (const pitchClass of C_MAJOR_CLASSES) {
+      const candidate = base + octave + pitchClass;
+      const distance = Math.abs(candidate - midi);
+      // Candidates are visited upwards, so `<=` lets a later (higher) one win a tie.
+      if (distance <= bestDistance + 1e-9) {
+        best = candidate;
+        bestDistance = Math.min(distance, bestDistance);
+      }
+    }
+  }
+  return best;
+};
+
 const DEFAULT_STEP_TIMEOUT_MS = 180_000;
 const DEFAULT_TIMING_LENGTHS_SEC = [60, 240] as const;
 const REQUIRED_CAPABILITIES = [
@@ -290,6 +413,69 @@ export interface EffectsConfig {
   readonly timingLengthsSec: readonly number[];
   /** Which variable the data template of `exe` came from, for the report; null (or absent) for none. */
   readonly dataTemplateFrom?: DataTemplateSource | null;
+  /**
+   * For the unit tests against a stand-in only: run just these checks (by step name, see
+   * EFFECT_CHECK_NAMES, and `timing <n> s` for a length in `timingLengthsSec`), with the set-up steps they
+   * need (launch, import, the fixed note parameters, the baseline; the extra clips for the note-split,
+   * vibrato and drift checks). The other checks are not run and do not appear in the report. Every
+   * check is judged exactly as in a full run. Absent in every run against a real instance:
+   * effectsSetupFromEnv never sets it and no variable reaches it. A name that is not a check is an
+   * error, and so is an empty list, so that a typo cannot run nothing and pass.
+   */
+  readonly onlyChecks?: readonly string[];
+}
+
+/**
+ * The checks of the scenario by step name, in the order they run. The timing steps (`timing <n> s`) are
+ * named by `timingLengthsSec`.
+ */
+export const EFFECT_CHECK_NAMES = [
+  'export before any edit',
+  'setTargetPitch +100 cents',
+  'shiftCents +100 cents',
+  'setPitchShift +2 semitones',
+  'AUTO regenerate pulls the sharp note back',
+  'AUTO snapNotes pulls the sharp note back',
+  'setParams retuneSpeed 1',
+  'snapToScale returns an off-scale note to the scale',
+  'prefs.set tuningHz 442',
+  'race: +100 cents, export, -100 cents',
+  'shiftTiming +30 ms',
+  'moveHandles +30 ms',
+  'extra clips for the note-split, vibrato and drift checks',
+  'AUTO regenerate noteSplitCents',
+  'setParams vibratoDepth and vibratoRateHz',
+  'setParams pitchDriftScale 0',
+  'prefs.set hybridMode',
+] as const;
+
+/** The checks that run on the extra clips, which the step of that name makes. */
+const EXTRA_CLIPS_STEP = 'extra clips for the note-split, vibrato and drift checks';
+const NEEDS_EXTRA_CLIPS: readonly string[] = [
+  'AUTO regenerate noteSplitCents',
+  'setParams vibratoDepth and vibratoRateHz',
+  'setParams pitchDriftScale 0',
+];
+
+/** The checks to run for `onlyChecks` (with what they need), undefined for all; throws for a name that is none. */
+function selectedChecks(config: EffectsConfig): ReadonlySet<string> | undefined {
+  const names = config.onlyChecks;
+  if (names === undefined) return undefined;
+  const known = new Set<string>([
+    ...EFFECT_CHECK_NAMES,
+    ...config.timingLengthsSec.map((n) => `timing ${String(n)} s`),
+  ]);
+  if (names.length === 0)
+    throw new Error('onlyChecks is empty: name the checks to run, or leave it out to run them all');
+  const unknown = names.filter((name) => !known.has(name));
+  if (unknown.length > 0) {
+    throw new Error(
+      `onlyChecks names no check: ${unknown.map((n) => JSON.stringify(n)).join(', ')} (the checks are: ${[...known].join('; ')})`,
+    );
+  }
+  const selected = new Set(names);
+  if (names.some((name) => NEEDS_EXTRA_CLIPS.includes(name))) selected.add(EXTRA_CLIPS_STEP);
+  return selected;
 }
 
 /** The variables a data template can come from: the scenario's own wins over the shared one. */
@@ -383,6 +569,8 @@ export interface EffectsReport {
   readonly hybridMode: boolean | null;
   /** Which variable the instance's data template came from; null when none was copied in. */
   readonly dataTemplateFrom: DataTemplateSource | null;
+  /** The checks the run was limited to (EffectsConfig.onlyChecks); absent for a full run. */
+  readonly onlyChecks?: readonly string[];
   readonly startedAt: string;
   readonly totalMs: number;
   readonly steps: readonly StepReport[];
@@ -414,6 +602,17 @@ export interface EffectsReport {
     readonly minVoicedFrames: number;
     readonly estimatorErrorCents: number;
     readonly shiftEstimatorErrorMs: number;
+    /** The tolerances of the checks of note splitting, vibrato, drift, tuning and hybrid mode. */
+    readonly splitBoundarySec: number;
+    readonly vibratoRateHz: number;
+    readonly vibratoAmplitudeRatioMin: number;
+    readonly vibratoAmplitudeRatioMax: number;
+    readonly vibratoAbsentMaxCents: number;
+    readonly driftMinBaselineStdCents: number;
+    readonly driftZeroMaxFraction: number;
+    readonly tuningCents: number;
+    readonly sameSoundPitchCents: number;
+    readonly hybridDifferentMinAbsDiff: number;
   };
   /** What two exports of the unchanged clip, and the estimator against the known pitch, measured. */
   readonly noiseFloor: Readonly<Record<string, unknown>> | null;
@@ -783,7 +982,7 @@ export function noteDelta(baseline: DecodedWav, wet: DecodedWav, span: Span, exp
   }
   return {
     index: span.index,
-    expectedCents,
+    expectedCents: round(expectedCents),
     medianCents: perFrame.length >= MIN_VOICED_FRAMES ? round(median(perFrame)) : null,
     frames: perFrame.length,
     perFrame: perFrame.map((c) => round(c, 1)),
@@ -806,6 +1005,138 @@ function pitchAgainst(
   const mid = median(cents);
   const spread = Math.sqrt(cents.reduce((sum, c) => sum + (c - mid) ** 2, 0) / cents.length);
   return { cents: round(mid), frames: voiced.length, spreadCents: round(spread, 1) };
+}
+
+/** How the pitch of a note wavers in an export: see test/support/pitch-modulation.ts. */
+export interface Wavering {
+  readonly frames: number;
+  /** Standard deviation of the pitch in cents once a straight drift is taken out. */
+  readonly stdCents: number;
+  readonly peakToPeakCents: number;
+  /** The strongest periodic movement between 2.5 and 13 Hz. */
+  readonly rateHz: number;
+  readonly amplitudeCents: number;
+  /** The share of the variance that movement explains, 0 to 1. */
+  readonly varianceShare: number;
+}
+
+/** The wavering of the trimmed inside of a note; null when too few of its frames are voiced to say. */
+export function waveringOf(wav: DecodedWav, span: Span): Wavering | null {
+  const frames = noteFrames(wav, span);
+  const voiced = frames.filter((v) => v !== null).length;
+  if (voiced < MIN_VOICED_FRAMES) return null;
+  const contour: Contour | null = contourOf(frames, F0_HOP_SEC);
+  if (contour === null) return null;
+  const spread = spreadOf(contour);
+  const movement = modulationOf(contour);
+  return {
+    frames: voiced,
+    stdCents: round(spread.stdCents),
+    peakToPeakCents: round(spread.peakToPeakCents, 1),
+    rateHz: round(movement.rateHz),
+    amplitudeCents: round(movement.amplitudeCents, 1),
+    varianceShare: round(movement.varianceShare),
+  };
+}
+
+/**
+ * The problems of an exported note that should carry the vibrato of `depth` and `rateHz` (set with
+ * setParams) against the same note in the baseline, which has none: the movement is there at the rate
+ * set, about as strong as the depth says, and the baseline has none.
+ */
+export function vibratoProblems(baseline: Wavering, wet: Wavering, depth: number, rateHz: number): string[] {
+  const problems: string[] = [];
+  if (baseline.amplitudeCents > VIBRATO_ABSENT_MAX_CENTS) {
+    problems.push(
+      `the baseline note already moves periodically (${String(baseline.amplitudeCents)} cents at ${String(baseline.rateHz)} Hz, allowed ${String(VIBRATO_ABSENT_MAX_CENTS)} without vibrato)`,
+    );
+  }
+  if (Math.abs(wet.rateHz - rateHz) > VIBRATO_RATE_TOLERANCE_HZ) {
+    problems.push(
+      `the pitch moves at ${String(wet.rateHz)} Hz, expected ${String(rateHz)} +- ${String(VIBRATO_RATE_TOLERANCE_HZ)}`,
+    );
+  }
+  const low = round(VIBRATO_AMPLITUDE_RATIO_MIN * depth, 3);
+  const high = round(VIBRATO_AMPLITUDE_RATIO_MAX * depth, 3);
+  if (wet.amplitudeCents < low || wet.amplitudeCents > high) {
+    problems.push(
+      `the pitch moves by +-${String(wet.amplitudeCents)} cents, expected between ${String(low)} and ${String(high)} for depth ${String(depth)}`,
+    );
+  }
+  return problems;
+}
+
+/**
+ * The problems of the drift check: the baseline note (pitchDriftScale 1) drifts at least
+ * DRIFT_MIN_BASELINE_STD_CENTS, and with pitchDriftScale 0 it drifts at most DRIFT_ZERO_MAX_FRACTION
+ * of that.
+ */
+export function driftProblems(baseline: Wavering, zero: Wavering): string[] {
+  const problems: string[] = [];
+  if (baseline.stdCents < DRIFT_MIN_BASELINE_STD_CENTS) {
+    problems.push(
+      `the baseline note drifts by only ${String(baseline.stdCents)} cents (std), less than the ${String(DRIFT_MIN_BASELINE_STD_CENTS)} the check needs`,
+    );
+  } else if (zero.stdCents > DRIFT_ZERO_MAX_FRACTION * baseline.stdCents) {
+    problems.push(
+      `with pitchDriftScale 0 the note still drifts by ${String(zero.stdCents)} cents (std), baseline ${String(baseline.stdCents)}: ` +
+        `more than ${String(DRIFT_ZERO_MAX_FRACTION)} of it`,
+    );
+  }
+  return problems;
+}
+
+/** Where a note starts and ends in the clip (content seconds). */
+export interface NoteBounds {
+  readonly startSec: number;
+  readonly endSec: number;
+}
+
+/**
+ * Where the notes OpenTune made are cut, against a tone whose pitch steps at known places inside its
+ * notes (`toneNotes` and `stepsSec`, content seconds). With `cut` (a note-split sensitivity below
+ * every step) a note starts within SPLIT_BOUNDARY_TOLERANCE_SEC of each step, and no note starts
+ * inside a tone note anywhere else. Without it (above every step) the notes are the tone's notes:
+ * one per tone note, with its start and end within the tolerance.
+ */
+export function splitProblems(
+  notes: readonly NoteBounds[],
+  toneNotes: readonly NoteBounds[],
+  stepsSec: readonly number[],
+  cut: boolean,
+): string[] {
+  const tol = SPLIT_BOUNDARY_TOLERANCE_SEC;
+  const problems: string[] = [];
+  const inside = notes
+    .map((n) => n.startSec)
+    .filter((start) => toneNotes.some((t) => start > t.startSec + tol && start < t.endSec - tol));
+  if (cut) {
+    for (const step of stepsSec) {
+      if (!inside.some((start) => Math.abs(start - step) <= tol)) {
+        problems.push(`no note starts within ${String(tol)} s of the pitch step at ${step.toFixed(2)} s`);
+      }
+    }
+    for (const start of inside) {
+      if (!stepsSec.some((step) => Math.abs(start - step) <= tol)) {
+        problems.push(`a note starts at ${start.toFixed(2)} s, where the pitch does not step`);
+      }
+    }
+    return problems;
+  }
+  if (inside.length > 0) {
+    problems.push(`notes start inside the tone's notes at ${inside.map((s) => s.toFixed(2)).join(', ')} s`);
+  }
+  for (const t of toneNotes) {
+    const covering = notes.filter((n) => n.endSec > t.startSec + tol && n.startSec < t.endSec - tol);
+    const first = covering[0];
+    const last = covering[covering.length - 1];
+    if (first === undefined || last === undefined || Math.abs(first.startSec - t.startSec) > tol) {
+      problems.push(`no note starts at the start of the tone note at ${t.startSec.toFixed(2)} s`);
+    } else if (Math.abs(last.endSec - t.endSec) > tol) {
+      problems.push(`no note ends at the end of the tone note at ${t.endSec.toFixed(2)} s`);
+    }
+  }
+  return problems;
 }
 
 export interface SampleComparison {
@@ -1000,6 +1331,68 @@ function makeLongTone(seconds: number): Tone {
   });
 }
 
+/**
+ * Two notes with a pause between them, each one stretch of voice whose pitch steps within the note,
+ * as a singer's does between two tones: 57 with +90 cents from 1.2 s, and 62 with +60 cents from 1.2 s
+ * and a further +60 from 2.4 s. A split sensitivity (cents) below the steps cuts every note at its
+ * steps (2 + 3 notes), one above all of them (the largest is 120 cents from the first plateau) leaves
+ * the two notes whole. `stepsSec` are the places of the steps in the file.
+ */
+function makeSteppedTone(): { tone: Tone; stepsSec: readonly number[] } {
+  const tone = generateTone({
+    seed: 20261024,
+    leadSec: 0.4,
+    notes: [
+      {
+        midi: 57,
+        durationSec: 2.4,
+        gapSec: 0.6,
+        pitchCents: steppedCents([
+          { atSec: 0, cents: 0 },
+          { atSec: 1.2, cents: 90 },
+        ]),
+      },
+      {
+        midi: 62,
+        durationSec: 3.6,
+        gapSec: 0.6,
+        pitchCents: steppedCents([
+          { atSec: 0, cents: 0 },
+          { atSec: 1.2, cents: 60 },
+          { atSec: 2.4, cents: 120 },
+        ]),
+      },
+    ],
+  });
+  const start = (i: number) => tone.truth.notes[i]?.startSec ?? 0;
+  return { tone, stepsSec: [start(0) + 1.2, start(1) + 1.2, start(1) + 2.4] };
+}
+
+/** The slow drift of the drifting note of the modulation tone: a sine of this amplitude (cents) and period. */
+const DRIFT_SOURCE_CENTS = 30;
+const DRIFT_SOURCE_PERIOD_SEC = 1.5;
+
+/**
+ * A steady note for the vibrato check and a note that drifts slowly (a sine of DRIFT_SOURCE_CENTS
+ * around its pitch, one period in DRIFT_SOURCE_PERIOD_SEC) for the drift check, long enough that the
+ * trimmed inside of each holds several periods of what is measured.
+ */
+function makeModulationTone(): Tone {
+  return generateTone({
+    seed: 20261025,
+    leadSec: 0.4,
+    notes: [
+      { midi: 60, durationSec: 3, gapSec: 0.6 },
+      {
+        midi: 64,
+        durationSec: 3.6,
+        gapSec: 0.6,
+        pitchCents: slowDriftCents(DRIFT_SOURCE_CENTS, DRIFT_SOURCE_PERIOD_SEC),
+      },
+    ],
+  });
+}
+
 /** Which notes the checks edit. */
 interface Picks {
   /** setTargetPitch +100 cents. */
@@ -1045,6 +1438,7 @@ export async function waitForAnalysis(session: OtcpSession, contentId: string, t
 }
 
 export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}): Promise<EffectsReport> {
+  const selected = selectedChecks(config);
   const started = performance.now();
   const startedAt = new Date().toISOString();
   const target = hooks.target ?? exeTarget(config.exe);
@@ -1069,6 +1463,8 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   let sessionHybridMode: boolean | null = null;
   /** The processing every export reported, by the step that made it. */
   const processing = new Map<string, ExportProcessing[]>();
+  /** The export records the scenario made after changing the hybrid mode itself (see recordProcessing). */
+  const chosenProcessing = new Set<ExportProcessing>();
   let currentStep = '';
   target.labelNext?.('effects');
 
@@ -1076,7 +1472,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   const scrub = (text: string) => scrubText(text, { audioPath: config.audioPath, workDir });
 
   /** Keeps what an export result says about its processing (hybrid mode, backend) for the current step. */
-  const recordProcessing = (label: string, result: unknown) => {
+  const recordProcessing = (label: string, result: unknown, chosen = false) => {
     const p = member(result, 'processing', 'the export result');
     const entry: ExportProcessing = {
       export: label,
@@ -1087,9 +1483,15 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     const list = processing.get(currentStep) ?? [];
     list.push(entry);
     processing.set(currentStep, list);
+    // The hybrid mode the scenario set itself is not the mode the instance started in: it stays out of
+    // the report's hybridMode and notice.
+    if (chosen) chosenProcessing.add(entry);
+    return entry;
   };
 
   const step = async (name: string, body: () => Promise<string>, options: StepOptions = {}) => {
+    // A check that was not asked for (EffectsConfig.onlyChecks) is not run and not reported.
+    if (options.check === true && selected !== undefined && !selected.has(name)) return;
     if (halted !== undefined && options.always !== true) {
       steps.push({ name, result: 'SKIP', ms: 0, note: `not run: ${halted}` });
       return;
@@ -1143,7 +1545,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   };
 
   /** Exports the clip (or another placement) and reads the file back. Checks it is not silent and the dry list. */
-  const exportClip = async (label: string, placement = placementId) => {
+  const exportClip = async (label: string, placement = placementId, chosen = false) => {
     const file = path.join(workDir, `effects-${String(++exportCount)}-${label.replace(/[^a-z0-9]+/gi, '-')}.wav`);
     const at = performance.now();
     const result = await runJob(
@@ -1154,27 +1556,34 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       timeoutMs,
     );
     exportTimes.push({ label, ms: Math.round(performance.now() - at) });
-    recordProcessing(label, result);
+    const reported = recordProcessing(label, result, chosen);
     const dry = member(result, 'dryContents', 'the export result');
     if (!Array.isArray(dry)) throw new Error('dryContents is not an array');
     const wav = decodeWav(await readFile(text(result, 'path', 'the export result')));
     if (peakOf(wav) <= 1e-4) throw new Error(`the ${label} export is silent`);
-    return { wav, dry: dry as unknown[] };
+    return { wav, dry: dry as unknown[], hybridMode: reported.hybridMode };
   };
 
   /** An export that must be corrected: nothing in dryContents. */
-  const exportWet = async (label: string) => {
-    const { wav, dry } = await exportClip(label);
+  const exportWetWith = async (label: string, chosen = false) => {
+    const { wav, dry, hybridMode } = await exportClip(label, placementId, chosen);
     if (dry.length > 0)
       throw new Error(`the ${label} export lists the clip in dryContents: it was exported uncorrected`);
-    return wav;
+    return { wav, hybridMode };
   };
+  const exportWet = async (label: string) => (await exportWetWith(label)).wav;
 
   interface CheckFrame {
     /** The clip as it was before the check wrote anything. */
     readonly before: ClipState;
     /** The undoId of every write the check made, oldest first; restored newest first. */
     readonly undoIds: string[];
+    /**
+     * Put-back actions of what edit.undo does not take back (a global preference), registered before the
+     * change is made; run newest first once the undos are done, and a failure stops the checks after
+     * this one (Unrestored), since they would run on a changed instance.
+     */
+    readonly cleanups: (() => Promise<void>)[];
     /** The fields its results reported that the scenario does not read back (Consistency.unreadFields). */
     readonly unread: Set<string>;
     /** The measurements, written to checks[name]. */
@@ -1241,6 +1650,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
    */
   const restore = async (frame: CheckFrame): Promise<string[]> => {
     const problems: string[] = [];
+    let undoFailure: Error | undefined;
     try {
       for (const undoId of [...frame.undoIds].reverse()) {
         const result = await need().call('edit.undo', { expectedUndoId: undoId }, 60_000);
@@ -1249,17 +1659,35 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         problems.push(...consistency.problems.map((p) => `undo: ${p}`));
         for (const field of consistency.unreadFields) frame.unread.add(field);
       }
+    } catch (error) {
+      undoFailure = error instanceof Error ? error : new Error(String(error));
+    }
+    // What edit.undo does not take back (a preference) is put back whether or not the undos worked.
+    const putBack: string[] = [];
+    for (const cleanup of frame.cleanups.splice(0).reverse()) {
+      try {
+        await cleanup();
+      } catch (error) {
+        putBack.push(error instanceof Error ? error.message : String(error));
+      }
+    }
+    try {
+      if (undoFailure !== undefined) throw undoFailure;
       const now = await readState(need(), contentId);
       const left = snapshotProblems(frame.before, now);
-      if (left.length > 0) throw new Unrestored(`after edit.undo the clip is not as it was: ${left.join('; ')}`);
+      if (left.length > 0) {
+        throw new Unrestored([`after edit.undo the clip is not as it was: ${left.join('; ')}`, ...putBack].join('; '));
+      }
+      if (putBack.length > 0) throw new Unrestored(putBack.join('; '));
       if (frame.undoIds.length > 0) await settle();
     } catch (error) {
       if (error instanceof Unrestored) throw error;
       throw new Unrestored(
-        `the clip could not be put back: ${error instanceof Error ? error.message : String(error)}`,
-        {
-          cause: error,
-        },
+        [
+          `the clip could not be put back: ${error instanceof Error ? error.message : String(error)}`,
+          ...(putBack.length > 0 ? [putBack.join('; ')] : []),
+        ].join('; '),
+        { cause: error },
       );
     }
     return problems;
@@ -1278,10 +1706,13 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   const guardedCheck = async (
     name: string,
     work: (frame: CheckFrame) => Promise<{ note: string; problems: readonly string[] }>,
+    /** After the writes are taken back and the clip is as it was: more problems (the export is as it was, say). */
+    afterRestore?: (frame: CheckFrame) => Promise<readonly string[]>,
   ): Promise<string> => {
     const frame: CheckFrame = {
       before: await readState(need(), contentId),
       undoIds: [],
+      cleanups: [],
       unread: new Set(),
       report: {},
     };
@@ -1291,8 +1722,9 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       checks[name] = frame.report;
       restored = true;
       const undo = await restore(frame);
+      const again = afterRestore === undefined ? [] : await afterRestore(frame);
       Object.assign(frame.report, { undo }, unreadReport(frame));
-      const all = [...problems, ...undo];
+      const all = [...problems, ...undo, ...again];
       if (all.length > 0) throw new Error(all.join('; '));
       return frame.unread.size === 0
         ? note
@@ -1314,6 +1746,228 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         error: scrub(thrown instanceof Error ? thrown.message : String(thrown)),
       };
       throw thrown;
+    }
+  };
+
+  // --- global preferences ---------------------------------------------------------------------
+
+  interface PrefsValues {
+    readonly tuningHz: number;
+    readonly hybridMode: boolean;
+  }
+  type PrefKey = keyof PrefsValues;
+
+  /** The preferences the checks change, as prefs.get reports them. */
+  const readPrefs = async (): Promise<PrefsValues> => {
+    const read = await need().call('prefs.get', {}, 30_000);
+    const processing = member(read, 'processing', 'prefs.get');
+    return {
+      tuningHz: num(processing, 'tuningHz', 'the processing preferences'),
+      hybridMode: bool(processing, 'hybridMode', 'the processing preferences'),
+    };
+  };
+
+  /** The revert recipe of a write result (undo.revert), or null when it gives none. */
+  const revertRecipe = (result: Json): { method: string; params: Json } | null => {
+    const revert = isObject(result.undo) ? result.undo.revert : null;
+    return isObject(revert) && typeof revert.method === 'string' && isObject(revert.params)
+      ? { method: revert.method, params: revert.params }
+      : null;
+  };
+
+  /**
+   * What a prefs.set result must say about the one preference it changed: applied, the change, no undo
+   * entry (a preference is not part of the project: undo reason ui_parity) but a revert recipe that
+   * names the previous value, and the warnings.
+   */
+  const prefProblems = (
+    result: Json,
+    key: PrefKey,
+    from: number | boolean,
+    to: number | boolean,
+    warnings: readonly string[],
+  ): string[] => {
+    const problems: string[] = [];
+    if (result.applied !== true || result.noOp === true) {
+      problems.push(
+        `prefs.set ${key} was not applied (applied ${String(result.applied)}, noOp ${String(result.noOp)})`,
+      );
+    }
+    const change = (Array.isArray(result.changes) ? (result.changes as unknown[]) : []).find(
+      (c) => isObject(c) && c.entity === 'preference' && isObject(c.ref) && c.ref.preference === key,
+    );
+    const field = isObject(change) && isObject(change.fields) ? change.fields[key] : undefined;
+    if (!isObject(field) || !same(field.before, from) || !same(field.after, to)) {
+      problems.push(
+        `changes does not report ${key} ${String(from)} -> ${String(to)} (it says ${JSON.stringify(field)})`,
+      );
+    }
+    if (!isObject(result.undo) || result.undo.undoable !== false || result.undo.reason !== 'ui_parity') {
+      problems.push('its undo block is not undoable false with reason ui_parity (a preference has no undo entry)');
+    }
+    const recipe = revertRecipe(result);
+    if (recipe?.method !== 'prefs.set' || !same(recipe.params[key], from)) {
+      problems.push(`the revert recipe does not set ${key} back to ${String(from)}`);
+    }
+    // The recipe is for the one preference that changed. A recipe that also sets another one would change
+    // something the write did not touch (the put-back still sends the changed preference only, see watchPrefs).
+    const others = recipe === null ? [] : Object.keys(recipe.params).filter((k) => k !== key);
+    if (others.length > 0) {
+      problems.push(`the revert recipe also sets ${others.join(', ')}, which this write did not change`);
+    }
+    const codes = new Set(
+      (Array.isArray(result.warnings) ? (result.warnings as unknown[]) : []).map((w) => (isObject(w) ? w.code : null)),
+    );
+    for (const code of warnings) if (!codes.has(code)) problems.push(`the warning ${code} is missing`);
+    return problems;
+  };
+
+  /**
+   * The preferences a check changes, which edit.undo does not take back. `start` is what they read when
+   * the check began. The put-back is registered with the frame at once, so that it runs whatever
+   * happens afterwards; `revert()` runs it on the spot, reads the preferences back, and throws when
+   * they are not the ones of the start (the message says what they were).
+   *
+   * What the put-back sends is a prefs.set with the values the result's revert recipe gives for the
+   * preferences watched here and for no other (the recipe is data the instance returned, not a call the
+   * scenario trusts to name the method or to touch only what was changed). A recipe that is missing,
+   * names another method or lacks a watched value is a problem, and the preferences are put back from
+   * what prefs.get read at the start instead; so is a recipe that did not put them back. The problems
+   * are returned by `revert()` and, when it runs as the frame's cleanup (the check failed before it got
+   * there), written to the report as `revertProblems`.
+   */
+  const watchPrefs = (frame: CheckFrame, keys: readonly PrefKey[], start: PrefsValues) => {
+    let recipe: { method: string; params: Json } | null = null;
+    const differing = (now: PrefsValues) => keys.filter((k) => !same(now[k], start[k]));
+    const fromStart = (): Json => Object.fromEntries(keys.map((k) => [k, start[k]]));
+    /** The values of the watched preferences in the recipe, or why there are none. */
+    const fromRecipe = (): { params: Json } | { problem: string } => {
+      if (recipe === null) return { problem: 'the prefs.set result gave no revert recipe' };
+      if (recipe.method !== 'prefs.set') return { problem: `the revert recipe calls ${recipe.method}, not prefs.set` };
+      const params: Record<string, unknown> = {};
+      for (const k of keys) {
+        const value = recipe.params[k];
+        if (typeof value !== typeof start[k]) return { problem: `the revert recipe gives no value for ${k}` };
+        params[k] = value;
+      }
+      return { params };
+    };
+    const revert = async (): Promise<string[]> => {
+      const problems: string[] = [];
+      if (differing(await readPrefs()).length === 0) return problems;
+      const planned = fromRecipe();
+      if ('problem' in planned) {
+        problems.push(`${planned.problem}; put back from what prefs.get read when the check began`);
+        await need().call('prefs.set', fromStart(), 60_000);
+      } else {
+        await need().call('prefs.set', planned.params, 60_000);
+        if (differing(await readPrefs()).length > 0) {
+          problems.push(
+            'the revert recipe did not put the preference back; put back from what prefs.get read when the check began',
+          );
+          await need().call('prefs.set', fromStart(), 60_000);
+        }
+      }
+      const after = await readPrefs();
+      const left = differing(after);
+      if (left.length > 0) {
+        throw new Error(
+          left
+            .map(
+              (k) =>
+                `preference ${k} reads ${String(after[k])} after the revert, it was ${String(start[k])} when the check began`,
+            )
+            .join('; '),
+        );
+      }
+      return problems;
+    };
+    frame.cleanups.push(async () => {
+      const problems = await revert();
+      if (problems.length > 0) {
+        const earlier = Array.isArray(frame.report.revertProblems) ? (frame.report.revertProblems as unknown[]) : [];
+        frame.report.revertProblems = [...earlier, ...problems];
+      }
+    });
+    return {
+      set: async (params: Json): Promise<Json> => {
+        const result = await need().call('prefs.set', params, 60_000);
+        recipe = revertRecipe(result);
+        return result;
+      },
+      revert,
+    };
+  };
+
+  /**
+   * Exports the clip again after a check has put it back: it must sound as the baseline did, over the
+   * whole file (a change that was not taken back would be heard anywhere). Returns the problems.
+   */
+  const exportsAsBaseline = async (frame: CheckFrame, label: string, allowedMaxAbsDiff: number): Promise<string[]> => {
+    if (baseline === undefined) throw new Error('no baseline');
+    const again = await exportWet(label);
+    const whole = compareSamples(baseline, again, [
+      { startSec: 0, endSec: baseline.mono.length / baseline.sampleRateHz },
+    ]);
+    frame.report.exportAfterUndo = whole;
+    return whole.maxAbsDiff > allowedMaxAbsDiff
+      ? [
+          `after the undo the export differs from the baseline by up to ${whole.maxAbsDiff.toExponential(2)} ` +
+            `(allowed ${allowedMaxAbsDiff.toExponential(0)})`,
+        ]
+      : [];
+  };
+
+  /**
+   * Takes back the newest write of a check with edit.undo, in the middle of the check: the clip must
+   * read as it did before the check (only one write may have been made), and its render settles.
+   * Returns the problems of the undo result; throws Unrestored when the clip is not as it was.
+   */
+  const undoNewest = async (frame: CheckFrame): Promise<string[]> => {
+    const undoId = frame.undoIds.pop();
+    if (undoId === undefined) throw new Error('there is no write to take back');
+    const result = await need().call('edit.undo', { expectedUndoId: undoId }, 60_000);
+    const after = await readState(need(), contentId);
+    const consistency = consistencyOf(result, after, contentId);
+    for (const field of consistency.unreadFields) frame.unread.add(field);
+    const left = snapshotProblems(frame.before, after);
+    if (left.length > 0) throw new Unrestored(`after edit.undo the clip is not as it was: ${left.join('; ')}`);
+    await settle();
+    return consistency.problems.map((p) => `undo: ${p}`);
+  };
+
+  /** A clip imported for a check of its own, on a track of its own; the checks run on it through useClip. */
+  interface ExtraClip {
+    readonly contentId: string;
+    readonly placementId: string;
+    readonly spans: Span[];
+    readonly places: NotePlace[];
+    baseline?: DecodedWav;
+  }
+
+  /** Runs `body` with the helpers of the scenario (settle, write, export, measure) aimed at another clip. */
+  const useClip = async <T>(clip: ExtraClip, body: () => Promise<T>): Promise<T> => {
+    const saved = { contentId, placementId, baseline, spans, places };
+    ({ contentId, placementId, baseline, spans, places } = {
+      contentId: clip.contentId,
+      placementId: clip.placementId,
+      baseline: clip.baseline,
+      spans: clip.spans,
+      places: clip.places,
+    });
+    try {
+      return await body();
+    } finally {
+      ({ contentId, placementId, baseline, spans, places } = saved);
+    }
+  };
+
+  /** Skips the step unless the clip offers the AUTO mode. */
+  const requireAutoMode = async (mode: string) => {
+    const details = await need().call('content.getDetails', { contentId }, 30_000);
+    const available = member(member(details, 'autoModes', 'content details'), 'available', 'autoModes');
+    if (!Array.isArray(available) || !available.includes(mode)) {
+      throw new StepSkip('SKIP', `the clip does not offer AUTO mode ${mode}`);
     }
   };
 
@@ -1360,8 +2014,17 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     return span;
   };
 
-  /** Measures every note against the baseline: `expected` gives the change of the edited ones, all others 0. */
-  const measure = (wet: DecodedWav, expected: ReadonlyMap<number, number>) => {
+  /**
+   * The pitch of every note against the baseline, in the given tolerance: `expected` gives the change
+   * of the edited ones, all others 0. Nothing is said about the samples (see measure).
+   */
+  const measurePitch = (
+    wet: DecodedWav,
+    expected: ReadonlyMap<number, number>,
+    toleranceCents = PITCH_TOLERANCE_CENTS,
+    /** Notes whose change is measured and reported but not judged. */
+    notJudged: ReadonlySet<number> = new Set(),
+  ) => {
     if (baseline === undefined) throw new Error('no baseline');
     const base = baseline;
     const deltas = spans.map((span) => noteDelta(base, wet, span, expected.get(span.index) ?? 0));
@@ -1369,12 +2032,20 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     for (const d of deltas) {
       if (d.medianCents === null) {
         problems.push(`note ${String(d.index)}: only ${String(d.frames)} frames voiced in both files`);
-      } else if (Math.abs(d.medianCents - d.expectedCents) > PITCH_TOLERANCE_CENTS) {
+      } else if (!notJudged.has(d.index) && Math.abs(d.medianCents - d.expectedCents) > toleranceCents) {
         problems.push(
-          `note ${String(d.index)}: ${String(d.medianCents)} cents, expected ${String(d.expectedCents)} +- ${String(PITCH_TOLERANCE_CENTS)}`,
+          `note ${String(d.index)}: ${String(d.medianCents)} cents, expected ${String(d.expectedCents)} +- ${String(toleranceCents)}`,
         );
       }
     }
+    return { deltas, problems };
+  };
+
+  /** Measures every note against the baseline: `expected` gives the change of the edited ones, all others 0. */
+  const measure = (wet: DecodedWav, expected: ReadonlyMap<number, number>, toleranceCents = PITCH_TOLERANCE_CENTS) => {
+    if (baseline === undefined) throw new Error('no baseline');
+    const base = baseline;
+    const { deltas, problems } = measurePitch(wet, expected, toleranceCents);
     // The notes that were not edited, in the zones of RESYNTH_*: those within the reach of an edit's
     // re-synthesis, and those away from every edit.
     const edited = [...expected.keys()];
@@ -1419,11 +2090,38 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       }
     }
     const report = {
-      toleranceCents: PITCH_TOLERANCE_CENTS,
+      toleranceCents,
       notes: deltas.map(publicDelta),
       unedited: { away: { ...away, notes: awaySpans.map((s) => s.index) }, reach },
     };
     return { deltas, problems, report };
+  };
+
+  /**
+   * Whether two exports of the clip are the same sound (see SAME_SOUND_PITCH_CENTS): note by note,
+   * bit-identical or the same sound in another phase, at the same pitch.
+   */
+  const sameSound = (a: DecodedWav, b: DecodedWav) => {
+    const problems: string[] = [];
+    const notes = spans.map((s) => {
+      const identical =
+        compareSamples(a, b, [{ startSec: s.startSec - 0.05, endSec: s.endSec + 0.05 }]).bitIdentical === 1;
+      // One period of the note's pitch is as far as a phase offset can move it.
+      const residualDb = identical ? null : alignedResidualDb(a, b, insideOf(s), a.sampleRateHz / s.hz);
+      const pitch = noteDelta(a, b, s, 0);
+      if (!identical && (residualDb === null || residualDb > RESYNTH_MAX_RESIDUAL_DB)) {
+        problems.push(
+          `note ${String(s.index)} is not the same sound: ${String(residualDb)} dB left after aligning its phase (allowed ${String(RESYNTH_MAX_RESIDUAL_DB)})`,
+        );
+      }
+      if (pitch.medianCents === null || Math.abs(pitch.medianCents) > SAME_SOUND_PITCH_CENTS) {
+        problems.push(
+          `note ${String(s.index)} is ${String(pitch.medianCents)} cents from where it was (allowed ${String(SAME_SOUND_PITCH_CENTS)})`,
+        );
+      }
+      return { index: s.index, bitIdentical: identical, alignedResidualDb: residualDb, pitchCents: pitch.medianCents };
+    });
+    return { problems, report: { notes } };
   };
 
   const describeDeltas = (deltas: readonly NoteDelta[], indices: readonly number[]) =>
@@ -1871,6 +2569,155 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   );
 
   await step(
+    'snapToScale returns an off-scale note to the scale',
+    async () => {
+      const name = 'snapToScale returns an off-scale note to the scale';
+      if (picks === undefined)
+        throw new StepSkip('SKIP', `the audio has fewer than two voiced notes of ${String(MIN_NOTE_SEC)} s`);
+      if (tone === undefined) {
+        throw new StepSkip('SKIP', 'external audio: the scale its notes belong to is not known in advance');
+      }
+      const index = picks.shift;
+      return guardedCheck(name, async (frame) => {
+        const { before, report } = frame;
+        // Out of the scale first: 70 cents above its pitch, between two pitches of C major.
+        const shifted = await write(
+          'content.editNotes',
+          {
+            contentId,
+            expectedRevision: before.notesRevision,
+            ops: [{ op: 'shiftCents', select: { indices: [index] }, deltaCents: SNAP_SHIFT_CENTS }],
+          },
+          frame,
+        );
+        const problems = [...shifted.problems];
+        await settle();
+        const up = measure(await exportWet(`${name}: shifted`), new Map([[index, SNAP_SHIFT_CENTS]]));
+        problems.push(...up.problems.map((p) => `shifted by ${String(SNAP_SHIFT_CENTS)} cents: ${p}`));
+        // Then onto the scale: the nearest pitch of C major to where it is now.
+        const wanted = nearestInCMajor(noteAt(shifted.after, index).targetMidi);
+        const snapped = await write(
+          'content.editNotes',
+          {
+            contentId,
+            expectedRevision: shifted.after.notesRevision,
+            ops: [{ op: 'snapToScale', select: { indices: [index] }, key: { root: 0, scale: 'major' } }],
+          },
+          frame,
+        );
+        problems.push(...snapped.problems, ...noteChanged(snapped.result, index, 'targetMidi', wanted));
+        const now = noteAt(snapped.after, index);
+        if (Math.abs(now.targetMidi - wanted) > (REPORTED_FIELD_EPSILON.targetMidi ?? READBACK_EPSILON)) {
+          problems.push(`the note's target reads back ${String(now.targetMidi)}, expected ${String(wanted)}`);
+        }
+        if (Math.abs(now.offsetCents) > (REPORTED_FIELD_EPSILON.offsetCents ?? READBACK_EPSILON)) {
+          problems.push(`the note's offsetCents reads back ${String(now.offsetCents)}, expected 0`);
+        }
+        await settle();
+        const down = measure(await exportWet(`${name}: snapped`), new Map([[index, 0]]));
+        problems.push(...down.problems.map((p) => `snapped: ${p}`));
+        Object.assign(report, {
+          note: index,
+          targetMidi: {
+            before: noteAt(before, index).targetMidi,
+            shifted: noteAt(shifted.after, index).targetMidi,
+            snapped: now.targetMidi,
+          },
+          shifted: up.report,
+          snapped: down.report,
+          consistency: problems.slice(),
+        });
+        return {
+          note:
+            `${describeDeltas(up.deltas, [index])} when shifted, ${describeDeltas(down.deltas, [index])} once snapped ` +
+            `to ${String(wanted)}; undo restored the clip`,
+          problems,
+        };
+      });
+    },
+    { check: true },
+  );
+
+  await step(
+    'prefs.set tuningHz 442',
+    async () => {
+      const name = 'prefs.set tuningHz 442';
+      if (!need().hello.capabilities.includes('prefs.write'))
+        throw new StepSkip('SKIP', 'the instance does not report prefs.write');
+      if (picks === undefined)
+        throw new StepSkip('SKIP', `the audio has fewer than two voiced notes of ${String(MIN_NOTE_SEC)} s`);
+      if (picks.off === null) {
+        throw new StepSkip('SKIP', 'external audio: which note is off, and by how much, is not known in advance');
+      }
+      const off = picks.off;
+      await requireAutoMode('regenerate');
+      return guardedCheck(
+        name,
+        async (frame) => {
+          const { report } = frame;
+          const start = await readPrefs();
+          const wanted = start.tuningHz === TUNING_CHECK_HZ ? 440 : TUNING_CHECK_HZ;
+          const watch = watchPrefs(frame, ['tuningHz'], start);
+          const set = await watch.set({ tuningHz: wanted });
+          const problems = prefProblems(set, 'tuningHz', start.tuningHz, wanted, [
+            'GLOBAL_PREFERENCE',
+            'NOT_RETROACTIVE',
+          ]);
+          const read = await readPrefs();
+          if (!same(read.tuningHz, wanted))
+            problems.push(`prefs.get reads tuningHz ${String(read.tuningHz)}, expected ${String(wanted)}`);
+          // The new reference is not applied to what is rendered already (NOT_RETROACTIVE): the clip
+          // exports as it did.
+          const kept = measure(await exportWet(`${name}: before AUTO`), new Map(), TUNING_TOLERANCE_CENTS);
+          problems.push(...kept.problems.map((p) => `before AUTO: ${p}`));
+          // AUTO at the new reference: every note lands on the nearest semitone of A4 = wanted Hz, which
+          // lies this far from the semitone of A4 = the old reference; the sharp note comes down by its
+          // 40 cents as in the AUTO checks.
+          const shiftCents = 1200 * Math.log2(wanted / start.tuningHz);
+          const state = await readState(need(), contentId);
+          const auto = await write(
+            'content.autoTune',
+            {
+              contentId,
+              mode: 'regenerate',
+              key: { root: 0, scale: 'chromatic' },
+              expectedRevision: state.notesRevision,
+            },
+            frame,
+          );
+          problems.push(...auto.problems);
+          if (!same(auto.after.tuningHz, wanted)) {
+            problems.push(
+              `content.getNotes reports tuningHz ${String(auto.after.tuningHz)}, expected ${String(wanted)}`,
+            );
+          }
+          await settle();
+          const expected = new Map(spans.map((s) => [s.index, shiftCents + (s.index === off ? -OFF_NOTE_CENTS : 0)]));
+          const m = measure(await exportWet(`${name}: AUTO`), expected, TUNING_TOLERANCE_CENTS);
+          problems.push(...m.problems);
+          // The reference goes back by the recipe the result gave, and is read back.
+          problems.push(...(await watch.revert()));
+          Object.assign(report, {
+            tuningHz: { before: start.tuningHz, set: wanted },
+            expectedShiftCents: round(shiftCents),
+            notRetroactive: kept.report,
+            auto: m.report,
+            consistency: problems.slice(),
+          });
+          return {
+            note:
+              `A4 ${String(start.tuningHz)} -> ${String(wanted)} Hz, AUTO moved the notes by ${String(round(shiftCents))} cents as expected ` +
+              `(${describeDeltas(m.deltas, [0, off])}); reference put back by its recipe, undo restored the clip`,
+            problems,
+          };
+        },
+        (frame) => exportsAsBaseline(frame, `${name}: taken back`, 0),
+      );
+    },
+    { check: true },
+  );
+
+  await step(
     'race: +100 cents, export, -100 cents',
     async () => {
       if (picks === undefined)
@@ -1998,33 +2845,59 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     { check: true },
   );
 
-  await step(
-    'shiftTiming +30 ms',
-    async () => {
-      const s = need();
-      if (!s.hello.capabilities.includes('timing.v1'))
-        throw new StepSkip('SKIP', 'the instance does not report timing.v1');
-      if (picks === undefined)
-        throw new StepSkip('SKIP', `the audio has fewer than two voiced notes of ${String(MIN_NOTE_SEC)} s`);
-      if (baseline === undefined) throw new Error('no baseline');
-      const base = baseline;
-      const anchor = spanOf(picks.shift).startSec;
-      // Seeding cannot be undone (as in OpenTune) and must not change the sound: checked on its own export.
+  /**
+   * A check of a time-grid write that moves one handle by TIMING_SHIFT_SEC. When the grid has no
+   * handles yet it is seeded first (which cannot be undone, as in OpenTune, and must not change the
+   * sound: checked on its own export). `move` makes the write; the check then measures that the audio
+   * at the handle plays that much later and that the notes away from the handle stay where they were.
+   */
+  const timingCheck = async (
+    name: string,
+    anchorIndex: number,
+    move: (m: { frame: CheckFrame; before: ClipState; at: HandleRead; half: number }) => Promise<{
+      after: ClipState;
+      problems: string[];
+      report?: Record<string, unknown>;
+    }>,
+    options: {
+      readonly exportAfterUndo: boolean;
+      /**
+       * Moving a handle stretches the stretch before it and squeezes the one after it, and OpenTune's
+       * stretch does not give the length back exactly: the notes after the handle after it came out
+       * 2.24 and 2.25 ms off for a handle at the second note, -0.45 ms for one at the third (the
+       * notes before the handle before it were unchanged to 1e-4). They are judged by their shift
+       * (SHIFT_TOLERANCE_SEC, which separates them from the 30 ms of the move) and their pitch, not sample
+       * by sample.
+       */
+      readonly tailMayShift: boolean;
+    },
+  ): Promise<string> => {
+    const s = need();
+    if (baseline === undefined) throw new Error('no baseline');
+    const base = baseline;
+    const anchor = spanOf(anchorIndex).startSec;
+    const unedited = (list: readonly Span[]) =>
+      list.map((sp) => ({ startSec: sp.startSec - 0.05, endSec: sp.endSec + 0.05 }));
+    let seededSamples: SampleComparison | null = null;
+    if ((await readState(s, contentId)).handles.length === 0) {
       const seeded = await s.call('content.editTimeGrid', { contentId, op: 'seed' }, 60_000);
       const job = member(seeded, 'job', 'the seed result');
       if (isObject(job)) await waitJob(s, text(job, 'jobId', 'the seed job'), 'time-grid seed', timeoutMs);
       await settle();
       const seededWav = await exportWet('after seeding the time grid');
-      const unedited = (list: readonly Span[]) =>
-        list.map((sp) => ({ startSec: sp.startSec - 0.05, endSec: sp.endSec + 0.05 }));
-      const seededSamples = compareSamples(base, seededWav, unedited(spans));
-      return guardedCheck('shiftTiming +30 ms', async (frame) => {
+      seededSamples = compareSamples(base, seededWav, unedited(spans));
+    }
+    return guardedCheck(
+      name,
+      async (frame) => {
         const { before, report } = frame;
-        report.seedUnchanged = seededSamples;
-        if (seededSamples.maxAbsDiff > UNEDITED_MAX_ABS_DIFF_TIMING) {
-          throw new Error(
-            `seeding the time grid changed the sound by up to ${seededSamples.maxAbsDiff.toExponential(2)}`,
-          );
+        if (seededSamples !== null) {
+          report.seedUnchanged = seededSamples;
+          if (seededSamples.maxAbsDiff > UNEDITED_MAX_ABS_DIFF_TIMING) {
+            throw new Error(
+              `seeding the time grid changed the sound by up to ${seededSamples.maxAbsDiff.toExponential(2)}`,
+            );
+          }
         }
         if (before.handles.length === 0) throw new Error('the seeded time grid has no handles');
         // The handle nearest the start of the picked note; the notes before the handle before it
@@ -2037,16 +2910,8 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         const previous = sorted[k - 1]?.contentSec ?? 0;
         const next = sorted[k + 1]?.contentSec ?? Infinity;
         const half = Math.min(0.05, Math.min(at.contentSec - previous, next - at.contentSec) / 3);
-        const { after, problems } = await write(
-          'content.shiftTiming',
-          {
-            contentId,
-            expectedGridRevision: before.tokens.gridRevision,
-            range: { startContentSec: round(at.contentSec - half, 6), endContentSec: round(at.contentSec + half, 6) },
-            deltaSec: TIMING_SHIFT_SEC,
-          },
-          frame,
-        );
+        const { after, problems, report: written } = await move({ frame, before, at, half });
+        Object.assign(report, written ?? {});
         const moved = after.handles.find((h) => h.handleId === at.handleId);
         if (moved === undefined || !same(round(moved.outputSec - at.outputSec, 6), TIMING_SHIFT_SEC)) {
           problems.push(`handle ${at.handleId} moved to ${String(moved?.outputSec)} from ${String(at.outputSec)}`);
@@ -2058,7 +2923,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         );
         if (others.length > 0) problems.push(`${String(others.length)} other handles moved as well`);
         await settle();
-        const wet = await exportWet('shiftTiming +30 ms');
+        const wet = await exportWet(name);
         const shift = estimateShift(base.mono, wet.mono, base.sampleRateHz, {
           startSec: at.outputSec - SHIFT_WINDOW_SEC,
           endSec: at.outputSec + SHIFT_WINDOW_SEC,
@@ -2070,6 +2935,9 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
           );
         }
         const still = spans.filter((sp) => sp.endSec < previous || sp.startSec > next);
+        // Notes judged sample by sample, and the tail that may be a little late.
+        const exact = options.tailMayShift ? still.filter((sp) => sp.endSec < previous) : still;
+        const tail = options.tailMayShift ? still.filter((sp) => sp.startSec > next) : [];
         const stillShifts = still.map((sp) => {
           try {
             const e = estimateShift(base.mono, wet.mono, base.sampleRateHz, {
@@ -2086,7 +2954,16 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
             problems.push(`note ${String(st.index)}, away from the moved handle, moved by ${String(st.shiftMs)} ms`);
           }
         }
-        const stillSamples = compareSamples(base, wet, unedited(still));
+        const stillSamples = compareSamples(base, wet, unedited(exact));
+        const tailNotes = tail.map((sp) => {
+          const pitch = noteDelta(base, wet, sp, 0);
+          if (pitch.medianCents === null || Math.abs(pitch.medianCents) > PITCH_TOLERANCE_CENTS) {
+            problems.push(
+              `note ${String(sp.index)}, after the moved handle, changed pitch by ${String(pitch.medianCents)} cents (allowed ${String(PITCH_TOLERANCE_CENTS)})`,
+            );
+          }
+          return { index: sp.index, pitchCents: pitch.medianCents };
+        });
         // Generated audio: sample by sample, as measured. External audio: a grid change renders the
         // whole stretch again, and notes of real voices came back in another phase (differences of
         // 0.17 to 0.26 of full scale) with the same pitch, so each note away from the handle is
@@ -2094,7 +2971,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         // pitch has not moved (PITCH_TOLERANCE_CENTS).
         let stillNotes: Record<string, unknown>[] | undefined;
         if (tone === undefined) {
-          stillNotes = still.map((sp) => {
+          stillNotes = exact.map((sp) => {
             const identical =
               compareSamples(base, wet, [{ startSec: sp.startSec - 0.05, endSec: sp.endSec + 0.05 }]).bitIdentical ===
               1;
@@ -2139,14 +3016,542 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
           correlation: round(shift.peak, 4),
           notesAway: stillShifts,
           unedited: stillSamples,
+          ...(tail.length === 0 ? {} : { notesAfter: tailNotes }),
           ...(stillNotes === undefined ? {} : { uneditedNotes: stillNotes }),
           consistency: problems.slice(),
         });
         return {
-          note: `moved by ${String(shiftMs)} ms at the handle, notes away from it unchanged; undo restored the grid`,
+          note:
+            `moved by ${String(shiftMs)} ms at the handle, notes away from it unchanged` +
+            (tail.length === 0
+              ? ''
+              : ` (the notes after it moved by ${stillShifts
+                  .filter((st) => tail.some((sp) => sp.index === st.index))
+                  .map((st) => String(st.shiftMs))
+                  .join(', ')} ms)`) +
+            '; undo restored the grid',
           problems,
         };
+      },
+      options.exportAfterUndo
+        ? async (frame) => {
+            // The grid is taken back and the clip is exported again; what must hold depends on the audio:
+            // - generated audio: the whole file equals the baseline sample by sample (within
+            //   UNEDITED_MAX_ABS_DIFF_TIMING), not only the notes, since a handle that stayed would be
+            //   heard anywhere;
+            // - external audio: taking the grid back renders the clip again in another phase, as the move did,
+            //   so each note (with a margin around it) must be the same sound as in the baseline (sameSound:
+            //   bit-identical, or at most RESYNTH_MAX_RESIDUAL_DB left after aligning its phase, at the same
+            //   pitch). The whole-file comparison is then only written to the report.
+            const again = await exportWet(`${name}, taken back`);
+            const whole = compareSamples(base, again, [{ startSec: 0, endSec: base.mono.length / base.sampleRateHz }]);
+            if (tone === undefined) {
+              const same = sameSound(base, again);
+              frame.report.exportAfterUndo = { ...whole, sameSound: same.report };
+              return same.problems.map((p) => `after the undo: ${p}`);
+            }
+            frame.report.exportAfterUndo = whole;
+            return whole.maxAbsDiff > UNEDITED_MAX_ABS_DIFF_TIMING
+              ? [
+                  `after the undo the export differs from the baseline by up to ${whole.maxAbsDiff.toExponential(2)} ` +
+                    `(allowed ${UNEDITED_MAX_ABS_DIFF_TIMING.toExponential(0)})`,
+                ]
+              : [];
+          }
+        : undefined,
+    );
+  };
+
+  await step(
+    'shiftTiming +30 ms',
+    async () => {
+      const s = need();
+      if (!s.hello.capabilities.includes('timing.v1'))
+        throw new StepSkip('SKIP', 'the instance does not report timing.v1');
+      if (picks === undefined)
+        throw new StepSkip('SKIP', `the audio has fewer than two voiced notes of ${String(MIN_NOTE_SEC)} s`);
+      return timingCheck(
+        'shiftTiming +30 ms',
+        picks.shift,
+        async ({ frame, before, at, half }) => {
+          const { after, problems } = await write(
+            'content.shiftTiming',
+            {
+              contentId,
+              expectedGridRevision: before.tokens.gridRevision,
+              range: { startContentSec: round(at.contentSec - half, 6), endContentSec: round(at.contentSec + half, 6) },
+              deltaSec: TIMING_SHIFT_SEC,
+            },
+            frame,
+          );
+          return { after, problems };
+        },
+        { exportAfterUndo: false, tailMayShift: false },
+      );
+    },
+    { check: true },
+  );
+
+  await step(
+    'moveHandles +30 ms',
+    async () => {
+      const s = need();
+      if (!s.hello.capabilities.includes('timing.v1'))
+        throw new StepSkip('SKIP', 'the instance does not report timing.v1');
+      if (picks === undefined)
+        throw new StepSkip('SKIP', `the audio has fewer than two voiced notes of ${String(MIN_NOTE_SEC)} s`);
+      // A handle in the middle of the clip, so that notes lie before the handle before it and after the
+      // handle after it.
+      return timingCheck(
+        'moveHandles +30 ms',
+        spans[Math.floor(spans.length / 2)]?.index ?? picks.target,
+        async ({ frame, before, at }) => {
+          const wanted = round(at.outputSec + TIMING_SHIFT_SEC, 6);
+          const { result, after, problems } = await write(
+            'content.editTimeGrid',
+            {
+              op: 'moveHandles',
+              contentId,
+              expectedGridRevision: before.tokens.gridRevision,
+              moves: [{ handleId: at.handleId, outputSec: wanted }],
+            },
+            frame,
+          );
+          const clamped = member(result, 'clamped', 'the moveHandles result');
+          if (!Array.isArray(clamped)) problems.push('clamped is not an array');
+          else if (clamped.length > 0) problems.push(`the move was limited: ${JSON.stringify(clamped).slice(0, 160)}`);
+          if (!(isObject(result.sideEffects) && 'reRenderQueued' in result.sideEffects)) {
+            problems.push('the result does not report sideEffects.reRenderQueued');
+          }
+          return { after, problems, report: { requestedOutputSec: wanted } };
+        },
+        { exportAfterUndo: true, tailMayShift: true },
+      );
+    },
+    { check: true },
+  );
+
+  // --- the note-split, vibrato and drift checks: audio of their own ------------------------------
+
+  let stepsClip: ExtraClip | undefined;
+  let steppedTone: ReturnType<typeof makeSteppedTone> | undefined;
+  let modulationClip: ExtraClip | undefined;
+
+  /** Imports a generated tone on a track of its own, without selecting it, and reads its notes. */
+  const importExtra = async (label: string, extraTone: Tone): Promise<ExtraClip> => {
+    const written = await writeToneFiles(extraTone, `effects-${label}`);
+    try {
+      const imported = await importAndAnalyse(written.wavPath, { newTrack: true, focus: false });
+      const read = await readState(need(), imported.contentId);
+      return {
+        contentId: imported.contentId,
+        placementId: imported.placementId,
+        spans: spansOf(read),
+        places: read.notes.map((n) => ({ index: n.index, startSec: n.startContentSec, endSec: n.endContentSec })),
+      };
+    } finally {
+      await written.cleanup();
+    }
+  };
+
+  // Marked as a check: when it is skipped (external audio) the steps after it still run, the timing steps among them.
+  await step(
+    'extra clips for the note-split, vibrato and drift checks',
+    async () => {
+      if (tone === undefined) throw new StepSkip('SKIP', 'external audio: the checks use generated tones of their own');
+      steppedTone = makeSteppedTone();
+      stepsClip = await importExtra('steps', steppedTone.tone);
+      const modulationTone = makeModulationTone();
+      const made = await importExtra('modulation', modulationTone);
+      if (made.spans.length !== modulationTone.truth.notes.length) {
+        throw new Error(
+          `OpenTune found ${String(made.spans.length)} voiced notes in the modulation tone, it has ${String(modulationTone.truth.notes.length)}`,
+        );
+      }
+      // The same fixed parameters as the main clip, then the baseline of the vibrato and drift checks.
+      modulationClip = made;
+      await useClip(made, async () => {
+        const read = await readState(need(), contentId);
+        await write(
+          'content.editNotes',
+          {
+            contentId,
+            expectedRevision: read.notesRevision,
+            ops: [{ op: 'setParams', select: { all: true }, ...FIXED_PARAMS }],
+          },
+          null,
+        );
+        await settle();
+        made.baseline = await exportWet('modulation baseline');
       });
+      return (
+        `stepped tone: ${String(stepsClip.spans.length)} voiced notes at the default sensitivity, ` +
+        `steps at ${steppedTone.stepsSec.map((t) => t.toFixed(1)).join(', ')} s; modulation tone: ${String(made.spans.length)} notes, baseline exported`
+      );
+    },
+    { check: true },
+  );
+
+  await step(
+    'AUTO regenerate noteSplitCents',
+    async () => {
+      const name = 'AUTO regenerate noteSplitCents';
+      const clip = stepsClip;
+      const stepped = steppedTone;
+      if (clip === undefined || stepped === undefined) throw new StepSkip('SKIP', 'the extra clips were not made');
+      return useClip(clip, async () => {
+        await requireAutoMode('regenerate');
+        const toneNotes = stepped.tone.truth.notes.map((n) => ({ startSec: n.startSec, endSec: n.endSec }));
+        return guardedCheck(name, async (frame) => {
+          const { report } = frame;
+          const problems: string[] = [];
+          const runs: Record<string, unknown>[] = [];
+          const counts: number[] = [];
+          for (const [cents, cut] of [
+            [SPLIT_SMALL_CENTS, true],
+            [SPLIT_LARGE_CENTS, false],
+          ] as const) {
+            const read = await readState(need(), contentId);
+            const auto = await write(
+              'content.autoTune',
+              {
+                contentId,
+                mode: 'regenerate',
+                key: { root: 0, scale: 'chromatic' },
+                // retuneSpeed 1: each note is flattened to its target, so the pitch it is exported at is its target.
+                params: { noteSplitCents: cents, retuneSpeed: 1 },
+                expectedRevision: read.notesRevision,
+              },
+              frame,
+            );
+            const where = `noteSplitCents ${String(cents)}`;
+            problems.push(...auto.problems.map((p) => `${where}: ${p}`));
+            const used = isObject(auto.result.paramsUsed) ? auto.result.paramsUsed.noteSplitCents : undefined;
+            if (typeof used !== 'number' || !same(used, cents)) {
+              problems.push(`${where}: paramsUsed.noteSplitCents is ${JSON.stringify(used)}`);
+            }
+            const notes = auto.after.notes.map((n) => ({ startSec: n.startContentSec, endSec: n.endContentSec }));
+            problems.push(...splitProblems(notes, toneNotes, stepped.stepsSec, cut).map((p) => `${where}: ${p}`));
+            await settle();
+            const wav = await exportWet(`${name}: ${String(cents)}`);
+            // Every note long enough to measure is exported at its target pitch.
+            const pitches = auto.after.notes
+              .filter((n) => n.voiced && n.endContentSec - n.startContentSec >= MIN_NOTE_SEC)
+              .map((n) => {
+                const hz = auto.after.tuningHz * 2 ** ((n.targetMidi - 69) / 12);
+                const at = pitchAgainst(
+                  wav,
+                  { index: n.index, startSec: n.startContentSec, endSec: n.endContentSec, hz },
+                  hz,
+                );
+                return {
+                  index: n.index,
+                  startSec: round(n.startContentSec),
+                  endSec: round(n.endContentSec),
+                  targetMidi: n.targetMidi,
+                  cents: at.cents,
+                  frames: at.frames,
+                };
+              });
+            for (const p of pitches) {
+              if (p.cents === null) {
+                problems.push(
+                  `${where}: note ${String(p.index)} has only ${String(p.frames)} voiced frames in the export`,
+                );
+              } else if (Math.abs(p.cents) > PITCH_TOLERANCE_CENTS) {
+                problems.push(
+                  `${where}: note ${String(p.index)} is exported ${String(p.cents)} cents from its target ${String(p.targetMidi)} (allowed ${String(PITCH_TOLERANCE_CENTS)})`,
+                );
+              }
+            }
+            counts.push(auto.after.notes.length);
+            runs.push({
+              noteSplitCents: cents,
+              notes: auto.after.notes.length,
+              boundaries: auto.after.notes.map((n) => round(n.startContentSec)),
+              paramsUsed: isObject(auto.result.paramsUsed) ? auto.result.paramsUsed : null,
+              pitches,
+            });
+            // The first AUTO is taken back before the second: both start from the clip as it was.
+            if (cut) problems.push(...(await undoNewest(frame)));
+          }
+          const [many, few] = counts;
+          if (many === undefined || few === undefined || many <= few) {
+            problems.push(
+              `a sensitivity of ${String(SPLIT_SMALL_CENTS)} cents gave ${String(many)} notes, ${String(SPLIT_LARGE_CENTS)} cents gave ${String(few)}: the smaller one should cut more`,
+            );
+          }
+          Object.assign(report, {
+            stepsSec: stepped.stepsSec.map((t) => round(t)),
+            runs,
+            consistency: problems.slice(),
+          });
+          return {
+            note:
+              `${String(many)} notes at ${String(SPLIT_SMALL_CENTS)} cents (cut at every pitch step), ${String(few)} at ${String(SPLIT_LARGE_CENTS)} ` +
+              '(the two tone notes whole), each exported at its target; undo restored the clip',
+            problems,
+          };
+        });
+      });
+    },
+    { check: true },
+  );
+
+  await step(
+    'setParams vibratoDepth and vibratoRateHz',
+    async () => {
+      const name = 'setParams vibratoDepth and vibratoRateHz';
+      const clip = modulationClip;
+      if (clip === undefined) throw new StepSkip('SKIP', 'the extra clips were not made');
+      return useClip(clip, async () => {
+        const base = baseline;
+        const steady = spans[0];
+        const other = spans[1];
+        if (base === undefined || steady === undefined || other === undefined) throw new Error('no baseline');
+        return guardedCheck(
+          name,
+          async (frame) => {
+            const { before, report } = frame;
+            const baseWaver = waveringOf(base, steady);
+            if (baseWaver === null) throw new Error('the baseline note has too few voiced frames');
+            const written = await write(
+              'content.editNotes',
+              {
+                contentId,
+                expectedRevision: before.notesRevision,
+                ops: [
+                  {
+                    op: 'setParams',
+                    select: { indices: [steady.index] },
+                    vibratoDepth: VIBRATO_DEPTH,
+                    vibratoRateHz: VIBRATO_RATE_HZ,
+                  },
+                ],
+              },
+              frame,
+            );
+            const problems = [...written.problems];
+            const set = noteAt(written.after, steady.index);
+            if (!same(set.vibratoDepth, VIBRATO_DEPTH) || !same(set.vibratoRateHz, VIBRATO_RATE_HZ)) {
+              problems.push(
+                `the note reads back depth ${String(set.vibratoDepth)} and rate ${String(set.vibratoRateHz)}`,
+              );
+            }
+            await settle();
+            const wet = await exportWet(name);
+            const waver = waveringOf(wet, steady);
+            if (waver === null) throw new Error('the vibrato note has too few voiced frames in the export');
+            problems.push(...vibratoProblems(baseWaver, waver, VIBRATO_DEPTH, VIBRATO_RATE_HZ));
+            // The note that was not edited stays where it was.
+            const bystander = noteDelta(base, wet, other, 0);
+            if (bystander.medianCents === null || Math.abs(bystander.medianCents) > PITCH_TOLERANCE_CENTS) {
+              problems.push(`the other note moved by ${String(bystander.medianCents)} cents`);
+            }
+            Object.assign(report, {
+              depth: VIBRATO_DEPTH,
+              rateHz: VIBRATO_RATE_HZ,
+              baseline: baseWaver,
+              vibrato: waver,
+              otherNote: publicDelta(bystander),
+              consistency: problems.slice(),
+            });
+            return {
+              note:
+                `+-${String(waver.amplitudeCents)} cents at ${String(waver.rateHz)} Hz with depth ${String(VIBRATO_DEPTH)} at ${String(VIBRATO_RATE_HZ)} Hz ` +
+                `(none before: ${String(baseWaver.amplitudeCents)}); undo restored the clip`,
+              problems,
+            };
+          },
+          (frame) => exportsAsBaseline(frame, `${name}: taken back`, 0),
+        );
+      });
+    },
+    { check: true },
+  );
+
+  await step(
+    'setParams pitchDriftScale 0',
+    async () => {
+      const name = 'setParams pitchDriftScale 0';
+      const clip = modulationClip;
+      if (clip === undefined) throw new StepSkip('SKIP', 'the extra clips were not made');
+      return useClip(clip, async () => {
+        const base = baseline;
+        const steady = spans[0];
+        const drifting = spans[1];
+        if (base === undefined || steady === undefined || drifting === undefined) throw new Error('no baseline');
+        return guardedCheck(
+          name,
+          async (frame) => {
+            const { before, report } = frame;
+            const baseWaver = waveringOf(base, drifting);
+            if (baseWaver === null) throw new Error('the baseline note has too few voiced frames');
+            const written = await write(
+              'content.editNotes',
+              {
+                contentId,
+                expectedRevision: before.notesRevision,
+                ops: [{ op: 'setParams', select: { indices: [drifting.index] }, pitchDriftScale: 0 }],
+              },
+              frame,
+            );
+            const problems = [...written.problems];
+            if (!same(noteAt(written.after, drifting.index).pitchDriftScale, 0)) {
+              problems.push('the note does not read back pitchDriftScale 0');
+            }
+            await settle();
+            const wet = await exportWet(name);
+            const waver = waveringOf(wet, drifting);
+            if (waver === null) throw new Error('the note has too few voiced frames in the export');
+            problems.push(...driftProblems(baseWaver, waver));
+            const bystander = noteDelta(base, wet, steady, 0);
+            if (bystander.medianCents === null || Math.abs(bystander.medianCents) > PITCH_TOLERANCE_CENTS) {
+              problems.push(`the other note moved by ${String(bystander.medianCents)} cents`);
+            }
+            Object.assign(report, {
+              sourceDrift: { amplitudeCents: DRIFT_SOURCE_CENTS, periodSec: DRIFT_SOURCE_PERIOD_SEC },
+              baseline: baseWaver,
+              driftScale0: waver,
+              otherNote: publicDelta(bystander),
+              consistency: problems.slice(),
+            });
+            return {
+              note:
+                `drift ${String(waver.stdCents)} cents (std) with scale 0, ${String(baseWaver.stdCents)} with scale 1; ` +
+                'undo restored the clip',
+              problems,
+            };
+          },
+          (frame) => exportsAsBaseline(frame, `${name}: taken back`, 0),
+        );
+      });
+    },
+    { check: true },
+  );
+
+  // The last check that compares with a baseline: switching hybrid mode makes OpenTune render every clip
+  // again, and a clip rendered again after an edit and its undo is the same sound in another phase
+  // (RESYNTH_*), not the same samples.
+  await step(
+    'prefs.set hybridMode',
+    async () => {
+      const name = 'prefs.set hybridMode';
+      if (!need().hello.capabilities.includes('prefs.write'))
+        throw new StepSkip('SKIP', 'the instance does not report prefs.write');
+      if (tone === undefined) {
+        throw new StepSkip(
+          'SKIP',
+          'external audio: the corrections of this check were measured on the generated tones',
+        );
+      }
+      if (picks === undefined)
+        throw new StepSkip('SKIP', `the audio has fewer than two voiced notes of ${String(MIN_NOTE_SEC)} s`);
+      const small = picks.target;
+      const large = picks.shift;
+      const state = (on: boolean) => `hybrid mode ${on ? 'on' : 'off'}`;
+      return guardedCheck(
+        name,
+        async (frame) => {
+          const { before, report } = frame;
+          const start = await readPrefs();
+          const flipped = !start.hybridMode;
+          const watch = watchPrefs(frame, ['hybridMode'], start);
+          const problems: string[] = [];
+          // One small and one large correction (the threshold of OpenTune's lighter path is between them).
+          const edit = await write(
+            'content.editNotes',
+            {
+              contentId,
+              expectedRevision: before.notesRevision,
+              ops: [
+                { op: 'shiftCents', select: { indices: [small] }, deltaCents: HYBRID_SMALL_CENTS },
+                { op: 'shiftCents', select: { indices: [large] }, deltaCents: HYBRID_LARGE_CENTS },
+              ],
+            },
+            frame,
+          );
+          problems.push(...edit.problems);
+          await settle();
+          const expected = new Map([
+            [small, HYBRID_SMALL_CENTS],
+            [large, HYBRID_LARGE_CENTS],
+          ]);
+          // With hybrid mode on the small correction is rendered by the lighter path, which may leave it
+          // unapplied (the measured note stays where it was); that is OpenTune's own rendering, so it is
+          // measured and reported but not judged. The large correction is judged in both states.
+          const judged = (on: boolean) => (on ? new Set([small]) : new Set<number>());
+          const first = await exportWetWith(`${name}: ${state(start.hybridMode)}`);
+          if (first.hybridMode !== null && first.hybridMode !== start.hybridMode) {
+            problems.push(
+              `the first export reports ${state(first.hybridMode)}, the instance began with ${state(start.hybridMode)}`,
+            );
+          }
+          const p1 = measurePitch(first.wav, expected, PITCH_TOLERANCE_CENTS, judged(start.hybridMode));
+          problems.push(...p1.problems.map((p) => `${state(start.hybridMode)}: ${p}`));
+          // The other render path; OpenTune renders every content again.
+          const set = await watch.set({ hybridMode: flipped });
+          problems.push(...prefProblems(set, 'hybridMode', start.hybridMode, flipped, ['GLOBAL_PREFERENCE']));
+          const queued = isObject(set.sideEffects) ? set.sideEffects.reRenderQueued : undefined;
+          if (!isObject(queued) || !Array.isArray(queued.contentIds) || !queued.contentIds.includes(contentId)) {
+            problems.push('the result does not report sideEffects.reRenderQueued for the clip');
+          }
+          const read = await readPrefs();
+          if (read.hybridMode !== flipped) {
+            problems.push(`prefs.get reads hybridMode ${String(read.hybridMode)}, expected ${String(flipped)}`);
+          }
+          await settle();
+          const second = await exportWetWith(`${name}: ${state(flipped)}`, true);
+          if (second.hybridMode !== null && second.hybridMode !== flipped) {
+            problems.push(
+              `the export after the change reports ${state(second.hybridMode)}, expected ${state(flipped)}`,
+            );
+          }
+          const p2 = measurePitch(second.wav, expected, PITCH_TOLERANCE_CENTS, judged(flipped));
+          problems.push(...p2.problems.map((p) => `${state(flipped)}: ${p}`));
+          // The two paths render the clip differently: the same clip exports as the same samples twice,
+          // so any difference is the render path.
+          const whole = [{ startSec: 0, endSec: first.wav.mono.length / first.wav.sampleRateHz }];
+          const differ = compareSamples(first.wav, second.wav, whole);
+          if (differ.maxAbsDiff < HYBRID_DIFFERENT_MIN_ABS_DIFF) {
+            problems.push(
+              `the clip exports the same in ${state(start.hybridMode)} and ${state(flipped)} (samples differ by up to ${differ.maxAbsDiff.toExponential(2)}, ` +
+                `at least ${HYBRID_DIFFERENT_MIN_ABS_DIFF.toExponential(0)} expected)`,
+            );
+          }
+          // Back by the recipe the result gave; the clip renders again as it did.
+          problems.push(...(await watch.revert()));
+          await settle();
+          const third = await exportWetWith(`${name}: put back`);
+          const putBack = sameSound(first.wav, third.wav);
+          problems.push(...putBack.problems.map((p) => `after the recipe: ${p}`));
+          Object.assign(report, {
+            hybridMode: { began: start.hybridMode, set: flipped },
+            began: p1.deltas.map(publicDelta),
+            flipped: p2.deltas.map(publicDelta),
+            notJudged: { note: small, whileHybridModeIs: true },
+            differ,
+            putBack: putBack.report,
+            consistency: problems.slice(),
+          });
+          return {
+            note:
+              `${describeDeltas(p1.deltas, [small, large])} in ${state(start.hybridMode)}, ` +
+              `${describeDeltas(p2.deltas, [small, large])} in ${state(flipped)} ` +
+              `(samples differ by up to ${differ.maxAbsDiff.toExponential(1)}; the small correction is not judged with hybrid mode on); ` +
+              'put back by its recipe, the export sounds as before',
+            problems,
+          };
+        },
+        async (frame) => {
+          // The edit is taken back and the preference is back: the clip sounds as the baseline did.
+          if (baseline === undefined) throw new Error('no baseline');
+          const again = await exportWet(`${name}: taken back`);
+          const same = sameSound(baseline, again);
+          frame.report.exportAfterUndo = same.report;
+          return same.problems.map((p) => `after the undo: ${p}`);
+        },
+      );
     },
     { check: true },
   );
@@ -2226,9 +3631,13 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     const report = checks[name];
     checks[name] = { ...(isObject(report) ? report : {}), processing: list };
   }
-  const reported = [sessionHybridMode, ...[...processing.values()].flat().map((p) => p.hybridMode)].filter(
-    (v): v is boolean => v !== null,
-  );
+  const reported = [
+    sessionHybridMode,
+    ...[...processing.values()]
+      .flat()
+      .filter((p) => !chosenProcessing.has(p))
+      .map((p) => p.hybridMode),
+  ].filter((v): v is boolean => v !== null);
   const hybridMode = reported.length === 0 ? null : reported.includes(true);
 
   return {
@@ -2237,6 +3646,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     notices: hybridMode === true ? [HYBRID_MODE_NOTICE] : [],
     hybridMode,
     dataTemplateFrom: config.dataTemplateFrom ?? null,
+    ...(config.onlyChecks === undefined ? {} : { onlyChecks: [...config.onlyChecks] }),
     startedAt,
     totalMs: Math.round(performance.now() - started),
     steps: steps.map((st) => ({ ...st, ms: Math.round(st.ms) })),
@@ -2257,6 +3667,16 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       minVoicedFrames: MIN_VOICED_FRAMES,
       estimatorErrorCents: ESTIMATOR_ERROR_CENTS,
       shiftEstimatorErrorMs: SHIFT_ERROR_SEC * 1000,
+      splitBoundarySec: SPLIT_BOUNDARY_TOLERANCE_SEC,
+      vibratoRateHz: VIBRATO_RATE_TOLERANCE_HZ,
+      vibratoAmplitudeRatioMin: VIBRATO_AMPLITUDE_RATIO_MIN,
+      vibratoAmplitudeRatioMax: VIBRATO_AMPLITUDE_RATIO_MAX,
+      vibratoAbsentMaxCents: VIBRATO_ABSENT_MAX_CENTS,
+      driftMinBaselineStdCents: DRIFT_MIN_BASELINE_STD_CENTS,
+      driftZeroMaxFraction: DRIFT_ZERO_MAX_FRACTION,
+      tuningCents: TUNING_TOLERANCE_CENTS,
+      sameSoundPitchCents: SAME_SOUND_PITCH_CENTS,
+      hybridDifferentMinAbsDiff: HYBRID_DIFFERENT_MIN_ABS_DIFF,
     },
     noiseFloor,
     checks,

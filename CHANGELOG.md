@@ -76,6 +76,16 @@ versioned separately and has its own changelog.
   `sequential` and `separateTracks`) must change the exported master mix exactly as their results report, and nothing
   else; every write is taken back and the restored export must equal the baseline. Unit tests prove each check against
   a stand-in, and a stand-in with one defect fails exactly the check that notices it.
+- Seven more checks in the effects scenario (`test/e2e/effects.ts`), each measured on a real build, with its tolerance
+  frozen next to the measurement and a unit test that a wrong effect fails: `content.autoTune` with
+  `params.noteSplitCents` (a stepped tone is cut at every step by 30 cents and left whole by 160), `snapToScale`,
+  vibrato depth and rate (rate, amplitude, none at depth 0), `pitchDriftScale` 0 against 1 (on a slowly drifting tone),
+  `content.editTimeGrid` `moveHandles`, and the two processing preferences `prefs.set tuningHz` (about +7.85 cents for
+  442 Hz, not retroactive) and `prefs.set hybridMode` (re-render, same sound after the revert recipe). The preference
+  checks run only in the scenario's own instance, put the value back by the revert recipe and read it back; a value that
+  is not put back fails with the value it started from and stops the checks after it. The generator
+  (`test/support/harmonic-tone.ts`) can now give a note a pitch contour (steps, slow drift), and the stand-in
+  executable models the new methods and a defect for each check.
 
 ### Changed
 

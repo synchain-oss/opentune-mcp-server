@@ -8,7 +8,16 @@ import { readFile } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
 
-import { generateTone, hzToMidiCents, writeToneFiles, type Tone, type ToneSpec } from '../support/harmonic-tone.js';
+import {
+  CONTOUR_HOP_SEC,
+  generateTone,
+  hzToMidiCents,
+  slowDriftCents,
+  steppedCents,
+  writeToneFiles,
+  type Tone,
+  type ToneSpec,
+} from '../support/harmonic-tone.js';
 
 /** The F0 frame length used where the protocol gives none: 10 ms. */
 const HOP_SEC = 0.01;
@@ -16,6 +25,16 @@ const WINDOW = 2048;
 const YIN_THRESHOLD = 0.05;
 const MIN_HZ = 80;
 const MAX_HZ = 1000;
+
+/**
+ * Time limit of the cases that read a whole tone back with the YIN estimator below (about 160 frames
+ * of 1.1 million multiply-adds each). Measured on a developer machine: 0.12 s without coverage; with
+ * coverage on, in the full unit run, the slower of the two longest took 1.97 s (1.1 s when run alone).
+ * A CI runner then took 5.4 s, past the default limit of 5 s. The limit is 1.97 s x 4 (how much slower
+ * a CI runner may be) x 2.5 (margin) = 19.7 s, rounded up. It only bounds a hung or runaway estimator;
+ * no tolerance of the checks depends on it.
+ */
+const F0_ESTIMATE_TIMEOUT_MS = 20_000;
 
 /** YIN (de Cheveigne and Kawahara, 2002) on one frame centred at `centre`; null when unvoiced. */
 function yin(samples: Float64Array, rate: number, centre: number): number | null {
@@ -107,9 +126,13 @@ const NOTES = [
 
 describe('harmonic tone generator', () => {
   for (const tuningHz of [440, 432]) {
-    it(`agrees with an independent F0 estimate at tuningHz ${String(tuningHz)}`, () => {
-      checkAgainstTruth(generateTone({ seed: 7, notes: NOTES, tuningHz }));
-    });
+    it(
+      `agrees with an independent F0 estimate at tuningHz ${String(tuningHz)}`,
+      () => {
+        checkAgainstTruth(generateTone({ seed: 7, notes: NOTES, tuningHz }));
+      },
+      F0_ESTIMATE_TIMEOUT_MS,
+    );
   }
 
   it('holds the pitch centre under vibrato and an amplitude envelope', () => {
@@ -201,5 +224,110 @@ describe('harmonic tone generator', () => {
       const tone = generateTone({ seed: 1, notes: [{ hz: 22049, durationSec: 0.1, gapSec: 0 }] });
       expect(tone.truth.notes[0]?.hz).toBe(22049);
     });
+  });
+});
+
+describe('pitch trajectories of a note', () => {
+  /** The cents the F0 estimate lies above the note's own pitch, at `tSec` seconds from the start of the file. */
+  const centsAt = (tone: Tone, tSec: number): number => {
+    const rate = tone.truth.sampleRateHz;
+    const hz = yin(tone.samples, rate, Math.round(tSec * rate));
+    return hz === null ? Number.NaN : 1200 * Math.log2(hz / (tone.truth.notes[0]?.hz ?? 1));
+  };
+
+  it('steppedCents holds each level and glides between them in a raised cosine', () => {
+    const f = steppedCents(
+      [
+        { atSec: 0, cents: 0 },
+        { atSec: 1, cents: 90 },
+        { atSec: 2, cents: 30 },
+      ],
+      0.2,
+    );
+    expect(f(0)).toBe(0);
+    expect(f(0.89)).toBe(0);
+    expect(f(1)).toBeCloseTo(45, 9); // the middle of the glide
+    expect(f(1.11)).toBe(90);
+    expect(f(1.5)).toBe(90);
+    expect(f(2)).toBeCloseTo(60, 9);
+    expect(f(5)).toBe(30);
+    expect(f(0.95)).toBeGreaterThan(0);
+    expect(f(0.95)).toBeLessThan(45);
+  });
+
+  it('steppedCents refuses no level and a glide of no length', () => {
+    expect(() => steppedCents([])).toThrow(/at least one level/);
+    expect(() => steppedCents([{ atSec: 0, cents: 0 }], 0)).toThrow(/rampSec 0 must be above 0/);
+    expect(() => steppedCents([{ atSec: 0, cents: 0 }], Number.NaN)).toThrow(/rampSec NaN/);
+  });
+
+  it('slowDriftCents is a sine of the amplitude and the period, from the phase given', () => {
+    const f = slowDriftCents(30, 2);
+    expect(f(0)).toBeCloseTo(0, 9);
+    expect(f(0.5)).toBeCloseTo(30, 9);
+    expect(f(1)).toBeCloseTo(0, 9);
+    expect(f(1.5)).toBeCloseTo(-30, 9);
+    expect(slowDriftCents(10, 1, Math.PI / 2)(0)).toBeCloseTo(10, 9);
+    expect(() => slowDriftCents(10, 0)).toThrow(/periodSec 0 must be above 0/);
+  });
+
+  it('puts a step into the audio: an independent estimate follows the plateaus', () => {
+    const tone = generateTone({
+      seed: 4,
+      leadSec: 0.2,
+      notes: [
+        {
+          midi: 60,
+          durationSec: 1.6,
+          pitchCents: steppedCents([
+            { atSec: 0, cents: 0 },
+            { atSec: 0.8, cents: 100 },
+          ]),
+        },
+      ],
+    });
+    const before = [0.5, 0.6, 0.7].map((t) => centsAt(tone, t));
+    const after = [1.1, 1.2, 1.3].map((t) => centsAt(tone, t));
+    expect(Math.abs(median(before))).toBeLessThan(5);
+    expect(Math.abs(median(after) - 100)).toBeLessThan(5);
+    // The truth keeps the pitch the note was given.
+    expect(tone.truth.notes[0]?.midiExact).toBe(60);
+  });
+
+  it('puts a slow drift into the audio: the estimate swings by the amplitude', () => {
+    const tone = generateTone({
+      seed: 4,
+      leadSec: 0.2,
+      notes: [{ midi: 60, durationSec: 2, pitchCents: slowDriftCents(30, 2) }],
+    });
+    // The sine peaks a quarter period into the note (0.2 + 0.5 s) and bottoms out at 0.2 + 1.5 s.
+    const around = (t: number) => median([-0.03, -0.02, -0.01, 0, 0.01, 0.02, 0.03].map((d) => centsAt(tone, t + d)));
+    expect(Math.abs(around(0.7) - 30)).toBeLessThan(8);
+    expect(Math.abs(around(1.7) + 30)).toBeLessThan(8);
+  });
+
+  it('writes the trajectory into the truth, one value every CONTOUR_HOP_SEC from the start of the note', () => {
+    const tone = generateTone({
+      seed: 1,
+      notes: [
+        { midi: 60, durationSec: 0.5, pitchCents: (t) => 100 * t },
+        { midi: 62, durationSec: 0.2 },
+      ],
+    });
+    const [moving, flat] = tone.truth.notes;
+    expect(moving?.contourCents).toHaveLength(50);
+    expect(moving?.contourCents?.[0]).toBe(0);
+    expect(moving?.contourCents?.[10]).toBeCloseTo(10, 6);
+    expect(moving?.contourCents?.[49]).toBeCloseTo(49, 6);
+    expect(flat?.contourCents).toBeUndefined();
+    expect(CONTOUR_HOP_SEC).toBe(0.01);
+  });
+
+  it('stays byte-identical per seed with a trajectory, and differs from the tone without one', () => {
+    const spec: ToneSpec = { seed: 9, notes: [{ midi: 60, durationSec: 0.4, pitchCents: slowDriftCents(20, 1) }] };
+    expect(generateTone(spec).sha256).toBe(generateTone(spec).sha256);
+    expect(generateTone(spec).sha256).not.toBe(
+      generateTone({ seed: 9, notes: [{ midi: 60, durationSec: 0.4 }] }).sha256,
+    );
   });
 });
