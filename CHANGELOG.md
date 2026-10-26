@@ -8,6 +8,10 @@ versioned separately and has its own changelog.
 
 ## Unreleased
 
+### Changed
+
+- The companion skills `tuning-workflow`, `check-results` and `lyrics-timeline` now treat a clear request from the user as the agreement for that step, ask a question only once and only about what the tools cannot find out, use only the files the user named, confirm that the render is current before a result is called ready to listen to, and compare before and after pitch figures only when they share the same target basis.
+
 ## [0.2.0] - 2026-10-26
 
 The second public version of OpenTune MCP Server (by Synchain), and wave B of the control interface: editing the
