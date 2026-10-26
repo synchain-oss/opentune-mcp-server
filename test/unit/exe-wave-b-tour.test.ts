@@ -172,6 +172,7 @@ describe('the wave-B tour against a correct fake', () => {
       'ui.getState and ui.dismiss=PASS',
       'import and analysis=PASS',
       'ui.getState and ui.setSelection=PASS',
+      'ui.setWorkspace=PASS',
       'track.set, track.add, track.duplicate and track.delete=PASS',
       'transport.get, transport.setTempo, transport.setLoop and transport.control=PASS',
       'prefs.set=PASS',
@@ -184,7 +185,7 @@ describe('the wave-B tour against a correct fake', () => {
       'shutdown=PASS',
     ]);
     expect(report).toMatchObject({ scenario: 'wave-b-tour', result: 'PASS', skipped: [] });
-    expect(report.counts).toEqual({ PASS: 16, FAIL: 0, SKIP: 0, 'FLAKY-SKIP': 0 });
+    expect(report.counts).toEqual({ PASS: 17, FAIL: 0, SKIP: 0, 'FLAKY-SKIP': 0 });
     expect(report.instance).toMatchObject({ protocol: '1.0', appVersion: '0.0.0-mock' });
     expect(report.capabilities).toContain('reference.v1');
 
@@ -202,6 +203,7 @@ describe('the wave-B tour against a correct fake', () => {
       'ui.getState',
       'ui.dismiss',
       'ui.setSelection',
+      'ui.setWorkspace',
       'prefs.set',
       'audio.get',
       'audio.set',
@@ -233,6 +235,7 @@ describe('the wave-B tour against a correct fake', () => {
       'opentune_autotune_range',
       'opentune_delete_track',
       'opentune_edit_arrangement',
+      'opentune_manage_ui',
       'opentune_manage_ui',
       'opentune_set_settings',
       'opentune_set_tracks',
@@ -1538,6 +1541,110 @@ describe('the selection step of the tour opens the editor', () => {
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('FAIL');
     expect(step?.note).toContain('workspaceSwitched');
+  }, 120_000);
+});
+
+describe('the workspace step of the tour closes the piano roll and puts it back', () => {
+  const STEP = 'ui.setWorkspace';
+
+  it('switches to the other view, sends the revert recipe, and asks for the shown view once more', async () => {
+    const sent: string[] = [];
+    const { hooks } = fixture({
+      prepare: withAudio,
+      before: (method, params) => {
+        if (method === 'ui.setWorkspace') sent.push(String(params.workspace));
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result, step?.note).toBe('PASS');
+    // The piano roll is open (the step before opened it): arrangement, the revert back, the no-op.
+    expect(sent).toEqual(['arrangement', 'pianoRoll', 'pianoRoll']);
+    expect(step?.note).toContain('from pianoRoll to arrangement');
+    expect(step?.note).toContain('a no-op');
+    // The window is as the step found it, and the MCP tool step used its own revert line.
+    expect(report.calls.some((call) => call.method === 'ui.setWorkspace' && call.kind === 'revert')).toBe(true);
+    const tool = report.tools.find((entry) => entry.tool === 'opentune_manage_ui' && entry.outcome === 'ok');
+    expect(tool).toBeDefined();
+  }, 120_000);
+
+  it('is skipped, with the capability named, when the instance cannot switch the view', async () => {
+    const { hooks } = fixture({
+      prepare: (mock) => {
+        withAudio(mock);
+        mock.given({ withoutCapabilities: ['ui.workspace'] });
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('SKIP');
+    expect(step?.note).toContain('ui.workspace');
+    expect(report.skipped.join(' ')).toContain('opentune_manage_ui (needs ui.workspace)');
+  }, 120_000);
+
+  it('fails when the result names no workspaceSwitched side effect', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        if (method !== 'ui.setWorkspace' || result.noOp === true || !isObject(result.sideEffects)) return undefined;
+        delete result.sideEffects.workspaceSwitched;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('workspaceSwitched');
+  }, 120_000);
+
+  it('fails when the project is marked as changed by a view switch', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        if (method !== 'ui.setWorkspace' || result.noOp === true || !isObject(result.dirty)) return undefined;
+        // The mark flips: the project was changed by nothing but the view.
+        result.dirty.after = result.dirty.after !== true;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('dirty went from');
+  }, 120_000);
+
+  it('fails a revert recipe that names the view already shown, and stops the tour', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        const undo = isObject(result.undo) ? result.undo : undefined;
+        const revert = undo !== undefined && isObject(undo.revert) ? undo.revert : undefined;
+        if (method !== 'ui.setWorkspace' || revert === undefined) return undefined;
+        revert.params = { workspace: 'arrangement' };
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('differs from before the write');
+    expect(step?.note).toContain('workspace');
+  }, 120_000);
+
+  it('fails when the view switch does not show in a fresh ui.getState', async () => {
+    const { hooks } = fixture({
+      prepare: withAudio,
+      reply: (method, result) => {
+        // The window state a fresh read reports never leaves the piano roll.
+        if (method !== 'ui.getState' || !isObject(result.ui)) return undefined;
+        result.ui.workspace = 'pianoRoll';
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('workspace');
   }, 120_000);
 });
 

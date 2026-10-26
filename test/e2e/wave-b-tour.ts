@@ -447,6 +447,11 @@ class Reads {
       case 'selection': {
         return pick(await this.uiState(), SELECTION_MEMBERS);
       }
+      case 'ui': {
+        // The member group of the window that a ui change names by { singleton: 'workspace' }.
+        if (ref.singleton !== 'workspace') return null;
+        return pick(await this.uiState(), ['workspace']);
+      }
       case 'project': {
         return pick(await this.projectState(), ['dirty', 'path']);
       }
@@ -1595,9 +1600,10 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       expect: { applied: true, noOp: false, absentWarnings: ['IRREVERSIBLE'] },
     });
     collect('ui.setSelection (put the clip back)', problems, putBack);
-    // Open the clip in the piano roll, as double-clicking it does. No request switches the window back (the
-    // revert recipe never does, PROTOCOL.md section 14.6), so the piano roll stays open for the rest of the
-    // run, which only this run's own instance sees; the selection is what stays as it was.
+    // Open the clip in the piano roll, as double-clicking it does. ui.setSelection never switches the window
+    // back (its revert recipe does not either, PROTOCOL.md section 14.6): ui.setWorkspace, the next step, closes
+    // the piano roll and puts it back, so the piano roll stays open for the rest of the run, which only this
+    // run's own instance sees; the selection is what stays as it was.
     const workspaceValue = objectMember(state, 'ui', 'ui.getState').workspace;
     const workspaceBefore = typeof workspaceValue === 'string' ? workspaceValue : '';
     const opened = await t.write({
@@ -1642,6 +1648,87 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       `ui.getState read; a track and the clip were selected and the previous selection put back${
         clipSelection.restoredBy === null ? ' (there was none)' : ''
       }; openEditor showed the clip in the piano roll (ui.getState: workspace, content, selection)`,
+    );
+  });
+
+  await checkStep('ui.setWorkspace', async () => {
+    requireCapabilities(['ui.workspace']);
+    const problems: string[] = [];
+    const t = theTour();
+    t.reads.clear();
+    const shown = (await t.reads.uiState()).workspace;
+    const from = shown === 'pianoRoll' ? 'pianoRoll' : 'arrangement';
+    // The other view: the piano roll is open here when the step before opened it, so this closes it.
+    const to = from === 'pianoRoll' ? 'arrangement' : 'pianoRoll';
+    const dirtyBefore = member(await t.reads.projectState(), 'dirty', 'project.get');
+    const switched = await t.write({
+      step: 'ui.setWorkspace',
+      method: 'ui.setWorkspace',
+      params: { workspace: to },
+      // The window state (workspace, selection, clip shown) must be the same after the revert recipe.
+      snapshot: ['selection'],
+      expect: {
+        applied: true,
+        noOp: false,
+        undoable: false,
+        undoReason: 'not_persisted_state',
+        revert: 'present',
+        absentWarnings: ['IRREVERSIBLE'],
+      },
+    });
+    collect('ui.setWorkspace', problems, switched);
+    // Only the view changed: no revision moved, the project was not marked as changed, nothing was generated
+    // or queued, and the one side effect is the switch itself.
+    const envelope = switched.envelope;
+    const diff = isObject(envelope.revisionDiff) ? envelope.revisionDiff : {};
+    if (
+      diff.arrangement !== null ||
+      diff.trackState !== null ||
+      !Array.isArray(diff.contents) ||
+      diff.contents.length > 0
+    ) {
+      problems.push('revisionDiff is not empty although only the view changed');
+    }
+    const dirty = isObject(envelope.dirty) ? envelope.dirty : {};
+    if (dirty.before !== dirtyBefore || dirty.after !== dirtyBefore) {
+      problems.push(
+        `dirty went from ${JSON.stringify(dirty.before)} to ${JSON.stringify(dirty.after)}; the project was ${JSON.stringify(dirtyBefore)} before`,
+      );
+    }
+    const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
+    const others = Object.keys(effects).filter((name) => name !== 'workspaceSwitched');
+    if (others.length > 0) problems.push(`the result names side effects besides the switch: ${others.join(', ')}`);
+    const named = isObject(effects.workspaceSwitched) ? effects.workspaceSwitched : null;
+    if (named?.from !== from || named.to !== to) {
+      problems.push(`sideEffects.workspaceSwitched does not say ${from} to ${to}`);
+    }
+    const undo = isObject(envelope.undo) ? envelope.undo : {};
+    const recipe = isObject(undo.revert) ? undo.revert : {};
+    const recipeParams = isObject(recipe.params) ? recipe.params : {};
+    if (recipe.method !== 'ui.setWorkspace' || recipeParams.workspace !== from) {
+      problems.push(`the revert recipe does not switch back to ${from}`);
+    }
+    // The revert recipe has put the view back; asking for it again changes nothing and says so.
+    const again = await t.write({
+      step: 'ui.setWorkspace (already shown)',
+      method: 'ui.setWorkspace',
+      params: { workspace: from },
+      expect: {
+        applied: true,
+        noOp: true,
+        undoable: false,
+        undoReason: 'no_op',
+        revert: 'none',
+        absentWarnings: ['IRREVERSIBLE'],
+      },
+    });
+    collect('ui.setWorkspace (already shown)', problems, again);
+    const empty = listOf(member(again.envelope, 'changes', 'the result'));
+    if (empty.length > 0) problems.push('a no-op result lists changes');
+    return finish(
+      'ui.setWorkspace',
+      problems,
+      `the window went from ${from} to ${to} (workspaceSwitched; no revision, no dirty mark) and the revert recipe put ${from} back; asking for ${from} again was a no-op`,
     );
   });
 
@@ -3029,6 +3116,21 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
         const ui = await t.reads.uiState();
         const selected = Array.isArray(ui.selectedPlacementIds) ? ui.selectedPlacementIds : [];
         return selected.includes(clipId) ? null : 'the clip is not selected in a fresh ui.getState';
+      },
+      restore: restoreFromLine,
+    });
+
+    // opentune_manage_ui switch_view: the other view, then back through the revert line.
+    t.reads.clear();
+    const viewBefore = (await t.reads.uiState()).workspace === 'pianoRoll' ? 'pianoRoll' : 'arrangement';
+    const viewWanted = viewBefore === 'pianoRoll' ? 'arrangement' : 'pianoRoll';
+    await runTool({
+      tool: 'opentune_manage_ui',
+      args: { op: 'switch_view', view: viewWanted === 'pianoRoll' ? 'piano_roll' : 'arrangement' },
+      capabilities: ['ui.workspace'],
+      visible: async () => {
+        const ui = await t.reads.uiState();
+        return ui.workspace === viewWanted ? null : `the window does not show ${viewWanted} in a fresh ui.getState`;
       },
       restore: restoreFromLine,
     });

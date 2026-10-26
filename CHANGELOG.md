@@ -8,6 +8,18 @@ versioned separately and has its own changelog.
 
 ## Unreleased
 
+### Added
+
+- `opentune_manage_ui` has the op `switch_view` with `view` `arrangement` or `piano_roll`, so an agent can close the
+  piano roll again after `focus_clip` opened it (`arrangement` shows the arrangement view). It sends the new OTCP
+  method `ui.setWorkspace` of the specification `1.0.0-rc.7` (capability `ui.workspace`, which the op asks for in
+  place of `ui.bridge`). Only the view changes: no clip, note or setting, no revision, and the project is not marked as
+  changed. The result names the view that was shown, says so when the window already showed the view asked for (a
+  no-op), and gives the call that switches back. A test build without `ui.workspace` answers with `UNSUPPORTED`
+  (`capability_missing`) and a next step that asks the user to click the view button in the OpenTune window. The mock,
+  five contract vectors, the tool golden files, the tour of the real-machine run and the `tuning-workflow` skill follow.
+  See `docs/contract-changes/20261026-ui-set-workspace.md`.
+
 ### Changed
 
 - The companion skills `tuning-workflow`, `check-results` and `lyrics-timeline` now treat a clear request from the user as the agreement for that step, ask a question only once and only about what the tools cannot find out, use only the files the user named, confirm that the render is current before a result is called ready to listen to, and compare before and after pitch figures only when they share the same target basis.

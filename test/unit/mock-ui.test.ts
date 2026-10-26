@@ -221,6 +221,246 @@ describe('ui.setSelection', () => {
   });
 });
 
+describe('ui.setWorkspace', () => {
+  const codes = (result: Record<string, unknown>) => (result.warnings as { code: string }[]).map((w) => w.code);
+
+  it('switches to the piano roll and back, reports the switch, and its revert recipe switches back', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: false, clips: [clip()] });
+    const before = mock.snapshot();
+
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({
+      applied: true,
+      noOp: false,
+      dryRun: false,
+      changes: [
+        {
+          entity: 'ui',
+          ref: { singleton: 'workspace' },
+          label: expect.any(String) as string,
+          fields: { workspace: { before: 'arrangement', after: 'pianoRoll', unit: null } },
+        },
+      ],
+      revisionDiff: { arrangement: null, trackState: null, contents: [] },
+      undo: {
+        undoable: false,
+        reason: 'not_persisted_state',
+        revert: { method: 'ui.setWorkspace', params: { workspace: 'arrangement' } },
+      },
+      dirty: { before: false, after: false },
+      ui: { workspace: 'pianoRoll' },
+      sideEffects: { workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null } },
+      warnings: [],
+      job: null,
+    });
+    // The view state is what the reads show, and nothing of the project changed.
+    expect(await state(session)).toMatchObject({ workspace: 'pianoRoll' });
+    expect((await ok('project.get')).selection).toMatchObject({ pianoRollContentId: null });
+    expect(mock.snapshot()).toEqual(before);
+
+    // The recipe, sent as it is, closes the piano roll; its own recipe opens it again.
+    const closed = await revert(session, opened);
+    expect(closed).toMatchObject({
+      noOp: false,
+      changes: [{ fields: { workspace: { before: 'pianoRoll', after: 'arrangement' } } }],
+      ui: { workspace: 'arrangement' },
+      sideEffects: { workspaceSwitched: { from: 'pianoRoll', to: 'arrangement', revert: null } },
+      undo: { revert: { method: 'ui.setWorkspace', params: { workspace: 'pianoRoll' } } },
+    });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+    await revert(session, closed);
+    expect(await state(session)).toMatchObject({ workspace: 'pianoRoll' });
+    expect(mock.snapshot()).toEqual(before);
+  });
+
+  it('is a no-op when the window already shows the workspace, in both directions', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: false, clips: [clip()] });
+    const noOp = {
+      applied: true,
+      noOp: true,
+      changes: [],
+      sideEffects: {},
+      warnings: [],
+      undo: { undoable: false, reason: 'no_op', revert: null },
+      revisionDiff: { arrangement: null, trackState: null, contents: [] },
+      dirty: { before: false, after: false },
+    };
+    expect(await ok('ui.setWorkspace', { workspace: 'arrangement' })).toMatchObject({
+      ...noOp,
+      ui: { workspace: 'arrangement' },
+    });
+    await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).toMatchObject({
+      ...noOp,
+      ui: { workspace: 'pianoRoll' },
+    });
+  });
+
+  it('switches back after ui.setSelection opened the editor, and the clip stays selected', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    await ok('ui.setSelection', { placementId: ids['clip.placementId'], openEditor: true });
+    expect(await state(session)).toMatchObject({ workspace: 'pianoRoll', pianoRollContentId: ids['clip.contentId'] });
+
+    const back = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(back).toMatchObject({
+      changes: [{ fields: { workspace: { before: 'pianoRoll', after: 'arrangement' } } }],
+      ui: { workspace: 'arrangement', selectedPlacementIds: [ids['clip.placementId']] },
+      dirty: { before: false, after: false },
+      revisionDiff: { contents: [] },
+    });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+    expect((await ok('project.get')).selection).toMatchObject({ selectedPlacementIds: [ids['clip.placementId']] });
+    // Opening the piano roll again shows the selected clip.
+    const again = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(again.ui).toMatchObject({ workspace: 'pianoRoll', pianoRollContentId: ids['clip.contentId'] });
+  });
+
+  it('shows the selected clip in the piano roll, or none when no clip is selected', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ clips: [clip({ bind: 'a', trackId: 1 }), clip({ bind: 'b', trackId: 2 })] });
+    // Nothing selected: the piano roll is empty, which is not an error.
+    expect((await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).ui).toMatchObject({
+      workspace: 'pianoRoll',
+      pianoRollContentId: null,
+    });
+    await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    await ok('ui.setSelection', { placementId: ids['b.placementId'] });
+    expect((await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).ui).toMatchObject({
+      pianoRollContentId: ids['b.contentId'],
+    });
+    // Another clip is selected while the arrangement view shows: the piano roll shows that one when it opens.
+    await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    await ok('ui.setSelection', { placementId: ids['a.placementId'] });
+    expect((await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).ui).toMatchObject({
+      pianoRollContentId: ids['a.contentId'],
+    });
+    // A track selects no clip, so the piano roll shows none.
+    await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    await ok('ui.setSelection', { trackId: 3 });
+    expect((await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).ui).toMatchObject({ pianoRollContentId: null });
+  });
+
+  it('generates nothing in the openDyne scheme and does not mark the project as changed', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({
+      editingScheme: 'openDyne',
+      dirty: false,
+      clips: [{ bind: 'clip', trackId: 0, startTimelineSec: 0, durationSec: 6, analysis: 'running' }],
+    });
+    // The clip is selected while its analysis runs, so selecting it generated nothing; the analysis finishes
+    // afterwards, which leaves a selected clip whose notes were never generated (the case in which selecting it
+    // would generate them).
+    await ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+    mock.setAnalysis(ids['clip.contentId'] ?? '', 'ready');
+    mock.given({ dirty: false });
+    const before = mock.snapshot();
+    expect(before.contents[0]?.notes).toHaveLength(0);
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({ dirty: { before: false, after: false }, revisionDiff: { contents: [] } });
+    expect(Object.keys(opened.sideEffects as object)).toEqual(['workspaceSwitched']);
+    expect(codes(opened)).toEqual([]);
+    expect(mock.snapshot()).toEqual(before);
+  });
+
+  it('keeps a dirty project dirty and a clean one clean', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: true });
+    expect(await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).toMatchObject({
+      dirty: { before: true, after: true },
+    });
+    mock.given({ dirty: false });
+    expect(await ok('ui.setWorkspace', { workspace: 'arrangement' })).toMatchObject({
+      dirty: { before: false, after: false },
+    });
+  });
+
+  it.each([
+    [{ pointerDown: true }, 'pointer_down'],
+    [{ modalOpen: true }, 'modal_open'],
+    [{ importInProgress: true }, 'import_in_progress'],
+    [{ projectOperation: true }, 'project_operation'],
+  ] as const)('is refused with BUSY while the UI is busy (%j) and changes nothing', async (busy, reason) => {
+    const session = await sessions.open();
+    const { mock, fails } = session;
+    mock.given({ clips: [clip()] });
+    mock.setBusy(busy);
+    const error = await fails('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(error).toMatchObject({
+      message: 'BUSY',
+      data: { kind: 'BUSY', reason, retryable: true, executed: false, retryAfterMs: 1000 },
+    });
+    mock.setBusy({ pointerDown: false, modalOpen: false, importInProgress: false, projectOperation: false });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+  });
+
+  it('is refused while a dialog is open, and while an export holds the export lock', async () => {
+    const dialog = await sessions.open();
+    dialog.mock.given({ dialogs: [{ kind: 'message' }] });
+    expect((await dialog.fails('ui.setWorkspace', { workspace: 'pianoRoll' })).data).toMatchObject({
+      kind: 'BUSY',
+      reason: 'modal_open',
+      executed: false,
+    });
+    // Unlike ui.dismiss, nothing about a dialog lets the switch through; closing the dialog does.
+    await dialog.ok('ui.dismiss', { target: 'dialogs' });
+    expect(await dialog.ok('ui.setWorkspace', { workspace: 'pianoRoll' })).toMatchObject({ noOp: false });
+
+    const exporting = await sessions.open();
+    exporting.mock.given({
+      clips: [clip()],
+      jobs: [{ bind: 'export', kind: 'export', state: 'running', cancellable: true }],
+    });
+    expect((await exporting.fails('ui.setWorkspace', { workspace: 'pianoRoll' })).data).toMatchObject({
+      kind: 'BUSY',
+      reason: 'export_in_progress',
+      executed: false,
+    });
+    expect(await state(exporting)).toMatchObject({ workspace: 'arrangement' });
+  });
+
+  it('refuses a missing, unknown or additional member as invalid params', async () => {
+    const session = await sessions.open();
+    const { mock, fails } = session;
+    mock.given({ clips: [clip()] });
+    for (const params of [
+      {},
+      { workspace: 'mixer' },
+      { workspace: 'piano_roll' },
+      { workspace: 1 },
+      { workspace: 'pianoRoll', dryRun: true },
+    ]) {
+      expect((await fails('ui.setWorkspace', params)).data, JSON.stringify(params)).toMatchObject({
+        kind: 'INVALID_ARGUMENT',
+        reason: 'invalid_params',
+        executed: false,
+      });
+    }
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+  });
+
+  it('is capability_missing on an instance without ui.workspace, which still has the rest of the UI bridge', async () => {
+    const session = await sessions.open();
+    const { mock, ok, fails } = session;
+    mock.given({ clips: [clip()], withoutCapabilities: ['ui.workspace'] });
+    expect(mock.capabilities).not.toContain('ui.workspace');
+    expect((await fails('ui.setWorkspace', { workspace: 'pianoRoll' })).data).toMatchObject({
+      kind: 'UNSUPPORTED',
+      reason: 'capability_missing',
+    });
+    expect(await ok('ui.getState')).toHaveProperty('ui');
+    expect(await ok('ui.dismiss', { target: 'dialogs' })).toMatchObject({ noOp: true });
+  });
+});
+
 describe('ui.dismiss', () => {
   it('commits the colour of a track-colour dialog only with confirm, and its revert recipe sets the old colour', async () => {
     const session = await sessions.open();
@@ -336,11 +576,12 @@ describe('showOnboarding', () => {
 });
 
 describe('a window-less run (no editor window)', () => {
-  // The ten methods that act through the editor window (PROTOCOL.md section 7 rule 6; NO_EDITOR_METHODS of the mock).
+  // The eleven methods that act through the editor window (PROTOCOL.md section 7 rule 6; NO_EDITOR_METHODS of the mock).
   const NO_EDITOR_METHODS = [
     'ui.getState',
     'ui.dismiss',
     'ui.setSelection',
+    'ui.setWorkspace',
     'track.add',
     'track.duplicate',
     'track.delete',
@@ -359,6 +600,7 @@ describe('a window-less run (no editor window)', () => {
     'ui.getState': {},
     'ui.dismiss': { target: 'dialogs' },
     'ui.setSelection': { placementId: ids['a.placementId'] },
+    'ui.setWorkspace': { workspace: 'pianoRoll' },
     'track.add': {},
     'track.duplicate': { trackId: 1, mode: 'clone' },
     'track.delete': { trackId: 1, expectedArrangementRevision: arrangementRevision, confirm: true },
