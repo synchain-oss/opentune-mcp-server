@@ -324,6 +324,47 @@ async function scenarios(): Promise<Record<string, Scenario>> {
       { op: 'focus_clip', clip: ids['a.placementId'] ?? '', open_editor: true },
     );
   }
+  {
+    const { ctx } = await world({ dirty: true });
+    await run(
+      ctx,
+      'quit-unsaved-refused',
+      'Unsaved changes: nothing is closed, and the next step is to save first (the project has no file yet).',
+      'opentune_quit',
+      {},
+    );
+    await run(
+      ctx,
+      'quit-discard',
+      'Closed over unsaved changes with the consent of the user: the first sentence says they are lost.',
+      'opentune_quit',
+      { discard_unsaved: true },
+    );
+  }
+  {
+    const { ctx } = await world({ clips: [clip()], dirty: false });
+    await run(
+      ctx,
+      'quit',
+      'Nothing to lose: closed, and the instance is gone before the result comes back.',
+      'opentune_quit',
+      {},
+    );
+  }
+  {
+    const { ctx } = await world({ jobs: [{ bind: 'job', kind: 'prefsApply', state: 'running', cancellable: false }] });
+    await run(ctx, 'quit-busy', 'A job has not finished: nothing is closed.', 'opentune_quit', {});
+  }
+  {
+    const { ctx } = await world({ withoutCapabilities: ['app.quit'] });
+    await run(
+      ctx,
+      'quit-unsupported',
+      'A build without app.quit: nothing is sent; the user closes the window after the project is saved.',
+      'opentune_quit',
+      {},
+    );
+  }
   return out;
 }
 

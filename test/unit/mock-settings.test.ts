@@ -94,6 +94,40 @@ describe('prefs.set', () => {
     expect(mock.snapshot().contents[0]?.notes.length).toBeGreaterThan(0);
   });
 
+  it('generates notes for a clip that was only selected, while the window shows the arrangement view', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok } = session;
+    const ids = mock.given({
+      clips: [
+        { bind: 'clip', trackId: 0, startTimelineSec: 0, durationSec: 6, analysis: 'ready' },
+        { bind: 'other', trackId: 1, startTimelineSec: 0, durationSec: 6, analysis: 'ready' },
+      ],
+    });
+    // Selecting loads the clip into the piano roll, with no openEditor and no switch of the view.
+    const selected = await ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+    expect(selected.ui).toMatchObject({ workspace: 'arrangement', pianoRollContentId: ids['clip.contentId'] });
+    const started = await ok('prefs.set', { editingScheme: 'openDyne' });
+    clock.advance(0);
+    const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId'), waitMs: 5000 })) as {
+      job: { state: string; result: Record<string, unknown> };
+    };
+    expect(job.state).toBe('succeeded');
+    expect(job.result).toMatchObject({
+      sideEffects: { notesGenerated: { contentId: ids['clip.contentId'] } },
+      dirty: { before: false, after: true },
+    });
+    expect((job.result.warnings as { code: string }[]).map((w) => w.code)).toEqual([
+      'GLOBAL_PREFERENCE',
+      'SCHEME_GENERATED_NOTES',
+      'IRREVERSIBLE',
+    ]);
+    // Only the clip the piano roll holds: the other one still has no notes.
+    const notes = mock.snapshot().contents.map((content) => content.notes.length);
+    expect(notes[0]).toBeGreaterThan(0);
+    expect(notes[1]).toBe(0);
+  });
+
   it('is refused while a dialog is open', async () => {
     const session = await sessions.open();
     session.mock.given({ dialogs: [{ kind: 'preferences' }] });

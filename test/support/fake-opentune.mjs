@@ -23,6 +23,11 @@
 // calls of the arrangement effects scenario with a small model of tracks, clips, their gain, fades
 // and mute/solo, and a master mix (test/support/fake-arrangement.mjs).
 //
+// The `quit*` modes report app.quit and answer it as an instance that quits does: the result first, then
+// the connections and the listener are closed and the process ends by itself. `quit` removes its discovery
+// file and exits with status 0, `quit-no-cleanup` leaves the file, `quit-bad-exit` exits with status 5, and
+// `quit-stays` closes everything but does not exit. `launcher-quit` is `quit` started through a launcher.
+//
 // Every copy that keeps running ends by itself once its OPENTUNE_DATA_DIR is gone, so a test that
 // fails cannot leave one behind; with `--marker=<file>` it first writes how it ended to that file.
 
@@ -48,13 +53,32 @@ const dataDir = process.env.OPENTUNE_DATA_DIR;
 const smoke = mode.startsWith('smoke');
 const effects = mode.startsWith('effects') ? createEffects(mode) : undefined;
 const arrangement = mode.startsWith('arrangement') ? createArrangement(mode) : undefined;
+const quit = mode.startsWith('quit');
+/** The rest of a valid session.hello result (the limits are fixed by PROTOCOL.md section 3.4). */
+const HELLO_REST = {
+  appVersion: '0.0.0-fake',
+  flavor: 'standalone',
+  limits: {
+    preAuthReadBytes: 8192,
+    helloTimeoutMs: 2000,
+    maxPreAuthConnections: 8,
+    maxSessions: 4,
+    maxLineBytes: 4194304,
+    maxInFlightPerSession: 16,
+    idleTimeoutMs: 600000,
+    dispatchTimeoutMs: 10000,
+    jobWaitMaxMs: 30000,
+    jobRetentionMs: 1800000,
+    jobRetentionCount: 64,
+  },
+};
 
 const endWith = (how, code) => {
   if (marker !== undefined) fs.writeFileSync(marker, how);
   process.exit(code);
 };
 
-const LAUNCHED = { launcher: 'ok', 'launcher-bad-start': 'bad-start' };
+const LAUNCHED = { launcher: 'ok', 'launcher-bad-start': 'bad-start', 'launcher-quit': 'quit' };
 if (mode in LAUNCHED) {
   const args = process.argv.slice(2).filter((a) => !a.startsWith('--mode='));
   const instance = spawn(process.execPath, [fileURLToPath(import.meta.url), `--mode=${LAUNCHED[mode]}`, ...args], {
@@ -291,8 +315,21 @@ function serve() {
         const ok = request.method === 'session.hello' && request.params?.token === token;
         if (ok) socket.authed = true;
         const later = socket.authed && request.method !== 'session.hello';
-        const reply =
-          smoke && later
+        const quitting = quit && later && request.method === 'app.quit';
+        const reply = quitting
+          ? {
+              jsonrpc: '2.0',
+              id: request.id,
+              result: {
+                quitting: true,
+                discardedUnsavedChanges: false,
+                projectPath: null,
+                nullReasons: { projectPath: 'no_project_path' },
+                exitDeadlineMs: 5000,
+                warnings: [],
+              },
+            }
+          : smoke && later
             ? smokeReply(request)
             : effects !== undefined && later
               ? effects.reply(request)
@@ -309,18 +346,34 @@ function serve() {
                         serverProof: mode === 'bad-proof' ? randomBytes(16).toString('hex') : serverProof,
                         capabilities: smoke
                           ? smokeCapabilities()
-                          : (effects?.capabilities ?? arrangement?.capabilities ?? ['session.v1']),
+                          : (effects?.capabilities ??
+                            arrangement?.capabilities ??
+                            (quit ? ['session.v1', 'app.quit'] : ['session.v1'])),
+                        // A vector validates the whole result; the other modes only need the members the target reads.
+                        ...(quit ? HELLO_REST : {}),
                       },
                     }
                   : { jsonrpc: '2.0', id: request.id, error: { code: -32001, message: 'UNAUTHENTICATED', data: {} } };
         socket.write(`${JSON.stringify(reply)}\n`, () => {
           // Ends by itself, without removing its discovery file, as a crash would.
           if (mode === 'exit-after-hello') process.exit(5);
+          if (quitting) quitNow();
         });
       }
     });
     socket.on('error', () => {});
+    sockets.add(socket);
   });
+  const sockets = new Set();
+  let discoveryFile;
+  // What an instance does once it answered app.quit: no more connections, then the end of the process.
+  const quitNow = () => {
+    server.close();
+    for (const socket of sockets) socket.destroy();
+    if (mode === 'quit-stays') return;
+    if (mode !== 'quit-no-cleanup') fs.rmSync(discoveryFile, { force: true });
+    endWith('quit', mode === 'quit-bad-exit' ? 5 : 0);
+  };
   server.listen({ host: '127.0.0.1', port: 0 }, () => {
     const dir = path.join(dataDir, 'control', 'instances');
     fs.mkdirSync(dir, { recursive: true });
@@ -363,7 +416,7 @@ function serve() {
       startedAtMs: Date.now(),
       flavor: 'standalone',
     };
-    const discoveryFile = path.join(dir, `${process.pid}.json`);
+    discoveryFile = path.join(dir, `${process.pid}.json`);
     fs.writeFileSync(discoveryFile, `${JSON.stringify(discovery)}\n`);
     fs.writeFileSync(`${readyFile}.tmp`, `${JSON.stringify({ pid: process.pid, instanceId })}\n`);
     fs.renameSync(`${readyFile}.tmp`, readyFile);
