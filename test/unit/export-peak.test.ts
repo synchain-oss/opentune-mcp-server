@@ -5,7 +5,8 @@
 // layouts, damaged files), and opentune_export_audio reading only the file its own export wrote, with the
 // sentence for a mix above 0 dBFS and the reason when the read fails. No audio file is checked in.
 
-import fs from 'node:fs';
+import fs, { constants, type BigIntStats } from 'node:fs';
+import { lstat, open } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -14,7 +15,7 @@ import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { startMock } from '../../mock/server.js';
 import { exportAudio, isFileOfThisExport, peakReport, type ExportAudioArgs } from '../../src/tools/export-audio.js';
 import type { Outcome, ToolContext } from '../../src/tools/registry.js';
-import { READ_BLOCK_BYTES, readWavPeak } from '../../src/tools/wav-peak.js';
+import { OPEN_FLAGS, READ_BLOCK_BYTES, readWavPeak, type FileOps } from '../../src/tools/wav-peak.js';
 import { tempDir, testContext } from '../support/context.js';
 import { clip, need } from '../support/mock-client.js';
 
@@ -210,6 +211,65 @@ describe('readWavPeak', () => {
       return; // creating links needs a privilege some systems do not give
     }
     expect(await readWavPeak(link)).toEqual({ ok: false, reason: 'unreadable' });
+  });
+});
+
+describe('readWavPeak: the file that is read is the file that was looked at', () => {
+  const real: FileOps = { lstat: (f) => lstat(f, { bigint: true }), open: (f, flags) => open(f, flags) };
+  /** The stats of `lstat` with one member shadowed, the methods (isFile) kept. */
+  const shadowed = async (f: string, member: Record<string, unknown>) =>
+    Object.create(
+      await real.lstat(f),
+      Object.fromEntries(Object.entries(member).map(([k, value]) => [k, { value }])),
+    ) as Awaited<ReturnType<FileOps['lstat']>>;
+
+  it('reads it when device and file number agree, and opens it without following a link where the system can', async () => {
+    const flags: number[] = [];
+    const ops: FileOps = {
+      lstat: real.lstat,
+      open: (f, fl) => {
+        flags.push(fl);
+        return real.open(f, fl);
+      },
+    };
+    const target = file(wav(floats([0.5]), { bits: 32 }));
+    expect(await readWavPeak(target, ops)).toMatchObject({ ok: true, peak: 0.5 });
+    expect(flags).toEqual([OPEN_FLAGS]);
+    if (process.platform !== 'win32') expect((flags[0] ?? 0) & constants.O_NOFOLLOW).not.toBe(0);
+  });
+
+  it('does not read a file whose number is not the one that lstat saw, as when the path was replaced in between', async () => {
+    const target = file(wav(floats([2]), { bits: 32 }));
+    const other = await real.lstat(target);
+    const replaced: FileOps = { lstat: (f) => shadowed(f, { ino: other.ino + 1n }), open: real.open };
+    expect(await readWavPeak(target, replaced)).toEqual({ ok: false, reason: 'unreadable' });
+    const moved: FileOps = { lstat: (f) => shadowed(f, { dev: other.dev + 1n }), open: real.open };
+    expect(await readWavPeak(target, moved)).toEqual({ ok: false, reason: 'unreadable' });
+    // Without the difference it is read.
+    expect(await readWavPeak(target, real)).toMatchObject({ ok: true, peak: 2 });
+  });
+
+  it('compares only what the file system reports: a file number of 0 skips the comparison', async () => {
+    const target = file(wav(floats([2]), { bits: 32 }));
+    const unreported: FileOps = { lstat: (f) => shadowed(f, { ino: 0n }), open: real.open };
+    expect(await readWavPeak(target, unreported)).toMatchObject({ ok: true, peak: 2 });
+  });
+
+  it('does not read what was opened when it is not a regular file', async () => {
+    const target = file(wav(floats([2]), { bits: 32 }));
+    const folder: FileOps = {
+      lstat: real.lstat,
+      // The path now names a folder: the handle may open on some systems, and its stat says what it is.
+      open: async (_f, fl) => {
+        const handle = await real.open(target, fl);
+        const stat = handle.stat.bind(handle);
+        const notAFile = async (): Promise<BigIntStats> =>
+          Object.create(await stat({ bigint: true }), { isFile: { value: () => false } }) as BigIntStats;
+        handle.stat = notAFile as typeof handle.stat;
+        return handle;
+      },
+    };
+    expect(await readWavPeak(target, folder)).toEqual({ ok: false, reason: 'unreadable' });
   });
 });
 

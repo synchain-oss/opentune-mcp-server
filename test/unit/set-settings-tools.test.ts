@@ -516,16 +516,19 @@ describe('opentune_set_settings: vocoder weight, rendering priority and pitch mo
     expect(out.summary).toContain('not at all if it cannot be loaded');
   });
 
-  it('reads session.info once, before the call, and only for a call that names the vocoder weight', async () => {
+  it('reads session.info once before the call, and only for a call that names the vocoder weight or the rendering priority', async () => {
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()] });
     const sent = await recordCalls(ctx);
     body(await setSettings(ctx, { processing: { tuning_hz: 442, hybrid_mode: true } }));
     expect(sent).not.toContain('session.info');
-    // A change of the rendering priority reads it once, after the job, to tell the backend in use.
+    // A change of the rendering priority reads it twice: before the call, to tell whether the job will wait for the
+    // vocoder, and after the job, to tell the backend in use.
+    sent.length = 0;
     body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
-    expect(sent.filter((m) => m === 'session.info')).toHaveLength(1);
-    expect(sent.indexOf('session.info')).toBeGreaterThan(sent.lastIndexOf('job.get'));
+    expect(sent.filter((m) => m === 'session.info')).toHaveLength(2);
+    expect(sent.indexOf('session.info')).toBeLessThan(sent.indexOf('prefs.set'));
+    expect(sent.lastIndexOf('session.info')).toBeGreaterThan(sent.lastIndexOf('job.get'));
     sent.length = 0;
     body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
     // One read, and it comes before the request that changes the weight, not after the job.
@@ -779,7 +782,13 @@ describe('opentune_set_settings: the backend in use after a change of the render
     const out = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
     expect(out.summary).toContain('gpuFirst was requested, but OpenTune is now using the CPU');
     for (const part of WHERE_TEXT) expect(out.summary).toContain(part);
-    expect(out.rendering_backend).toEqual({ requested: 'gpuFirst', backend: 'cpu', vocoder_reloading: false });
+    expect(out.rendering_backend).toEqual({
+      requested: 'gpuFirst',
+      backend: 'cpu',
+      vocoder_reloading: false,
+      confirmed: true,
+      unconfirmed_reason: null,
+    });
     // The way back is still the first thing the summary says; the new sentence comes last.
     expect(out.summary).toMatch(/^opentune_set_settings: this changes user-global OpenTune settings/);
     expect(out.summary.endsWith('checks Direct3D 12.')).toBe(true);
@@ -794,27 +803,106 @@ describe('opentune_set_settings: the backend in use after a change of the render
     mock.setGpuAvailable(true);
     const gpu = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
     expect(gpu.summary).not.toContain('using the CPU');
-    expect(gpu.rendering_backend).toEqual({ requested: 'gpuFirst', backend: 'directml', vocoder_reloading: false });
+    expect(gpu.rendering_backend).toEqual({
+      requested: 'gpuFirst',
+      backend: 'directml',
+      vocoder_reloading: false,
+      confirmed: true,
+      unconfirmed_reason: null,
+    });
     const cpu = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
     expect(cpu.summary).not.toContain('using the CPU');
-    expect(cpu.rendering_backend).toEqual({ requested: 'cpuFirst', backend: 'cpu', vocoder_reloading: false });
+    expect(cpu.rendering_backend).toEqual({
+      requested: 'cpuFirst',
+      backend: 'cpu',
+      vocoder_reloading: false,
+      confirmed: true,
+      unconfirmed_reason: null,
+    });
   });
 
-  it('reads the backend once, after the job, and only for a change of the rendering priority', async () => {
+  it('reads the backend once after the job (and the vocoder once before the call), only for a change of the rendering priority', async () => {
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()] });
     mock.setGpuAvailable(false);
     const sent = await recordCalls(ctx);
     body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
-    expect(sent.filter((m) => m === 'session.info')).toHaveLength(1);
-    expect(sent.lastIndexOf('job.get')).toBeLessThan(sent.indexOf('session.info'));
-    // A call that changes nothing, or something else, reads nothing more.
+    expect(sent.filter((m) => m === 'session.info')).toHaveLength(2);
+    expect(sent.lastIndexOf('job.get')).toBeLessThan(sent.lastIndexOf('session.info'));
+    // A call that changes nothing reads the vocoder before the call (it cannot know yet) but no backend after it.
     sent.length = 0;
     const same = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
     expect(same.noOp).toBe(true);
     expect(same).not.toHaveProperty('rendering_backend');
+    expect(sent.filter((m) => m === 'session.info')).toHaveLength(1);
+    expect(sent.indexOf('session.info')).toBeLessThan(sent.indexOf('prefs.set'));
+    // A call about something else reads nothing.
+    sent.length = 0;
     body(await setSettings(ctx, { processing: { tuning_hz: 442 } }));
     expect(sent).not.toContain('session.info');
+  });
+
+  describe('with a vocoder that was not ready before the change', () => {
+    // A job does not wait for a vocoder that was not ready before the call, so it can end before the vocoder has
+    // loaded again; the backend read afterwards may still be the one from before, and a CPU there is no fall back.
+    const NOT_CONFIRMED =
+      'The vocoder was not ready when the setting changed, so it may not have loaded again yet: which backend it uses ' +
+      'is only known after the next load, so read opentune_get_settings again once a render has run.';
+
+    it('does not call a CPU under gpuFirst a fall back, and says that the backend is not known yet', async () => {
+      const { mock, ctx } = await withMock();
+      mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+      mock.setGpuAvailable(false);
+      mock.setVocoderLoadOnDemand(true);
+      const out = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
+      expect(out.summary).toContain(NOT_CONFIRMED);
+      expect(out.summary).not.toContain('using the CPU');
+      expect(out.summary).not.toContain('fallen back');
+      expect(out.summary).not.toContain('Direct3D 12');
+      expect(out.rendering_backend).toEqual({
+        requested: 'gpuFirst',
+        backend: 'cpu',
+        vocoder_reloading: false,
+        confirmed: false,
+        unconfirmed_reason: 'vocoder_not_ready_before_change',
+      });
+      // Once the vocoder has loaded, the same state is a real fall back and the settings say so.
+      mock.setVocoderLoadOnDemand(false);
+      const again = body(await getSettings(ctx, { sections: ['processing'] }));
+      expect(again.summary).toContain('OpenTune is using the CPU');
+    });
+
+    it('counts a failed read before the call as not ready, and a ready vocoder as confirmed', async () => {
+      const { mock, ctx } = await withMock();
+      mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+      mock.setGpuAvailable(false);
+      const session = await rawSession(ctx);
+      const original = session.call.bind(session);
+      let jobEnded = false;
+      session.call = async (method: string, params: Json, timeoutMs: number) => {
+        if (method === 'session.info' && !jobEnded) {
+          throw new OtcpError({ kind: 'BUSY', reason: 'modal_open', retryable: true, detail: 'x', executed: false });
+        }
+        const result = await original(method, params, timeoutMs);
+        if (method === 'job.get') jobEnded = true;
+        return result;
+      };
+      const out = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
+      expect(out.summary).toContain(NOT_CONFIRMED);
+      expect(out.rendering_backend).toMatchObject({
+        confirmed: false,
+        unconfirmed_reason: 'vocoder_not_ready_before_change',
+      });
+    });
+
+    it('says nothing more for cpuFirst, and still says that the vocoder reloads when it does', async () => {
+      const { mock, ctx } = await withMock();
+      mock.given({ clips: [clip()] });
+      mock.setVocoderLoadOnDemand(true);
+      const out = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
+      expect(out.summary).not.toContain(NOT_CONFIRMED);
+      expect(out.rendering_backend).toMatchObject({ requested: 'cpuFirst', confirmed: false });
+    });
   });
 
   describe('with a vocoder that is still reloading', () => {

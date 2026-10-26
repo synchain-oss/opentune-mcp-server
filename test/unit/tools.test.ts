@@ -272,7 +272,9 @@ describe('opentune_get_status', () => {
   it('stays READY when session.info fails after a verified hello', async () => {
     const ctx = fakeInstances([session(failing({ kind: 'BUSY', reason: 'modal_open' }))]);
     const b = expectState(await getStatus(ctx, undefined), 'READY', null);
-    expect(b.instances).toEqual([expect.objectContaining({ info: null, nullReasons: { info: 'unavailable' } })]);
+    expect(b.instances).toEqual([
+      expect.objectContaining({ info: null, nullReasons: { blockedBy: 'capability_missing', info: 'unavailable' } }),
+    ]);
   });
 
   it('gives a reason for each part of session.info that the instance does not report', async () => {
@@ -282,7 +284,11 @@ describe('opentune_get_status', () => {
     expect(b.instances).toEqual([
       expect.objectContaining({
         info: { appVersion: '1', runtime, audioDevice: null, processing: null },
-        nullReasons: { 'info.audioDevice': 'not_reported', 'info.processing': 'not_reported' },
+        nullReasons: {
+          blockedBy: 'capability_missing',
+          'info.audioDevice': 'not_reported',
+          'info.processing': 'not_reported',
+        },
       }),
     ]);
   });
@@ -351,8 +357,14 @@ describe('opentune_get_status', () => {
       expect(b).toMatchObject({
         state: 'READY',
         blockedBy: { kind: 'onboarding', hint: expect.stringContaining('welcome page') as unknown },
-        nextStep: { actor: 'agent', tool: 'opentune_manage_ui', args: { op: 'dismiss_onboarding' } },
+        nextStep: { actor: 'user', tool: 'opentune_manage_ui', args: { op: 'dismiss_onboarding' } },
       });
+      // Closing it marks onboarding as shown and cannot be undone: the user is told and agrees before the call.
+      expect((b.nextStep as { message: string }).message).toBe(
+        'Tell the user that OpenTune shows its first-run welcome page and that closing it marks it as seen, which ' +
+          'cannot be undone. Only after the user agrees, close it with opentune_manage_ui op dismiss_onboarding, then ' +
+          "continue with the user's request.",
+      );
       expect(b.summary).toBe(
         'OpenTune is running, but it is showing the first-run welcome page, so write operations are refused until it is closed.',
       );
@@ -418,7 +430,7 @@ describe('opentune_get_status', () => {
       ]);
     });
 
-    it('asks nothing of an instance without the capability, and says nothing when no window blocks', async () => {
+    it('asks nothing of an instance without the capability, and says that it cannot tell, not that nothing blocks', async () => {
       let asked = 0;
       const without = fakeWindow([
         windowSession(() => {
@@ -428,7 +440,16 @@ describe('opentune_get_status', () => {
       ]);
       const quiet = expectState(await getStatus(without, undefined), 'READY', null);
       expect(asked).toBe(0);
-      expect(quiet.instances).toEqual([expect.not.objectContaining({ blockedBy: expect.anything() as unknown })]);
+      // A member that is simply missing would read as "nothing blocks": it is null, with a reason that is not the
+      // one of a failed read.
+      expect(quiet.instances).toEqual([
+        expect.objectContaining({
+          blockedBy: null,
+          nullReasons: expect.objectContaining({ blockedBy: 'capability_missing' }) as unknown,
+        }),
+      ]);
+      expect(quiet.summary).toBe(STATUS_TEXT.READY.summary);
+      expect(quiet).not.toHaveProperty('blockedBy');
       const clear = fakeWindow([windowSession(() => windowState({}))]);
       const b = expectState(await getStatus(clear, undefined), 'READY', null);
       expect(b).not.toHaveProperty('blockedBy');

@@ -138,13 +138,14 @@ const WINDOW_BLOCK = {
     summary:
       'OpenTune is running, but it is showing the first-run welcome page, so write operations are refused until it is closed.',
     hint: 'The first-run welcome page is open; writes are refused until it is closed.',
+    // Closing it marks onboarding as shown in the user's OpenTune and cannot be undone, so the user agrees first.
     step: {
-      actor: 'agent',
+      actor: 'user',
       tool: 'opentune_manage_ui',
       args: { op: 'dismiss_onboarding' },
       message:
-        'Tell the user that OpenTune shows its first-run welcome page, then close it with opentune_manage_ui op ' +
-        "dismiss_onboarding (it marks onboarding as shown in the user's OpenTune, which cannot be undone) and " +
+        'Tell the user that OpenTune shows its first-run welcome page and that closing it marks it as seen, which ' +
+        'cannot be undone. Only after the user agrees, close it with opentune_manage_ui op dismiss_onboarding, then ' +
         "continue with the user's request.",
     },
   },
@@ -166,11 +167,13 @@ type WindowBlock = keyof typeof WINDOW_BLOCK;
 
 /**
  * Whether the window blocks writes, read once with ui.getState: the first-run overlay when the state says it is
- * showing, any other dialog otherwise; null when nothing blocks; 'unreadable' when the read failed or the
- * instance has no ui.bridge. A state that does not say what the overlay is gets the generic dialog, never a guess.
+ * showing, any other dialog otherwise; null when nothing blocks; 'unreadable' when the read failed and
+ * 'capability_missing' when the instance has no ui.bridge, so there is nothing to read. The two are told apart in the
+ * result: a missing member would read as "nothing blocks". A state that does not say what the overlay is gets the
+ * generic dialog, never a guess.
  */
-async function windowBlock(session: OtcpSession): Promise<WindowBlock | 'unreadable' | null> {
-  if (!session.hello.capabilities.includes('ui.bridge')) return null;
+async function windowBlock(session: OtcpSession): Promise<WindowBlock | 'unreadable' | 'capability_missing' | null> {
+  if (!session.hello.capabilities.includes('ui.bridge')) return 'capability_missing';
   try {
     const state = await session.call('ui.getState', {}, INFO_TIMEOUT_MS);
     if (isObject(state.onboarding) && state.onboarding.showing === true) return 'onboarding';
@@ -225,11 +228,17 @@ async function instanceStatus(ctx: ToolContext, entry: DiscoveryEntry): Promise<
     capabilities: session.hello.capabilities,
     ...(block === null
       ? {}
-      : block === 'unreadable'
+      : block === 'unreadable' || block === 'capability_missing'
         ? { blockedBy: null }
         : { blockedBy: { kind: block, hint: WINDOW_BLOCK[block].hint } }),
   };
-  const unread: Json = block === 'unreadable' ? { blockedBy: 'unavailable' } : {};
+  // A blockedBy that is null says why: the read failed, or the instance cannot report its window at all.
+  const unread: Json =
+    block === 'unreadable'
+      ? { blockedBy: 'unavailable' }
+      : block === 'capability_missing'
+        ? { blockedBy: 'capability_missing' }
+        : {};
   try {
     const info = await session.call('session.info', {}, INFO_TIMEOUT_MS);
     const parts: Json = {

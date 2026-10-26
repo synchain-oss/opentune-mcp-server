@@ -44,13 +44,14 @@ versioned separately and has its own changelog.
 - `opentune_get_status` and `opentune_launch` read the window of a ready instance once (`ui.getState`, capability
   `ui.bridge`). When the first-run welcome page or another dialog is open, the result carries `blockedBy` (`kind` and a
   hint), the summary says that writes are refused until it is closed, and the next step is `opentune_manage_ui` with
-  `dismiss_onboarding` or `dismiss_dialogs`. A vocoder that is not loaded yet is no longer worded as a problem: one
+  `dismiss_onboarding` (after the user has agreed: closing the welcome page marks it as seen and cannot be undone) or
+  `dismiss_dialogs`. An instance without `ui.bridge` has `blockedBy` `null` with the reason `capability_missing`. A vocoder that is not loaded yet is no longer worded as a problem: one
   sentence says that it loads at the first render.
 - `opentune_get_settings` gives next to `options.renderingPriority` one note per value (`optionNotes`: what it means and
   when it takes effect), and a summary sentence when the priority is `gpuFirst` but the CPU runs, with the log and
   `opentune-mcp doctor` as the places to look. `opentune_set_settings` reads the backend once after a change of the
-  rendering priority (`rendering_backend`) and says "gpuFirst was requested, but OpenTune is now using the CPU" or that the
-  vocoder is still reloading. The description of `rendering_priority` says what the values do.
+  rendering priority (`rendering_backend`) and says "gpuFirst was requested, but OpenTune is now using the CPU", that the
+  vocoder is still reloading, or, when the vocoder was not ready before the change, that the backend is not known yet. The description of `rendering_priority` says what the values do.
 - `opentune_edit_notes` describes `delta_cents`, `retune_speed`, `pitch_drift_scale` (the usual meaning of "vibrato" in a
   request), `vibrato_depth` and `vibrato_rate_hz` in the parameters.
 - `opentune_edit_arrangement` no longer says "ask the user first" for every split, merge and delete: a request that

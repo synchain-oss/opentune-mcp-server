@@ -335,9 +335,11 @@ instance can report it and add `blockedBy` (`kind` `onboarding` or `dialog`, and
 that says writes are refused until the dialog is closed; they do not say that everything is ready. `opentune_get_settings`
 also reports whether onboarding was shown. Ask the user to answer the dialog, then retry. `opentune_manage_ui` can close
 it like the Escape key: op `dismiss_onboarding` for the onboarding overlay (it also marks onboarding as shown, a global
-setting that cannot be undone, so tell the user first), op `dismiss_dialogs` for any other dialog. The server never
-presses a button of a dialog. If the window cannot be read, `blockedBy` is null with a reason in `nullReasons`, and the
-status is still reported as ready.
+setting that cannot be undone, so tell the user that OpenTune shows the welcome page and close it only after the user
+agrees), op `dismiss_dialogs` for any other dialog. The server never presses a button of a dialog. If the window cannot
+be read, `blockedBy` is null with the reason `unavailable` in `nullReasons`, and the status is still reported as ready.
+An instance without the capability `ui.bridge` cannot report its window at all: `blockedBy` is null there with the
+reason `capability_missing`, which does not mean that no dialog is open.
 
 ## Rendering backend and vocoder
 
@@ -348,7 +350,10 @@ the summary says so. To see why, read the log: `opentune_get_settings` with sect
 the lines about the backend. On Windows also run `opentune-mcp doctor`: it checks the Direct3D 12 runtime that a test
 build lists in `opentune-control.json` (see [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied)). After a change of the
 rendering priority, `opentune_set_settings` reads the backend once the job has ended and reports it in
-`rendering_backend`; if the vocoder is still reloading after a short wait, it says so instead of guessing.
+`rendering_backend`; if the vocoder is still reloading after a short wait, it says so instead of guessing. If the vocoder
+was not ready when the setting changed (right after the start, before the first render), OpenTune can finish the job
+before the vocoder has loaded again, so a `cpu` read then is not proof of a fall back: `rendering_backend.confirmed` is
+`false`, and the backend is only known after the next load. Read `opentune_get_settings` again once a render has run.
 
 `vocoderReady: false` just after OpenTune starts is normal, not a fault: the vocoder loads when the first render needs
 it. Nothing has to be done about it.

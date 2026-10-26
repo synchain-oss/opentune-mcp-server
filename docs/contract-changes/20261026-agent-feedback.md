@@ -65,10 +65,12 @@ any dialog) was open, and the first write failed with `BUSY (modal_open)`. A voc
 true, the result gets `blockedBy: {kind: "onboarding", hint}`; when a modal is open (`busy.modalOpen` or a dialog is
 listed) and the state does not say that the first-run page is showing, `blockedBy: {kind: "dialog", hint}`. The summary
 says that OpenTune runs but writes are refused until the window is closed, and the next step is `opentune_manage_ui` with
-`dismiss_onboarding` (the welcome page; it marks onboarding as shown, which cannot be undone, so the next step tells the
-agent to tell the user) or `dismiss_dialogs`. If the state cannot be read, `blockedBy` is `null` with
-`nullReasons.blockedBy` `unavailable`, and the status stays `READY`. An instance without `ui.bridge` has no member. With
-several instances, only the per-instance `blockedBy` is given. The fields of the result that already existed are not
+`dismiss_onboarding` (the welcome page) or `dismiss_dialogs`. Closing the welcome page marks onboarding as shown, which
+cannot be undone, so its next step has the user as the actor: tell the user that OpenTune shows the page and that
+closing it marks it as seen, and close it only after the user agrees. If the state cannot be read, `blockedBy` is
+`null` with `nullReasons.blockedBy` `unavailable`, and the status stays `READY`. An instance without `ui.bridge` cannot
+be asked: `blockedBy` is `null` there too, with `nullReasons.blockedBy` `capability_missing`, so that a missing member is
+never taken for "nothing blocks". With several instances, only the per-instance `blockedBy` is given. The fields of the result that already existed are not
 changed, and `vocoderReady: false` is still reported as it is; the summary adds one sentence saying that the vocoder loads
 at the first render, so it not being loaded just after the start is normal.
 
@@ -88,10 +90,15 @@ runs.
 what it means and that it takes effect at once (the vocoder reloads for a few seconds, nothing is rendered again). When
 the priority is `gpuFirst` and `processing.backend` is `cpu`, the summary says that the GPU may be unavailable or have fallen
 back and where to look (the log with `sections ["log"]` and `log_lines` 30, and `opentune-mcp doctor`, which checks
-Direct3D 12). `opentune_set_settings` reads `session.info` once after the job of a change of the priority and adds
-`rendering_backend: {requested, backend, vocoder_reloading}`; for `gpuFirst` with the CPU it says so with the same two
-places, and a vocoder that is still reloading after a wait of at most 6 seconds is said to be reloading and not guessed.
-A failed read gives `rendering_backend: null` and `nullReasons.rendering_backend`. The description of `rendering_priority`
+Direct3D 12). `opentune_set_settings` reads `session.info` before the call of a change of the priority (as it does for
+a change of the vocoder weight) and once after the job, and adds
+`rendering_backend: {requested, backend, vocoder_reloading, confirmed, unconfirmed_reason}`; for `gpuFirst` with the CPU
+it says so with the same two places, and a vocoder that is still reloading after a wait of at most 6 seconds is said to be
+reloading and not guessed. A job does not wait for a vocoder that was not ready before the call (PROTOCOL.md section 12.7
+rule 4) and can end before the vocoder has loaded again, so what is read afterwards may still be the backend from
+before. Then `confirmed` is `false` with `unconfirmed_reason` `vocoder_not_ready_before_change`, and a CPU under
+`gpuFirst` is not called a fall back: the summary says that the vocoder was not ready when the setting changed and that
+the backend is only known after the next load. A failed read gives `rendering_backend: null` and `nullReasons.rendering_backend`. The description of `rendering_priority`
 is a little longer. Sentences are composed from the enum values only; no OpenTune string is put in them. The mock can now
 express "gpuFirst requested, CPU actual".
 
@@ -134,7 +141,11 @@ peak above 0 dBFS adds a sentence to the summary: the peak, the number of sample
 bits or playing it elsewhere may clip, and to lower the volume of a track with `opentune_set_tracks` and export again. The
 path that is read is only the one in the job result and only if it is the path asked for or one of the names
 `<stem> (2).wav` to `<stem> (999).wav` in its folder, which are the names an export tries; it is not a link; a file whose
-audio is over 1 GiB is not read. A read that fails (missing, not a WAV, an unsupported layout) leaves both members `null`
+audio is over 1 GiB is not read. The path can be replaced between the check and the read, so the file is opened without
+following a link where the system has a flag for it (`O_NOFOLLOW`, not on Windows), and the opened file must be a regular
+file with the same device and file number as the one that was checked, else it is not read (`unreadable`). Where a file
+system reports no file number the comparison is skipped; on Windows, where no flag refuses a link at open, it is the
+only guard and is best effort. A read that fails (missing, not a WAV, an unsupported layout) leaves both members `null`
 with the reason in `nullReasons` (`unreadable`, `not_a_wav`, `unsupported_format`, `too_large`,
 `not_the_exported_file`), and the export result is unaffected. A silent file has `peakDbfs` `null` with the reason
 `silent` and a count of 0. Integer samples of 8 to 32 bits and floats of 32 and 64 bits are read; the format tag
@@ -167,5 +178,5 @@ Total 62,588 bytes of 65,536 (it was 61,907). By tool: `opentune_edit_notes` 7,1
 All changes are additions or rewordings of results of the tools; the OTCP wire, the tool names, the arguments and the error
 kinds are the same. An older client that reads the old summary sentences or the member order sees the new ones; one that
 reads members by name sees every old member, with long lists cut at 20 (see 1). An older OpenTune build is unaffected: a
-build without `ui.bridge` has no `blockedBy`, one that reports no `backend` has `backend` `null`, and an export that wrote
+build without `ui.bridge` has `blockedBy` `null` with the reason `capability_missing`, one that reports no `backend` has `backend` `null`, and an export that wrote
 a file this server cannot read has the two members `null`.

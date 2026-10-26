@@ -7,7 +7,9 @@
 // playing it elsewhere clips. Integer and 32 or 64-bit float samples are understood; anything else is reported
 // as unsupported rather than guessed.
 
+import { constants } from 'node:fs';
 import { lstat, open, type FileHandle } from 'node:fs/promises';
+import type { BigIntStats } from 'node:fs';
 
 /** Why the peak is not known, as the reason of `nullReasons`. Fixed words, never text from a file. */
 export type PeakFailure = 'unreadable' | 'not_a_wav' | 'unsupported_format' | 'too_large';
@@ -102,18 +104,44 @@ async function locate(handle: FileHandle, size: number): Promise<Located | PeakF
   return 'not_a_wav';
 }
 
+/** The two file system calls that decide which file is read; tests replace them. */
+export interface FileOps {
+  readonly lstat: (file: string) => Promise<BigIntStats>;
+  readonly open: (file: string, flags: number) => Promise<FileHandle>;
+}
+
+const realOps: FileOps = { lstat: (file) => lstat(file, { bigint: true }), open: (file, flags) => open(file, flags) };
+
+/** Open for reading, and refuse a link at the last part of the path where the system has a flag for it. */
+export const OPEN_FLAGS = constants.O_RDONLY | (process.platform === 'win32' ? 0 : constants.O_NOFOLLOW);
+
+/**
+ * Whether the file that was opened is the one `lstat` looked at: a regular file with the same device and file number.
+ * Between the two calls the path can be replaced, a link put in place of the file for one, and only the check after the
+ * open sees the file that is really read. A file system that reports no file number (0) cannot be compared, and then
+ * only the regular-file check holds: on Windows, which has no flag that refuses a link at open, this comparison is the
+ * only guard and is best effort.
+ */
+const sameFile = (looked: BigIntStats, opened: BigIntStats): boolean =>
+  opened.isFile() &&
+  (looked.ino === 0n || opened.ino === 0n || (looked.dev === opened.dev && looked.ino === opened.ino));
+
 /**
  * Reads the audio of the WAV file at `file` once, from start to end, and returns its peak level and the number of
  * samples above full scale. Never throws: a file that cannot be read or understood is a `reason`.
  */
-export async function readWavPeak(file: string): Promise<WavPeak> {
+export async function readWavPeak(file: string, ops: FileOps = realOps): Promise<WavPeak> {
   let handle: FileHandle | undefined;
   try {
     // A link is not the file the export wrote.
-    const info = await lstat(file);
+    const info = await ops.lstat(file);
     if (!info.isFile()) return { ok: false, reason: 'unreadable' };
-    handle = await open(file, 'r');
-    const found = await locate(handle, info.size);
+    handle = await ops.open(file, OPEN_FLAGS);
+    // The path may have been replaced since lstat: what is read is the file that was opened, and it must be the file
+    // that was looked at.
+    const opened = await handle.stat({ bigint: true });
+    if (!sameFile(info, opened)) return { ok: false, reason: 'unreadable' };
+    const found = await locate(handle, Number(opened.size));
     if (typeof found === 'string') return { ok: false, reason: found };
     if (found.length > MAX_READ_BYTES) return { ok: false, reason: 'too_large' };
     const { read, bytesPerSample: width } = found;

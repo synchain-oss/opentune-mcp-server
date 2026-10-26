@@ -198,8 +198,9 @@ describe('opentune_launch', () => {
         launched: true,
         state: 'READY',
         blockedBy: { kind: 'onboarding' },
-        nextStep: { actor: 'agent', tool: 'opentune_manage_ui', args: { op: 'dismiss_onboarding' } },
+        nextStep: { actor: 'user', tool: 'opentune_manage_ui', args: { op: 'dismiss_onboarding' } },
       });
+      expect((b.nextStep as { message: string }).message).toContain('Only after the user agrees, close it with');
       expect(b.summary).toMatch(
         /^Started OpenTune \(pid \d+\)\. OpenTune is running, but it is showing the first-run welcome page, so write operations are refused until it is closed\./,
       );
@@ -210,6 +211,24 @@ describe('opentune_launch', () => {
         blockedBy: { kind: 'dialog' },
         nextStep: { args: { op: 'dismiss_dialogs' } },
       });
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'says that a build without ui.bridge cannot report its window, rather than leaving blockedBy out',
+    async () => {
+      // The stand-in has no ui.bridge unless OT_FAKE_WINDOW gives it.
+      const { ctx } = setup();
+      const b = body(await launch(ctx, {}));
+      expect(b).toMatchObject({ launched: true, state: 'READY', nextStep: STATUS_TEXT.READY.step });
+      expect(b).not.toHaveProperty('blockedBy');
+      expect(b.instances).toEqual([
+        expect.objectContaining({
+          blockedBy: null,
+          nullReasons: expect.objectContaining({ blockedBy: 'capability_missing' }) as unknown,
+        }),
+      ]);
     },
     TIMEOUT,
   );

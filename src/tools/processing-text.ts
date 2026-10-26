@@ -49,6 +49,16 @@ export const BACKEND_STILL_RELOADING =
   'The vocoder is still reloading, so which backend it uses is not known yet; read opentune_get_settings again in a ' +
   'few seconds.';
 
+/**
+ * The sentence of opentune_set_settings after a change to gpuFirst that read the CPU, when the vocoder was not ready
+ * before the change. A job does not wait for a vocoder that was not ready (PROTOCOL.md section 12.7 rule 4), so it can
+ * end before the vocoder has loaded again and the backend read afterwards may still be the old one: the fall back to
+ * the CPU is not known, and is not claimed.
+ */
+export const BACKEND_NOT_CONFIRMED =
+  'The vocoder was not ready when the setting changed, so it may not have loaded again yet: which backend it uses is ' +
+  'only known after the next load, so read opentune_get_settings again once a render has run.';
+
 /** Whether the settings say gpuFirst with the CPU in use. Enumerated values only. */
 export const gpuFirstOnCpu = (priority: unknown, backend: unknown): boolean =>
   priority === 'gpuFirst' && backend === 'cpu';

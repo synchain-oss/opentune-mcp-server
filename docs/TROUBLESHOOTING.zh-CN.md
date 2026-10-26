@@ -224,11 +224,11 @@ OpenTune 宣告运行中实例的目录必须可读。在带控制接口的 Open
 
 ## First launch dialog
 
-OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次引导(onboarding)对话框。需要有人在 OpenTune 窗口里回答一次。它(或任何其他模态对话框)开着时,所有写操作都会失败,返回 [BUSY](#error-busy),原因 `modal_open`。`opentune_get_settings` 会报告首次引导是否已经显示过。`opentune_get_status` 与 `opentune_launch` 在实例能报告窗口状态时会读一次窗口,并在结果里加上 `blockedBy`(`kind` 为 `onboarding` 或 `dialog`,另有一句提示),摘要会说明在对话框关闭之前写操作都会被拒绝,而不是说一切就绪。请让用户回答该对话框,然后重试。`opentune_manage_ui` 也能像按 Esc 一样把它关掉:首次引导覆盖层用 `dismiss_onboarding`(它同时把首次引导标记为已显示,这是撤销不了的全局设置,先告知用户),其他对话框用 `dismiss_dialogs`。服务从不按对话框里的按钮。读不到窗口状态时,`blockedBy` 为 null,原因写在 `nullReasons` 里,状态仍按就绪报告。
+OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次引导(onboarding)对话框。需要有人在 OpenTune 窗口里回答一次。它(或任何其他模态对话框)开着时,所有写操作都会失败,返回 [BUSY](#error-busy),原因 `modal_open`。`opentune_get_settings` 会报告首次引导是否已经显示过。`opentune_get_status` 与 `opentune_launch` 在实例能报告窗口状态时会读一次窗口,并在结果里加上 `blockedBy`(`kind` 为 `onboarding` 或 `dialog`,另有一句提示),摘要会说明在对话框关闭之前写操作都会被拒绝,而不是说一切就绪。请让用户回答该对话框,然后重试。`opentune_manage_ui` 也能像按 Esc 一样把它关掉:首次引导覆盖层用 `dismiss_onboarding`(它同时把首次引导标记为已显示,这是撤销不了的全局设置,所以要先告诉用户 OpenTune 正显示欢迎页,用户同意后再关),其他对话框用 `dismiss_dialogs`。服务从不按对话框里的按钮。读不到窗口状态时,`blockedBy` 为 null,原因 `unavailable` 写在 `nullReasons` 里,状态仍按就绪报告。实例没有 `ui.bridge` 能力时根本无法报告窗口状态:`blockedBy` 同样为 null,原因为 `capability_missing`,这并不表示没有对话框开着。
 
 ## Rendering backend and vocoder
 
-`opentune_get_settings`(`processing` 小节)会显示渲染优先级和 OpenTune 当前使用的后端(`processing.backend`)。`gpuFirst` 下,OpenTune 每次加载声码器都会先尝试 GPU,失败时悄悄退回 CPU,所以 GPU 并不保证可用。优先级是 `gpuFirst` 而后端是 `cpu` 时,摘要会指出这一点。想知道原因,请读日志:用 `opentune_get_settings`,`sections` 为 `["log"]`、`log_lines` 为 30,可以看到与后端有关的日志行。Windows 上还可以运行 `opentune-mcp doctor`:它检查测试构建在 `opentune-control.json` 里列出的 Direct3D 12 运行库(见 [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied))。改了渲染优先级之后,`opentune_set_settings` 会在作业结束后读一次后端,放进 `rendering_backend`;等了一小会儿声码器仍在重新加载时,会如实说明,而不是猜测。
+`opentune_get_settings`(`processing` 小节)会显示渲染优先级和 OpenTune 当前使用的后端(`processing.backend`)。`gpuFirst` 下,OpenTune 每次加载声码器都会先尝试 GPU,失败时悄悄退回 CPU,所以 GPU 并不保证可用。优先级是 `gpuFirst` 而后端是 `cpu` 时,摘要会指出这一点。想知道原因,请读日志:用 `opentune_get_settings`,`sections` 为 `["log"]`、`log_lines` 为 30,可以看到与后端有关的日志行。Windows 上还可以运行 `opentune-mcp doctor`:它检查测试构建在 `opentune-control.json` 里列出的 Direct3D 12 运行库(见 [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied))。改了渲染优先级之后,`opentune_set_settings` 会在作业结束后读一次后端,放进 `rendering_backend`;等了一小会儿声码器仍在重新加载时,会如实说明,而不是猜测。如果改动时声码器还没就绪(刚启动、还没渲染过),OpenTune 可能在声码器重新加载完成之前就结束了作业,这时读到 `cpu` 并不能证明发生了回退:`rendering_backend.confirmed` 为 `false`,要等下一次加载后才能确定后端,请在渲染过一次之后再读 `opentune_get_settings`。
 
 刚启动 OpenTune 时 `vocoderReady: false` 是正常的,不是故障:声码器在第一次渲染需要它时才加载,无需处理。
 
