@@ -25,8 +25,9 @@ versioned separately and has its own changelog.
   with `opentune_save_project`, or ask the user whether the changes may be discarded), and quits over them only with
   `discard_unsaved: true`, which only the user may allow. It refuses with `BUSY` while a dialog is open or a job has not
   finished (the new reason `job_in_progress`). The first sentence of the result says that OpenTune closed, or that it
-  closed without saving and the unsaved changes are lost, or that the exit was not confirmed in time; the project file
-  comes back as data. A test build without `app.quit` (everything before this change, including the test build of
+  closed without saving and the unsaved changes are lost, or that the exit was not confirmed in time (`exited` is
+  `false`), or that it could not be looked at (`exited` is `null`, with `exitCheckProblem`: the discovery directory
+  could not be read, which is not the same as a timeout); the project file comes back as data. A test build without `app.quit` (everything before this change, including the test build of
   0.2.0) answers with `UNSUPPORTED` (`capability_missing`) and a next step that asks the user to save and close the
   window. The mock, nine contract vectors (a vector can now end the instance: `endsSession`), the runner, the tool
   golden files, the token canary and the `tuning-workflow` skill follow. See

@@ -32,6 +32,7 @@ const ENDS = ['app/quit-clean', 'app/quit-saved-path', 'app/quit-dirty-discard']
 function observing(
   expectEnded: ((waitMs: number) => Promise<EndReport>) | undefined,
   asked: number[] = [],
+  requested: string[] = [],
 ): ContractTarget {
   const inner = mockTarget();
   return {
@@ -44,6 +45,9 @@ function observing(
         capabilities: instance.capabilities,
         establish: (given) => instance.establish(given),
         runnerValue: (name) => instance.runnerValue(name),
+        endRequested: () => {
+          requested.push('requested');
+        },
         close: () => instance.close(),
       };
       if (expectEnded === undefined) return base;
@@ -208,6 +212,70 @@ describe('vectors with endsSession', () => {
     const outcome = await runVector(planted, mockTarget(), undefined, SHORT);
     expect(outcome.result).toBe('FAIL');
     expect(outcome.note).toMatch(/the server did not close the connection after the instance was to end/);
+  });
+});
+
+describe('the call that makes the instance end is announced to the target', () => {
+  const ok = () => Promise.resolve({ problems: [], notChecked: [] });
+  const INFO = { jsonrpc: '2.0', id: 1, method: 'session.info', params: {} };
+  const INFO_OK = { jsonrpc: '2.0', id: 1, result: { $any: 'object' } };
+
+  /** The quit of app/quit-clean as the last two steps of a scenario, after `before`. */
+  function scenario(
+    before: readonly Record<string, unknown>[],
+    after: readonly Record<string, unknown>[] = [],
+  ): Vector {
+    const quitting = vector('app/quit-clean');
+    return {
+      id: quitting.id,
+      type: 'scenario',
+      description: quitting.description,
+      capability: quitting.capability,
+      since: quitting.since,
+      session: quitting.session,
+      endsSession: true,
+      steps: [...before, { send: quitting.request }, { expect: quitting.response }, ...after],
+    };
+  }
+
+  it('announces a request vector once, before it ends, and a vector that does not end the instance never', async () => {
+    const requested: string[] = [];
+    const target = observing(ok, [], requested);
+    expect(await runVector(vector('app/quit-clean'), target)).toMatchObject({ result: 'PASS' });
+    expect(requested).toEqual(['requested']);
+    requested.length = 0;
+    for (const id of ['app/quit-dirty-refused', 'app/quit-busy', 'session/info-ok']) {
+      expect(await runVector(vector(id), target)).toMatchObject({ result: 'PASS' });
+    }
+    expect(requested).toEqual([]);
+  });
+
+  it('announces a scenario once, at the last step that sends', async () => {
+    const requested: string[] = [];
+    const planted = scenario([{ send: INFO }, { expect: INFO_OK }], [{ expectClosed: {} }]);
+    expect(await runVector(planted, observing(ok, [], requested))).toMatchObject({ result: 'PASS' });
+    expect(requested).toEqual(['requested']);
+  });
+
+  it('announces it when the response to the call is not the one expected, because the instance ends anyway', async () => {
+    const requested: string[] = [];
+    const planted = scenario([]);
+    // The mock answers with discardedUnsavedChanges false and quits; the vector expects true.
+    const step = planted.steps?.[1] as { expect: { result: Record<string, unknown> } };
+    step.expect.result.discardedUnsavedChanges = true;
+    const outcome = await runVector(planted, observing(ok, [], requested));
+    expect(outcome.result).toBe('FAIL');
+    expect(outcome.note).toMatch(/discardedUnsavedChanges/);
+    expect(requested).toEqual(['requested']);
+  });
+
+  it('does not announce it when a step before the call fails first', async () => {
+    const requested: string[] = [];
+    const planted = scenario([{ send: INFO }, { expect: { jsonrpc: '2.0', id: 1, result: { nonsense: true } } }]);
+    const outcome = await runVector(planted, observing(ok, [], requested));
+    expect(outcome.result).toBe('FAIL');
+    // The call that would end the instance was never sent.
+    expect(requested).toEqual([]);
   });
 });
 

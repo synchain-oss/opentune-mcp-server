@@ -112,7 +112,11 @@ needed. For such a vector it
   that it has no process of its own.
 
 The instance that quit is not counted as one that "ended by itself during a vector" and is not ended again by
-`close()`. A vector that does not set `endsSession` and sees its instance end is still a deviation.
+`close()`. From the moment the runner sends the call that makes it quit (the request of a request vector, the last step
+that sends in a scenario) its end is one that was asked for, also when the vector fails at that step or afterwards, so
+the failure is the one of the vector and not a second one for an early end. An instance that ends before that call was
+sent, because an earlier step failed, is still one that ended by itself. A vector that does not set `endsSession` and
+sees its instance end is still a deviation.
 
 `OTCP_CONTRACT_SUMMARY_EXE` (a file path) makes the run write its counts as JSON, which is how
 `npm run gates` fills its "contract vectors (exe)" row. The file also names the runner (`exe`), the build

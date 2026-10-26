@@ -92,33 +92,49 @@ function exitDeadline(result: Json): number {
   return typeof ms === 'number' && Number.isInteger(ms) && ms >= 1 && ms <= 60_000 ? ms : DEFAULT_EXIT_DEADLINE_MS;
 }
 
-/** Whether the instance is gone by `limitMs`: its discovery file removed, or its process ended. False when that cannot be told. */
-async function waitForExit(ctx: ToolContext, instanceId: string, limitMs: number): Promise<boolean> {
+/**
+ * What the watch for the exit found. `exited` is true when the instance is gone (its discovery file removed, or its
+ * process ended), false when it was still listed at the last look after the time given, and null when no look at the
+ * discovery directory succeeded in that time: nothing is known then, and `problem` says why.
+ */
+type ExitWatch = { readonly exited: boolean } | { readonly exited: null; readonly problem: string };
+
+/** Looks for the instance until it is gone or `limitMs` has passed; a failed look is tried again, it is not an answer. */
+async function waitForExit(ctx: ToolContext, instanceId: string, limitMs: number): Promise<ExitWatch> {
   const deadline = performance.now() + limitMs;
+  let problem = 'the discovery directory could not be read';
+  let looked = false;
   for (;;) {
     const scan = await ctx.instances.scan();
-    if (!('instances' in scan)) return false;
-    if (!scan.instances.some((instance) => instance.instanceId === instanceId)) return true;
-    if (performance.now() >= deadline) return false;
+    if ('instances' in scan) {
+      looked = true;
+      if (!scan.instances.some((instance) => instance.instanceId === instanceId)) return { exited: true };
+    } else {
+      problem = scan.detail;
+    }
+    if (performance.now() >= deadline) return looked ? { exited: false } : { exited: null, problem };
     await sleep(ctx.launch.pollMs);
   }
 }
 
 /** The summary: what happened to the application and to the unsaved work first, then what the agent may do. */
-function summaryOf(discarded: boolean, exited: boolean, waitedMs: number, hasPath: boolean): string {
+function summaryOf(discarded: boolean, watch: ExitWatch, waitedMs: number, hasPath: boolean): string {
   const seconds = String(Math.round(waitedMs / 1000));
+  const lost = 'OpenTune was told to close without saving, so the unsaved changes are lost, but ';
   let first: string;
-  if (exited) {
+  if (watch.exited === true) {
     first = discarded ? 'OpenTune closed without saving; the unsaved changes are lost.' : 'OpenTune closed.';
+  } else if (watch.exited === null) {
+    // Nothing could be looked at: no claim of how long it took, only that it is not known.
+    const unknown = `it could not be confirmed whether it has exited (${watch.problem}).`;
+    first = discarded ? `${lost}${unknown}` : `OpenTune accepted the request to close, but ${unknown}`;
   } else if (discarded) {
-    first =
-      'OpenTune was told to close without saving, so the unsaved changes are lost, but it had not exited after ' +
-      `${seconds} s; it may still be shutting down.`;
+    first = `${lost}it had not exited after ${seconds} s; it may still be shutting down.`;
   } else {
     first = `OpenTune accepted the request to close but had not exited after ${seconds} s; it may still be shutting down.`;
   }
   const rest = [
-    exited ? '' : 'Check opentune_get_status before assuming it is closed.',
+    watch.exited === true ? '' : 'Check opentune_get_status before assuming it is closed.',
     hasPath ? 'The project file is at the path in projectPath.' : 'The project had no file: it was never saved.',
     'To work again, start OpenTune with opentune_launch.',
   ].filter((sentence) => sentence !== '');
@@ -151,18 +167,24 @@ export async function quit(ctx: ToolContext, args: QuitArgs): Promise<Outcome> {
     const deadlineMs = exitDeadline(result);
     const waitMs = deadlineMs + EXIT_MARGIN_MS;
     const started = performance.now();
-    const exited = await waitForExit(ctx, entry.instanceId, waitMs);
+    const watch = await waitForExit(ctx, entry.instanceId, waitMs);
     const discarded = result.discardedUnsavedChanges === true;
     const projectPath = typeof result.projectPath === 'string' ? result.projectPath : null;
+    // exited is true (gone), false (still listed after the time given) or null (never seen: the reason is given).
+    const reasons: Json = {
+      ...(isObject(result.nullReasons) ? result.nullReasons : {}),
+      ...(watch.exited === null ? { exited: 'not_observable' } : {}),
+    };
     return {
       ok: true,
       body: {
-        summary: summaryOf(discarded, exited, performance.now() - started, projectPath !== null),
+        summary: summaryOf(discarded, watch, performance.now() - started, projectPath !== null),
         quitting: true,
-        exited,
+        exited: watch.exited,
+        ...(watch.exited === null ? { exitCheckProblem: watch.problem } : {}),
         discardedUnsavedChanges: discarded,
         projectPath,
-        ...(isObject(result.nullReasons) ? { nullReasons: result.nullReasons } : {}),
+        ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}),
         exitDeadlineMs: deadlineMs,
         warnings: Array.isArray(result.warnings) ? result.warnings : [],
       },

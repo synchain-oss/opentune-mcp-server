@@ -373,10 +373,15 @@ function checkParamsValid(vector: Vector, request: unknown, spec: OtcpSpec): voi
   }
 }
 
+/** Whether a step sends something to the instance. */
+const sends = (step: Step): boolean => ['send', 'sendRaw', 'sendHex', 'sendFilled'].some((key) => key in step);
+
 async function runSteps(vector: Vector, run: Run): Promise<void> {
   if (vector.type === 'request') {
     const request = resolve(vector.request, run.bindings);
     checkParamsValid(vector, request, run.spec);
+    // The request that makes the instance end: from here on an end is one that was asked for, whatever follows.
+    if (vector.endsSession === true) run.instance.endRequested?.();
     run.sendValue('main', request);
     await run.expect('main', vector.response);
     if (vector.connectionAfter === 'closed') {
@@ -388,7 +393,18 @@ async function runSteps(vector: Vector, run: Run): Promise<void> {
     }
     return;
   }
-  for (const step of vector.steps ?? []) await run.step(step);
+  const steps = vector.steps ?? [];
+  // A scenario that ends the instance ends with the call that makes it quit (the last step that sends).
+  let quitting = -1;
+  if (vector.endsSession === true) {
+    steps.forEach((step, index) => {
+      if (sends(step)) quitting = index;
+    });
+  }
+  for (const [index, step] of steps.entries()) {
+    if (index === quitting) run.instance.endRequested?.();
+    await run.step(step);
+  }
 }
 
 /**

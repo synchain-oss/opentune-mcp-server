@@ -69,6 +69,38 @@ describe('exe target: a vector that ends the instance', () => {
   );
 
   it(
+    'does not count the end as an early one when the vector fails after the call that ends the instance',
+    async () => {
+      const target = fake('quit');
+      // The stand-in answers app.quit as it should and quits. A step after the answer fails, a second after
+      // the instance has ended by itself, so expectEnded() never runs: the call that ended the instance had been
+      // sent, so the vector fails for its own step only, and not a second time for an end it did not ask for.
+      const quitting = quitClean();
+      const planted: Vector = {
+        id: quitting.id,
+        type: 'scenario',
+        description: quitting.description,
+        capability: quitting.capability,
+        since: quitting.since,
+        session: quitting.session,
+        endsSession: true,
+        steps: [
+          { send: quitting.request },
+          { expect: quitting.response },
+          { pauseMs: 1000 },
+          { expect: { jsonrpc: '2.0', id: 2, result: { $any: 'object' } } },
+        ],
+      };
+      const outcome = await runExeVector(planted, target);
+      expect(outcome.result).toBe('FAIL');
+      expect(outcome.note).not.toContain('before the vector was over');
+      expect(target.stats).toMatchObject({ exitedEarly: 0, endedAsAsked: 0 });
+      expect(target.takeProblems()).toEqual([]);
+    },
+    SLOW,
+  );
+
+  it(
     'fails when the process is still running after the end wait, and then ends it',
     async () => {
       const target = fake('quit-stays');

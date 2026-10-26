@@ -473,7 +473,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       let instancePid: number | undefined = undefined;
       let owned: Owned | undefined;
       let unconfirmed: string | undefined;
-      /** Whether the vector asked the instance to end by itself (expectEnded was called). */
+      /** Whether the runner sent the call that makes the instance end by itself (endRequested was called). */
       let endAsked = false;
       /** The snapshot of the settings files of the data folder, taken before the start. */
       let settings: SettingsGuard | undefined;
@@ -687,11 +687,15 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
         async prepareRunnerValues() {
           runnerValues = await withRpc((rpc) => readRunnerValues(rpc, String(discovery.instanceId)));
         },
+        // The runner is about to send the call that makes the instance quit (a vector with endsSession): the end
+        // that follows is asked for, also when the vector fails before expectEnded() runs.
+        endRequested() {
+          endAsked = true;
+        },
         // The instance quits by itself (a vector with endsSession): its exit, when the target started the
         // process; the removal of its discovery file. Never ends the instance (close() does that, if it is
         // still there).
         async expectEnded(waitMs) {
-          endAsked = true;
           const found: string[] = [];
           const notChecked: string[] = [];
           const waitUntil = Date.now() + waitMs;
@@ -733,7 +737,8 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
               // Ended by force: the clean-up on exit was not verified.
               stats.forced++;
             } else if (ending.how === 'exited') {
-              // A vector that asked for the end has had its checks in expectEnded; it is no early end.
+              // The runner sent the call that makes the instance end: the checks are in expectEnded, or the vector
+              // failed first and says why; it is no early end.
               if (!endAsked) {
                 stats.exitedEarly++;
                 found.push(`the instance ended by itself before the vector was over (${ending.detail})`);

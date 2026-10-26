@@ -35,11 +35,18 @@ export interface TargetInstance {
    */
   prepareRunnerValues?(): Promise<void>;
   /**
+   * Called by the runner right before it sends the call that makes the instance end (the request of a
+   * vector with `endsSession`, or the last step that sends in such a scenario). From then on the target
+   * does not count an end of the instance as one that came too early, even when the vector fails at that
+   * step or afterwards before expectEnded() is called. Not called when an earlier step fails first: an
+   * instance that ends before the call was sent has ended on its own.
+   */
+  endRequested?(): void;
+  /**
    * Called when a vector with `endsSession` is done and the runner has seen that the connections closed
    * and the port accepts none. Waits up to `waitMs` for the instance to end by itself and reports what
-   * the target can observe of how it ended. It does not end the instance itself. The target also takes
-   * note that the end was asked for, so that close() does not count it as an instance that ended too
-   * early. A target without it checks nothing of this, and the runner says so in the outcome.
+   * the target can observe of how it ended. It does not end the instance itself. A target without it
+   * checks nothing of this, and the runner says so in the outcome.
    */
   expectEnded?(waitMs: number): Promise<EndReport>;
   /** Ends the instance, or detaches from it. */
