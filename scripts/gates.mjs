@@ -5,12 +5,17 @@
 // (Markdown, ready to paste into a pull request) for the current commit to stdout. Progress and
 // tool output go to stderr. Exits 1 if any check fails.
 //
-// Usage: node scripts/gates.mjs [--base <ref>] [--only <names>] [--allow-external-authors]
-//                               [--allow-dependabot] [--no-skip]
+// Usage: node scripts/gates.mjs [--base <ref>] [--exclude <ref>]... [--only <names>]
+//                               [--allow-external-authors] [--allow-dependabot] [--no-skip]
 //   --base   branch the current branch will be merged into; the commits in <ref>..HEAD are
 //            checked for attribution, sign-off and identity, and the files that are new since
 //            the merge base, or added by a commit in the range and removed again, must not be
 //            audio (default: origin/feature/v1)
+//   --exclude
+//            leave the commits reachable from <ref> out of the attribution, sign-off and identity
+//            check (repeatable; each must exist). CI passes the default branch for a pull request
+//            into a feature/* trunk, whose range then holds dev's history that the pull request
+//            did not add (scripts/ci-checks.mjs scope). The other checks keep the whole range.
 //   --only   comma-separated, case-insensitive substrings of check names; runs just those checks
 //            (for re-running one failure). A table from a partial run is not a gates result.
 //   --allow-external-authors
@@ -59,6 +64,7 @@ import {
   checkNoNewAudio,
   checkPackageJson,
   checkPackList,
+  commitRange,
   compareHeadingOutlines,
   contractVectorsVerdict,
   findPullRequestTarget,
@@ -420,7 +426,7 @@ async function privacy() {
   );
 }
 
-async function attribution(base, allowExternalAuthors, allowDependabot) {
+async function attribution(base, exclude, allowExternalAuthors, allowDependabot) {
   // 1. The checker and its pattern list are byte-identical copies of the maintainer's canonical
   //    files; the pinned digests detect any local edit.
   const pinned = parseSha256File(await fs.readFile(path.join(ROOT, PATTERNS_SHA_FILE), 'utf8'));
@@ -435,7 +441,8 @@ async function attribution(base, allowExternalAuthors, allowDependabot) {
   const patterns = loadPatterns(path.join(ROOT, PATTERNS_FILE));
 
   // 2. Commit messages and identities (author and committer) on this branch.
-  const commits = parseGitLog(git(['log', `--format=${GIT_LOG_FORMAT}`, `${base}..HEAD`]));
+  const range = commitRange({ base, exclude });
+  const commits = parseGitLog(git(['log', `--format=${GIT_LOG_FORMAT}`, ...range]));
   problems.push(...checkCommits(commits, { patterns, allowExternalAuthors, allowDependabot }));
 
   // 3. Repository text files (the pattern list itself is excluded: it contains the patterns).
@@ -446,7 +453,7 @@ async function attribution(base, allowExternalAuthors, allowDependabot) {
   }
   return verdict(
     problems,
-    `checker sha256 pinned; ${commits.length} commits in ${base}..HEAD` +
+    `checker sha256 pinned; ${commits.length} commits in ${range.join(' ')}` +
       `${allowDependabot ? " (Dependabot's own commits exempt)" : ''}: signed off, ` +
       `${allowExternalAuthors ? 'project or signed-off outside' : 'project'} author and committer (name and address), ` +
       `no AI attribution or personal data in messages; ${files.length} text files clean`,
@@ -633,11 +640,12 @@ async function contractVectorsExe() {
 // main
 
 const USAGE =
-  'usage: node scripts/gates.mjs [--base <ref>] [--only <names>] [--allow-external-authors] [--allow-dependabot] [--no-skip]';
+  'usage: node scripts/gates.mjs [--base <ref>] [--exclude <ref>]... [--only <names>] [--allow-external-authors] [--allow-dependabot] [--no-skip]';
 
 function parseArgs(argv) {
   const options = {
     base: DEFAULT_BASE,
+    exclude: [],
     only: null,
     allowExternalAuthors: false,
     allowDependabot: false,
@@ -645,6 +653,7 @@ function parseArgs(argv) {
   };
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--base' && argv[i + 1]) options.base = argv[++i];
+    else if (argv[i] === '--exclude' && argv[i + 1]) options.exclude.push(argv[++i]);
     else if (argv[i] === '--allow-external-authors') options.allowExternalAuthors = true;
     else if (argv[i] === '--allow-dependabot') options.allowDependabot = true;
     else if (argv[i] === '--no-skip') options.noSkip = true;
@@ -659,11 +668,19 @@ function parseArgs(argv) {
 }
 
 async function main() {
-  const { base, only, allowExternalAuthors, allowDependabot, noSkip } = parseArgs(process.argv.slice(2));
+  const { base, exclude, only, allowExternalAuthors, allowDependabot, noSkip } = parseArgs(process.argv.slice(2));
   try {
     git(['rev-parse', '--verify', '--quiet', `${base}^{commit}`]);
   } catch {
     throw new Error(`base ref ${base} not found; fetch it (git fetch origin) or pass --base <ref>`);
+  }
+  // Fail closed: a missing --exclude ref must not turn into a check of the whole range.
+  for (const ref of exclude) {
+    try {
+      git(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`]);
+    } catch {
+      throw new Error(`--exclude ref ${ref} not found; fetch it (git fetch origin)`);
+    }
   }
 
   const steps = [
@@ -688,7 +705,7 @@ async function main() {
     ['gitleaks', () => gitleaks(base)],
     ['privacy', privacy],
     ['no new audio files (outside test/fixtures/vocals/)', () => noNewAudio(base)],
-    ['attribution, sign-off + identity', () => attribution(base, allowExternalAuthors, allowDependabot)],
+    ['attribution, sign-off + identity', () => attribution(base, exclude, allowExternalAuthors, allowDependabot)],
     ['README en/zh-CN heading outline', readmeParity],
     ['no pull_request_target', pullRequestTarget],
     ['contract vectors (mock)', contractVectors],
@@ -768,7 +785,8 @@ async function main() {
   const table = [
     `### Local gates: \`${sha}\`${dirty ? ' (with uncommitted changes)' : ''}${partial}`,
     '',
-    `Branch \`${branch}\`, base \`${base}\`${allowExternalAuthors ? ', outside authors allowed' : ''}` +
+    `Branch \`${branch}\`, base \`${base}\`${exclude.length ? ` (attribution leaves out ${exclude.map((r) => `\`${r}\``).join(', ')})` : ''}` +
+      `${allowExternalAuthors ? ', outside authors allowed' : ''}` +
       `${allowDependabot ? ", Dependabot's commits exempt" : ''}; ` +
       `Node ${process.version}, ${process.platform}-${process.arch}.`,
     '',

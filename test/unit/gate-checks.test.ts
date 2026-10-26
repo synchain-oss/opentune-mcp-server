@@ -6,7 +6,7 @@
 // assembled at runtime so that this file does not trip the scan it is testing.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -36,6 +36,7 @@ import {
   checkPackList,
   checkPackageJson,
   commitCheckScope,
+  commitRange,
   compareHeadingOutlines,
   contractVectorsVerdict,
   findPullRequestTarget,
@@ -721,8 +722,93 @@ describe('commitCheckScope', () => {
 
   it('holds a pull request from a branch of this repository to project identities', () => {
     expect(
-      commitCheckScope({ event: 'pull_request', baseRef: 'feature/v1', repo, headRepo: repo, headRef: 'feat/x' }),
+      commitCheckScope({
+        event: 'pull_request',
+        baseRef: 'feature/v1',
+        defaultBranch: 'dev',
+        repo,
+        headRepo: repo,
+        headRef: 'feat/x',
+      }),
     ).toMatchObject({ base: 'origin/feature/v1', allowExternalAuthors: false, allowDependabot: false });
+    expect(
+      commitCheckScope({ event: 'pull_request', baseRef: 'dev', repo, headRepo: repo, headRef: 'feat/x' }),
+    ).toMatchObject({ base: 'origin/dev', allowExternalAuthors: false, allowDependabot: false });
+  });
+
+  describe('a pull request into a feature/* trunk leaves the default branch out', () => {
+    // Merging dev back into the trunk puts dev's history (Dependabot's squash commits, for one) in
+    // origin/<base>..HEAD. Those commits passed dev's required checks; they are not the pull
+    // request's. The same rule is what lets a fast-forward push to the trunk skip them.
+    const noDefaultBranch = { event: 'pull_request', baseRef: 'feature/v1', repo, headRepo: repo };
+    const pr = { ...noDefaultBranch, defaultBranch: 'dev' };
+    const hasNoExclude = (scope: object) => {
+      expect(scope).not.toHaveProperty('exclude');
+    };
+
+    it('excludes origin/<default branch>, whatever the default branch is called', () => {
+      const scope = commitCheckScope({ ...pr, headRef: 'feat/sync-dev' });
+      expect(scope).toMatchObject({ base: 'origin/feature/v1', exclude: ['origin/dev'] });
+      expect(commitCheckScope({ ...pr, headRef: 'feat/x', defaultBranch: 'main' })).toMatchObject({
+        exclude: ['origin/main'],
+      });
+      // The rules for the commits the pull request does add are the strict ones.
+      expect(scope).toMatchObject({ allowExternalAuthors: false, allowDependabot: false });
+      expect(scope.reason).toContain('dev');
+    });
+
+    it('applies to a trunk of any name under feature/', () => {
+      expect(commitCheckScope({ ...pr, baseRef: 'feature/v2', headRef: 'feat/x' })).toMatchObject({
+        base: 'origin/feature/v2',
+        exclude: ['origin/dev'],
+      });
+    });
+
+    it('selects <base>..HEAD less the excluded refs', () => {
+      expect(commitRange(commitCheckScope({ ...pr, headRef: 'feat/x' }))).toEqual([
+        'origin/feature/v1..HEAD',
+        '--not',
+        'origin/dev',
+      ]);
+      // Without an exclude field the range is the plain <base>..HEAD.
+      expect(commitRange({ base: 'origin/dev' })).toEqual(['origin/dev..HEAD']);
+      expect(commitRange({ base: 'origin/dev', exclude: [] })).toEqual(['origin/dev..HEAD']);
+    });
+
+    it('refuses to guess when the default branch is unknown', () => {
+      expect(() => commitCheckScope({ ...noDefaultBranch, headRef: 'feat/x' })).toThrow(
+        /into feature\/v1: the default branch is unknown/,
+      );
+      expect(() => commitCheckScope({ ...pr, headRef: 'feat/x', defaultBranch: '' })).toThrow(/default branch/);
+    });
+
+    it('does not change a pull request into dev or prod, from a fork, or by Dependabot', () => {
+      // into dev or prod: the range is origin/<base>..HEAD as before (origin/dev is the default branch)
+      hasNoExclude(commitCheckScope({ ...pr, baseRef: 'dev', headRef: 'feat/x' }));
+      hasNoExclude(commitCheckScope({ ...pr, baseRef: 'prod', headRef: 'dev' }));
+      // from a fork into a trunk, even when the fork's branch carries Dependabot's commits
+      const fork = commitCheckScope({ ...pr, headRepo: 'someone/fork', headRef: 'feat/x' });
+      hasNoExclude(fork);
+      expect(fork).toMatchObject({ base: 'origin/feature/v1', allowExternalAuthors: true, allowDependabot: false });
+      hasNoExclude(commitCheckScope({ event: 'pull_request', baseRef: 'feature/v1', repo, headRef: 'feat/x' }));
+      // Dependabot's own pull request, into a trunk
+      const bot = commitCheckScope({ ...pr, headRef: 'dependabot/npm_and_yarn/x', prAuthor: DEPENDABOT_NAME });
+      hasNoExclude(bot);
+      expect(bot).toMatchObject({ allowDependabot: true, allowExternalAuthors: false });
+      // none of these needs the default branch
+      hasNoExclude(commitCheckScope({ ...noDefaultBranch, baseRef: 'dev', headRef: 'feat/x' }));
+      hasNoExclude(
+        commitCheckScope({ ...noDefaultBranch, headRef: 'dependabot/npm_and_yarn/x', prAuthor: DEPENDABOT_NAME }),
+      );
+    });
+
+    it('does not change a push or a manual run', () => {
+      hasNoExclude(commitCheckScope({ event: 'push', before: sha, defaultBranch: 'dev', repo, refName: 'feature/v1' }));
+      hasNoExclude(
+        commitCheckScope({ event: 'push', before: '0'.repeat(40), defaultBranch: 'dev', repo, refName: 'feature/v1' }),
+      );
+      hasNoExclude(commitCheckScope({ event: 'workflow_dispatch', defaultBranch: 'dev', repo }));
+    });
   });
 
   it("exempts Dependabot's commits only in Dependabot's own pull request", () => {
@@ -852,6 +938,217 @@ describe('feature/* pushes: strict for creation and rewrites, relaxed for fast-f
     expect(check(webMerge, trunk())).toEqual([]);
     expect(check(webMerge, trunk({ before: '0'.repeat(40) }))).toEqual([]);
     expect(check(webMerge, trunk({ beforeAvailable: false }))).toEqual([]);
+  });
+});
+
+// The sub-pull request that brings dev back into the trunk, in a real repository: dev holds a
+// Dependabot squash commit (no sign-off, another person's address in its message) and an outside
+// contributor's merged commit, and the branch merges dev and adds a commit of its own. Commits are
+// made with plumbing (commit-tree), which runs no hooks. Git is slow on Windows CI, hence the timeout.
+describe('a pull request that merges the default branch into a feature/* trunk', { timeout: 30_000 }, () => {
+  const repo = 'synchain-oss/opentune-mcp-server';
+  const PROJECT = 'noreply@synchain.ca';
+  const outsider = join('contributor', '@', 'example', '.org');
+  const dir = mkdtempSync(path.join(os.tmpdir(), 'ot-anc-'));
+  afterAll(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  interface Who {
+    name: string;
+    email: string;
+    committerName?: string;
+    committerEmail?: string;
+  }
+  const maintainer: Who = { name: MAINTAINER_NAME, email: PROJECT };
+  const contributor: Who = { name: 'Contributor', email: outsider };
+  const bot: Who = {
+    name: DEPENDABOT_NAME,
+    email: DEPENDABOT_EMAIL,
+    committerName: WEB_MERGE_COMMITTER_NAME,
+    committerEmail: WEB_MERGE_COMMITTER_EMAIL,
+  };
+  const signoff = (who: Who) => `Signed-off-by: ${who.name} <${who.email}>`;
+  // git log does not promise an order among commits made in the same second.
+  const sorted = (shas: string[]) => [...shas].sort();
+
+  const git = (args: string[], env: Record<string, string> = {}, input?: string): string => {
+    const result = spawnSync('git', args, {
+      cwd: dir,
+      env: { ...process.env, ...env },
+      input,
+      encoding: 'utf8',
+      maxBuffer: 1 << 24,
+    });
+    if (result.status !== 0) throw new Error(`git ${args.join(' ')}: ${result.stderr}`);
+    return result.stdout.trim();
+  };
+  git(['init', '-q']);
+  const tree = git(['mktree'], {}, '');
+  const commit = (message: string, parents: string[], who: Who = maintainer): string =>
+    git(['commit-tree', tree, '-m', message, ...parents.flatMap((p) => ['-p', p])], {
+      GIT_AUTHOR_NAME: who.name,
+      GIT_AUTHOR_EMAIL: who.email,
+      GIT_COMMITTER_NAME: who.committerName ?? who.name,
+      GIT_COMMITTER_EMAIL: who.committerEmail ?? who.email,
+    });
+
+  const root = commit(`chore: root\n\n${signoff(maintainer)}`, []);
+  const botCommit = commit(`chore(deps): bump x (#70)\n\nRelease notes by ${outsider}`, [root], bot);
+  const devTip = commit(`fix: y (#71)\n\n${signoff(contributor)}`, [botCommit], contributor);
+  const merge = (who: Who) => commit('Merge dev into the trunk branch', [root, devTip], who);
+  const merged = merge(maintainer);
+  const mergedByOutsider = merge(contributor);
+  const own = (subject: string, parent: string, who: Who = maintainer) =>
+    commit(`${subject}\n\n${signoff(maintainer)}`, [parent], who);
+  const good = own('ci(checks): z', merged);
+  const unsigned = commit('ci(checks): z, no sign-off', [merged]);
+  const badMerge = own('ci(checks): z after a merge by someone else', mergedByOutsider);
+  const botOnBranch = commit('chore(deps): bump w', [merged], bot);
+  git(['update-ref', 'refs/remotes/origin/dev', devTip]);
+  git(['update-ref', 'refs/remotes/origin/feature/v1', root]);
+
+  const scopeOf = (over: Record<string, string> = {}) =>
+    commitCheckScope({
+      event: 'pull_request',
+      baseRef: 'feature/v1',
+      defaultBranch: 'dev',
+      repo,
+      headRepo: repo,
+      headRef: 'feat/sync-dev',
+      ...over,
+    });
+  /** The commits of a scope at `head` and what the commit check says about them. */
+  const review = (head: string, scope: ReturnType<typeof commitCheckScope> = scopeOf()) => {
+    git(['update-ref', 'HEAD', head]);
+    const commits = parseGitLog(git(['log', `--format=${GIT_LOG_FORMAT}`, ...commitRange(scope)]));
+    return {
+      shas: commits.map((c) => c.sha),
+      problems: checkCommits(commits, {
+        allowExternalAuthors: scope.allowExternalAuthors,
+        allowDependabot: scope.allowDependabot,
+      }),
+    };
+  };
+
+  it("passes: dev's commits are not the pull request's, its own commit and the merge commit are", () => {
+    const { shas, problems } = review(good);
+    expect(problems).toEqual([]);
+    expect(sorted(shas)).toEqual(sorted([good, merged]));
+  });
+
+  // Without the exclusion the range holds dev's commits, which the strict rules reject.
+  it("fails without the exclusion, on dev's Dependabot and contributor commits", () => {
+    const { shas, problems } = review(good, { ...scopeOf(), exclude: [] });
+    expect(sorted(shas)).toEqual(sorted([good, merged, devTip, botCommit]));
+    expect(problems.some((p) => p.startsWith(`commit ${botCommit.slice(0, 8)}:`))).toBe(true);
+    expect(problems.some((p) => p.startsWith(`commit ${devTip.slice(0, 8)}:`))).toBe(true);
+  });
+
+  it('still fails a commit of its own without a sign-off', () => {
+    expect(review(unsigned).problems).toEqual([
+      `commit ${unsigned.slice(0, 8)}: [missing-signoff] no Signed-off-by trailer (use git commit -s)`,
+    ]);
+  });
+
+  it('still fails a merge commit whose author is not a project identity', () => {
+    const { shas, problems } = review(badMerge);
+    expect(sorted(shas)).toEqual(sorted([badMerge, mergedByOutsider]));
+    expect(problems.length).toBeGreaterThan(0);
+    expect(problems.every((p) => p.startsWith(`commit ${mergedByOutsider.slice(0, 8)}`))).toBe(true);
+  });
+
+  it("does not exempt a commit on the branch that wears Dependabot's identity", () => {
+    const { shas, problems } = review(botOnBranch);
+    expect(sorted(shas)).toEqual(sorted([botOnBranch, merged]));
+    expect(problems.some((p) => p.startsWith(`commit ${botOnBranch.slice(0, 8)}:`))).toBe(true);
+  });
+
+  it('is unchanged for a pull request into dev: the whole of origin/dev..HEAD is checked', () => {
+    const { shas } = review(good, scopeOf({ baseRef: 'dev' }));
+    expect(sorted(shas)).toEqual(sorted([good, merged]));
+    git(['update-ref', 'refs/remotes/origin/dev', root]);
+    try {
+      expect(sorted(review(good, scopeOf({ baseRef: 'dev' })).shas)).toEqual(sorted([good, merged, devTip, botCommit]));
+    } finally {
+      git(['update-ref', 'refs/remotes/origin/dev', devTip]);
+    }
+  });
+
+  describe('through scripts/ci-checks.mjs, as the workflows run it', () => {
+    const source = fileURLToPath(new URL('../../scripts/', import.meta.url));
+    mkdirSync(path.join(dir, 'scripts', 'lib'), { recursive: true });
+    for (const file of ['ci-checks.mjs', 'lib/checks.mjs', 'check-attribution.mjs', 'attribution-patterns.txt']) {
+      copyFileSync(path.join(source, file), path.join(dir, 'scripts', file));
+    }
+    const ciChecks = (check: string, head: string, env: Record<string, string> = {}) => {
+      git(['update-ref', 'HEAD', head]);
+      return spawnSync(process.execPath, [path.join(dir, 'scripts', 'ci-checks.mjs'), check], {
+        cwd: dir,
+        encoding: 'utf8',
+        timeout: 20_000,
+        env: {
+          ...process.env,
+          EVENT_NAME: 'pull_request',
+          BASE_REF: 'feature/v1',
+          BEFORE: '',
+          REF_NAME: '',
+          DEFAULT_BRANCH: 'dev',
+          REPO: repo,
+          HEAD_REPO: repo,
+          HEAD_REF: 'feat/sync-dev',
+          PR_AUTHOR: 'DLsnows',
+          ...env,
+        },
+      });
+    };
+    const outputs = (stdout: string) =>
+      Object.fromEntries(
+        stdout
+          .trim()
+          .split('\n')
+          .map((line) => [line.slice(0, line.indexOf('=')), line.slice(line.indexOf('=') + 1)]),
+      );
+
+    it('prints the range to check: the base, the refs left out and the identity rules', () => {
+      const r = ciChecks('scope', good);
+      expect(r.status).toBe(0);
+      expect(outputs(r.stdout)).toEqual({
+        base: 'origin/feature/v1',
+        exclude: 'origin/dev',
+        allow_external_authors: 'false',
+        allow_dependabot: 'false',
+      });
+      expect(outputs(ciChecks('scope', good, { BASE_REF: 'dev' }).stdout)).toMatchObject({
+        base: 'origin/dev',
+        exclude: '',
+      });
+      expect(outputs(ciChecks('scope', good, { HEAD_REPO: 'someone/fork' }).stdout)).toMatchObject({ exclude: '' });
+    });
+
+    it("passes the pull request that merges dev, and fails its own unsigned commit without naming dev's", () => {
+      const passed = ciChecks('commits', good);
+      expect(passed.status).toBe(0);
+      expect(passed.stderr).toContain('commit range origin/feature/v1..HEAD --not origin/dev');
+      expect(passed.stderr).toContain('2 commit(s)');
+      const failed = ciChecks('commits', unsigned);
+      expect(failed.status).toBe(1);
+      expect(failed.stderr).toContain(`commit ${unsigned.slice(0, 8)}: [missing-signoff]`);
+      expect(failed.stderr).not.toContain(botCommit.slice(0, 8));
+    });
+
+    it('fails closed when the default branch is unknown or not in the clone', () => {
+      const unknown = ciChecks('commits', good, { DEFAULT_BRANCH: '' });
+      expect(unknown.status).toBe(2);
+      expect(unknown.stderr).toContain('the default branch is unknown');
+      const missing = ciChecks('scope', good, { DEFAULT_BRANCH: 'gone' });
+      expect(missing.status).toBe(2);
+      expect(missing.stderr).toContain('origin/gone is not in this clone');
+      expect(missing.stdout).toBe('');
+      const missingCommits = ciChecks('commits', good, { DEFAULT_BRANCH: 'gone' });
+      expect(missingCommits.status).toBe(2);
+      expect(missingCommits.stderr).toContain('origin/gone is not in this clone');
+    });
   });
 });
 
@@ -1313,5 +1610,40 @@ describe('gates.mjs --no-skip', () => {
     const r = run('no pull_request_target', '--no-skip');
     expect(r.status).toBe(0);
     expect(r.stdout).toMatch(/\| no pull_request_target \| PASS \|/);
+  });
+});
+
+describe('gates.mjs --exclude', () => {
+  // The attribution row reads its commits from `git log <base>..HEAD --not <excluded refs>`. With
+  // --base HEAD the range holds no commit of this repository, so the row is a file scan that
+  // passes on a clean tree; what these tests look at is the range it reports and the refusal of a
+  // ref that is not there.
+  const gates = fileURLToPath(new URL('../../scripts/gates.mjs', import.meta.url));
+  const run = (...extra: string[]) =>
+    spawnSync(process.execPath, [gates, '--base', 'HEAD', '--only', 'attribution', ...extra], {
+      cwd: fileURLToPath(new URL('../..', import.meta.url)),
+      encoding: 'utf8',
+      timeout: 60_000,
+    });
+
+  it('reports the range with the refs it leaves out', () => {
+    const r = run('--exclude', 'HEAD');
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/\| attribution, sign-off \+ identity \| PASS \| .*0 commits in HEAD\.\.HEAD --not HEAD/);
+    expect(r.stdout).toContain('(attribution leaves out `HEAD`)');
+  });
+
+  it('refuses a ref that does not exist instead of checking the whole range', () => {
+    const r = run('--exclude', 'refs/remotes/origin/no-such-branch');
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain('--exclude ref refs/remotes/origin/no-such-branch not found');
+    expect(r.stdout).not.toContain('PASS');
+  });
+
+  it('keeps the plain range without --exclude', () => {
+    const r = run();
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/0 commits in HEAD\.\.HEAD:/);
+    expect(r.stdout).not.toContain('--not');
   });
 });

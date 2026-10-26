@@ -9,13 +9,15 @@
 //
 // Usage: node scripts/ci-checks.mjs <check>
 //   scope    the commit range and identity rules of this event for the attribution check, printed
-//            as base=…, allow_external_authors=…, allow_dependabot=… lines for $GITHUB_OUTPUT
+//            as base=…, exclude=… (space-separated refs; empty when nothing is left out),
+//            allow_external_authors=…, allow_dependabot=… lines for $GITHUB_OUTPUT
 //            (env: EVENT_NAME, BASE_REF, BEFORE, REF_NAME, DEFAULT_BRANCH, REPO, HEAD_REPO, HEAD_REF,
-//            PR_AUTHOR)
+//            PR_AUTHOR). A ref the range leaves out must exist in the clone, else this fails.
 //   branch   source branch rules of a pull request into dev or prod
 //            (env: BASE_REF, HEAD_REF, HEAD_REPO, REPO)
 //   commits  sign-off, attribution and identity of every commit in origin/<base>..HEAD of a pull
-//            request (env: as for scope; EVENT_NAME defaults to pull_request)
+//            request, less the commits the scope leaves out
+//            (env: as for scope; EVENT_NAME defaults to pull_request)
 //   frozen   frozen-contract guard on the files changed since the merge base with origin/<base>
 //            (env: BASE_REF)
 // Exit status: 0 = pass, 1 = problems found, 2 = usage or context error.
@@ -30,6 +32,7 @@ import {
   checkCommits,
   checkFrozenContract,
   commitCheckScope,
+  commitRange,
   parseGitLog,
   parseNameStatus,
 } from './lib/checks.mjs';
@@ -53,9 +56,9 @@ function git(args) {
   return result.stdout;
 }
 
-/** True when the commit is in this clone (`sha` must already be validated as a full SHA). */
-function commitExists(sha) {
-  const result = spawnSync('git', ['cat-file', '-e', `${sha}^{commit}`], { cwd: ROOT, stdio: 'ignore' });
+/** True when the commit is in this clone (`rev` must be a full SHA or a ref that commitCheckScope built). */
+function commitExists(rev) {
+  const result = spawnSync('git', ['cat-file', '-e', `${rev}^{commit}`], { cwd: ROOT, stdio: 'ignore' });
   if (result.error) throw result.error;
   return result.status === 0;
 }
@@ -65,7 +68,7 @@ function scopeFromEnv(defaultEvent) {
   // A push that rewrote its branch leaves `before` unreachable, so the full-history checkout does
   // not have it. Only a well-formed SHA reaches git; commitCheckScope rejects anything else.
   const beforeAvailable = /^[0-9a-f]{40}$/.test(before) && !/^0+$/.test(before) ? commitExists(before) : true;
-  return commitCheckScope({
+  const scope = commitCheckScope({
     event: process.env.EVENT_NAME || defaultEvent,
     baseRef: env('BASE_REF', { required: false }),
     before,
@@ -77,6 +80,17 @@ function scopeFromEnv(defaultEvent) {
     headRef: env('HEAD_REF', { required: false }),
     prAuthor: env('PR_AUTHOR', { required: false }),
   });
+  // Fail closed: when the clone lacks a ref the range leaves out, say so, and never fall back to a
+  // range without the exclusion.
+  for (const ref of scope.exclude ?? []) {
+    if (!commitExists(ref)) {
+      throw new Error(
+        `${ref} is not in this clone, so the commits already on the default branch cannot be left out of ` +
+          `${scope.base}..HEAD; fetch it (actions/checkout with fetch-depth: 0, or git fetch origin)`,
+      );
+    }
+  }
+  return scope;
 }
 
 /** Prints the problems and returns the exit status. */
@@ -93,9 +107,11 @@ function report(title, problems, passNote) {
 const CHECKS = {
   scope() {
     const scope = scopeFromEnv('');
-    log(`commit range ${scope.base}..HEAD — ${scope.reason}`);
+    log(`commit range ${commitRange(scope).join(' ')} — ${scope.reason}`);
+    // `exclude` holds refs, which cannot contain spaces (git check-ref-format); the workflow splits it with `read -a`.
     process.stdout.write(
-      `base=${scope.base}\nallow_external_authors=${String(scope.allowExternalAuthors)}\n` +
+      `base=${scope.base}\nexclude=${(scope.exclude ?? []).join(' ')}\n` +
+        `allow_external_authors=${String(scope.allowExternalAuthors)}\n` +
         `allow_dependabot=${String(scope.allowDependabot)}\n`,
     );
     return 0;
@@ -113,8 +129,8 @@ const CHECKS = {
 
   commits() {
     const scope = scopeFromEnv('pull_request');
-    log(`commit range ${scope.base}..HEAD — ${scope.reason}`);
-    const commits = parseGitLog(git(['log', `--format=${GIT_LOG_FORMAT}`, `${scope.base}..HEAD`]));
+    log(`commit range ${commitRange(scope).join(' ')} — ${scope.reason}`);
+    const commits = parseGitLog(git(['log', `--format=${GIT_LOG_FORMAT}`, ...commitRange(scope)]));
     const problems = checkCommits(commits, {
       allowExternalAuthors: scope.allowExternalAuthors,
       allowDependabot: scope.allowDependabot,

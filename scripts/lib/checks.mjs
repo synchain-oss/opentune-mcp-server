@@ -527,6 +527,8 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false, 
 /**
  * @typedef {object} CommitScope
  * @property {string} base                   commits in <base>..HEAD are checked
+ * @property {string[]} [exclude]            refs whose commits are left out of that range (commitRange
+ *                                           adds them as `--not <ref>`); absent: nothing is left out
  * @property {boolean} allowExternalAuthors  checkCommits option
  * @property {boolean} allowDependabot       checkCommits option
  * @property {string} reason                 one line for the log
@@ -537,7 +539,8 @@ export function checkCommits(commits, { patterns, allowExternalAuthors = false, 
  * - A pull request checks its own commits against `origin/<base>`:
  *   - from a branch of this repository: author and committer must be project identities (a
  *     contributor never pushes here), except that Dependabot's own pull requests may carry its
- *     commits;
+ *     commits. Into a feature/* trunk, the commits already on the default branch are left out
+ *     of the range (`exclude`): they are not what the pull request adds;
  *   - from a fork: an outside author's commits are accepted when signed off with their own address;
  *   - into prod: the commits are dev's history, which reached dev through gated pull requests and
  *     may include contributors' and Dependabot's merged commits.
@@ -641,16 +644,55 @@ export function commitCheckScope({
       };
     }
     const fromDependabot = prAuthor === DEPENDABOT_NAME && /^dependabot\//.test(headRef ?? '');
+    if (fromDependabot) {
+      return {
+        base,
+        allowExternalAuthors: false,
+        allowDependabot: true,
+        reason: "Dependabot's pull request: its own commits are exempt, any other commit must be a project identity",
+      };
+    }
+    if (baseRef.startsWith('feature/')) {
+      // Merging the default branch into a feature/* trunk (the sub-pull request that brings dev
+      // back before the trunk goes to dev) puts dev's history into <base>..HEAD. Those commits
+      // are not this pull request's: they reached the default branch through its required checks
+      // and branch-gate, which accept Dependabot's squash commits and outside contributors'
+      // merged work. A push to the trunk already skips them the same way (the fast-forward case
+      // above). Everything the pull request itself adds, including the merge commit that brings
+      // the default branch in, stays under the strict rules.
+      if (!defaultBranch) {
+        throw new Error(
+          `pull request into ${baseRef}: the default branch is unknown, so the commits already on it cannot be left out`,
+        );
+      }
+      return {
+        base,
+        exclude: [`origin/${defaultBranch}`],
+        allowExternalAuthors: false,
+        allowDependabot: false,
+        reason:
+          'pull request from a branch of this repository: project identities only, for the commits it adds ' +
+          `(those already on ${defaultBranch} passed its checks)`,
+      };
+    }
     return {
       base,
       allowExternalAuthors: false,
-      allowDependabot: fromDependabot,
-      reason: fromDependabot
-        ? "Dependabot's pull request: its own commits are exempt, any other commit must be a project identity"
-        : 'pull request from a branch of this repository: project identities only',
+      allowDependabot: false,
+      reason: 'pull request from a branch of this repository: project identities only',
     };
   }
   throw new Error(`unsupported event ${JSON.stringify(event)}`);
+}
+
+/**
+ * The revision arguments that select the commits of a scope for `git log` (or `rev-list`):
+ * `<base>..HEAD`, less everything reachable from the scope's `exclude` refs.
+ * @param {{ base: string, exclude?: string[] }} scope
+ * @returns {string[]}
+ */
+export function commitRange({ base, exclude = [] }) {
+  return [`${base}..HEAD`, ...(exclude.length > 0 ? ['--not', ...exclude] : [])];
 }
 
 /**
