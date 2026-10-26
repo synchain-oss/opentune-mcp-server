@@ -64,7 +64,8 @@ function warningTail(envelope: Json): string {
 
 /**
  * Side effects whose words are written out in focusSummary, when their details are an object; any other one, and
- * one of these whose details are not an object, is named by the fixed table.
+ * one of these whose details are not an object, is named by the fixed table. The exception is tempoRounded: whether
+ * it is worded is decided by its key, whatever its details are, so the fixed table must not name it a second time.
  */
 const WORDED = new Set(['notesGenerated', 'uiScaleChanged', 'workspaceSwitched', 'tempoRounded']);
 
@@ -100,7 +101,9 @@ export function focusSummary(envelope: Json, openEditor = false): string {
     unasked.push(`${tempoRoundedWords(effects.tempoRounded, dry)}, and ${marked}`);
   }
   for (const name of Object.keys(effects)) {
-    if (!(WORDED.has(name) && isObject(effects[name]))) {
+    // tempoRounded is worded above by its key; the others are worded above only when their details are an object.
+    const worded = name === 'tempoRounded' || (WORDED.has(name) && isObject(effects[name]));
+    if (!worded) {
       unasked.push(SIDE_EFFECT_TEXT[name] ?? `side effect ${token(name, 'camel') ?? 'with an unrecognized name'}`);
     }
   }
