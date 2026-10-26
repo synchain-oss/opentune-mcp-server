@@ -1725,6 +1725,8 @@ export function timingPlan({
   const suggestions = [];
   let deltaTooLarge = 0;
   const tooClose = [];
+  // The ranges the plan makes (content clock), kept for the warning of an onset that got none.
+  const planned = [];
   // A ready call needs one clip and one revision: a mixed or missing one would be guessed, so
   // those plans give the numbers and the warnings without a call.
   const callable =
@@ -1751,13 +1753,15 @@ export function timingPlan({
       // the rounding; two ranges that met at one point would move the handle there twice.
       end = Math.min(ceil4(onset.endContentSec), round(floor4(onset.limitContentSec) - 0.0001, 4));
       if (end <= start) {
-        // No room is left for a range: the next chain starts less than 0.2 ms after this one. Nothing is
-        // planned for this onset, and the plan says so instead of dropping it silently.
+        // No room is left for a range: the next chain starts less than 0.2 ms after this one. This onset gets
+        // no op of its own, and the plan says so instead of dropping it silently (see the warning below: a
+        // handle at the onset can still lie in the range of the next chain).
         tooClose.push({ note, onset, deltaMs });
         continue;
       }
     }
     const op = { op: 'shift', start_content_sec: start, end_content_sec: end, delta_ms: deltaMs };
+    planned.push({ start, end, deltaMs });
     const beat = beats[point.beatIndex];
     // opentune_edit_timing has no dry_run: this plan is the preview. A suggestion carries only its
     // op, never a ready call: `calls` below holds the batches, so an agent cannot read a call out of
@@ -1797,15 +1801,43 @@ export function timingPlan({
       detail: `${String(deltaTooLarge)} suggestion(s) would move more than ${String(MAX_DELTA_MS)} ms and were left out`,
     });
   for (const { note, onset, deltaMs } of tooClose) {
+    // The next chain's range starts at floor4 of its start, which can lie at or before this onset (both
+    // starts within the same 0.1 ms): then a handle at this onset is inside that range and moves with it,
+    // by that chain's shift. The 1e-6 is the tolerance floor4 and ceil4 use.
+    const at = onset.startContentSec;
+    const covering = planned.find((range) => range.start <= at + 1e-6 && at <= range.end + 1e-6) ?? null;
+    const movedWithNextChainMs = covering === null ? null : covering.deltaMs;
+    const noteIndex = isFiniteNumber(note.index) ? note.index : null;
+    const startSec = round(at, 6);
+    const nextStartSec = round(onset.limitContentSec, 6);
+    const who = `the onset at ${String(startSec)} s of the content (note index ${noteIndex === null ? 'unknown' : String(noteIndex)})`;
+    const why =
+      `the next chain starts at ${String(nextStartSec)} s, so a range for this chain would end at or before ` +
+      'its own start. Ranges are closed intervals and must not share an end point (a handle there would move ' +
+      'twice), so a range ends at least 0.1 ms before the next one starts';
+    let detail;
+    if (covering === null) {
+      detail =
+        `${who} got no shift of its own (${String(deltaMs)} ms): ${why}. No range of the plan covers a handle at this ` +
+        'onset, so none is moved; fix its timing by hand if it matters';
+    } else {
+      const range = `${String(covering.start)} to ${String(covering.end)} s`;
+      const effect =
+        covering.deltaMs === deltaMs
+          ? `it moves with that chain, by the same ${String(deltaMs)} ms this chain would have had`
+          : `it moves with that chain, by ${String(covering.deltaMs)} ms, and not by this chain's ${String(deltaMs)} ms`;
+      detail =
+        `${who} got no shift of its own (${String(deltaMs)} ms): ${why}. A handle at this onset lies inside the ` +
+        `range ${range} of a following chain, so ${effect}; check it after the batch`;
+    }
     warnings.push({
       code: 'RANGE_TOO_NARROW',
-      detail:
-        `the onset at ${String(round(onset.startContentSec, 6))} s of the content ` +
-        `(note index ${isFiniteNumber(note.index) ? String(note.index) : 'unknown'}) was skipped, with its shift ` +
-        `of ${String(deltaMs)} ms: the next chain starts at ${String(round(onset.limitContentSec, 6))} s, so the ` +
-        'range of this one would end at or before its own start. Ranges are closed intervals and must not share ' +
-        'an end point (a handle there would move twice), so a range ends at least 0.1 ms before the next one ' +
-        'starts. Nothing was planned for this onset; fix its timing by hand if it matters',
+      detail,
+      noteIndex,
+      startContentSec: startSec,
+      deltaMs,
+      nextChainStartContentSec: nextStartSec,
+      movedWithNextChainMs,
     });
   }
   if (considered.length === 0)

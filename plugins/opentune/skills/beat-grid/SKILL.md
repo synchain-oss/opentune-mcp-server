@@ -178,7 +178,7 @@ nothing is installed; with an installed analyzer the release state is irrelevant
      expressive timing. `--subdivision 2` or `4` matches eighth or sixteenth notes.
    - `merge` and `warnings` say how many notes were merged and skipped (`SHORT_NOTES`). Lower
      `--merge-gap-ms` if two syllables were joined; raise it if one syllable still gives several onsets.
-   - `RANGE_TOO_NARROW` names an onset that got no op because the next chain starts under 0.2 ms after it; say so in the report.
+   - `RANGE_TOO_NARROW`: an onset got no op because the next chain starts under 0.2 ms after it. `movedWithNextChainMs` is null (nothing moves it) or the shift of the following range that covers it, which can differ from its own; report it.
    - If `calls` is empty and the warning names `NO_REVISION`, `REVISION_MISMATCH` or `MIXED_PLACEMENTS`,
      do not guess a revision or a clip: read the notes of one clip again and make one plan per clip.
 4. **Show the plan.** Summarize: how many onsets are off, the overall lead or lag, the largest shifts with

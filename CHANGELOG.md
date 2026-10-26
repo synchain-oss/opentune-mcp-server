@@ -68,8 +68,10 @@ versioned separately and has its own changelog.
     view. Both state what the OpenTune build already does; nothing changes on the wire.
   - The timing plan of the `beat-grid` skill no longer lets neighbouring ranges meet: a range ends at least 0.1 ms
     before the next one starts. An onset that has no room left for a range (the next chain starts less than about 0.2 ms
-    after it) is skipped with the warning `RANGE_TOO_NARROW`, which names the note and the shift that was not planned,
-    instead of getting a range that reaches into the next one.
+    after it) gets no op of its own and the warning `RANGE_TOO_NARROW`, which names the note and the shift that was not
+    planned, instead of a range that reaches into the next one. The warning also says what happens to a handle at that
+    onset: it can still lie inside the next chain's range (the two starts are in the same 0.1 ms) and then moves with
+    that chain, by that chain's shift (`movedWithNextChainMs`, which is `null` when no range covers it).
   - `SKILL.md` of `beat-grid` says that `grid` stays out of the paths file when `--grid` is on the command line (both
     is refused as "given twice").
   - `SKILL.md` of `tuning-workflow` tells the first-run welcome page from other dialogs by `blockedBy.kind`

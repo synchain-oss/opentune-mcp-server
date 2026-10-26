@@ -176,6 +176,10 @@ const FIELD_LIKE = /`([a-z][a-z0-9]*[A-Z][A-Za-z0-9]*)`/g;
 const NOT_RESULT_FIELDS = new Set<string>(['beatInBar']);
 
 // Whether the code holds the word as a whole word (the words are letters and digits only, so they need no escaping).
+// The limit: it matches against the whole text of src/ (or of the script), so a word in a comment or in a string counts
+// as present. The check can only find a name that a skill mentions and the code does not have anywhere; it does not
+// prove that the field is in the output. Comments are not cut out first: that would cut a `//` inside a string, and
+// would not know the `#` of Python.
 const isWord = (word: string, code: string): boolean => new RegExp(String.raw`\b${word}\b`).test(code);
 
 function unknownFields(text: string, code: string): string[] {
