@@ -97,49 +97,6 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
-      {
-        "entity": "ui",
-        "ref": {
-          "singleton": "workspace"
-        },
-        "label": "Workspace",
-        "fields": {
-          "workspace": {
-            "before": "arrangement",
-            "after": "pianoRoll",
-            "unit": null
-          }
-        }
-      },
-      {
-        "entity": "tempo",
-        "ref": {
-          "singleton": "tempo"
-        },
-        "label": "Tempo",
-        "fields": {
-          "bpm": {
-            "before": 120.27,
-            "after": 120.3,
-            "unit": "bpm"
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "not_persisted_state",
@@ -149,6 +106,66 @@
           "workspace": "arrangement"
         }
       }
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "singleton": "tempo"
+        },
+        "data": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "workspaceSwitched",
+        "text": "The window switched between the arrangement and the piano roll.",
+        "details": {
+          "from": "arrangement",
+          "to": "pianoRoll",
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "tempoRounded",
+        "text": "The tempo field of the transport bar wrote the tempo it shows, rounded to one decimal, back to the project.",
+        "details": {
+          "fromBpm": 120.27,
+          "toBpm": 120.3,
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (the state is not kept in the project). Restore: call opentune_manage_ui with the arguments in restore, as they are.",
+        "revert": {
+          "method": "ui.setWorkspace",
+          "params": {
+            "workspace": "arrangement"
+          }
+        },
+        "restore": {
+          "tool": "opentune_manage_ui",
+          "arguments": {
+            "op": "switch_view",
+            "view": "arrangement"
+          }
+        }
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
     },
     "dirty": {
       "before": false,
@@ -183,6 +200,39 @@
       }
     ],
     "job": null,
+    "changes": [
+      {
+        "entity": "ui",
+        "ref": {
+          "singleton": "workspace"
+        },
+        "label": "Workspace",
+        "fields": {
+          "workspace": {
+            "before": "arrangement",
+            "after": "pianoRoll",
+            "unit": null
+          }
+        }
+      },
+      {
+        "entity": "tempo",
+        "ref": {
+          "singleton": "tempo"
+        },
+        "label": "Tempo",
+        "fields": {
+          "bpm": {
+            "before": 120.27,
+            "after": 120.3,
+            "unit": "bpm"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "main window",
@@ -240,56 +290,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "IRREVERSIBLE",
-        "text": "This change can be neither undone nor reverted by any request of the protocol.",
-        "subject": {
-          "singleton": "tempo"
-        },
-        "data": null
-      },
-      {
-        "kind": "sideEffect",
-        "name": "workspaceSwitched",
-        "text": "The window switched between the arrangement and the piano roll.",
-        "details": {
-          "from": "arrangement",
-          "to": "pianoRoll",
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "sideEffect",
-        "name": "tempoRounded",
-        "text": "The tempo field of the transport bar wrote the tempo it shows, rounded to one decimal, back to the project.",
-        "details": {
-          "fromBpm": 120.27,
-          "toBpm": 120.3,
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (the state is not kept in the project). Restore: call opentune_manage_ui with the arguments in restore, as they are.",
-        "revert": {
-          "method": "ui.setWorkspace",
-          "params": {
-            "workspace": "arrangement"
-          }
-        },
-        "restore": {
-          "tool": "opentune_manage_ui",
-          "arguments": {
-            "op": "switch_view",
-            "view": "arrangement"
-          }
-        }
-      }
-    ]
+    }
   }
 }
