@@ -1154,7 +1154,7 @@
   {
     "name": "opentune_analyze_pitch",
     "title": "Analyze OpenTune pitch",
-    "description": "OpenTune (audio vocal pitch editor): measures the pitch of a clip against its notes, in cents (positive = sharp). Plain fields are before the corrections (detected minus target); corrected* fields are after them (corrected minus target). Per note: median deviation, stability, onset, release; notes beyond threshold_cents (default 25) are flagged, before and after. Phrases split at silences over 0.4 s. detail summary (default): totals, worst notes, flagged note indexes (as in opentune_get_notes), clip_revision; phrases and notes are paged. from and to: seconds of the source audio. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): measures a clip's pitch against its notes, in cents (positive = sharp). Plain fields: detected minus target; corrected*: corrected minus target. Per note: median deviation, stability, onset, release; notes beyond threshold_cents (default 25) are flagged, before and after. Phrases split at silences over 0.4 s. detail summary (default): totals, worst notes, flagged note indexes (as in opentune_get_notes); phrases and notes are paged. from and to: source-audio seconds. baseline: stored_notes or nearest_semitone (no notes: not comparable later). Read-only.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1844,7 +1844,7 @@
   {
     "name": "opentune_estimate_key",
     "title": "Estimate the key of a song",
-    "description": "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch (OpenTune's analysis) and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses), tonic_confidence, tuning offset in cents, local keys over time and keys per section (seconds; the mix and the clip's source audio start together). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses) and tonic_confidence (both over estimated_over), tuning offset in cents, local keys (each with a confidence over its own segment) and keys per section (seconds on the clip; the mix starts with it). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
