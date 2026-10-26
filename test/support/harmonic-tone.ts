@@ -27,6 +27,12 @@ export interface ToneNote {
   readonly gapSec?: number;
   /** Vibrato of this note alone; replaces the vibrato of the spec for it. */
   readonly vibrato?: ToneVibrato;
+  /**
+   * A pitch trajectory of this note alone: cents added to its pitch at `tSec` seconds after the note
+   * starts (a step, a glide, a slow drift), on top of any vibrato. The truth keeps the pitch the note
+   * was given, without this offset.
+   */
+  readonly pitchCents?: (tSec: number) => number;
 }
 
 export interface ToneVibrato {
@@ -65,7 +71,15 @@ export interface TruthNote {
   readonly cents: number;
   /** midi + cents / 100: what an estimator should report as a fractional MIDI number. */
   readonly midiExact: number;
+  /**
+   * The note's pitch trajectory (ToneNote.pitchCents) in cents above `midiExact`, one value every
+   * CONTOUR_HOP_SEC from the start of the note; absent for a note without a trajectory.
+   */
+  readonly contourCents?: readonly number[];
 }
+
+/** Seconds between the values of TruthNote.contourCents. */
+export const CONTOUR_HOP_SEC = 0.01;
 
 export interface Truth {
   readonly sampleRateHz: number;
@@ -190,12 +204,20 @@ export function generateTone(spec: ToneSpec): Tone {
     const hz = noteHz(note, tuningHz);
     const gapSec = note.gapSec ?? DEFAULT_GAP_SEC;
     checkNote(index, hz, note.durationSec, gapSec, rate);
+    const trajectory = note.pitchCents;
     truthNotes.push({
       index,
       startSec: cursor,
       endSec: cursor + note.durationSec,
       hz,
       ...hzToMidiCents(hz, tuningHz),
+      ...(trajectory === undefined
+        ? {}
+        : {
+            contourCents: Array.from({ length: Math.ceil(note.durationSec / CONTOUR_HOP_SEC) }, (_, k) =>
+              Number(trajectory(k * CONTOUR_HOP_SEC).toFixed(3)),
+            ),
+          }),
     });
     cursor += note.durationSec + gapSec;
   }
@@ -223,6 +245,8 @@ export function generateTone(spec: ToneSpec): Tone {
       if (vibrato) {
         f0 *= 2 ** ((vibrato.depthCents * Math.sin(2 * Math.PI * vibrato.rateHz * t)) / 1200);
       }
+      const trajectory = spec.notes[truth.index]?.pitchCents;
+      if (trajectory) f0 *= 2 ** (trajectory(t) / 1200);
       phase += (2 * Math.PI * f0) / rate;
       let value = 0;
       for (let k = 1; k <= harmonicCount; k++) {
@@ -245,6 +269,38 @@ export function generateTone(spec: ToneSpec): Tone {
     truth: { sampleRateHz: rate, tuningHz, durationSec: totalSamples / rate, notes: truthNotes },
     sha256: createHash('sha256').update(wav).digest('hex'),
   };
+}
+
+/**
+ * A pitch trajectory (ToneNote.pitchCents) that holds levels one after the other and changes between
+ * them with a raised-cosine glide of `rampSec`: the first level from the start of the note, each
+ * further one `atSec` seconds into the note (its glide is centred on `atSec`). A step in the pitch
+ * that stays continuous in phase, as a voice that jumps from one pitch to another is.
+ */
+export function steppedCents(
+  levels: readonly { readonly atSec: number; readonly cents: number }[],
+  rampSec = 0.04,
+): (tSec: number) => number {
+  if (levels.length === 0) throw new Error('steppedCents needs at least one level');
+  if (!(rampSec > 0)) throw new Error(`rampSec ${String(rampSec)} must be above 0`);
+  return (tSec) => {
+    let cents = levels[0]?.cents ?? 0;
+    for (let i = 1; i < levels.length; i++) {
+      const to = levels[i];
+      const from = levels[i - 1];
+      if (to === undefined || from === undefined) break;
+      const x = (tSec - (to.atSec - rampSec / 2)) / rampSec;
+      if (x <= 0) break;
+      cents = x >= 1 ? to.cents : from.cents + (to.cents - from.cents) * 0.5 * (1 - Math.cos(Math.PI * x));
+    }
+    return cents;
+  };
+}
+
+/** A slow pitch drift (ToneNote.pitchCents): a sine of `amplitudeCents` and `periodSec`, starting at `phase` radians. */
+export function slowDriftCents(amplitudeCents: number, periodSec: number, phase = 0): (tSec: number) => number {
+  if (!(periodSec > 0)) throw new Error(`periodSec ${String(periodSec)} must be above 0`);
+  return (tSec) => amplitudeCents * Math.sin((2 * Math.PI * tSec) / periodSec + phase);
 }
 
 export interface ToneFiles {
