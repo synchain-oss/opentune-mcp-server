@@ -8,6 +8,29 @@ versioned separately and has its own changelog.
 
 ## Unreleased
 
+### Fixed
+
+- Result wording that disagreed with the facts of the same result (contract change record
+  `docs/contract-changes/20261026-result-wording.md`):
+  - A change of the tempo alone or of the time signature alone is now restorable with `opentune_transport`; the
+    result no longer says that no tool can restore it. A new test walks every revert recipe of the specification
+    vectors and fails when one that a tool can carry out maps to no tool call.
+  - The summary of a result whose lists OpenTune cut at 200 entries (AUTO over a long clip, a large edit of notes)
+    gives the real totals ("created 962 notes") and says which lists are shorter than the result.
+  - `opentune_manage_ui` with `focus_clip` and `open_editor` names the switch of the window and no longer claims
+    "no side effects"; a revert line says there is no tool yet to switch the window back.
+  - Duplicating a track, and any result that shows a hidden track, names the revealed track and the colour change in
+    the first sentence.
+  - A first save to a new file says that a new project file was written, not that nothing can be restored; every save
+    result says that OpenTune copies the audio the project uses into the `Project_Media` folder next to the project
+    file, and the body gives that folder (`mediaFolder`).
+  - `opentune_estimate_key` says which key to trust when the key of the clip has other notes than the estimate, states
+    which range its two confidences cover, and ends `local_keys` and `estimated_over` at the end of the clip.
+  - `opentune_analyze_pitch` reports `baseline` (`stored_notes` or `nearest_semitone`) and says that deviations
+    against the nearest semitone are not directly comparable with a later analysis of the clip with notes.
+  - A result that queued a render says that playback can still sound the old way until `render.current` of
+    `opentune_get_clip_details` is true, and that an export waits for it.
+
 ## [0.2.0] - 2026-10-26
 
 The second public version of OpenTune MCP Server (by Synchain), and wave B of the control interface: editing the
