@@ -190,10 +190,11 @@ export interface OtcpMock {
    */
   setVocoderFault(fault: 'stuck' | 'loadFails' | null): void;
   /**
-   * OpenTune loads its vocoder at the first render, not at start (it posts the load when a render first needs it):
-   * until an edit has to be rendered, session.info reports the vocoder as not ready, and a change of the rendering
-   * priority or the weight then does not wait for it. The first render starts the load, and no render is published
-   * before the vocoder has loaded. Off by default, the vocoder is ready from the start.
+   * OpenTune loads its vocoder at the first render that needs it, not at start: until then session.info reports the
+   * vocoder as not ready, and a change of the rendering priority or the weight does not wait for it. That render
+   * starts the load, and it is not published before the vocoder has loaded. With hybrid mode on, a render whose
+   * corrections all stay within 75 cents of the detected pitch is done by resampling, which needs no vocoder: it is
+   * published at once and loads nothing. Off by default, the vocoder is ready from the start.
    */
   setVocoderLoadOnDemand(on: boolean): void;
   /** OpenTune cannot load these pitch models: prefs.set of one of them (it must be among the options) fails with model_missing. */
