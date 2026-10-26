@@ -7,7 +7,7 @@
     "dry_run": true
   },
   "result": {
-    "summary": "opentune_manage_ui: dry run, nothing was selected; selecting the clip would have these side effects nobody asked for: OpenTune generates 11 notes for the clip, with no undo entry, and the project is marked as changed; the scale shown in the transport bar changes with the clip key. Warnings: SELECTION_GENERATED_NOTES, IRREVERSIBLE.",
+    "summary": "opentune_manage_ui: dry run, nothing was selected; selecting the clip would have these side effects nobody asked for: OpenTune generates 11 notes for the clip, with no undo entry, and the project would be marked as changed; the scale shown in the transport bar changes with the clip key. Warnings: SELECTION_GENERATED_NOTES, IRREVERSIBLE.",
     "applied": false,
     "noOp": false,
     "dryRun": true,

@@ -519,6 +519,38 @@ describe('the tempo field when the window switches view', () => {
     expect(opened.sideEffects).toEqual({ workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null } });
   });
 
+  it('does not count floating-point noise as a rounding', async () => {
+    // 120.30000000000001 is not the same double as 120.3, yet the tempo field shows 120.3 and writes back the same number.
+    const noisy = 120.30000000000001;
+    expect(noisy).not.toBe(120.3);
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    await ok('transport.setTempo', { bpm: noisy });
+    mock.given({ dirty: false });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened.sideEffects).toEqual({ workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null } });
+    expect(opened.changes as unknown[]).toHaveLength(1);
+    expect(opened).toMatchObject({ dirty: { before: false, after: false } });
+    expect(warningCodes(opened)).toEqual([]);
+    // The tempo is untouched: asking for it again changes nothing.
+    expect(await tempoIs(session, noisy)).toBe(true);
+    // The same holds when the switch is made by ui.setSelection with openEditor, and for a dry run.
+    await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    const placementId = ids['clip.placementId'];
+    const dry = await ok('ui.setSelection', { placementId, openEditor: true, dryRun: true });
+    expect(Object.keys(dry.sideEffects as object)).not.toContain('tempoRounded');
+    expect(dry.changes as unknown[]).toHaveLength(1);
+    const real = await ok('ui.setSelection', { placementId, openEditor: true });
+    expect(Object.keys(real.sideEffects as object)).not.toContain('tempoRounded');
+    expect((real.changes as { entity: string }[]).map((c) => c.entity)).toEqual(['selection']);
+    expect(await tempoIs(session, noisy)).toBe(true);
+    // A tempo that differs by more than the noise is still rounded: 120.3000001 shows as 120.3.
+    await ok('transport.setTempo', { bpm: 120.3000001 });
+    const back = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(field(back, 'sideEffects', 'tempoRounded')).toMatchObject({ fromBpm: 120.3000001, toBpm: 120.3 });
+  });
+
   it('does nothing to the tempo when the window already shows the view asked for', async () => {
     const session = await sessions.open();
     const { ok } = session;

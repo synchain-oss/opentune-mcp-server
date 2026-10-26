@@ -134,6 +134,14 @@ versioned separately and has its own changelog.
   for, and a revert line gives the `opentune_transport` call that sets it back (without `transport.v1` it says that no request can). The
   mock, a contract vector that every target runs, the rendering and tool golden files follow. The mock also loads the
   clip that an import with focus selects into the piano roll, as the window does.
+- Follow-up to the rounded tempo (contract change record `docs/contract-changes/20261026-tempo-rounded.md`, section
+  "Follow-up"): the summary of `opentune_manage_ui` with `focus_clip` names the tempo whenever the result lists the
+  side effect `tempoRounded`, also when an instance sends it with a value that is not an object, as the generic summary
+  does. In a dry run, the summary says that the project "would be" marked as changed, for the tempo and for the notes
+  OpenTune would generate, instead of saying it in the present tense. The OTCP specification (`1.0.0-rc.7`, section 21
+  rule 2) now says what the window does when an import focuses the imported clip: the clip is loaded into the piano
+  roll, `ui.pianoRollContentId` is its content and `selectedPlacementIds` its placement, and the view is not switched.
+  The mock does not count floating-point noise (a tempo of 120.30000000000001) as a rounding.
 
 ## [0.2.0] - 2026-10-26
 
