@@ -47,6 +47,8 @@ Seventh release candidate of protocol major 1, proposed as the text of 1.0.0. It
 - Vector `content/get-details-ok` no longer has a reference binding, and `uiButtonRuns` is `regenerate` instead of a matcher by type. The vectors `project/get-ok`, `project/open-*`, `track/delete-ok`, `prefs/get-ok`, `prefs/get-options` and `ui/set-selection-generates-notes` lose the removed members and preconditions.
 - No vector covers `autoModes.uiButtonRuns` `reference`: it would need a precondition that binds a reference track, which this release candidate removes, and a server of this release candidate has no reference track to bind. The text is checked against a real build whose window still has the feature.
 - `methods/README.md`: `x-otcp.startsJob` no longer names two methods that start jobs of one kind, and `x-otcp.valueCapabilities` has no example, because no method of this release candidate uses it.
+- `content.shiftTiming`: the description of `range` (and the row of the method in PROTOCOL.md section 22) says that the range is a closed interval, as the OpenTune time tool selects the handles (`start <= position <= end`): a handle exactly at the start or exactly at the end of the range moves. When two ranges of one batch share an end point, the handle at that point is moved twice, so adjacent ranges must not share an end point. This states the behaviour of the build; no param, result member, vector or wire value changes.
+- `import.start`: the descriptions of the method and of the `focus` param say that the focused clip is loaded into the piano roll without switching the view, as PROTOCOL.md section 21 rule 2 says. The text only; no param, result member, vector or wire value changes.
 - Status and current version `1.0.0-rc.7`.
 
 ## [1.0.0-rc.6] - 2026-10-25
