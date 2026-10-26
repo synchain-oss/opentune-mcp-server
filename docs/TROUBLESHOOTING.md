@@ -237,6 +237,10 @@ retrying a change.
 
 OpenTune did not answer in time. The request may still run; re-read the state before retrying a change.
 
+With reason `read_too_slow` (from `opentune_get_notes` with `output_path`) this server stopped reading pages because
+the next one could end after a client has given up (40 seconds into the call). Nothing in OpenTune changed and no file
+was written; read a narrower range (`from` and `to`) into several files, or call again when OpenTune is less busy.
+
 ### Error CONFIG_INVALID
 
 The server's configuration is invalid, for example `OPENTUNE_MCP_DISCOVERY_DIR` or `OPENTUNE_DATA_DIR` is not an
@@ -345,8 +349,9 @@ reason `capability_missing`, which does not mean that no dialog is open.
 
 `opentune_get_settings` (section `processing`) shows the rendering priority and the backend OpenTune uses now
 (`processing.backend`). With `gpuFirst` OpenTune tries the GPU each time the vocoder loads and falls back to the CPU
-without a word when that fails, so the GPU is not guaranteed. When the priority is `gpuFirst` but the backend is `cpu`,
-the summary says so. To see why, read the log: `opentune_get_settings` with sections `["log"]` and `log_lines` 30 shows
+without a word when that fails, so the GPU is not guaranteed. When the priority is `gpuFirst`, the backend is `cpu` and
+the vocoder is loaded (`processing.vocoderReady` is true), the summary says so; a vocoder that is not loaded can still
+report the backend from before, so nothing is concluded from it. To see why, read the log: `opentune_get_settings` with sections `["log"]` and `log_lines` 30 shows
 the lines about the backend. On Windows also run `opentune-mcp doctor`: it checks the Direct3D 12 runtime that a test
 build lists in `opentune-control.json` (see [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied)). After a change of the
 rendering priority, `opentune_set_settings` reads the backend once the job has ended and reports it in
@@ -355,8 +360,13 @@ was not ready when the setting changed (right after the start, before the first 
 before the vocoder has loaded again, so a `cpu` read then is not proof of a fall back: `rendering_backend.confirmed` is
 `false`, and the backend is only known after the next load. Read `opentune_get_settings` again once a render has run.
 
-`vocoderReady: false` just after OpenTune starts is normal, not a fault: the vocoder loads when the first render needs
-it. Nothing has to be done about it.
+`vocoderReady: false` just after OpenTune starts is expected: the vocoder loads when the first render needs it, and the
+summaries of `opentune_get_status`, `opentune_launch` and `opentune_get_settings` say so. They do not call it normal,
+because `session.info` and `prefs.get` have no member that tells a vocoder that has not loaded yet from one that could
+not load or is stuck. If it is still false after a render has run (an edit that has to be rendered, an export), tell the
+user, and read the log (`opentune_get_settings` with sections `["log"]`) for the reason. A change of the vocoder weight
+or the rendering priority fails with [MODEL_UNAVAILABLE](#error-model_unavailable) `vocoder_load_failed` when OpenTune
+cannot load the new weight or backend.
 
 ## Hybrid mode
 
