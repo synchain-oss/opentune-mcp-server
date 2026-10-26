@@ -1,0 +1,21 @@
+{
+  "description": "switch_view without a view: nothing is sent.",
+  "tool": "opentune_manage_ui",
+  "input": {
+    "op": "switch_view"
+  },
+  "result": {
+    "error": {
+      "kind": "INVALID_ARGUMENT",
+      "reason": "view_required",
+      "detail": "switch_view needs view: arrangement or piano_roll",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "message": "The arguments were rejected; correct them as the detail says and call again."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-invalid_argument"
+    }
+  }
+}

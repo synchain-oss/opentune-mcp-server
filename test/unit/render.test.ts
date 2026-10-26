@@ -472,6 +472,7 @@ describe('revert recipes as tool calls', () => {
     { method: 'transport.setTempo', params: { bpm: 120, timeSignature: { numerator: 4, denominator: 4 } } },
     { method: 'transport.setLoop', params: { enabled: false } },
     { method: 'ui.setSelection', params: { placementId: 'p:01234567:0:1' } },
+    { method: 'ui.setWorkspace', params: { workspace: 'pianoRoll' } },
   ];
 
   it("turns every recipe a tool performs into a call that the tool's input schema accepts", () => {
@@ -535,6 +536,25 @@ describe('revert recipes as tool calls', () => {
       kind: 'revert',
       restore: { tool: 'opentune_transport', arguments: { bpm: 120 } },
     });
+  });
+
+  it('restores the workspace the window showed with switch_view, and leaves anything else to the user', () => {
+    expect(revertPlan({ method: 'ui.setWorkspace', params: { workspace: 'arrangement' } })).toMatchObject({
+      kind: 'tool',
+      consent: false,
+      omitted: false,
+      needsRevision: false,
+      call: { tool: 'opentune_manage_ui', arguments: { op: 'switch_view', view: 'arrangement' } },
+    });
+    expect(revertPlan({ method: 'ui.setWorkspace', params: { workspace: 'pianoRoll' } })).toMatchObject({
+      kind: 'tool',
+      call: { tool: 'opentune_manage_ui', arguments: { op: 'switch_view', view: 'piano_roll' } },
+    });
+    for (const params of [{}, { workspace: 'mixer' }, { workspace: 'piano_roll' }, { workspace: 1 }]) {
+      expect(revertPlan({ method: 'ui.setWorkspace', params }), JSON.stringify(params)).toMatchObject({
+        kind: 'manual',
+      });
+    }
   });
 
   it('restores a tuning frequency that is not a whole number', () => {
@@ -1127,6 +1147,21 @@ describe('uiEffects', () => {
     ]);
     expect(effects[0]?.visibleNow).toBe(true);
     expect(render({ changes: [change('pitchShift')] }).uiEffects[0]).toMatchObject({ surface: 'clip pitch shift' });
+  });
+
+  it('lists the change of the workspace and the side effect that reports it as one visible effect', () => {
+    const effects = render({
+      changes: [change('ui', { singleton: 'workspace' })],
+      sideEffects: { workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null } },
+      ui: piano(CONTENT),
+    }).uiEffects;
+    expect(effects).toEqual([
+      { surface: 'main window', effect: 'workspace switched', target: 'project', visibleNow: true },
+    ]);
+    // The entity alone, without the side effect, names the same effect.
+    expect(render({ changes: [change('ui', { singleton: 'workspace' })], ui: piano(CONTENT) }).uiEffects).toEqual(
+      effects,
+    );
   });
 
   it('reports every defined side effect and keeps unknown ones by name', () => {
