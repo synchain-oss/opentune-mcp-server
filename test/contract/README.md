@@ -65,7 +65,8 @@ Everything else (`audio`, `dialogs`, `onboarding`, `keyboardFocus`, `editingSche
 `withoutCapabilities`, `projectFile`, `clipOnEveryTrack`) is skipped with the reason. `keyboardFocus`
 `tempoField` is skipped because whether the window of a started OpenTune is in the foreground, and where its
 keyboard focus is, belong to the machine and the window system, which the runner does not control; the vector
-`ui/set-workspace-tempo-rounded` that has it runs against the mock and in the fork's headless runner.
+`ui/set-workspace-tempo-rounded` that has it runs against the mock, and in the fork's headless runner once it can
+establish the precondition.
 
 Afterwards the process is asked to stop normally and the discovery file is checked to be gone.
 Windows has no normal stop request to send, so there the target ends the process and records that

@@ -192,7 +192,6 @@ versioned separately and has its own changelog.
     missing, suggests `save_as` to a new file, and overwrites the original only if the user agrees.
   - The skill tests: the check that no skill declares `allowed-tools` also sees a quoted key, and every identifier a
     skill names in backticks as a result field (`peakDbfs`, `blockedBy`) must exist in the code.
-
 - Follow-ups to the settings, export, timing and notes tools and to the mock (contract change record
   `docs/contract-changes/20261026-followups-code.md`):
   - `opentune_get_settings` says "gpuFirst but OpenTune is using the CPU" only while the vocoder is loaded
