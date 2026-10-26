@@ -4,7 +4,10 @@
 // opentune_set_settings against the mock: one success case per field group (processing, audio
 // device, clear recent), the combination of two groups, a change handed to a prefsApply job and
 // followed, each error with its next step, the capabilities the groups need (and do not need), the
-// untrusted device name as data, and the shape the tool declares.
+// untrusted device name as data, and the shape the tool declares. A second block covers the vocoder
+// weight, rendering priority, pitch model and reference alignment mode: the job that waits for the
+// vocoder, its two failures, a value the installation does not offer, the wording of the re-render a
+// weight change causes, and the refusal of a job member on an instance without jobs.v1.
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -24,12 +27,19 @@ afterEach(async () => {
   for (const fn of cleanup.splice(0).reverse()) await fn();
 });
 
-async function withMock(options: { manual?: boolean } = {}): Promise<{ mock: OtcpMock; ctx: TestContext }> {
+interface MockOptions {
+  readonly manual?: boolean;
+  /** Timing of the vocoder of the mock, to make a wait pass its limit quickly. */
+  readonly vocoder?: Partial<{ queuedMs: number; reconfiguringMs: number; waitLimitMs: number }>;
+}
+
+async function withMock(options: MockOptions = {}): Promise<{ mock: OtcpMock; ctx: TestContext }> {
   const t = tempDir();
   cleanup.push(t.remove);
   const mock = await startMock({
     discoveryDir: t.dir,
     ...(options.manual === true ? { clock: new ManualClock() } : {}),
+    ...(options.vocoder === undefined ? {} : { vocoder: options.vocoder }),
   });
   cleanup.push(() => mock.stop());
   const ctx = testContext(t.dir);
@@ -201,6 +211,11 @@ describe('opentune_set_settings', () => {
     expect(started.summary).toMatch(/started job j:[0-9a-f]{8}:[1-9][0-9]*/);
     expect(started.summary).toContain('Follow it with opentune_get_job');
     expect(started.summary).toContain('1 later setting group(s) were not attempted');
+    // The scheme is the member that brings notes; nothing of the weight or priority is claimed.
+    expect(started.summary).toContain(
+      'an editing-scheme change may generate notes that can be neither undone nor reverted',
+    );
+    expect(started.summary).not.toContain('vocoder');
     const jobId = (started.job as { jobId: string }).jobId;
 
     clock.advance(0);
@@ -360,5 +375,407 @@ describe('opentune_set_settings', () => {
     expect(setSettingsTool.otcpMethods).toEqual(['prefs.set', 'audio.set', 'project.clearRecent', 'job.get']);
     expect(setSettingsTool.description.startsWith('OpenTune (audio vocal pitch editor): ')).toBe(true);
     expect(setSettingsTool.description.length).toBeLessThanOrEqual(600);
+  });
+});
+
+type SetArgs = Parameters<typeof setSettings>[1];
+interface Line {
+  kind: string;
+  name?: string;
+  text?: string;
+  code?: string;
+  subject?: unknown;
+}
+
+const linesOf = (out: Record<string, unknown>): Line[] => (Array.isArray(out.lines) ? (out.lines as Line[]) : []);
+const reRenderLine = (out: Record<string, unknown>) =>
+  linesOf(out).find((l) => l.kind === 'sideEffect' && l.name === 'reRenderQueued');
+
+/** The processing section of opentune_get_settings, as the tool reports it. */
+const processingOf = async (ctx: TestContext) =>
+  body(await getSettings(ctx, { sections: ['processing'] })).processing as Record<string, unknown>;
+
+/** Records the methods the session sends from now on. */
+async function recordCalls(ctx: TestContext): Promise<string[]> {
+  const sent: string[] = [];
+  const session = await rawSession(ctx);
+  const original = session.call.bind(session);
+  session.call = async (method: string, params: Json, timeoutMs: number) => {
+    sent.push(method);
+    return original(method, params, timeoutMs);
+  };
+  return sent;
+}
+
+/** Waits (real time) until session.info reports the vocoder ready or not ready. */
+async function untilVocoder(ctx: TestContext, ready: boolean): Promise<void> {
+  const session = await rawSession(ctx);
+  for (let i = 0; i < 400; i += 1) {
+    const info = await session.call('session.info', {}, 5000);
+    if ((info.processing as Json).vocoderReady === ready) return;
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  throw new Error(`the vocoder never reported ready ${String(ready)}`);
+}
+
+describe('opentune_set_settings: vocoder weight, rendering priority, pitch model, reference alignment mode', () => {
+  it('changes the vocoder weight by a job that waits for the vocoder and says every content renders again', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ clips: [clip()] });
+    const out = body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
+    expect(out.summary).toMatch(/^opentune_set_settings: this changes user-global OpenTune settings/);
+    // The summary names the render that follows, in the words of a vocoder that has loaded.
+    expect(out.summary).toContain('will be done again with the new vocoder weight, which has loaded');
+    expect(out.changes).toMatchObject([
+      {
+        entity: 'preference',
+        ref: { preference: 'vocoderWeight' },
+        fields: { vocoderWeight: { before: 'hifigan.onnx', after: 'hifigan_coulin9.onnx' } },
+      },
+    ]);
+    expect(warningCodes(out)).toEqual(['GLOBAL_PREFERENCE']);
+    expect(out.sideEffects).toMatchObject({ reRenderQueued: { contentIds: [ids['clip.contentId']] } });
+    expect(reRenderLine(out)?.text).toBe(
+      'Rendering of one or more contents will be done again with the new vocoder weight, which has loaded.',
+    );
+    expect(revertLine(out)?.restore).toEqual({
+      tool: 'opentune_set_settings',
+      arguments: { processing: { vocoder_weight: 'hifigan.onnx' } },
+    });
+    expect(await processingOf(ctx)).toMatchObject({
+      vocoderWeight: 'hifigan_coulin9.onnx',
+      vocoderReady: true,
+      vocoderReconfiguring: false,
+    });
+    // The revert line is a call that works as it stands.
+    const back = body(await setSettings(ctx, (revertLine(out)?.restore as { arguments: SetArgs }).arguments));
+    expect(back.changes).toMatchObject([{ fields: { vocoderWeight: { after: 'hifigan.onnx' } } }]);
+    expect(await processingOf(ctx)).toMatchObject({ vocoderWeight: 'hifigan.onnx', vocoderReady: true });
+    // The weight in use is a no-op.
+    expect(body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan.onnx' } })).noOp).toBe(true);
+  });
+
+  it('says the render starts only after the weight has loaded when the vocoder was not ready for the call', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    // A reconfiguration that never ends leaves the vocoder not ready; the next job does not wait for it.
+    mock.setVocoderFault('stuck');
+    const first = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' }, wait_seconds: 0 }));
+    expect(first.summary).toContain('started job');
+    await untilVocoder(ctx, false);
+    const out = body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
+    expect(out.summary).toContain('only after the new vocoder weight has finished loading');
+    expect(out.summary).toContain('not at all if it cannot be loaded');
+    expect(reRenderLine(out)?.text).toContain('not at all if it cannot be loaded');
+    expect(out.sideEffects).toHaveProperty('reRenderQueued');
+    expect(await processingOf(ctx)).toMatchObject({ vocoderWeight: 'hifigan_coulin9.onnx', vocoderReady: false });
+    mock.setVocoderFault(null);
+  });
+
+  it('does not say the weight has loaded when the vocoder reports ready only after a job that did not wait for it', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    // The vocoder is not ready for the call, so the job does not wait for it ...
+    mock.setVocoderFault('stuck');
+    body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' }, wait_seconds: 0 }));
+    await untilVocoder(ctx, false);
+    // ... and the earlier reconfiguration ends once the job has: a read after the call sees "ready, not
+    // reconfiguring", which proves nothing about the weight the job handed over (PROTOCOL.md section 12.7 rule 4).
+    const session = await rawSession(ctx);
+    const original = session.call.bind(session);
+    session.call = async (method: string, params: Json, timeoutMs: number) => {
+      const result = await original(method, params, timeoutMs);
+      if (method === 'job.get' && (result.job as Json | undefined)?.state === 'succeeded') {
+        mock.setVocoderFault(null);
+        for (let i = 0; i < 400; i += 1) {
+          const processing = (await original('session.info', {}, 5000)).processing as Json;
+          if (processing.vocoderReady === true && processing.vocoderReconfiguring === false) break;
+          await new Promise((resolve) => setTimeout(resolve, 5));
+        }
+      }
+      return result;
+    };
+    const out = body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
+    expect(await processingOf(ctx)).toMatchObject({ vocoderReady: true, vocoderReconfiguring: false });
+    expect(out.summary).toContain('only after the new vocoder weight has finished loading');
+    expect(out.summary).not.toContain('which has loaded');
+    expect(reRenderLine(out)?.text).toContain('not at all if it cannot be loaded');
+  });
+
+  it('words the re-render conditionally when session.info cannot be read before the call', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    const session = await rawSession(ctx);
+    const original = session.call.bind(session);
+    session.call = async (method: string, params: Json, timeoutMs: number) => {
+      if (method === 'session.info') throw new Error('the connection dropped');
+      return original(method, params, timeoutMs);
+    };
+    const out = body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
+    expect(out.summary).toContain('not at all if it cannot be loaded');
+  });
+
+  it('reads session.info once, before the call, and only for a call that names the vocoder weight', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    const sent = await recordCalls(ctx);
+    body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
+    body(await setSettings(ctx, { processing: { tuning_hz: 442, hybrid_mode: true } }));
+    expect(sent).not.toContain('session.info');
+    sent.length = 0;
+    body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
+    // One read, and it comes before the request that changes the weight, not after the job.
+    expect(sent.filter((m) => m === 'session.info')).toHaveLength(1);
+    expect(sent.indexOf('session.info')).toBeLessThan(sent.indexOf('prefs.set'));
+    expect(sent.indexOf('session.info')).toBeLessThan(sent.indexOf('job.get'));
+  });
+
+  it('changes the rendering priority by a job, with no render and nothing but the global warning', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    const out = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
+    expect(out.changes).toMatchObject([
+      {
+        ref: { preference: 'renderingPriority' },
+        fields: { renderingPriority: { before: 'gpuFirst', after: 'cpuFirst' } },
+      },
+    ]);
+    expect(warningCodes(out)).toEqual(['GLOBAL_PREFERENCE']);
+    expect(out.sideEffects).toEqual({});
+    expect(out.summary).not.toContain('rendering of one or more contents');
+    expect(revertLine(out)?.restore).toEqual({
+      tool: 'opentune_set_settings',
+      arguments: { processing: { rendering_priority: 'gpuFirst' } },
+    });
+    expect(await processingOf(ctx)).toMatchObject({ renderingPriority: 'cpuFirst', vocoderReady: true });
+  });
+
+  it('names in the lead of a job that outlives the wait only what the members of the call bring', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    const weight = body(
+      await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' }, wait_seconds: 0 }),
+    );
+    expect(weight.summary).toMatch(/^opentune_set_settings: this changes user-global OpenTune settings/);
+    expect(weight.summary).toContain('Follow it with opentune_get_job');
+    expect(weight.summary).toContain(
+      'a new vocoder weight makes every content render again once it has loaded, and not at all if it cannot be loaded; ' +
+        "the job's result holds the previous values",
+    );
+    expect(weight.summary).not.toContain('generate notes');
+    // The job is followed to its end before the next change, as a user would.
+    const jobId = (weight.job as { jobId: string }).jobId;
+    expect(body(await getJob(ctx, { job_id: jobId, wait_seconds: 10 })).job).toMatchObject({ state: 'succeeded' });
+
+    const priority = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' }, wait_seconds: 0 }));
+    expect(priority.summary).toContain(
+      'a new rendering priority makes the vocoder load again and renders no content again; ' +
+        "the job's result holds the previous values",
+    );
+    expect(priority.summary).not.toContain('generate notes');
+    expect(priority.summary).not.toContain('vocoder weight');
+    await untilVocoder(ctx, true);
+
+    const both = body(
+      await setSettings(ctx, {
+        processing: { editing_scheme: 'openDyne', vocoder_weight: 'hifigan.onnx' },
+        wait_seconds: 0,
+      }),
+    );
+    expect(both.summary).toContain(
+      'an editing-scheme change may generate notes that can be neither undone nor reverted',
+    );
+    expect(both.summary).toContain('a new vocoder weight makes every content render again once it has loaded');
+  });
+
+  it('changes the pitch model and the reference alignment mode in the call, with EXPERIMENTAL_FEATURE for the mode', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()], preferences: { options: { f0Model: ['fcpe', 'rmvpe'] } } });
+    const sent = await recordCalls(ctx);
+    const out = body(
+      await setSettings(ctx, { processing: { f0_model: 'rmvpe', reference_align_mode: 'game' }, wait_seconds: 0 }),
+    );
+    // Neither member is applied by a job: the call itself made the change.
+    expect(sent).toEqual(['prefs.set']);
+    expect(out.changes).toMatchObject([
+      { ref: { preference: 'f0Model' }, fields: { f0Model: { before: 'fcpe', after: 'rmvpe' } } },
+      {
+        ref: { preference: 'referenceAlignMode' },
+        fields: { referenceAlignMode: { before: 'standardAuto', after: 'game' } },
+      },
+    ]);
+    expect(warningCodes(out)).toContain('EXPERIMENTAL_FEATURE');
+    expect(linesOf(out).find((l) => l.kind === 'warning' && l.code === 'EXPERIMENTAL_FEATURE')).toMatchObject({
+      subject: { preference: 'referenceAlignMode' },
+    });
+    expect(revertLine(out)?.restore).toEqual({
+      tool: 'opentune_set_settings',
+      arguments: { processing: { f0_model: 'fcpe', reference_align_mode: 'standardAuto' } },
+    });
+    // The revert line puts both back; the pitch model in use is a no-op.
+    body(await setSettings(ctx, (revertLine(out)?.restore as { arguments: SetArgs }).arguments));
+    expect(await processingOf(ctx)).toMatchObject({ f0Model: 'fcpe', referenceAlignMode: 'standardAuto' });
+    expect(body(await setSettings(ctx, { processing: { f0_model: 'fcpe' } })).noOp).toBe(true);
+  });
+
+  it('lists and restores all eight preferences in the order of the protocol, whatever order the call names them in', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()], preferences: { options: { f0Model: ['fcpe', 'rmvpe'] } } });
+    const out = body(
+      await setSettings(ctx, {
+        processing: {
+          reference_align_mode: 'game',
+          f0_model: 'rmvpe',
+          rendering_priority: 'cpuFirst',
+          vocoder_weight: 'hifigan_coulin9.onnx',
+          experimental_features: true,
+          hybrid_mode: true,
+          editing_scheme: 'openDyne',
+          tuning_hz: 442,
+        },
+      }),
+    );
+    expect((out.changes as { ref: { preference: string } }[]).map((c) => c.ref.preference)).toEqual([
+      'tuningHz',
+      'editingScheme',
+      'hybridMode',
+      'experimentalFeatures',
+      'vocoderWeight',
+      'renderingPriority',
+      'f0Model',
+      'referenceAlignMode',
+    ]);
+    const restore = revertLine(out)?.restore as { arguments: { processing: Record<string, unknown> } };
+    expect(Object.keys(restore.arguments.processing)).toEqual([
+      'tuning_hz',
+      'editing_scheme',
+      'hybrid_mode',
+      'experimental_features',
+      'vocoder_weight',
+      'rendering_priority',
+      'f0_model',
+      'reference_align_mode',
+    ]);
+    body(await setSettings(ctx, restore.arguments));
+    expect(await processingOf(ctx)).toMatchObject({
+      tuningHz: 440,
+      editingScheme: 'openTune',
+      hybridMode: false,
+      experimentalFeatures: false,
+      vocoderWeight: 'hifigan.onnx',
+      renderingPriority: 'gpuFirst',
+      f0Model: 'fcpe',
+      referenceAlignMode: 'standardAuto',
+    });
+  });
+
+  it('refuses a weight or pitch model the installation does not offer, names the options to read, and changes nothing', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    const before = await processingOf(ctx);
+    for (const processing of [
+      { vocoder_weight: 'not-installed.onnx' },
+      { f0_model: 'not-installed' },
+      { vocoder_weight: 'hifigan_coulin9.onnx', f0_model: 'not-installed', rendering_priority: 'cpuFirst' },
+    ] as const) {
+      const error = failure(await setSettings(ctx, { processing }));
+      expect(error, JSON.stringify(processing)).toMatchObject({
+        kind: 'INVALID_ARGUMENT',
+        reason: 'option_unavailable',
+        retryable: false,
+        executed: false,
+      });
+      expect(error.nextStep).toMatchObject({ actor: 'agent', tool: 'opentune_get_settings' });
+      expect(error.nextStep.message).toContain('processing.options');
+    }
+    expect(await processingOf(ctx)).toEqual(before);
+    // The weight in use is refused too when the installation no longer lists it.
+    const gone = await withMock();
+    gone.mock.given({
+      clips: [clip()],
+      preferences: { vocoderWeight: 'removed.onnx', options: { vocoderWeight: ['a.onnx'] } },
+    });
+    const refused = failure(await setSettings(gone.ctx, { processing: { vocoder_weight: 'removed.onnx' } }));
+    expect(refused).toMatchObject({ reason: 'option_unavailable', executed: false });
+  });
+
+  it('fails with vocoder_not_ready when the vocoder stays busy past the limit, saying the change was taken back', async () => {
+    const { mock, ctx } = await withMock({ vocoder: { waitLimitMs: 40 } });
+    mock.given({ clips: [clip()] });
+    mock.setVocoderFault('stuck');
+    const error = failure(
+      await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' }, wait_seconds: 10 }),
+    );
+    expect(error).toMatchObject({
+      kind: 'MODEL_UNAVAILABLE',
+      reason: 'vocoder_not_ready',
+      retryable: true,
+      executed: false,
+    });
+    expect(error.nextStep.actor).toBe('agent');
+    expect(error.nextStep.message).toMatch(/took its changes back/);
+    expect(error.nextStep.message).toMatch(/opentune-mcp doctor/);
+    expect(error.url).toContain('#error-model_unavailable');
+    mock.setVocoderFault(null);
+    expect(await processingOf(ctx)).toMatchObject({ vocoderWeight: 'hifigan.onnx' });
+  });
+
+  it('fails with vocoder_load_failed at once when the vocoder cannot load the weight, and asks the user to look', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setVocoderFault('loadFails');
+    const error = failure(
+      await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' }, wait_seconds: 10 }),
+    );
+    expect(error).toMatchObject({
+      kind: 'MODEL_UNAVAILABLE',
+      reason: 'vocoder_load_failed',
+      retryable: false,
+      executed: false,
+    });
+    expect(error.nextStep.actor).toBe('user');
+    expect(error.nextStep.message).toMatch(/opentune-mcp doctor/);
+    mock.setVocoderFault(null);
+    expect(await processingOf(ctx)).toMatchObject({ vocoderWeight: 'hifigan.onnx' });
+  });
+
+  it('asks for jobs.v1 before it sends a member that a job applies, and changes nothing without it', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()], withoutCapabilities: ['jobs.v1'] });
+    const before = mock.snapshot();
+    const sent = await recordCalls(ctx);
+    for (const processing of [
+      { editing_scheme: 'openDyne' },
+      { vocoder_weight: 'hifigan_coulin9.onnx' },
+      { rendering_priority: 'cpuFirst' },
+      { tuning_hz: 442, editing_scheme: 'openDyne' },
+    ] as const) {
+      const error = failure(await setSettings(ctx, { processing }));
+      expect(error, JSON.stringify(processing)).toMatchObject({
+        kind: 'UNSUPPORTED',
+        reason: 'capability_missing',
+        executed: false,
+      });
+      expect(error.detail).toContain('jobs.v1');
+    }
+    // Nothing was sent, so nothing changed: not even the member that needs no job.
+    expect(sent).toEqual([]);
+    expect(mock.snapshot()).toEqual(before);
+    expect(await processingOf(ctx)).toMatchObject({ tuningHz: 440, editingScheme: 'openTune' });
+    // A member that finishes inside the call needs no job.
+    const out = body(
+      await setSettings(ctx, {
+        processing: { tuning_hz: 442, hybrid_mode: true, f0_model: 'fcpe', reference_align_mode: 'game' },
+      }),
+    );
+    expect(warningCodes(out)).toContain('EXPERIMENTAL_FEATURE');
+    expect(await processingOf(ctx)).toMatchObject({ tuningHz: 442, referenceAlignMode: 'game' });
+  });
+
+  it('names prefs.write first when an instance lacks it and jobs.v1', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()], withoutCapabilities: ['jobs.v1', 'prefs.write'] });
+    const error = failure(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
+    expect(error.detail).toContain('prefs.write');
   });
 });

@@ -120,6 +120,18 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   await run('opentune_launch', { allow_second_instance: true });
   await run('opentune_set_settings', { processing: { tuning_hz: 442 }, wait_seconds: 10 });
   await run('opentune_set_settings', {}, 'error');
+  // The vocoder weight, rendering priority, pitch model and reference alignment mode, and a weight the
+  // installation does not list, which is refused with nothing changed.
+  await run('opentune_set_settings', {
+    processing: {
+      vocoder_weight: 'hifigan_coulin9.onnx',
+      rendering_priority: 'cpuFirst',
+      f0_model: 'fcpe',
+      reference_align_mode: 'game',
+    },
+    wait_seconds: 10,
+  });
+  await run('opentune_set_settings', { processing: { vocoder_weight: 'not-installed.onnx' } }, 'error');
   // Tracks, transport and window state. Deleting a track renumbers the later ones, so it comes after
   // the steps that use track ids.
   await run('opentune_set_tracks', {

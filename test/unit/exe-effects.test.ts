@@ -24,6 +24,8 @@ import {
   RESYNTH_EDGE_MAX_RESIDUAL_DB,
   RESYNTH_MAX_RESIDUAL_DB,
   RESYNTH_PRE_ROLL_SEC,
+  WEIGHT_MIN_ABS_DIFF,
+  WEIGHT_STEP,
   alignedResidualDb,
   awayWindow,
   compareSamples,
@@ -31,6 +33,7 @@ import {
   edgeResidualOf,
   effectsSetupFromEnv,
   noteDelta,
+  pitchProblems,
   resynthesisReach,
   runEffects,
   scrubText,
@@ -130,6 +133,7 @@ describe('effects scenario against the stand-in', () => {
         'AUTO regenerate pulls the sharp note back': 'PASS',
         'AUTO snapNotes pulls the sharp note back': 'PASS',
         'setParams retuneSpeed 1': 'PASS',
+        [WEIGHT_STEP]: 'PASS',
         'snapToScale returns an off-scale note to the scale': 'PASS',
         'prefs.set tuningHz 442': 'PASS',
         'race: +100 cents, export, -100 cents': 'PASS',
@@ -300,6 +304,7 @@ describe('effects scenario against the stand-in', () => {
         PITCH_SHIFT,
         AUTO_REGEN,
         AUTO_SNAP,
+        WEIGHT_STEP,
         SNAP,
         TUNING,
         RACE,
@@ -821,6 +826,149 @@ describe('running only some of the checks (EffectsConfig.onlyChecks, for the tes
   });
 });
 
+describe('the vocoder weight step of the effects scenario', () => {
+  const run = (mode: string) => runEffects(config(mode, only(WEIGHT_STEP, RACE, SHIFT_TIMING)));
+  const laterSteps = [RACE, SHIFT_TIMING];
+
+  it(
+    'exports the same +30 cents correction under both weights, which differ, and returns to the first result',
+    async () => {
+      const report = await run('effects');
+      expect(results(report)[WEIGHT_STEP]).toBe('PASS');
+      expect(noteOf(report, WEIGHT_STEP)).toMatch(
+        /^\+30 cents rendered under two vocoder weights \(differ by up to [0-9.e+-]+\), the revert recipe brought the first weight back/,
+      );
+      const check = report.checks[WEIGHT_STEP] as {
+        correctionCents: number;
+        note: number;
+        reportedWeightOfExport: { first: string; second: string };
+        underFirstWeight: { notes: { index: number; medianCents: number }[] };
+        underSecondWeight: { notes: { index: number; medianCents: number }[] };
+        betweenWeights: { bitIdentical: number; spans: number; maxAbsDiff: number };
+        backUnderFirstWeight: { notes: { index: number; medianCents: number }[] };
+        backToFirst: { maxAbsDiff: number; allowedMaxAbsDiff: number };
+        processing: { export: string; hybridMode: boolean }[];
+      };
+      expect(check.correctionCents).toBe(30);
+      expect(check.reportedWeightOfExport).toEqual({ first: 'fake', second: 'fake-b' });
+      // The notes are at the corrected pitch under each weight, the others did not move.
+      for (const notes of [
+        check.underFirstWeight.notes,
+        check.underSecondWeight.notes,
+        check.backUnderFirstWeight.notes,
+      ]) {
+        expect(notes.find((n) => n.index === check.note)?.medianCents).toBeCloseTo(30, 0);
+      }
+      // The baseline was made under the first weight: its other notes read as before, under the second one
+      // within the tolerance of the estimator (the sound is another, the pitch is the same).
+      for (const notes of [check.underFirstWeight.notes, check.backUnderFirstWeight.notes]) {
+        expect(notes.filter((n) => n.index !== check.note).every((n) => n.medianCents === 0)).toBe(true);
+      }
+      const others = check.underSecondWeight.notes.filter((n) => n.index !== check.note);
+      expect(others).toHaveLength(4);
+      expect(others.every((n) => Math.abs(n.medianCents) <= PITCH_TOLERANCE_CENTS)).toBe(true);
+      // The two weights sound different; after the revert the export is the first one again.
+      expect(check.betweenWeights.bitIdentical).toBe(0);
+      expect(check.betweenWeights.maxAbsDiff).toBeGreaterThan(WEIGHT_MIN_ABS_DIFF);
+      expect(check.backToFirst.maxAbsDiff).toBeLessThanOrEqual(check.backToFirst.allowedMaxAbsDiff);
+      // The three exports of the step, each with the processing it reported.
+      expect(check.processing.map((p) => p.export)).toEqual(['weight A', 'weight B', 'weight A again']);
+      // The clip is back as it was, and the checks after the step run on the first weight.
+      for (const name of laterSteps) expect(results(report)[name], name).toBe('PASS');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'is a SKIP, with its reason, where there is nothing to switch to, and the other checks still pass',
+    async () => {
+      const cases = [
+        ['effects-one-weight', 'only one vocoder weight is installed, so there is nothing to switch to'],
+        [
+          'effects-no-options',
+          'prefs.get reports no processing.options, so the instance does not take the vocoder weight of 1.0.0-rc.6',
+        ],
+        ['effects-no-prefs', 'the instance does not report prefs.write'],
+      ] as const;
+      for (const [mode, reason] of cases) {
+        const report = await run(mode);
+        expect(results(report)[WEIGHT_STEP], mode).toBe('SKIP');
+        expect(noteOf(report, WEIGHT_STEP), mode).toBe(reason);
+        expect(report.result, mode).toBe('SKIP');
+        expect(
+          report.steps.filter((s) => s.result === 'FAIL'),
+          mode,
+        ).toEqual([]);
+        for (const name of laterSteps) expect(results(report)[name], `${mode}: ${name}`).toBe('PASS');
+        expect(results(report).shutdown, mode).toBe('PASS');
+      }
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'fails the step when the two weights render the same sound, and leaves the first weight in use',
+    async () => {
+      const report = await run('effects-weights-alike');
+      expect(results(report)[WEIGHT_STEP]).toBe('FAIL');
+      expect(noteOf(report, WEIGHT_STEP)).toMatch(
+        /^the exports under the two weights are the same sound \(differ by up to 0\.00e\+0, at least 1e-4 expected\): the weight was not applied to the render$/,
+      );
+      // The revert worked, so the checks after the step run on the first weight and pass.
+      for (const name of laterSteps) expect(results(report)[name], name).toBe('PASS');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'fails the step when the revert recipe does not bring the first weight back, puts it back anyway, and goes on',
+    async () => {
+      const report = await run('effects-weight-revert-broken');
+      expect(results(report)[WEIGHT_STEP]).toBe('FAIL');
+      const note = noteOf(report, WEIGHT_STEP);
+      expect(note).toContain('after the revert recipe, prefs.get does not report the first weight');
+      expect(note).toContain('the vocoder weight had to be put back by sending the first weight');
+      // Put back: the clip and the weight are as they were, so the checks after the step pass.
+      for (const name of laterSteps) expect(results(report)[name], name).toBe('PASS');
+      expect(results(report).shutdown).toBe('PASS');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'stops the checks when the first weight cannot be put back, and says so',
+    async () => {
+      const report = await run('effects-weight-stuck');
+      expect(results(report)[WEIGHT_STEP]).toBe('FAIL');
+      expect(noteOf(report, WEIGHT_STEP)).toContain(
+        'the vocoder weight could not be put back: prefs.get still reports another weight',
+      );
+      // Not run under a weight that was not the one the baseline was made with.
+      for (const name of laterSteps) {
+        expect(results(report)[name], name).toBe('SKIP');
+        expect(noteOf(report, name)).toBe(`not run: ${WEIGHT_STEP} ended with FAIL`);
+      }
+      expect(results(report).shutdown).toBe('PASS');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it('judges a pitch change by the expected cents, and a note that cannot be measured', () => {
+    const delta = (index: number, medianCents: number | null, expectedCents: number, frames = 90) => ({
+      index,
+      expectedCents,
+      medianCents,
+      frames,
+      perFrame: [],
+    });
+    expect(pitchProblems([delta(1, 30.4, 30), delta(2, 0, 0)])).toEqual([]);
+    expect(pitchProblems([delta(1, 0, 30)])).toEqual([
+      `note 1: 0 cents, expected 30 +- ${String(PITCH_TOLERANCE_CENTS)}`,
+    ]);
+    expect(pitchProblems([delta(3, null, 0, 4)])).toEqual(['note 3: only 4 frames voiced in both files']);
+  });
+});
+
 describe('effects measurements', () => {
   const tone = (cents: number) =>
     decodeWav(generateTone({ seed: 9, notes: [{ midi: 60, cents, durationSec: 1 }], leadSec: 0.2 }).wav);
@@ -1260,14 +1408,19 @@ describe('the effects scenario as a test file', () => {
       // The notice comes before the table.
       expect(output).toContain(`NOTE: ${HYBRID_MODE_NOTICE}\n| step | result | time | note |`);
       const written = JSON.parse(await readFile(path.join(dir, 'effects.json'), 'utf8')) as EffectsReport;
-      // Hybrid mode on is said at the top of the report, and the checks are judged as usual.
+      // Hybrid mode on is said at the top of the report, and the checks are judged as usual. The one about the
+      // vocoder weight is skipped: a small correction is not rendered by the vocoder, so the weight changes nothing.
       expect(written).toMatchObject({
         schema: 'opentune-mcp-e2e-effects/1',
-        result: 'PASS',
+        result: 'SKIP',
         notices: [HYBRID_MODE_NOTICE],
         hybridMode: true,
         dataTemplateFrom: 'OTCP_E2E_EFFECTS_DATA_TEMPLATE',
       });
+      expect(written.steps.filter((s) => s.result !== 'PASS').map((s) => [s.name, s.result])).toEqual([
+        [WEIGHT_STEP, 'SKIP'],
+      ]);
+      expect(noteOf(written, WEIGHT_STEP)).toMatch(/^hybrid mode is on: .*the weight changes nothing$/);
       expect(Object.keys(written).slice(0, 4)).toEqual(['schema', 'result', 'counts', 'notices']);
       expect(written.steps.find((s) => s.name === 'hello')?.note).toContain('hybrid mode on');
       expect(written.checks['shiftCents +100 cents']).toMatchObject({

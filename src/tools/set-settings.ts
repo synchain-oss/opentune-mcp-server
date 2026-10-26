@@ -7,16 +7,19 @@
 // so every change outlives the project and the session. OpenTune records no undo entry for them
 // (undo reason ui_parity, as in its own window); OTCP returns the previous values as a revert
 // recipe and the warning GLOBAL_PREFERENCE, and this result renders both. A change of the editing
-// scheme is applied by a prefsApply job, followed here like any other job. Device names come from
-// the system: they stay JSON string values and are never placed in a summary sentence.
+// scheme, the vocoder weight or the rendering priority is applied by a prefsApply job, followed
+// here like any other job; so a call that names one of them needs jobs.v1 and is refused before
+// anything is sent when the instance lacks it. Device names, weight names and model names come from
+// the system or the installation: they stay JSON string values and are never placed in a summary
+// sentence.
 
 import { z } from 'zod';
 
 import { OtcpError, fromOtcpError, toolError, type NextStep, type ToolError } from '../errors/tool-error.js';
 import type { Json, OtcpSession } from '../otcp/client.js';
 import { missingCapability } from '../otcp/instances.js';
-import { isObject } from '../render/changes.js';
-import { writeOutcome } from '../render/index.js';
+import { asList, isObject } from '../render/changes.js';
+import { writeOutcome, type ReRenderState, type RenderContext } from '../render/index.js';
 import { DESTRUCTIVE_WARNINGS, warningCodes } from '../render/summary.js';
 import {
   DEFAULT_WAIT_SECONDS,
@@ -42,13 +45,20 @@ const TOOL = 'opentune_set_settings';
 /** The capabilities this tool may need: which ones follows from the arguments (see setSettings). */
 const CAPABILITIES = ['prefs.write', 'audio.device', 'project.io', 'jobs.v1'] as const;
 
-/** The settable fields of prefs.set, as the tool names them (snake_case) and OTCP names them. */
+/** The settable fields of prefs.set, as the tool names them (snake_case) and OTCP names them, in the protocol's order. */
 const PROCESSING_FIELDS = [
   ['tuning_hz', 'tuningHz'],
   ['editing_scheme', 'editingScheme'],
   ['hybrid_mode', 'hybridMode'],
   ['experimental_features', 'experimentalFeatures'],
+  ['vocoder_weight', 'vocoderWeight'],
+  ['rendering_priority', 'renderingPriority'],
+  ['f0_model', 'f0Model'],
+  ['reference_align_mode', 'referenceAlignMode'],
 ] as const;
+
+/** The processing fields whose change OpenTune applies asynchronously: prefs.set hands the call to a prefsApply job. */
+const JOB_PROCESSING_FIELDS = ['editing_scheme', 'vocoder_weight', 'rendering_priority'] as const;
 
 /** The settable fields of audio.set, as the tool names them (snake_case) and OTCP names them. */
 const AUDIO_FIELDS = [
@@ -80,6 +90,23 @@ const processingSchema = z.strictObject({
     .boolean()
     .optional()
     .describe('Show or hide experimental features such as reference binding.'),
+  vocoder_weight: z
+    .string()
+    .min(1)
+    .max(64)
+    .optional()
+    .describe(
+      'Vocoder weight, one of the options of opentune_get_settings. Applied by a job; every content renders again.',
+    ),
+  rendering_priority: z
+    .enum(['gpuFirst', 'cpuFirst'])
+    .optional()
+    .describe('Inference backend rendering prefers. Applied by a job.'),
+  f0_model: z.string().min(1).max(64).optional().describe('Pitch model, one of the options of opentune_get_settings.'),
+  reference_align_mode: z
+    .enum(['standardAuto', 'game'])
+    .optional()
+    .describe('Reference alignment mode of AUTO Ref, an experimental feature.'),
 });
 
 const audioDeviceSchema = z.strictObject({
@@ -141,6 +168,52 @@ interface Rendered {
   readonly body: Body;
 }
 
+const INFO_TIMEOUT_MS = 15_000;
+
+/** Whether a prefs.set result changed the vocoder weight and reports that every content renders again. */
+const rendersAfterWeight = (envelope: Json): boolean =>
+  asList(envelope.changes).some(
+    (change) => isObject(change) && isObject(change.ref) && change.ref.preference === 'vocoderWeight',
+  ) &&
+  isObject(envelope.sideEffects) &&
+  'reRenderQueued' in envelope.sideEffects;
+
+/** Whether a step changes the vocoder weight: the one case whose wording depends on the vocoder before the call. */
+const namesWeight = (step: Step): boolean => step.method === 'prefs.set' && 'vocoderWeight' in step.params;
+
+/**
+ * Whether the vocoder is ready and not reconfiguring, read from session.info before a call that changes the weight.
+ * A job waits for the vocoder only if it was ready before the call (PROTOCOL.md section 12.7 rule 4), so this is what
+ * tells whether the job waited for the new weight to load. A read that fails counts as not ready: the conditional
+ * wording holds in either case.
+ */
+async function vocoderReadyBefore(ctx: ToolContext, session: OtcpSession): Promise<boolean> {
+  try {
+    const info = await session.call('session.info', {}, INFO_TIMEOUT_MS);
+    const processing = isObject(info.processing) ? info.processing : {};
+    return processing.vocoderReady === true && processing.vocoderReconfiguring !== true;
+  } catch (error) {
+    ctx.logger.warn(
+      `reading session.info to word the re-render failed (${error instanceof Error ? error.message : 'unknown error'})`,
+    );
+    return false;
+  }
+}
+
+/**
+ * How a prefs.set result is rendered. After a weight change OpenTune renders every content again once the new
+ * weight has loaded. That is certain only when the job waited for the vocoder (it was ready before the call) and
+ * ended normally: it then ended after the reconfiguration had finished. A job that did not wait can end before the
+ * new weight has loaded or even started to load, and right after a change the vocoder can still report "ready, not
+ * reconfiguring" (rule 4), so nothing read after the call proves the weight loaded; the render then happens only if
+ * the weight loads, and the wording says so.
+ */
+function renderContext(method: string, envelope: unknown, loaded: boolean): RenderContext {
+  if (method !== 'prefs.set' || !isObject(envelope) || !rendersAfterWeight(envelope)) return { tool: TOOL };
+  const reRender: ReRenderState = loaded ? 'loaded' : 'afterLoad';
+  return { tool: TOOL, reRender };
+}
+
 /** A summary without the tool prefix, for a sentence that composes several results. */
 const withoutPrefix = (summary: string): string =>
   summary.startsWith(`${TOOL}: `) ? summary.slice(TOOL.length + 2) : summary;
@@ -187,11 +260,28 @@ export function settingsLead(body: Body): Body {
   return body.noOp === true ? body : withLead(body, leadSentence([body]));
 }
 
-/** The body of a result that names a started job: it says what the change is before the job's own words. */
-const JOB_LEAD =
-  'this changes user-global OpenTune settings, which belong to the installation and not to the project, and ' +
-  'OpenTune records no undo entry for it, and an editing-scheme change may generate notes that can be neither ' +
-  "undone nor reverted; the job's result holds the previous values and what can be restored.";
+/** What the members that a job applies bring with them, in the order of the protocol. */
+const JOB_MEMBER_TEXT: readonly (readonly [member: string, text: string])[] = [
+  ['editingScheme', 'an editing-scheme change may generate notes that can be neither undone nor reverted'],
+  [
+    'vocoderWeight',
+    'a new vocoder weight makes every content render again once it has loaded, and not at all if it cannot be loaded',
+  ],
+  ['renderingPriority', 'a new rendering priority makes the vocoder load again and renders no content again'],
+];
+
+/**
+ * The lead of a result that names a started job: it says what the change is before the job's own words, and names
+ * only what the members of this call bring with them (a call that changes the rendering priority generates no notes).
+ */
+function jobLead(params: Json): string {
+  const brings = JOB_MEMBER_TEXT.filter(([member]) => member in params).map(([, text]) => `, and ${text}`);
+  return (
+    'this changes user-global OpenTune settings, which belong to the installation and not to the project, and ' +
+    `OpenTune records no undo entry for it${brings.join('')}; the job's result holds the previous values and what ` +
+    'can be restored.'
+  );
+}
 
 const withLead = (body: Body, lead: string): Body => ({
   ...body,
@@ -236,6 +326,8 @@ async function runSteps(
     results.length === 0 ? outcome : failedAfter(outcome.error);
 
   for (const [index, step] of steps.entries()) {
+    // The only extra read of a call, and only for a call that names a weight: whether the job will wait for it.
+    const readyBefore = namesWeight(step) && (await vocoderReadyBefore(ctx, session));
     let run;
     try {
       run = await startAndWait(ctx, session, step.method, step.params, waitSeconds);
@@ -247,7 +339,8 @@ async function runSteps(
     }
     const { started, job, waitFailed } = run;
     if (job === null || !isTerminal(job)) {
-      const outcome = writeOutcome(started, { tool: TOOL });
+      // No job to wait for (or one that has not ended): nothing says the new weight has loaded.
+      const outcome = writeOutcome(started, job === null ? renderContext(step.method, started, false) : { tool: TOOL });
       if (!outcome.ok) return stop(outcome);
       if (job === null) {
         results.push({ method: step.method, label: step.label, body: outcome.body });
@@ -267,7 +360,7 @@ async function runSteps(
         (remaining > 0
           ? ` The ${String(remaining)} later setting group(s) were not attempted; call again for them.`
           : '');
-      const pending = withLead({ ...outcome.body, summary: outcome.body.summary + note }, JOB_LEAD);
+      const pending = withLead({ ...outcome.body, summary: outcome.body.summary + note }, jobLead(step.params));
       return {
         ok: true,
         body:
@@ -279,7 +372,7 @@ async function runSteps(
     const state = jobState(job);
     if (state === 'failed') return stop(jobFailure(job));
     if (state === 'cancelled') {
-      const outcome = writeOutcome(job.result, { tool: TOOL });
+      const outcome = writeOutcome(job.result, renderContext(step.method, job.result, false));
       results.push({
         method: step.method,
         label: step.label,
@@ -299,7 +392,7 @@ async function runSteps(
         }),
       });
     }
-    const outcome = writeOutcome(result, { tool: TOOL });
+    const outcome = writeOutcome(result, renderContext(step.method, result, readyBefore));
     if (!outcome.ok) return stop(outcome);
     results.push({ method: step.method, label: step.label, body: outcome.body });
   }
@@ -326,9 +419,13 @@ export async function setSettings(ctx: ToolContext, args: SetSettingsArgs): Prom
   if (steps.length === 0)
     return invalid('give processing, audio_device or clear_recent: true: there is nothing to set');
 
-  // Only the capabilities the given groups need; a build without audio.device takes processing.
+  // Only the capabilities the given groups need; a build without audio.device takes processing. A member that
+  // OpenTune applies by a job needs jobs.v1 too: without it the setting would take effect and following the job
+  // would fail, so the call is refused before anything is sent.
+  const followsJob = processing !== undefined && JOB_PROCESSING_FIELDS.some((field) => processing[field] !== undefined);
   const needed = [
     ...(processing === undefined ? [] : ['prefs.write']),
+    ...(followsJob ? ['jobs.v1'] : []),
     ...(audio === undefined ? [] : ['audio.device']),
     ...(clear ? ['project.io'] : []),
   ];
@@ -343,12 +440,12 @@ export const setSettingsTool = defineTool({
   name: TOOL,
   title: 'Set OpenTune settings',
   description:
-    'OpenTune (audio vocal pitch editor): changes the global settings of the OpenTune installation, not of the ' +
-    'project. processing: tuning_hz (A4 in Hz, 400-500), editing_scheme (openTune or openDyne, applied by a ' +
-    'job), hybrid_mode, experimental_features. audio_device: device_type, output_device, sample_rate_hz, ' +
-    'buffer_size_frame, output_channel_pair, each one the instance offers. clear_recent: true empties the ' +
-    'recent-project list, which nothing refills. OpenTune records no undo entry; the result warns GLOBAL_PREFERENCE ' +
-    'and gives the previous values with the call that restores them.',
+    'OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. ' +
+    'processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, ' +
+    'f0_model, reference_align_mode; values of vocoder_weight and f0_model: see options of opentune_get_settings. ' +
+    'audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true ' +
+    'empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous ' +
+    'values with the call that restores them.',
   inputSchema: z.strictObject({
     processing: processingSchema.optional().describe('Processing preferences to change; give at least one member.'),
     audio_device: audioDeviceSchema.optional().describe('Audio device setup to change; give at least one member.'),

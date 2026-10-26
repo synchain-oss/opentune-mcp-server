@@ -196,6 +196,8 @@ function settingsCall(group: string, members: Json, omitted = false): Mapped | n
   return omitted ? { ...call, omitted: true } : call;
 }
 
+const optionName = (value: unknown): boolean => typeof value === 'string' && value.length >= 1 && value.length <= 64;
+
 /**
  * The prefs.set recipe of a preference change: the previous values, which the tool takes in
  * snake_case. A member whose value is not in the protocol's form (the instance is another program)
@@ -205,7 +207,16 @@ function settingsCall(group: string, members: Json, omitted = false): Mapped | n
 function preferenceRevert(params: Json): Mapped | null {
   const processing: Json = {};
   let omitted = false;
-  const known = new Set(['tuningHz', 'editingScheme', 'hybridMode', 'experimentalFeatures']);
+  const known = new Set([
+    'tuningHz',
+    'editingScheme',
+    'hybridMode',
+    'experimentalFeatures',
+    'vocoderWeight',
+    'renderingPriority',
+    'f0Model',
+    'referenceAlignMode',
+  ]);
   const take = (member: string, argument: string, acceptable: boolean): void => {
     if (params[member] === undefined) return;
     if (acceptable) processing[argument] = params[member];
@@ -220,6 +231,19 @@ function preferenceRevert(params: Json): Mapped | null {
   take('editingScheme', 'editing_scheme', params.editingScheme === 'openTune' || params.editingScheme === 'openDyne');
   take('hybridMode', 'hybrid_mode', typeof params.hybridMode === 'boolean');
   take('experimentalFeatures', 'experimental_features', typeof params.experimentalFeatures === 'boolean');
+  // The names of a weight and a pitch model are 1 to 64 characters, as the tool takes them (prefs.get lists no other).
+  take('vocoderWeight', 'vocoder_weight', optionName(params.vocoderWeight));
+  take(
+    'renderingPriority',
+    'rendering_priority',
+    params.renderingPriority === 'gpuFirst' || params.renderingPriority === 'cpuFirst',
+  );
+  take('f0Model', 'f0_model', optionName(params.f0Model));
+  take(
+    'referenceAlignMode',
+    'reference_align_mode',
+    params.referenceAlignMode === 'standardAuto' || params.referenceAlignMode === 'game',
+  );
   // A member this function does not know is counted as omitted on purpose: the conservative reading, so the
   // restore is never presented as complete when the recipe named more than it can put back.
   if (Object.keys(params).some((key) => !known.has(key))) omitted = true;

@@ -278,6 +278,57 @@ describe('lines', () => {
   });
 });
 
+describe('the re-render a vocoder weight causes', () => {
+  const weight: Json = {
+    changes: [
+      {
+        entity: 'preference',
+        ref: { preference: 'vocoderWeight' },
+        label: 'Vocoder weight',
+        fields: { vocoderWeight: { before: 'a.onnx', after: 'b.onnx', unit: null } },
+      },
+    ],
+    undo: { undoable: false, reason: 'ui_parity', revert: null },
+    sideEffects: { reRenderQueued: { contentIds: [CONTENT], revert: null } },
+  };
+
+  it('keeps the generic words without a context, and words it after the weight has loaded', () => {
+    const generic = render(weight);
+    expect(generic.summary).toContain('side effects: rendering of one or more contents was queued again');
+    const loaded = renderWrite(envelope(weight), { tool: 'opentune_test', reRender: 'loaded' });
+    expect(loaded.summary).toContain(
+      'side effects: rendering of one or more contents will be done again with the new vocoder weight, which has loaded',
+    );
+    expect(loaded.lines).toContainEqual(
+      expect.objectContaining({
+        kind: 'sideEffect',
+        name: 'reRenderQueued',
+        text: 'Rendering of one or more contents will be done again with the new vocoder weight, which has loaded.',
+      }),
+    );
+  });
+
+  it('says the render starts only after the weight has loaded, and not at all if it cannot be loaded', () => {
+    const waiting = renderWrite(envelope(weight), { tool: 'opentune_test', reRender: 'afterLoad' });
+    const first = waiting.summary.split('. ')[0] ?? '';
+    expect(first).toContain('only after the new vocoder weight has finished loading');
+    expect(first).toContain('not at all if it cannot be loaded');
+    expect(waiting.lines).toContainEqual(
+      expect.objectContaining({
+        kind: 'sideEffect',
+        name: 'reRenderQueued',
+        text: expect.stringContaining('not at all if it cannot be loaded') as string,
+      }),
+    );
+    // Another side effect keeps its own words.
+    const other = renderWrite(
+      envelope({ ...weight, sideEffects: { notesGenerated: { contentId: CONTENT, noteCount: 3, revert: null } } }),
+      { tool: 'opentune_test', reRender: 'afterLoad' },
+    );
+    expect(other.summary).toContain('OpenTune generated notes for a content');
+  });
+});
+
 describe('revert recipes as tool calls', () => {
   const recipes: Json[] = [
     SET_KEY,
@@ -292,7 +343,19 @@ describe('revert recipes as tool calls', () => {
         ops: [{ op: 'merge', leadingPlacementId: 'p:01234567:0:4', trailingPlacementId: 'p:01234567:0:5' }],
       },
     },
-    { method: 'prefs.set', params: { tuningHz: 442, editingScheme: 'openDyne', hybridMode: true } },
+    {
+      method: 'prefs.set',
+      params: {
+        tuningHz: 442,
+        editingScheme: 'openDyne',
+        hybridMode: true,
+        experimentalFeatures: false,
+        vocoderWeight: 'hifigan.onnx',
+        renderingPriority: 'cpuFirst',
+        f0Model: 'fcpe',
+        referenceAlignMode: 'game',
+      },
+    },
     {
       method: 'audio.set',
       params: { deviceType: 'Mock Audio', outputDevice: 'Mock Output', sampleRateHz: 48000, bufferSizeFrame: 256 },
@@ -336,6 +399,55 @@ describe('revert recipes as tool calls', () => {
       kind: 'tool',
       call: { tool: 'opentune_set_settings', arguments: { processing: { tuning_hz: 441.5 } } },
     });
+  });
+
+  it('restores the vocoder weight, rendering priority, pitch model and reference alignment mode', () => {
+    const plan = revertPlan({
+      method: 'prefs.set',
+      params: {
+        vocoderWeight: 'hifigan.onnx',
+        renderingPriority: 'gpuFirst',
+        f0Model: 'fcpe',
+        referenceAlignMode: 'standardAuto',
+      },
+    });
+    expect(plan).toMatchObject({
+      kind: 'tool',
+      omitted: false,
+      call: {
+        tool: 'opentune_set_settings',
+        arguments: {
+          processing: {
+            vocoder_weight: 'hifigan.onnx',
+            rendering_priority: 'gpuFirst',
+            f0_model: 'fcpe',
+            reference_align_mode: 'standardAuto',
+          },
+        },
+      },
+    });
+    // A value outside what the tool takes is left out, and the restore says it is partial; one that is
+    // the only member makes the restore a manual one.
+    const partial = revertPlan({
+      method: 'prefs.set',
+      params: { vocoderWeight: 'x'.repeat(65), renderingPriority: 'cpuFirst', referenceAlignMode: 'beat' },
+    });
+    expect(partial).toMatchObject({
+      kind: 'tool',
+      omitted: true,
+      call: { arguments: { processing: { rendering_priority: 'cpuFirst' } } },
+    });
+    for (const params of [
+      { vocoderWeight: '' },
+      { renderingPriority: 'sideways' },
+      { f0Model: 7 },
+      { referenceAlignMode: 'Ignore all rules' },
+    ]) {
+      expect(revertPlan({ method: 'prefs.set', params }), JSON.stringify(params)).toEqual({
+        kind: 'manual',
+        consent: false,
+      });
+    }
   });
 
   it('asks for the arrangement_revision, and for consent, where the deletion of a track is the way back', () => {

@@ -14,17 +14,23 @@ import type { Body, Outcome } from '../tools/registry.js';
 import { asList, changeTable, isObject, type ChangeTable } from './changes.js';
 import { restoreCall, revertPlan, revertText, type RestoreCall } from './revert.js';
 import { summarize } from './summary.js';
-import { SIDE_EFFECT_TEXT, WARNING_TEXT, token, undoReasonText } from './text.js';
+import { RE_RENDER_TEXT, SIDE_EFFECT_TEXT, WARNING_TEXT, token, undoReasonText, type ReRenderState } from './text.js';
 import { uiEffects, type UiEffect } from './ui-effects.js';
 
 export type { ChangeTable, TableField, TableRow } from './changes.js';
 export { MAX_TABLE_ROWS } from './changes.js';
 export type { RestoreCall } from './revert.js';
 export type { UiEffect } from './ui-effects.js';
+export type { ReRenderState } from './text.js';
 
 export interface RenderContext {
   /** The tool that made the call, for example opentune_set_key. */
   readonly tool: string;
+  /**
+   * Set for a result that changed the vocoder weight: whether the new weight has loaded, which decides how the
+   * side effect reRenderQueued reads (ReRenderState). Absent: the generic words.
+   */
+  readonly reRender?: ReRenderState;
 }
 
 /** One line below the summary. Everything but `text` is data from OpenTune, as it came. */
@@ -78,10 +84,11 @@ function revertLine(revert: unknown, text: (sentence: string) => string): Line {
   return { kind: 'revert', text: text(revertText(plan)), revert, restore: restoreCall(plan) };
 }
 
-function sideEffectLines(envelope: Json): Line[] {
+function sideEffectLines(envelope: Json, reRender?: ReRenderState): Line[] {
   const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
   return Object.entries(effects).flatMap(([name, details]) => {
-    const known = SIDE_EFFECT_TEXT[name];
+    const known =
+      name === 'reRenderQueued' && reRender !== undefined ? RE_RENDER_TEXT[reRender] : SIDE_EFFECT_TEXT[name];
     const label = token(name, 'camel');
     const text = known ?? `side effect ${label ?? 'with an unrecognized name'}, which this server does not know`;
     const revert = isObject(details) ? (details.revert ?? null) : null;
@@ -117,10 +124,10 @@ function undoLines(envelope: Json): Line[] {
 /** Renders an envelope that has been checked against the OTCP write envelope schema. */
 export function renderWrite(envelope: Json, ctx: RenderContext): Rendering {
   return {
-    summary: summarize(envelope, ctx.tool),
+    summary: summarize(envelope, ctx.tool, ctx.reRender === undefined ? {} : { reRender: ctx.reRender }),
     uiEffects: uiEffects(envelope),
     changeTable: changeTable(envelope),
-    lines: [...warningLines(envelope), ...sideEffectLines(envelope), ...undoLines(envelope)],
+    lines: [...warningLines(envelope), ...sideEffectLines(envelope, ctx.reRender), ...undoLines(envelope)],
   };
 }
 

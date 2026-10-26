@@ -21,8 +21,11 @@ import {
   chooseAudioSwitch,
   isKnownStalledDefect,
   isSafeDeviceType,
+  otherOf,
+  otherWeight,
   refusalIsDefect,
   runWaveBTour,
+  unofferedWeight,
   type WaveBTourHooks,
   type WaveBTourReport,
 } from '../e2e/wave-b-tour.js';
@@ -207,8 +210,15 @@ describe('the wave-B tour against a correct fake', () => {
     }
     // Every call is fine except the stale revert probe, which must fail with REVISION_CONFLICT
     // before it is sent again with the current revision.
-    expect(report.calls.filter((call) => call.outcome === 'error' && call.kind !== 'revert')).toEqual([]);
-    const probes = report.calls.filter((call) => call.outcome === 'error');
+    // The one write that must fail is the vocoder weight that is not among the options.
+    const refusals = report.calls.filter((call) => call.outcome === 'error' && call.kind === 'write');
+    expect(refusals.map((call) => [call.method, call.note.includes('option_unavailable')])).toEqual([
+      ['prefs.set', true],
+    ]);
+    expect(report.calls.filter((call) => call.outcome === 'error' && !['revert', 'write'].includes(call.kind))).toEqual(
+      [],
+    );
+    const probes = report.calls.filter((call) => call.outcome === 'error' && call.kind !== 'write');
     expect(probes.length).toBeGreaterThan(0);
     for (const probe of probes) expect(probe.note).toContain('REVISION_CONFLICT');
     expect(report.calls.filter((call) => call.kind === 'revert' && call.outcome === 'ok').length).toBeGreaterThan(0);
@@ -222,7 +232,21 @@ describe('the wave-B tour against a correct fake', () => {
       'opentune_transport',
     ]);
     expect(report.tools.every((tool) => tool.outcome === 'ok')).toBe(true);
-    expect(report.facts.preferencesTouched).toBe('tuningHz');
+    expect(report.facts.preferencesTouched).toEqual([
+      'tuningHz',
+      'renderingPriority',
+      'referenceAlignMode',
+      'vocoderWeight',
+    ]);
+    for (const name of [
+      'renderingPriority',
+      'referenceAlignMode',
+      'f0Model',
+      'vocoderWeight',
+      'vocoderWeightRefused',
+    ]) {
+      expect(report.facts[`prefs.${name}`], name).toBe('PASS');
+    }
     expect(report.facts.audioSwitched).toEqual([
       'bufferSizeFrame',
       'sampleRateHz',
@@ -1807,4 +1831,303 @@ describe('the first-run overlay in the dismiss step of the tour', () => {
     expect(step?.result).toBe('FAIL');
     expect(step?.note).toContain('noOp is false, expected true');
   }, 120_000);
+});
+
+describe('the preference step of the tour', () => {
+  const STEP = 'prefs.set';
+  const MEMBERS = ['vocoderWeight', 'renderingPriority', 'f0Model', 'referenceAlignMode'] as const;
+  const membersOf = (processing: Json | undefined): Json =>
+    Object.fromEntries(MEMBERS.map((name) => [name, processing?.[name]]));
+
+  /** Records what the tour sends with prefs.set and what session.info says; `defect` changes replies, `rewrite` params. */
+  function watch(defect?: SessionDefect, rewrite?: BeforeCall) {
+    const sent: Json[] = [];
+    const infos: Json[] = [];
+    const before: BeforeCall = (method, params) => {
+      rewrite?.(method, params);
+      if (method === 'prefs.set') sent.push(structuredClone(params));
+    };
+    const reply: SessionDefect = (method, result, params) => {
+      if (method === 'session.info' && isObject(result.processing)) infos.push(structuredClone(result.processing));
+      return defect?.(method, result, params);
+    };
+    return { sent, infos, options: { reply, before } };
+  }
+
+  /** The calls of the tour that set a preference other than the A4 tuning. */
+  const rc6Sent = (sent: readonly Json[]): Json[] => sent.filter((params) => !('tuningHz' in params));
+
+  const twoWeights = (mock: OtcpMock): void => {
+    withAudio(mock);
+  };
+  const oneWeight = (mock: OtcpMock): void => {
+    mock.given({ audio: { running: true }, preferences: { options: { vocoderWeight: ['hifigan.onnx'] } } });
+    mock.setOutputChannelPairCount(2);
+  };
+
+  it('switches each member once, reads it back, puts it back, and sends a weight that is not offered last', async () => {
+    const seen = watch();
+    const { hooks } = fixture({ prepare: twoWeights, ...seen.options });
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.result).toBe('PASS');
+    const note = stepResult(report, STEP)?.note ?? '';
+    expect(note).toContain('renderingPriority "gpuFirst" -> "cpuFirst" and back (backend null -> null)');
+    expect(note).toContain('referenceAlignMode "standardAuto" -> "game" and back');
+    expect(note).toContain('f0Model set to the one in use is a no-op');
+    expect(note).toContain('vocoderWeight "hifigan.onnx" -> "hifigan_coulin9.onnx" and back');
+    expect(note).toContain('refused with option_unavailable, nothing changed');
+    expect(rc6Sent(seen.sent)).toEqual([
+      { renderingPriority: 'cpuFirst' },
+      { renderingPriority: 'gpuFirst' },
+      { referenceAlignMode: 'game' },
+      { referenceAlignMode: 'standardAuto' },
+      { f0Model: 'fcpe' },
+      { vocoderWeight: 'hifigan_coulin9.onnx' },
+      { vocoderWeight: 'hifigan.onnx' },
+      { vocoderWeight: 'not-installed-weight.onnx' },
+    ]);
+    // What session.info said at the end is what it said at the start, with the vocoder ready.
+    const first = seen.infos[0];
+    const last = seen.infos.at(-1);
+    expect(membersOf(last)).toEqual(membersOf(first));
+    expect(last).toMatchObject({ vocoderReady: true, vocoderReconfiguring: false });
+    // The job of each change and of each revert of the vocoder weight and the rendering priority was followed.
+    expect(report.calls.filter((call) => call.step === STEP && call.method === 'job.get')).toHaveLength(4);
+    expect(report.skipped).toEqual([]);
+    expect(report.result).toBe('PASS');
+  }, 120_000);
+
+  it('skips the vocoder weight where only one is installed, and still sends the weight that is not offered', async () => {
+    const seen = watch();
+    const { hooks } = fixture({ prepare: oneWeight, ...seen.options });
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.result).toBe('PASS');
+    const reason = 'only one vocoder weight is installed, or prefs.get reports none in use';
+    expect(report.facts['prefs.vocoderWeight']).toBe(`SKIP: ${reason}`);
+    expect(report.skipped).toEqual([`prefs.set vocoderWeight (${reason})`]);
+    expect(report.facts['prefs.vocoderWeightRefused']).toBe('PASS');
+    expect(report.facts.preferencesTouched).toEqual(['tuningHz', 'renderingPriority', 'referenceAlignMode']);
+    expect(rc6Sent(seen.sent).map((params) => Object.keys(params)[0])).toEqual([
+      'renderingPriority',
+      'renderingPriority',
+      'referenceAlignMode',
+      'referenceAlignMode',
+      'f0Model',
+      'vocoderWeight',
+    ]);
+    expect(rc6Sent(seen.sent).at(-1)).toEqual({ vocoderWeight: 'not-installed-weight.onnx' });
+  }, 120_000);
+
+  it('sends nothing of rc.6 to an instance that reports no processing.options, and says why', async () => {
+    const seen = watch((method, result) => {
+      if (method !== 'prefs.get' || !isObject(result.processing)) return undefined;
+      delete result.processing.options;
+      return result;
+    });
+    const { hooks } = fixture({ prepare: twoWeights, ...seen.options });
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.result).toBe('PASS');
+    expect(rc6Sent(seen.sent)).toEqual([]);
+    for (const name of [
+      'renderingPriority',
+      'referenceAlignMode',
+      'f0Model',
+      'vocoderWeight',
+      'vocoderWeightRefused',
+    ]) {
+      expect(report.facts[`prefs.${name}`], name).toMatch(/^SKIP: prefs\.get reports no processing\.options/);
+    }
+    expect(report.skipped).toHaveLength(5);
+    expect(report.facts.preferencesTouched).toEqual(['tuningHz']);
+  }, 120_000);
+
+  it('fails the step when the revert recipe does not put a member back, sends the start values, and goes on', async () => {
+    const seen = watch((method, result) => {
+      if (method !== 'prefs.set') return undefined;
+      const change = Array.isArray(result.changes) ? result.changes.find(isObject) : undefined;
+      if (change === undefined || !isObject(change.ref) || change.ref.preference !== 'referenceAlignMode') {
+        return undefined;
+      }
+      const undo = isObject(result.undo) ? result.undo : undefined;
+      const revert = undo === undefined ? undefined : undo.revert;
+      const fields = isObject(change.fields) ? change.fields : {};
+      const field = isObject(fields.referenceAlignMode) ? fields.referenceAlignMode : {};
+      // The recipe sets the value that was just set, so sending it changes nothing.
+      if (isObject(revert) && isObject(revert.params)) revert.params.referenceAlignMode = field.after;
+      return result;
+    });
+    const { hooks } = fixture({ prepare: twoWeights, ...seen.options });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain(
+      'prefs.set (referenceAlignMode): the read-back state after prefs.set (the revert recipe) differs from before the write',
+    );
+    expect(report.facts['prefs.referenceAlignMode']).toBe('FAIL');
+    // The values of the start were sent once more, and that worked: the other members and the later steps ran.
+    expect(rc6Sent(seen.sent).filter((params) => 'referenceAlignMode' in params)).toEqual([
+      { referenceAlignMode: 'game' },
+      { referenceAlignMode: 'game' },
+      { referenceAlignMode: 'standardAuto' },
+    ]);
+    expect(report.facts['prefs.vocoderWeight']).toBe('PASS');
+    expect(report.facts['prefs.vocoderWeightRefused']).toBe('PASS');
+    expect(stepResult(report, 'the wave-B MCP tools')?.result).toBe('PASS');
+    expect(report.counts.FAIL).toBe(1);
+  }, 120_000);
+
+  it('stops the tour when the start values cannot be sent back either', async () => {
+    // Every attempt to set the mode to standardAuto (the revert and the start values) sets game instead.
+    const seen = watch(undefined, (method, params) => {
+      if (method === 'prefs.set' && params.referenceAlignMode === 'standardAuto') params.referenceAlignMode = 'game';
+    });
+    const { hooks } = fixture({ prepare: twoWeights, ...seen.options });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('differs from before the write');
+    expect(step?.note).toContain('the values at the start were');
+    expect(stepResult(report, 'audio.get and audio.set')?.result).toBe('SKIP');
+    expect(stepResult(report, 'audio.get and audio.set')?.note).toContain('could not put the preferences back');
+    expect(report.counts.FAIL).toBe(1);
+  }, 120_000);
+
+  it('fails a revert of the vocoder weight that is a job which ends with another weight in use', async () => {
+    // The recipe of the weight change names the weight just set, so that the revert job changes nothing.
+    const seen = watch((method, result) => {
+      if (method !== 'job.get' || !isObject(result.job) || !isObject(result.job.result)) return undefined;
+      const envelope = result.job.result;
+      const undo = isObject(envelope.undo) ? envelope.undo : undefined;
+      const revert = undo === undefined ? undefined : undo.revert;
+      const change = Array.isArray(envelope.changes) ? envelope.changes.find(isObject) : undefined;
+      if (change === undefined || !isObject(change.ref) || change.ref.preference !== 'vocoderWeight') return undefined;
+      const fields = isObject(change.fields) ? change.fields : {};
+      const field = isObject(fields.vocoderWeight) ? fields.vocoderWeight : {};
+      if (isObject(revert) && isObject(revert.params)) revert.params.vocoderWeight = field.after;
+      return result;
+    });
+    const { hooks } = fixture({ prepare: twoWeights, ...seen.options });
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.result).toBe('FAIL');
+    expect(stepResult(report, STEP)?.note).toContain('prefs.set (vocoderWeight): the read-back state');
+    expect(report.facts['prefs.vocoderWeight']).toBe('FAIL');
+    // The start weight was sent once more after the revert that changed nothing.
+    expect(rc6Sent(seen.sent).filter((params) => 'vocoderWeight' in params)[2]).toEqual({
+      vocoderWeight: 'hifigan.onnx',
+    });
+    expect(stepResult(report, 'the wave-B MCP tools')?.result).toBe('PASS');
+  }, 120_000);
+
+  it('fails a weight that is not among the options but was accepted, and takes it back', async () => {
+    const seen = watch(undefined, (method, params) => {
+      if (
+        method === 'prefs.set' &&
+        typeof params.vocoderWeight === 'string' &&
+        params.vocoderWeight.startsWith('not-')
+      ) {
+        params.vocoderWeight = 'hifigan_coulin9.onnx';
+      }
+    });
+    const { hooks } = fixture({ prepare: twoWeights, ...seen.options });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('a weight that is not among the options was accepted');
+    expect(report.facts['prefs.vocoderWeightRefused']).toBe('FAIL');
+    // The accepted change was taken back by its revert recipe, so the later steps ran.
+    expect(stepResult(report, 'the wave-B MCP tools')?.result).toBe('PASS');
+  }, 120_000);
+
+  it('fails a refusal that is not INVALID_ARGUMENT(option_unavailable)', async () => {
+    const { hooks } = fixture({
+      prepare: twoWeights,
+      before: (method, params) => {
+        if (
+          method === 'prefs.set' &&
+          typeof params.vocoderWeight === 'string' &&
+          params.vocoderWeight.startsWith('not-')
+        ) {
+          params.vocoderWeight = 7;
+        }
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const step = stepResult(report, STEP);
+    expect(step?.result).toBe('FAIL');
+    expect(step?.note).toContain('not INVALID_ARGUMENT(option_unavailable)');
+    expect(report.facts['prefs.vocoderWeightRefused']).toBe('FAIL');
+  }, 120_000);
+
+  it('fails a pitch model in use that is not reported as a no-op', async () => {
+    const { hooks } = fixture({
+      prepare: twoWeights,
+      reply: (method, result, params) => {
+        if (method !== 'prefs.set' || params.f0Model === undefined) return undefined;
+        result.noOp = false;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.result).toBe('FAIL');
+    expect(stepResult(report, STEP)?.note).toContain('prefs.set (f0Model): noOp is false, expected true');
+    expect(report.facts['prefs.f0Model']).toBe('FAIL');
+  }, 120_000);
+
+  it('fails a mode that prefs.get does not show after the write', async () => {
+    const { hooks } = fixture({
+      prepare: twoWeights,
+      reply: (method, result) => {
+        if (method !== 'prefs.get' || !isObject(result.processing)) return undefined;
+        if (result.processing.referenceAlignMode !== 'game') return undefined;
+        result.processing.referenceAlignMode = 'standardAuto';
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    expect(stepResult(report, STEP)?.result).toBe('FAIL');
+    expect(stepResult(report, STEP)?.note).toContain('prefs.get says "standardAuto" after the write, not "game"');
+    expect(report.facts['prefs.referenceAlignMode']).toBe('FAIL');
+  }, 120_000);
+
+  it('fails a weight change that reports no render of the contents, and a priority change that reports one', async () => {
+    const { hooks } = fixture({
+      prepare: twoWeights,
+      reply: (method, result) => {
+        if (method !== 'job.get' || !isObject(result.job) || !isObject(result.job.result)) return undefined;
+        const envelope = result.job.result;
+        const change = Array.isArray(envelope.changes) ? envelope.changes.find(isObject) : undefined;
+        const preference = change !== undefined && isObject(change.ref) ? change.ref.preference : undefined;
+        if (preference === 'vocoderWeight') envelope.sideEffects = {};
+        else if (preference === 'renderingPriority') {
+          envelope.sideEffects = { reRenderQueued: { contentIds: [], revert: null } };
+        } else return undefined;
+        return result;
+      },
+    });
+    const report = await runWaveBTour(config, hooks);
+    const note = stepResult(report, STEP)?.note ?? '';
+    expect(stepResult(report, STEP)?.result).toBe('FAIL');
+    expect(note).toContain(
+      'prefs.set (renderingPriority): the result reports reRenderQueued, which this preference does not cause',
+    );
+    expect(report.facts['prefs.renderingPriority']).toBe('FAIL');
+    expect(report.facts['prefs.vocoderWeight']).toBe('FAIL');
+  }, 120_000);
+
+  it('picks the other value of a pair, the other weight, and a weight that is not offered', () => {
+    expect(otherOf('gpuFirst', ['gpuFirst', 'cpuFirst'])).toBe('cpuFirst');
+    expect(otherOf('cpuFirst', ['gpuFirst', 'cpuFirst'])).toBe('gpuFirst');
+    expect(otherOf(null, ['gpuFirst', 'cpuFirst'])).toBeNull();
+    expect(otherOf('auto', ['gpuFirst', 'cpuFirst'])).toBeNull();
+    expect(otherWeight({ vocoderWeight: ['a', 'b'] }, 'a')).toBe('b');
+    expect(otherWeight({ vocoderWeight: ['a', 'b'] }, 'b')).toBe('a');
+    expect(otherWeight({ vocoderWeight: ['a', 'b'] }, null)).toBe('a');
+    expect(otherWeight({ vocoderWeight: ['a'] }, 'a')).toBeNull();
+    expect(otherWeight({ vocoderWeight: [] }, 'a')).toBeNull();
+    expect(otherWeight({}, 'a')).toBeNull();
+    expect(otherWeight(undefined, 'a')).toBeNull();
+    expect(otherWeight({ vocoderWeight: ['a', 3, 'b'] }, 'a')).toBe('b');
+    expect(unofferedWeight(['a'])).toBe('not-installed-weight.onnx');
+    expect(unofferedWeight(['not-installed-weight.onnx'])).toBe('x-not-installed-weight.onnx');
+  });
 });

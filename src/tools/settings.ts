@@ -37,7 +37,8 @@ const reasonOf = (source: Json | null, member: string): unknown =>
  * settings; session.info is the instance's live view, so its value is taken first. A member that is
  * null (or missing) there is filled from prefs.get when that has a value; a null never replaces a
  * value. session.info alone has the runtime members (backend, vocoder state); prefs.get alone has
- * onboardingShown. language is in both. nullReasons is rebuilt from the members that are still null,
+ * onboardingShown and options (the values opentune_set_settings accepts; null when the instance does not
+ * report them). language is in both. nullReasons is rebuilt from the members that are still null,
  * so a reason is never attached to a member that has a value.
  */
 function mergeProcessing(
@@ -56,12 +57,16 @@ function mergeProcessing(
   const language = [info.language, prefs?.language].find((v): v is string => typeof v === 'string');
   merged.language = language ?? null;
   merged.onboardingShown = typeof prefs?.onboardingShown === 'boolean' ? prefs.onboardingShown : null;
+  // The values opentune_set_settings accepts. Only prefs.get has them, and an instance of an earlier release
+  // candidate of the specification does not report them: null with a reason, never an error.
+  merged.options = isObject(prefsValues.options) ? prefsValues.options : null;
   const reasons: Json = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value !== null) continue;
     const reason = reasonOf(fromInfo, key) ?? reasonOf(fromPrefs, key);
     if (reason !== undefined) reasons[key] = reason;
-    else if (key === 'onboardingShown' && !hasRead) reasons[key] = 'capability_missing:read.v1';
+    else if ((key === 'onboardingShown' || key === 'options') && !hasRead) reasons[key] = 'capability_missing:read.v1';
+    else if (key === 'options') reasons[key] = 'not_reported';
     else reasons[key] = 'unavailable';
   }
   return { ...merged, ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}) };
@@ -183,12 +188,12 @@ export const getSettingsTool = defineTool({
   name: 'opentune_get_settings',
   title: 'Get OpenTune settings',
   description:
-    'OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the ' +
-    'project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features, ' +
-    'language, whether onboarding was shown), ' +
-    'audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device ' +
-    'capability), recent (recent project paths), export_caps (import and export formats and limits), log (last ' +
-    'lines of the OpenTune log; only when asked). Default: all but log. Read-only.',
+    'OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. ' +
+    'sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, ' +
+    'pitch model, reference alignment mode, experimental features, language, onboarding shown, options: the ' +
+    'values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available ' +
+    'values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log ' +
+    '(OpenTune log lines; only when asked). Default: all but log. Read-only.',
   inputSchema: z.strictObject({
     sections: z
       .array(z.enum(SETTINGS_SECTIONS))

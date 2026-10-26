@@ -51,16 +51,17 @@ ones it needs. A build that lacks one answers the tools that need it with the er
 `capability_missing`, and `detail` names the capability (see
 [Error UNSUPPORTED](TROUBLESHOOTING.md#error-unsupported)); every other tool keeps working. Two tools take what a build
 can give: `opentune_get_settings` returns a section it cannot read as `null` with the reason
-`capability_missing:<capability>`, and `opentune_set_settings` asks only for the capabilities of the groups you give
-it. A test build older than this server may therefore offer fewer tools than [reference.md](reference.md) lists.
-The exception is the job of `opentune_set_settings`: it does not check `jobs.v1` before it sends the change, so on a
-build without `jobs.v1` the change can be applied and the following of its job then fails.
+`capability_missing:<capability>`, and `opentune_set_settings` asks only for the capabilities of the groups and members
+you give it. A test build older than this server may therefore offer fewer tools than [reference.md](reference.md)
+lists. A call of `opentune_set_settings` that names `editing_scheme`, `vocoder_weight` or `rendering_priority` also needs
+`jobs.v1`, because OpenTune applies these by a job that the tool follows: on a build without `jobs.v1` the call is
+refused with `UNSUPPORTED` before anything is sent, so no change is applied that the tool could not follow.
 
 | Capability       | Tools that need it                                                                                                                                                                                                                                                 |
 | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | `session.v1`     | `opentune_get_status`, `opentune_launch`, `opentune_get_settings`                                                                                                                                                                                                  |
 | `read.v1`        | `opentune_get_project`, `opentune_get_notes`, `opentune_get_clip_details`, `opentune_analyze_pitch`, `opentune_estimate_key` (with `clip`), `opentune_export_audio`, `opentune_set_clip`, `opentune_autotune_range`, `opentune_edit_notes`, `opentune_edit_timing` |
-| `jobs.v1`        | `opentune_get_job`, `opentune_cancel_job`, and every tool that waits for a job: open, export, timing seed, save and open project, and `opentune_set_settings` when OpenTune answers with a job (it does not check for `jobs.v1` before it sends the change)        |
+| `jobs.v1`        | `opentune_get_job`, `opentune_cancel_job`, and every tool that waits for a job: open, export, timing seed, save and open project, and `opentune_set_settings` when it names `editing_scheme`, `vocoder_weight` or `rendering_priority` (checked before it sends)   |
 | `import.v1`      | `opentune_open_audio`                                                                                                                                                                                                                                              |
 | `export.v1`      | `opentune_export_audio`                                                                                                                                                                                                                                            |
 | `edit.v1`        | `opentune_set_clip`, `opentune_autotune_range`, `opentune_edit_notes`                                                                                                                                                                                              |
@@ -74,3 +75,40 @@ build without `jobs.v1` the change can be applied and the following of its job t
 | `project.io`     | `opentune_save_project`, `opentune_save_project_overwrite`, `opentune_open_project`, and the `clear_recent` part of `opentune_set_settings`                                                                                                                        |
 | `prefs.write`    | `opentune_set_settings` (the `processing` part)                                                                                                                                                                                                                    |
 | `audio.device`   | `opentune_get_settings` (the `audio_device` section), `opentune_set_settings` (the `audio_device` part)                                                                                                                                                            |
+
+## Settings tools and the specification versions
+
+`opentune_get_settings` and `opentune_set_settings` follow `1.0.0-rc.6` of the specification (`prefs.get`, `prefs.set`).
+The tools name their fields in snake_case, the specification in camelCase.
+
+| Field of `processing` in the tools     | Member in `prefs.get` and `prefs.set` | Values and notes                                                                                                                                                                                                                                                    |
+| -------------------------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `tuning_hz`                            | `tuningHz`                            | 400 to 500.                                                                                                                                                                                                                                                         |
+| `editing_scheme`                       | `editingScheme`                       | `openTune` or `openDyne`. Applied by a job.                                                                                                                                                                                                                         |
+| `hybrid_mode`                          | `hybridMode`                          | On or off.                                                                                                                                                                                                                                                          |
+| `experimental_features`                | `experimentalFeatures`                | On or off.                                                                                                                                                                                                                                                          |
+| `vocoder_weight`                       | `vocoderWeight`                       | One of `options.vocoderWeight` of `opentune_get_settings`. Applied by a job; every clip renders again once the weight has loaded.                                                                                                                                   |
+| `rendering_priority`                   | `renderingPriority`                   | `gpuFirst` or `cpuFirst`. Applied by a job; it changes the backend, not the sound.                                                                                                                                                                                  |
+| `f0_model`                             | `f0Model`                             | One of `options.f0Model` of `opentune_get_settings`.                                                                                                                                                                                                                |
+| `reference_align_mode`                 | `referenceAlignMode`                  | `standardAuto` or `game`. Changes nothing until the next AUTO Ref, and the result warns `EXPERIMENTAL_FEATURE`.                                                                                                                                                     |
+| `options` (in `opentune_get_settings`) | `processing.options` (`prefs.get`)    | The values `vocoder_weight`, `f0_model`, `rendering_priority` and `reference_align_mode` accept on this installation. A name outside the list is refused with `INVALID_ARGUMENT(option_unavailable)` and nothing is changed, also when it equals the current value. |
+
+A call that changes the editing scheme, the vocoder weight or the rendering priority is handed to a job, which the tool
+follows for `wait_seconds` like any other job. After a new vocoder weight the result says whether the clips render
+again now (the vocoder was ready before the call, so the job waited for the weight to load) or after the weight has
+loaded (it was not ready before the call, so the job did not wait, or that could not be read). Two
+failures are specific to these jobs, and in both OpenTune takes the changes back: `MODEL_UNAVAILABLE(vocoder_not_ready)`
+(the vocoder stayed busy past OpenTune's wait limit; call again) and `MODEL_UNAVAILABLE(vocoder_load_failed)` (it could
+not load the new weight or backend; this does not go away by calling again, see
+[Error MODEL_UNAVAILABLE](TROUBLESHOOTING.md#error-model_unavailable)).
+
+What a test build of `1.0.0-rc.5` does, since both versions have the wire version `1.0` and the tools decide by
+capabilities, not by version:
+
+- `prefs.set` rejects the four new members as unknown parameters with `INVALID_ARGUMENT(invalid_params)`, and nothing is
+  changed. The tool does not try to guess the version first.
+- `prefs.get` reports no `processing.options`. `opentune_get_settings` then returns `options` as `null`, with the reason
+  `not_reported` in `nullReasons` (or `capability_missing:read.v1` when the build cannot read at all), and the other
+  members as before. A `null` there tells you that this build does not take the new members.
+- The rest of the settings (tuning frequency, editing scheme, hybrid mode, experimental features, audio device, recent
+  projects) works as before.

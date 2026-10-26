@@ -249,6 +249,16 @@ const EDGE_TRIM_FRACTION = 0.2;
 const BAND_SEMITONES = 7;
 /** The edits of the checks. */
 const EDIT_CENTS = 100;
+/** The small correction, in cents, that the vocoder weight check renders under each weight. */
+const WEIGHT_CHECK_CENTS = 30;
+/**
+ * The smallest sample difference between the exports under two vocoder weights for them to count as two sounds. Two
+ * weights are two networks: their output differs by far more than this (-80 dBFS), so a smaller difference means the
+ * weight was not applied to the render.
+ */
+export const WEIGHT_MIN_ABS_DIFF = 1e-4;
+/** The name of the vocoder weight step. */
+export const WEIGHT_STEP = 'vocoder weight: +30 cents, 2 weights';
 const PITCH_SHIFT_SEMITONES = 2;
 const TIMING_SHIFT_SEC = 0.03;
 /** The deliberately sharp note of the generated audio. */
@@ -437,6 +447,7 @@ export const EFFECT_CHECK_NAMES = [
   'AUTO regenerate pulls the sharp note back',
   'AUTO snapNotes pulls the sharp note back',
   'setParams retuneSpeed 1',
+  WEIGHT_STEP,
   'snapToScale returns an off-scale note to the scale',
   'prefs.set tuningHz 442',
   'race: +100 cents, export, -100 cents',
@@ -990,6 +1001,28 @@ export function noteDelta(baseline: DecodedWav, wet: DecodedWav, span: Span, exp
 }
 
 /**
+ * The notes whose pitch change is not the expected one to within `toleranceCents`, or that have too few voiced
+ * frames in both files to tell. A note in `notJudged` is measured and reported but only the second problem counts.
+ */
+export function pitchProblems(
+  deltas: readonly NoteDelta[],
+  toleranceCents = PITCH_TOLERANCE_CENTS,
+  notJudged: ReadonlySet<number> = new Set(),
+): string[] {
+  const problems: string[] = [];
+  for (const d of deltas) {
+    if (d.medianCents === null) {
+      problems.push(`note ${String(d.index)}: only ${String(d.frames)} frames voiced in both files`);
+    } else if (!notJudged.has(d.index) && Math.abs(d.medianCents - d.expectedCents) > toleranceCents) {
+      problems.push(
+        `note ${String(d.index)}: ${String(d.medianCents)} cents, expected ${String(d.expectedCents)} +- ${String(toleranceCents)}`,
+      );
+    }
+  }
+  return problems;
+}
+
+/**
  * The median pitch of a note in one file against a known frequency, in cents; null when too few
  * frames are voiced. spreadCents is the standard deviation of the voiced frames around that median
  * (null with it): how steady the note is, which tells a plain note from one with vibrato or a glide.
@@ -1528,6 +1561,8 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   let places: NotePlace[] = [];
   let picks: Picks | undefined;
   let exportCount = 0;
+  /** The largest sample difference between two exports of the unchanged clip: what a repeat export may differ by. */
+  let repeatMaxAbsDiff = 0;
 
   /** Waits until the clip's audible render is settled at its current revision; returns how long it took. */
   const settle = async (id = contentId): Promise<number> => {
@@ -1561,15 +1596,18 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     if (!Array.isArray(dry)) throw new Error('dryContents is not an array');
     const wav = decodeWav(await readFile(text(result, 'path', 'the export result')));
     if (peakOf(wav) <= 1e-4) throw new Error(`the ${label} export is silent`);
-    return { wav, dry: dry as unknown[], hybridMode: reported.hybridMode };
+    // The vocoder weight the export says it used; null where it does not name one.
+    const used = member(result, 'processing', 'the export result');
+    const weight = isObject(used) && typeof used.vocoderWeight === 'string' ? used.vocoderWeight : null;
+    return { wav, dry: dry as unknown[], hybridMode: reported.hybridMode, weight };
   };
 
-  /** An export that must be corrected: nothing in dryContents. */
+  /** An export that must be corrected, with the vocoder weight it reports: nothing in dryContents. */
   const exportWetWith = async (label: string, chosen = false) => {
-    const { wav, dry, hybridMode } = await exportClip(label, placementId, chosen);
+    const { wav, dry, hybridMode, weight } = await exportClip(label, placementId, chosen);
     if (dry.length > 0)
       throw new Error(`the ${label} export lists the clip in dryContents: it was exported uncorrected`);
-    return { wav, hybridMode };
+    return { wav, hybridMode, weight };
   };
   const exportWet = async (label: string) => (await exportWetWith(label)).wav;
 
@@ -2028,16 +2066,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     if (baseline === undefined) throw new Error('no baseline');
     const base = baseline;
     const deltas = spans.map((span) => noteDelta(base, wet, span, expected.get(span.index) ?? 0));
-    const problems: string[] = [];
-    for (const d of deltas) {
-      if (d.medianCents === null) {
-        problems.push(`note ${String(d.index)}: only ${String(d.frames)} frames voiced in both files`);
-      } else if (!notJudged.has(d.index) && Math.abs(d.medianCents - d.expectedCents) > toleranceCents) {
-        problems.push(
-          `note ${String(d.index)}: ${String(d.medianCents)} cents, expected ${String(d.expectedCents)} +- ${String(toleranceCents)}`,
-        );
-      }
-    }
+    const problems = pitchProblems(deltas, toleranceCents, notJudged);
     return { deltas, problems };
   };
 
@@ -2362,6 +2391,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
       }));
     }
     noiseFloor = floor;
+    repeatMaxAbsDiff = samples.maxAbsDiff;
     const unmeasured = deltas.filter((d) => d.medianCents === null).map((d) => String(d.index));
     if (unmeasured.length > 0) {
       throw new Error(
@@ -2565,6 +2595,204 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
           return wrong === 0 ? [] : [`${String(wrong)} notes do not read back retuneSpeed 1`];
         },
       ),
+    { check: true },
+  );
+
+  // The same small correction under each installed vocoder weight. The weight is a global preference, which edit.undo
+  // does not take back: the step switches it with prefs.set, takes it back with the revert recipe of that result, and
+  // sends the weight read at the start once more when anything goes wrong.
+
+  /** The vocoder weight in use and the weights the installation offers, from prefs.get; null where it does not say. */
+  const weightsNow = async (): Promise<{ weight: string | null; options: string[] | null }> => {
+    const prefs = await need().call('prefs.get', {}, 30_000);
+    const p = member(prefs, 'processing', 'prefs.get');
+    const options = isObject(p) && isObject(p.options) ? p.options.vocoderWeight : undefined;
+    return {
+      weight: isObject(p) && typeof p.vocoderWeight === 'string' ? p.vocoderWeight : null,
+      options: Array.isArray(options) ? options.filter((name): name is string => typeof name === 'string') : null,
+    };
+  };
+
+  /** Whether session.info reports the vocoder ready and not loading. */
+  const vocoderReady = async (): Promise<boolean> => {
+    const p = member(await need().call('session.info', {}, 30_000), 'processing', 'session.info');
+    return isObject(p) && p.vocoderReady === true && p.vocoderReconfiguring !== true;
+  };
+
+  const untilVocoderReady = async (): Promise<void> => {
+    const deadline = Date.now() + timeoutMs;
+    while (!(await vocoderReady())) {
+      if (Date.now() >= deadline) throw new Error(`the vocoder was not ready within ${String(timeoutMs)} ms`);
+      await sleep(SETTLE_POLL_MS);
+    }
+  };
+
+  /** prefs.set, followed through the job that applies a new vocoder weight; returns the result envelope. */
+  const setWeight = async (params: Json): Promise<Json> => {
+    const started = await need().call('prefs.set', params, 60_000);
+    const job = member(started, 'job', 'the prefs.set result');
+    if (!isObject(job)) return started;
+    const done = await waitJob(need(), text(job, 'jobId', 'the job'), 'prefs.set', timeoutMs);
+    if (!isObject(done)) throw new Error('the prefs.set job ended without a result');
+    return done;
+  };
+
+  const wholeFile = (wav: DecodedWav) => [{ startSec: 0, endSec: wav.mono.length / wav.sampleRateHz }];
+
+  await step(
+    WEIGHT_STEP,
+    async () => {
+      const s = need();
+      if (!s.hello.capabilities.includes('prefs.write')) {
+        throw new StepSkip('SKIP', 'the instance does not report prefs.write');
+      }
+      if (picks === undefined)
+        throw new StepSkip('SKIP', `the audio has fewer than two voiced notes of ${String(MIN_NOTE_SEC)} s`);
+      if (baseline === undefined) throw new Error('no baseline');
+      if (sessionHybridMode === true) {
+        throw new StepSkip(
+          'SKIP',
+          'hybrid mode is on: a small correction renders as a pitch shift of the audio, not by the vocoder, so the weight changes nothing',
+        );
+      }
+      const start = await weightsNow();
+      if (start.options === null) {
+        throw new StepSkip(
+          'SKIP',
+          'prefs.get reports no processing.options, so the instance does not take the vocoder weight of 1.0.0-rc.6',
+        );
+      }
+      const first = start.weight;
+      const second = start.options.find((name) => name !== first);
+      if (start.options.length < 2 || second === undefined) {
+        throw new StepSkip('SKIP', 'only one vocoder weight is installed, so there is nothing to switch to');
+      }
+      if (first === null) throw new StepSkip('SKIP', 'prefs.get reports no vocoder weight in use');
+      const base = baseline;
+      const index = picks.target;
+      const want: ReadonlyMap<number, number> = new Map([[index, WEIGHT_CHECK_CENTS]]);
+      return guardedCheck(WEIGHT_STEP, async (frame) => {
+        const { before, report } = frame;
+        const problems: string[] = [];
+        /** Whether the weight in use may be another than the first: set before the call that can change it. */
+        let changed = false;
+        let failed: { readonly error: unknown } | undefined;
+        let note = '';
+        try {
+          await untilVocoderReady();
+          const edit = await write(
+            'content.editNotes',
+            {
+              contentId,
+              expectedRevision: before.notesRevision,
+              ops: [{ op: 'shiftCents', select: { indices: [index] }, deltaCents: WEIGHT_CHECK_CENTS }],
+            },
+            frame,
+          );
+          problems.push(...edit.problems);
+          report.consistency = edit.problems.slice();
+          await settle();
+
+          // The first weight: the correction is rendered, the other notes are as in the baseline.
+          const a = await exportWetWith('weight A');
+          const underFirst = measure(a.wav, want);
+          problems.push(...underFirst.problems.map((p) => `under the first weight: ${p}`));
+          if (a.weight !== null && a.weight !== first) {
+            problems.push('the export under the first weight says it was made with another weight');
+          }
+
+          // The second weight: the same correction, rendered by another network.
+          changed = true;
+          const switched = await setWeight({ vocoderWeight: second });
+          const undo = isObject(switched.undo) ? switched.undo : {};
+          const recipe = isObject(undo.revert) ? undo.revert : null;
+          if ((await weightsNow()).weight !== second) {
+            problems.push('after the switch, prefs.get does not report the second weight');
+          }
+          if (!(await vocoderReady())) {
+            problems.push('the switch has ended, but session.info does not report the vocoder as ready');
+          }
+          await settle();
+          const b = await exportWetWith('weight B');
+          if (b.weight !== null && b.weight !== second) {
+            problems.push('the export under the second weight says it was made with another weight');
+          }
+          const deltasB = spans.map((span) => noteDelta(base, b.wav, span, want.get(span.index) ?? 0));
+          problems.push(...pitchProblems(deltasB).map((p) => `under the second weight: ${p}`));
+          const between = compareSamples(a.wav, b.wav, wholeFile(a.wav));
+          if (between.bitIdentical === between.spans || between.maxAbsDiff < WEIGHT_MIN_ABS_DIFF) {
+            problems.push(
+              `the exports under the two weights are the same sound (differ by up to ${between.maxAbsDiff.toExponential(2)}, ` +
+                `at least ${WEIGHT_MIN_ABS_DIFF.toExponential(0)} expected): the weight was not applied to the render`,
+            );
+          }
+          Object.assign(report, {
+            correctionCents: WEIGHT_CHECK_CENTS,
+            note: index,
+            reportedWeightOfExport: { first: a.weight, second: b.weight },
+            underFirstWeight: underFirst.report,
+            underSecondWeight: { notes: deltasB.map(publicDelta) },
+            betweenWeights: between,
+          });
+
+          // The revert recipe of the switch brings the first weight back, and the export is the first one again.
+          if (recipe?.method !== 'prefs.set' || !isObject(recipe.params)) {
+            problems.push('the result of the switch carries no revert recipe for prefs.set');
+          } else {
+            await setWeight(recipe.params);
+          }
+          const returned = (await weightsNow()).weight === first;
+          if (returned) changed = false;
+          else problems.push('after the revert recipe, prefs.get does not report the first weight');
+          if (!(await vocoderReady())) {
+            problems.push('the revert has ended, but session.info does not report the vocoder as ready');
+          }
+          // Without the first weight back an export says nothing more about the recipe; the weight is sent again below.
+          if (returned) {
+            await settle();
+            const c = await exportWetWith('weight A again');
+            const backUnder = measure(c.wav, want);
+            problems.push(...backUnder.problems.map((p) => `back under the first weight: ${p}`));
+            const returnDiff = compareSamples(a.wav, c.wav, wholeFile(a.wav));
+            const allowed = Math.max(UNEDITED_MAX_ABS_DIFF_NOTES, 2 * repeatMaxAbsDiff);
+            if (returnDiff.maxAbsDiff > allowed) {
+              problems.push(
+                `after the revert, the export differs from the one under the first weight by up to ${returnDiff.maxAbsDiff.toExponential(2)} ` +
+                  `(allowed ${allowed.toExponential(2)}, what two exports of the same clip differ by)`,
+              );
+            }
+            Object.assign(report, {
+              backUnderFirstWeight: backUnder.report,
+              backToFirst: { ...returnDiff, allowedMaxAbsDiff: allowed },
+            });
+          }
+          note =
+            `+${String(WEIGHT_CHECK_CENTS)} cents rendered under two vocoder weights (differ by up to ${between.maxAbsDiff.toExponential(2)}), ` +
+            'the revert recipe brought the first weight back and the export returned to the first result; undo restored the clip';
+        } catch (error) {
+          failed = { error };
+        }
+        // The weight belongs to the installation and edit.undo does not touch it: whatever happened, put it back.
+        if (changed) {
+          try {
+            if ((await weightsNow()).weight !== first) await setWeight({ vocoderWeight: first });
+            if ((await weightsNow()).weight !== first) throw new Error('prefs.get still reports another weight');
+            await untilVocoderReady();
+          } catch (error) {
+            throw new Unrestored(
+              `the vocoder weight could not be put back: ${error instanceof Error ? error.message : String(error)}` +
+                (failed === undefined
+                  ? ''
+                  : `; before that: ${failed.error instanceof Error ? failed.error.message : String(failed.error)}`),
+              { cause: failed?.error ?? error },
+            );
+          }
+          if (failed === undefined) problems.push('the vocoder weight had to be put back by sending the first weight');
+        }
+        if (failed !== undefined) throw failed.error;
+        return { note, problems };
+      });
+    },
     { check: true },
   );
 

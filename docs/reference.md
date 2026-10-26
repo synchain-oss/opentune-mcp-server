@@ -277,7 +277,7 @@ OTCP capabilities: `read.v1`. OTCP methods: `content.getDetails`, `project.get`.
 
 **Get OpenTune settings**: read-only, not destructive, idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features, language, whether onboarding was shown), audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device capability), recent (recent project paths), export_caps (import and export formats and limits), log (last lines of the OpenTune log; only when asked). Default: all but log. Read-only.
+OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, reference alignment mode, experimental features, language, onboarding shown, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only.
 
 OTCP capabilities: `session.v1`, `read.v1`, `audio.device`. OTCP methods: `session.info`, `prefs.get`, `audio.get`, `app.getLog`.
 
@@ -291,7 +291,7 @@ OTCP capabilities: `session.v1`, `read.v1`, `audio.device`. OTCP methods: `sessi
 
 **Set OpenTune settings**: changes state, destructive, idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): changes the global settings of the OpenTune installation, not of the project. processing: tuning_hz (A4 in Hz, 400-500), editing_scheme (openTune or openDyne, applied by a job), hybrid_mode, experimental_features. audio_device: device_type, output_device, sample_rate_hz, buffer_size_frame, output_channel_pair, each one the instance offers. clear_recent: true empties the recent-project list, which nothing refills. OpenTune records no undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.
+OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, f0_model, reference_align_mode; values of vocoder_weight and f0_model: see options of opentune_get_settings. audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.
 
 OTCP capabilities: `prefs.write`, `audio.device`, `project.io`, `jobs.v1`. OTCP methods: `prefs.set`, `audio.set`, `project.clearRecent`, `job.get`.
 

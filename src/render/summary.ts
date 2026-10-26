@@ -9,7 +9,7 @@
 import type { Json } from '../otcp/client.js';
 import { asList, entitiesOf, isObject, type TableRow } from './changes.js';
 import { revertFlag, revertPlan } from './revert.js';
-import { SIDE_EFFECT_TEXT, token, undoReasonText } from './text.js';
+import { RE_RENDER_TEXT, SIDE_EFFECT_TEXT, token, undoReasonText, type ReRenderState } from './text.js';
 
 /** Warning codes that make a result destructive on their own. */
 export const DESTRUCTIVE_WARNINGS = new Set(['IRREVERSIBLE', 'UPSTREAM_UNDO_DEFECT', 'OVERWROTE_OTHER_PROJECT']);
@@ -49,7 +49,7 @@ function didPhrase(envelope: Json, dryRun: boolean): string {
   return more > 0 ? `${text} (and ${String(more)} more not listed)` : text;
 }
 
-function flagsOf(envelope: Json): string[] {
+function flagsOf(envelope: Json, reRender?: ReRenderState): string[] {
   const flags: string[] = [];
   const removed = asList(envelope.removed).length;
   if (removed > 0 || warningCodes(envelope).some((c) => DESTRUCTIVE_WARNINGS.has(c))) flags.push('destructive');
@@ -61,8 +61,10 @@ function flagsOf(envelope: Json): string[] {
   }
   const effects = Object.keys(isObject(envelope.sideEffects) ? envelope.sideEffects : {});
   if (effects.length > 0) {
-    const names = effects.map(
-      (name) => SIDE_EFFECT_TEXT[name] ?? `side effect ${token(name, 'camel') ?? 'with an unrecognized name'}`,
+    const names = effects.map((name) =>
+      name === 'reRenderQueued' && reRender !== undefined
+        ? RE_RENDER_TEXT[reRender]
+        : (SIDE_EFFECT_TEXT[name] ?? `side effect ${token(name, 'camel') ?? 'with an unrecognized name'}`),
     );
     flags.push(`side effects: ${names.join(', ')}`);
   }
@@ -93,6 +95,8 @@ export interface SummarizeOptions {
    * flag of all of them in its own first sentence, so the parts do not repeat them.
    */
   readonly flags?: boolean;
+  /** How the side effect reRenderQueued of a vocoder-weight change reads (ReRenderState); absent: the generic words. */
+  readonly reRender?: ReRenderState;
 }
 
 export function summarize(envelope: Json, tool: string, options: SummarizeOptions = {}): string {
@@ -100,7 +104,7 @@ export function summarize(envelope: Json, tool: string, options: SummarizeOption
   const warnings = warningCodes(envelope);
   const tail = warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
   const states = (): string[] => (withFlags ? stateFlags(envelope, warnings) : []);
-  const flags = (): string[] => (withFlags ? flagsOf(envelope) : []);
+  const flags = (): string[] => (withFlags ? flagsOf(envelope, options.reRender) : []);
   const job = isObject(envelope.job) ? envelope.job : null;
   if (job !== null) {
     const id = token(job.jobId, 'jobId');

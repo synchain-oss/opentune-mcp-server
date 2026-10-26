@@ -113,7 +113,12 @@ OpenTune is closing. Check the status before doing anything else.
 ### Error INVALID_ARGUMENT
 
 The arguments were rejected; `detail` says why. With reason `confirm_required` the operation is destructive and needs
-the user's explicit consent.
+the user's explicit consent. With reason `option_unavailable` (`opentune_set_settings`) the vocoder weight or the pitch
+model is not one this installation offers; `detail` names the member and nothing was changed. Read the offered values
+with `opentune_get_settings` (`processing.options`) and call again with one of them. A name is refused also when it
+equals the current value but is no longer listed, for example when the weight file was removed. A test build of
+`1.0.0-rc.5` does not know these members at all and answers with reason `invalid_params`
+(see [Settings tools and the specification versions](COMPATIBILITY.md#settings-tools-and-the-specification-versions)).
 
 ### Error NOT_FOUND
 
@@ -142,6 +147,14 @@ OpenTune could not render the corrected audio, also after one automatic retry.
 ### Error MODEL_UNAVAILABLE
 
 A model or inference backend OpenTune needs is missing. Run `opentune-mcp doctor`.
+
+Two reasons come from a change of the vocoder weight or the rendering priority (`opentune_set_settings`), which
+OpenTune applies by a job that waits until the vocoder is ready again. In both cases OpenTune takes the changes back,
+and the result says so. `vocoder_not_ready` (retryable): the vocoder was still busy when OpenTune's wait limit passed;
+wait a little, then call again, and run `opentune-mcp doctor` if it keeps happening. `vocoder_load_failed` (not
+retryable): the vocoder could not load the new weight or backend, for example because the weight file is corrupt or
+incompatible; the previous settings are back, so sending the same value again does not help. Tell the user and check the
+models with `opentune-mcp doctor`.
 
 ### Error REVISION_CONFLICT
 
