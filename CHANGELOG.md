@@ -35,6 +35,16 @@ versioned separately and has its own changelog.
   the user is asked only when it is not confident. Every command takes `--home` (priority `--home`,
   `OPENTUNE_BEATS_HOME`, `CLAUDE_PLUGIN_DATA`) and `--help`.
 
+### Fixed
+
+- The `beat-grid` skill checks `status` before it plans an install. An analyzer that was already installed used to
+  be treated as missing when the manifest still said the release was not published: the install plan listed
+  Problems and told the agent not to retry, and the whole beat-grid workflow was given up. Now `install` (the plan
+  and `--yes`) reports "already installed" with the version, folder and models, exits 0 and downloads nothing when the
+  program and the models asked for are there; `status` leaves out the unpublished-release note for an installed
+  analyzer; `SKILL.md` skips the install section on `installed: true` and stops for an unpublished release only
+  when nothing is installed. An analyzer that is not installed is still refused as before.
+
 ### Security
 
 - The `beat-grid` skill no longer declares `allowed-tools`. That line let every shell command and file read or write

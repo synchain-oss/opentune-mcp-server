@@ -72,6 +72,7 @@ interface InstallPlan {
   version: string | null;
   assets: { kind: string; asset: string; approxBytes: number }[];
   otherModel: { name: string; totalBytes: number | null };
+  installed: { version: string; target: string; dir: string; models: Record<string, boolean> } | null;
 }
 interface InstallResult {
   dir: string;
@@ -382,6 +383,26 @@ describe('the shipped manifest', () => {
       /not published yet/,
     );
     expect(fs.existsSync(path.join(home.dir, 'bin'))).toBe(false);
+  });
+
+  it('has no problem in the plan of an analyzer that is installed, whatever the release state is', () => {
+    const home = tempHome();
+    cleanup.push(home.remove);
+    expect(manifest.released).toBe(false);
+    const empty = installPlan({ manifest, target: 'win-x64', model: 'final', home: home.dir });
+    expect(empty.installed).toBeNull();
+    expect(empty.problems.length).toBeGreaterThan(0);
+
+    const dir = fakeInstall(home.dir, manifest, 'win-x64');
+    const plan = installPlan({ manifest, target: 'win-x64', model: 'final', home: home.dir });
+    expect(plan.problems).toEqual([]);
+    expect(plan.installed).toMatchObject({ version: manifest.version, target: 'win-x64', dir });
+    expect(plan.installed).toMatchObject({ models: { mel: true, final: true, small: false } });
+    expect(formatPlan(plan)).toContain('already installed');
+    // The model asked for decides: the small one is not there, so that plan is blocked as before.
+    const small = installPlan({ manifest, target: 'win-x64', model: 'small', home: home.dir });
+    expect(small.installed).toBeNull();
+    expect(small.problems.join('\n')).toContain('is not published yet');
   });
 
   it('reports the size of the final and the small download in the plan', () => {
@@ -1102,7 +1123,16 @@ describe('status', () => {
     expect(result.current).toMatchObject({ version: '0.1.0', target: 'win-x64', dir });
     expect(result.models).toEqual({ mel: true, final: true, small: false });
     expect(result.homeSource).toBe('OPENTUNE_BEATS_HOME');
-    expect(result.notes.join(' ')).toContain('not published yet');
+    // The release is not published (the shipped manifest), but the analyzer is installed: nothing to warn about.
+    expect(manifest.released).toBe(false);
+    expect(result.notes.join(' ')).not.toContain('not published yet');
+
+    // With nothing installed the note stays: it explains why an install would refuse.
+    const empty = tempHome();
+    cleanup.push(empty.remove);
+    const unused = status({ manifest, env: { OPENTUNE_BEATS_HOME: empty.dir }, platform: 'win32', arch: 'x64' });
+    expect(unused.installed).toBe(false);
+    expect(unused.notes.join(' ')).toContain('not published yet');
   });
 
   it('orders installations by semantic version, newest first', () => {

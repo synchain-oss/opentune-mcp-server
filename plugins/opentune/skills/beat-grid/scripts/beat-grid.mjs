@@ -90,8 +90,11 @@ const COMMAND_HELP = Object.freeze({
 ${HOME_HELP}
 `,
   install: `beat-grid install --model final|small [--yes] [--home <folder>]
-    Without --yes: print what would be downloaded, its size and its licence, and change nothing.
-    With --yes: download, verify every sha256, extract, install and check --version.
+    Run status first: when it says installed (and the model is there) there is nothing to install.
+    Without --yes: print what would be downloaded, its size and its licence, and change nothing; when the
+    analyzer is already installed it says so (exit 0, no problems, whatever the release state is).
+    With --yes: download, verify every sha256, extract, install and check --version; when the analyzer is
+    already installed it only reports that and downloads nothing.
 
 ${HOME_HELP}
 `,
@@ -301,23 +304,30 @@ export function installPlan({ manifest, target = detectTarget(), model = 'final'
   const safe = isObject(manifest) ? manifest : {};
   const platform = isObject(safe.platforms) ? safe.platforms[target] : undefined;
   const models = isObject(safe.models) ? safe.models : {};
-  const problems = manifestProblems(manifest);
-  if (target === null || !TARGETS.includes(target)) {
-    problems.push('this platform has no opentune-beats release (Windows x64 and macOS universal2 only)');
-  } else if (!isObject(platform)) {
-    problems.push(`the manifest has no asset for ${target}`);
-  }
-  if (!MODELS.includes(model)) problems.push(`--model must be final or small (found ${String(model)})`);
-  if (home === null)
-    problems.push(
-      'there is no data folder for the analyzer: set CLAUDE_PLUGIN_DATA (the plugin does this) or OPENTUNE_BEATS_HOME',
-    );
-  if (safe.released !== true) {
-    problems.push(
-      `the ${String(safe.releaseTag)} release of ${String(safe.repository)} is not published yet, and its ` +
-        'sha256 values are not known; nothing can be downloaded or installed until the release exists and ' +
-        'manifest.json is updated with its hashes',
-    );
+  // A usable installation is all there is to do, whatever the state of the release is: the release
+  // only matters for a download, and nothing is downloaded when the analyzer is already here. The
+  // problems below are about a download, so an installation has none.
+  const installed = existingInstall({ manifest: safe, home, target, model });
+  const problems = [];
+  if (installed === null) {
+    problems.push(...manifestProblems(manifest));
+    if (target === null || !TARGETS.includes(target)) {
+      problems.push('this platform has no opentune-beats release (Windows x64 and macOS universal2 only)');
+    } else if (!isObject(platform)) {
+      problems.push(`the manifest has no asset for ${target}`);
+    }
+    if (!MODELS.includes(model)) problems.push(`--model must be final or small (found ${String(model)})`);
+    if (home === null)
+      problems.push(
+        'there is no data folder for the analyzer: set CLAUDE_PLUGIN_DATA (the plugin does this) or OPENTUNE_BEATS_HOME',
+      );
+    if (safe.released !== true) {
+      problems.push(
+        `the ${String(safe.releaseTag)} release of ${String(safe.repository)} is not published yet, and its ` +
+          'sha256 values are not known; nothing can be downloaded or installed until the release exists and ' +
+          'manifest.json is updated with its hashes',
+      );
+    }
   }
   const assets = [];
   if (isObject(platform) && isObject(models.mel) && isObject(models[model])) {
@@ -351,12 +361,29 @@ export function installPlan({ manifest, target = detectTarget(), model = 'final'
     assets,
     totalBytes,
     otherModel: { name: other, totalBytes: otherTotal },
+    installed,
     problems,
   };
 }
 
+/** What `install` says when the analyzer is already installed: nothing to download, nothing to agree to. */
+function formatInstalled(installed, model) {
+  const present = Object.entries(installed.models)
+    .filter(([, here]) => here)
+    .map(([name]) => name);
+  return (
+    'beat-grid install plan: already installed, nothing to download (and nothing to ask the user):\n' +
+    `  Tool      : ${installed.tool} ${installed.version} (${installed.target})\n` +
+    `  Folder    : ${installed.dir}\n` +
+    `  Models    : ${present.join(', ')} (the requested model is ${model})\n` +
+    'Nothing was downloaded and nothing was changed. Skip the install and go on with the next step; the state of ' +
+    'the release does not matter. To install again, delete the folder first.\n'
+  );
+}
+
 /** The plan as text for the user, before any consent; fixed wording, no remote text. */
 export function formatPlan(plan) {
+  if (plan.installed !== null && plan.installed !== undefined) return formatInstalled(plan.installed, plan.model);
   const lines = ['beat-grid install plan (nothing has been downloaded):'];
   lines.push(`  Tool      : ${plan.tool} ${plan.version}`);
   lines.push(`  Licence   : ${plan.license}. ${plan.licenseNote ?? ''}`.trimEnd());
@@ -778,6 +805,30 @@ function modelsIn(dir) {
 }
 
 /**
+ * The usable installation of the manifest's version for `target` in `home`, or null: the program is there
+ * and so are the mel model and `model`. These are the facts `status` reports (installed, models), so the
+ * install plan and `status` never disagree about whether the analyzer is installed.
+ */
+export function existingInstall({ manifest, home, target, model }) {
+  if (home === null || typeof manifest?.version !== 'string' || typeof manifest.tool !== 'string') return null;
+  if (target === null || !TARGETS.includes(target)) return null;
+  const found = currentInstallation(home, manifest, target);
+  if (found === null) return null;
+  const models = modelsIn(found.dir);
+  if (!models.mel || models[model] !== true) return null;
+  const metadata = readInstallMetadata(found.dir);
+  return {
+    tool: 'opentune-beats',
+    version: manifest.version,
+    target,
+    dir: found.dir,
+    executable: found.executable,
+    models,
+    installedModel: typeof metadata?.model === 'string' ? metadata.model : null,
+  };
+}
+
+/**
  * Downloads, verifies, extracts and installs the analyzer, then checks `--version`. The previous
  * installation of the same version stays until the new one passes the check; a failure removes the
  * new folder and puts the old one back.
@@ -1064,11 +1115,14 @@ export function status({
       Number(manifest.models?.small?.approxBytes ?? 0);
     base.download = { finalApproxBytes: finalBytes, smallApproxBytes: smallBytes };
   }
-  if (manifest.released !== true)
-    base.notes.push(
-      `the ${String(manifest.releaseTag)} release of ${String(manifest.repository)} is not published yet; install ` +
-        'refuses until it is and the manifest carries its sha256 values',
-    );
+  // Only worth saying when there is nothing installed to use: an installed analyzer does not need the release.
+  const unreleased =
+    manifest.released === true
+      ? []
+      : [
+          `the ${String(manifest.releaseTag)} release of ${String(manifest.repository)} is not published yet; install ` +
+            'refuses until it is and the manifest carries its sha256 values',
+        ];
   let homeInfo;
   if (typeof homeOption === 'string' && homeOption.trim() !== '' && unusableHomeOption(homeOption))
     base.notes.push(
@@ -1080,6 +1134,7 @@ export function status({
     if (error instanceof BeatGridError) {
       base.homeError = error.detail;
       base.notes.push(error.detail);
+      base.notes.unshift(...unreleased);
       return base;
     }
     throw error;
@@ -1115,6 +1170,8 @@ export function status({
     base.installed = true;
     base.current = current;
     base.models = current.models;
+  } else {
+    base.notes.unshift(...unreleased);
   }
   return base;
 }
@@ -2307,6 +2364,23 @@ export async function main(
       const plan = installPlan({ manifest: loadedManifest, target, model, home });
       if (parsed.options.yes !== true) {
         out(formatPlan(plan));
+        return EXIT.OK;
+      }
+      if (plan.installed !== null) {
+        // Nothing to download and nothing to replace, whatever the state of the release is.
+        err('  already installed; nothing was downloaded or changed\n');
+        writeJson(out, {
+          schemaVersion: 1,
+          ok: true,
+          command: 'install',
+          alreadyInstalled: true,
+          dir: plan.installed.dir,
+          executable: plan.installed.executable,
+          version: plan.installed.version,
+          model,
+          models: plan.installed.models,
+          replaced: false,
+        });
         return EXIT.OK;
       }
       const resolved = dataHome(env, homeOption);

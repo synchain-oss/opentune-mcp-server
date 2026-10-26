@@ -45,7 +45,20 @@ Do not use it for pitch, key or tuning questions; use `tuning-workflow` and `che
 those. Do not use it when the user already gave exact times or a click track: `opentune_edit_timing`
 takes those directly.
 
-## Before the first run: ask for consent (required)
+## First check whether the analyzer is installed
+
+Run `status` before anything else. It changes nothing, and it says whether the analyzer is installed,
+its version and folder, and which models it has:
+
+`node "${CLAUDE_SKILL_DIR}/scripts/beat-grid.mjs" status --home "${CLAUDE_PLUGIN_DATA}"`
+
+- `installed: true` and the model you will use is in `models` (`final` by default, `small` with
+  `--model small`): the analyzer is here. **Skip the rest of this section**: do not run `install`, do not
+  ask for consent, and do not say anything about a release; go on to "Get a grid". Whether the
+  analyzer's release is published does not matter once it is installed.
+- `installed: false`, or the model is missing: go on with the consent below.
+
+## Not installed: ask for consent (required)
 
 The first run downloads the analyzer program and one model, which the user did not ask for. Tell the
 user the size and the licence, and wait for a yes. Never start the download on your own.
@@ -53,7 +66,8 @@ user the size and the licence, and wait for a yes. Never start the download on y
 1. Run the plan (it downloads and changes nothing):
    `node "${CLAUDE_SKILL_DIR}/scripts/beat-grid.mjs" install --model final --home "${CLAUDE_PLUGIN_DATA}"`
    Add `--model small` if the user prefers the smaller download. The plan prints the folder, the
-   files, the sizes and the licence.
+   files, the sizes and the licence. (If it says "already installed", the analyzer is there after all:
+   skip the rest of this section.)
 2. Tell the user, in their language:
    - **Size:** about 85 to 90 MB for the program and the final model (about 18 MB with `--model small`).
    - **Licence:** the program and the model weights are MIT. Part of the model's training data is
@@ -67,13 +81,10 @@ user the size and the licence, and wait for a yes. Never start the download on y
    and checks `--version`; a failure removes the new folder and keeps the previous version. Report what
    it installed.
 
-If the plan or `--yes` says the release is not published yet, stop and tell the user: the tool is
-not available in this version of the skill, and nothing was downloaded. Do not try other URLs,
-other versions or a checksum you guessed.
-
-`status` says whether the analyzer is installed, its version and folder, and which models it has:
-
-`node "${CLAUDE_SKILL_DIR}/scripts/beat-grid.mjs" status --home "${CLAUDE_PLUGIN_DATA}"`
+If the analyzer is **not installed** and the plan or `--yes` says the release is not published yet,
+stop and tell the user: the tool is not available in this version of the skill, and nothing was
+downloaded. Do not try other URLs, other versions or a checksum you guessed. (This applies only when
+nothing is installed; with an installed analyzer the release state is irrelevant.)
 
 ## Get a grid
 
@@ -223,5 +234,7 @@ call that restores the old values.
   `opentune_edit_timing` moves handles, so a long note next to a moved handle is stretched. Listen
   before and after, and undo what sounds worse.
 - The analyzer is Windows x64 and macOS universal2 only. On any other platform say so and stop.
-- The release of `opentune-beats` is not published yet. Until it is, `install --yes` refuses; say so
-  and offer to work from a BPM, click or MIDI grid the user provides instead.
+- If the analyzer is not installed (`status` says `installed: false`) and the release of
+  `opentune-beats` is not published yet, `install --yes` refuses; say so and offer to work from a BPM,
+  click or MIDI grid the user provides instead. An analyzer that is already installed works
+  whatever the release state is.

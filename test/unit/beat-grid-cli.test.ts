@@ -389,4 +389,175 @@ describe('SKILL.md', () => {
     expect(text).toContain('homeSource');
     expect(text).toContain('--help');
   });
+
+  it('runs status before install, and skips the install section when the analyzer is installed', () => {
+    const names = commandLines().map((command) => argvOf(command)[0]);
+    expect(names.indexOf('status')).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf('status')).toBeLessThan(names.indexOf('install'));
+    const firstStatus = text.indexOf('beat-grid.mjs" status');
+    const firstInstall = text.indexOf('beat-grid.mjs" install');
+    expect(firstStatus).toBeGreaterThan(0);
+    expect(firstStatus).toBeLessThan(firstInstall);
+    // The step that comes first says to skip everything about installing when `status` says installed.
+    const before = text.slice(0, firstInstall);
+    expect(before).toMatch(/installed: true/);
+    expect(before).toMatch(/Skip the rest of this section/);
+    expect(before).toMatch(/do not run `install`/);
+  });
+
+  it('stops for an unpublished release only when nothing is installed', () => {
+    const matches = [...text.matchAll(/not published yet/g)];
+    expect(matches.length).toBeGreaterThanOrEqual(2);
+    for (const match of matches) {
+      const around = text.slice(Math.max(0, match.index - 260), match.index + 260);
+      expect(around, around).toMatch(/not installed|nothing is installed|installed: false/);
+    }
+    // A reader who knows the analyzer is installed is told the release state does not matter.
+    expect(text).toMatch(/release state is irrelevant|whatever the release state is|does not matter/);
+  });
+});
+
+describe('an analyzer that is already installed', () => {
+  const { loadManifest } = beatGridModule as unknown as { loadManifest: () => Json };
+  const manifest = loadManifest();
+  const version = String(manifest.version);
+  const winDir = `opentune-beats-${version}-win-x64`;
+
+  /** A home with an installation of the pinned version; `models` are the model files that exist. */
+  function installedHome(models: string[] = ['mel_spectrogram.onnx', 'beat_this_final.onnx']): string {
+    const home = tempDir();
+    const dir = path.join(home, 'bin', winDir);
+    fs.mkdirSync(path.join(dir, 'models'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'opentune-beats.exe'), 'program');
+    for (const model of models) fs.writeFileSync(path.join(dir, 'models', model), model);
+    fs.writeFileSync(path.join(dir, 'install.json'), JSON.stringify({ version, model: 'final' }));
+    return home;
+  }
+
+  const listing = (folder: string): string[] =>
+    fs
+      .readdirSync(folder, { recursive: true, withFileTypes: true })
+      .map((entry) => path.join(entry.parentPath, entry.name))
+      .sort();
+
+  async function onWindows(argv: string[], fetched: string[] = []) {
+    let out = '';
+    let err = '';
+    const code = await main(argv, {
+      env: {},
+      platform: 'win32',
+      arch: 'x64',
+      out: (text: string) => (out += text),
+      err: (text: string) => (err += text),
+      fetchImpl: (url: string) => {
+        fetched.push(url);
+        throw new Error('nothing may be downloaded');
+      },
+    });
+    let json: Json | null;
+    try {
+      json = JSON.parse(out) as Json;
+    } catch {
+      json = null;
+    }
+    return { code, out, err, json };
+  }
+
+  it('is built on a manifest that says the release is not published, so the cases below mean something', () => {
+    expect(manifest.released).toBe(false);
+  });
+
+  it('says already installed in the plan, with no Problems, and exits 0', async () => {
+    const home = installedHome();
+    const plan = await onWindows(['install', '--model', 'final', '--home', home]);
+    expect(plan.code).toBe(EXIT.OK);
+    expect(plan.out).toContain('already installed');
+    expect(plan.out).toContain(version);
+    expect(plan.out).toContain(winDir);
+    expect(plan.out).toContain('mel, final');
+    expect(plan.out).not.toContain('Problems');
+    expect(plan.out).not.toContain('not published');
+    expect(plan.out).not.toContain('Nothing can be installed');
+    expect(plan.out).not.toContain('Do not retry');
+    expect(plan.out).not.toContain('Download');
+  });
+
+  it('install --yes reports it and downloads nothing', async () => {
+    const home = installedHome();
+    const before = listing(home);
+    const fetched: string[] = [];
+    const result = await onWindows(['install', '--model', 'final', '--yes', '--home', home], fetched);
+    expect(result.code).toBe(EXIT.OK);
+    expect(result.json).toMatchObject({
+      ok: true,
+      command: 'install',
+      alreadyInstalled: true,
+      version,
+      model: 'final',
+      replaced: false,
+      models: { mel: true, final: true, small: false },
+    });
+    expect(result.err).toContain('already installed');
+    expect(fetched).toEqual([]);
+    // Nothing was written: no new folder, no temporary folder, no backup.
+    expect(listing(home)).toEqual(before);
+  });
+
+  it('judges the model asked for: the small one is missing, so the plan is still blocked by the release', async () => {
+    const home = installedHome();
+    const small = await onWindows(['install', '--model', 'small', '--home', home]);
+    expect(small.out).not.toContain('already installed');
+    expect(small.out).toContain('Problems');
+    expect(small.out).toContain('not published yet');
+    const refused = await onWindows(['install', '--model', 'small', '--yes', '--home', home]);
+    expect(refused.code).not.toBe(EXIT.OK);
+    expect((refused.json?.error as Json).code).toBe('INSTALL_REFUSED');
+    // With the small model there too, either request is already installed.
+    const both = installedHome(['mel_spectrogram.onnx', 'beat_this_final.onnx', 'beat_this_small.onnx']);
+    expect((await onWindows(['install', '--model', 'small', '--home', both])).out).toContain('already installed');
+  });
+
+  it('still blocks on an unpublished release when nothing is installed, and when the program or mel is missing', async () => {
+    const empty = tempDir();
+    const none = await onWindows(['install', '--model', 'final', '--home', empty]);
+    expect(none.code).toBe(EXIT.OK);
+    expect(none.out).not.toContain('already installed');
+    expect(none.out).toContain('Problems');
+    expect(none.out).toContain('not published yet');
+    expect(none.out).toContain('Nothing can be installed');
+    const refused = await onWindows(['install', '--model', 'final', '--yes', '--home', empty]);
+    expect(refused.code).not.toBe(EXIT.OK);
+    expect((refused.json?.error as Json).code).toBe('INSTALL_REFUSED');
+    expect(fs.existsSync(path.join(empty, 'bin'))).toBe(false);
+
+    // The models without the program, and the program without the mel model, are not an installation.
+    const noProgram = installedHome();
+    fs.rmSync(path.join(noProgram, 'bin', winDir, 'opentune-beats.exe'));
+    expect((await onWindows(['install', '--home', noProgram])).out).toContain('Problems');
+    const noMel = installedHome(['beat_this_final.onnx']);
+    expect((await onWindows(['install', '--home', noMel])).out).toContain('Problems');
+  });
+
+  it('does not take an installation of another version for the one the skill needs', async () => {
+    const home = installedHome();
+    fs.renameSync(path.join(home, 'bin', winDir), path.join(home, 'bin', 'opentune-beats-9.9.9-win-x64'));
+    const plan = await onWindows(['install', '--home', home]);
+    expect(plan.out).not.toContain('already installed');
+    expect(plan.out).toContain('Problems');
+  });
+
+  it('agrees with status: installed there is already installed here, and the release note is left out', async () => {
+    const home = installedHome();
+    const status = await onWindows(['status', '--home', home]);
+    expect(status.json).toMatchObject({ installed: true, models: { mel: true, final: true, small: false } });
+    expect((status.json?.notes as string[]).join(' ')).not.toContain('not published');
+
+    const empty = tempDir();
+    const unused = await onWindows(['status', '--home', empty]);
+    expect(unused.json?.installed).toBe(false);
+    expect((unused.json?.notes as string[]).join(' ')).toContain('not published yet');
+    // A missing data folder keeps the note too: there is no installation to use.
+    const nowhere = await onWindows(['status']);
+    expect((nowhere.json?.notes as string[]).join(' ')).toContain('not published yet');
+  });
 });

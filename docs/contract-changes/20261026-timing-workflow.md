@@ -96,6 +96,16 @@ still is its own OTCP request and its own undo step, applied in order with the g
   confident from 1.5). It reads 16, 24 and 32 bit PCM and 32 bit float WAV with Node's own modules. The skill asks the
   user only when the check is not confident.
 
+## Installed analyzer: `status` first
+
+An analyzer that was already installed was treated as missing while the manifest said the release was not published:
+the install plan listed Problems and said not to retry, and `SKILL.md` said to stop, so the beat-grid workflow was given
+up. `SKILL.md` now starts with `status` and skips the install section when `installed` is true and the model is there.
+`install` (the plan and `--yes`) reports `already installed` (version, folder, models; `--yes` adds
+`alreadyInstalled: true`), exits 0 and downloads nothing when the program and the models asked for are there, without
+listing Problems; the release state only blocks an install when nothing is installed. `status` leaves out the
+unpublished-release note for an installed analyzer.
+
 ## Security: `allowed-tools` removed from the skill
 
 `SKILL.md` had an `allowed-tools` line. While the skill is loaded, Claude Code lets the tools it lists run without asking,
