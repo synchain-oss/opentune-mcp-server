@@ -41,12 +41,12 @@
       "contents": []
     },
     "tokens": {
-      "arrangementRevision": "a35",
+      "arrangementRevision": "a31",
       "contents": [],
       "placements": [
         {
           "placementId": "p:01234567:0:3",
-          "geometryHash": "h29"
+          "geometryHash": "h26"
         }
       ]
     },
@@ -112,7 +112,7 @@
         }
       }
     ],
-    "arrangement_revision": "ar1.YTM1",
+    "arrangement_revision": "ar1.YTMx",
     "clip_ids": {
       "created": [],
       "removed": []

@@ -190,7 +190,7 @@ export const getSettingsTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. ' +
     'sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, ' +
-    'pitch model, reference alignment mode, experimental features, language, onboarding shown, options: the ' +
+    'pitch model, experimental features, language, onboarding shown, options: the ' +
     'values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available ' +
     'values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log ' +
     '(OpenTune log lines; only when asked). Default: all but log. Read-only.',

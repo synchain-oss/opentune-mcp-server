@@ -5,15 +5,12 @@
 // content.editNotes and content.autoTune (spec/otcp/v1/PROTOCOL.md sections 10, 11 and 13 to 15).
 // Every edit changes the notes, key or pitch shift of the model for real, so reads and the undo
 // history see it; a note edit, a pitch shift and AUTO with ranges are one undo step each, while a
-// key change and notesOnly have no undo entry, as in the UI. AUTO's reference mode runs as a job that
-// aligns the notes to the clip the placement is bound to.
+// key change and notesOnly have no undo entry, as in the UI.
 
 import { checkNotBusy, contentLabel, envelope, type Handler, type MethodContext } from './context.js';
 import { refuse } from './errors.js';
-import { jobStartedResult } from './job-reply.js';
 import { DEFAULT_NOTE_PARAMS, DETECTED_KEY, sameJson, type ContentRec, type KeyRec, type NoteRec } from './model.js';
 import { DEFAULT_NOTE_SPLIT_CENTS, nearestInScale, noteName, segmentDetected } from './music.js';
-import { alignedNotes, alignmentDriver, boundReference, computeAlignment, requireReadyPair } from './reference.js';
 import {
   commit,
   expectKeyRevision,
@@ -387,62 +384,10 @@ function planNotesOnly(content: ContentRec, used: GeneratorParams): Plan {
   };
 }
 
-/** AUTO in mode reference: a job that computes the alignment data if needed and aligns the whole content (one undo step). */
-function autoTuneReference(context: MethodContext, content: ContentRec) {
-  const { world, params } = context;
-  expectRevision(content, params.expectedRevision);
-  const placement = world.placement(String(params.placementId));
-  if (placement.content !== content) {
-    throw refuse('INVALID_ARGUMENT', 'placement_content_mismatch', 'the placement does not show the content');
-  }
-  const reference = boundReference(placement);
-  requireReadyPair(placement, reference);
-  const members = (noteCount: unknown, omitted: Listing['omitted']) => ({
-    mode: 'reference',
-    keyUsed: null,
-    paramsUsed: null,
-    noteCount,
-    omittedCount: omitted,
-  });
-  const epoch = world.epoch;
-  const job = context.jobs.start(
-    { kind: 'referenceAnalysis' },
-    alignmentDriver(
-      world,
-      () => [placement, placement.reference],
-      () => {
-        // What the call checked can have changed while the job ran: check again, in the same order.
-        if (world.epoch !== epoch || world.placements.get(placement.serial) !== placement) {
-          throw refuse('NOT_FOUND', 'unknown_handle', 'the placement was removed before the job ran');
-        }
-        checkNotBusy(context);
-        requireReady(content);
-        const bound = boundReference(placement);
-        requireReadyPair(placement, bound);
-        // Just before it aligns, the job compares the token the call checked with the content's current one, as an
-        // export does before it renames (PROTOCOL.md section 12.6 rule 5), and before it stores alignment data:
-        // a job that fails stores none (rule 4).
-        expectRevision(content, params.expectedRevision);
-        computeAlignment(world, placement, bound);
-        const notes = alignedNotes(world, placement, bound);
-        const plan: Plan = { notes, changed: changesOf(content.notes, notes), removed: [], created: [], warnings: [] };
-        const before = content.notes.length;
-        return writeNotes(context, content, plan, {
-          dryRun: false,
-          undo: AUTO_TUNE,
-          extra: (omitted) => members({ before, after: notes.length }, omitted),
-        });
-      },
-    ),
-  );
-  return jobStartedResult(world, job, members(null, { changes: 0, created: 0, removed: 0 }));
-}
-
 const autoTune: Handler = (context) => {
   const { params } = context;
   const mode = String(params.mode);
   const content = open(context);
-  if (mode === 'reference') return autoTuneReference(context, content);
   expectRevision(content, params.expectedRevision);
   const given = (params.params ?? {}) as Partial<GeneratorParams>;
   const used: GeneratorParams = {

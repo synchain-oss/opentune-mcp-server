@@ -41,8 +41,7 @@ export interface OtcpSpec {
   /** Reason codes by `<scope>/<code>`, each with its own JSON-RPC code or null. */
   readonly reasons: ReadonlyMap<string, number | null>;
   /**
-   * The methods that start each job kind (x-otcp.startsJob). A kind can have more than one: both
-   * content.analyzeReference and content.autoTune (mode reference) start a referenceAnalysis job,
+   * The methods that start each job kind (x-otcp.startsJob). A kind can have more than one starter,
    * and each defines the result of the job it starts.
    */
   readonly jobStarters: ReadonlyMap<string, readonly string[]>;

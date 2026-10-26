@@ -332,7 +332,7 @@
   {
     "name": "opentune_autotune_range",
     "title": "Auto-tune a range of an OpenTune clip",
-    "description": "OpenTune (audio vocal pitch editor): runs AUTO on a clip with an explicit mode. regenerate rebuilds notes in ranges from the sung pitch, snapped to scale; snapNotes moves existing note targets to scale; notesOnly replaces ALL notes, cannot be undone, needs replace_edited_notes true; reference aligns to the reference clip (needs reference.v1). Ranges: source-audio seconds, default whole clip, max 16, one undo step. Unset parameters use generator defaults, not window knobs. retune_speed 0..1: 0 keeps natural movement, 1 sounds mechanical.",
+    "description": "OpenTune (audio vocal pitch editor): runs AUTO on a clip with an explicit mode. regenerate rebuilds notes in ranges from the sung pitch, snapped to scale; snapNotes moves existing note targets to scale; notesOnly replaces ALL notes, cannot be undone, needs replace_edited_notes true. Ranges: source-audio seconds, default whole clip, max 16, one undo step. Unset parameters use generator defaults, not window knobs. retune_speed 0..1: 0 keeps natural movement, 1 sounds mechanical.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -353,8 +353,7 @@
           "enum": [
             "regenerate",
             "snapNotes",
-            "notesOnly",
-            "reference"
+            "notesOnly"
           ]
         },
         "ranges": {
@@ -1598,7 +1597,7 @@
   {
     "name": "opentune_get_clip_details",
     "title": "Get OpenTune clip details",
-    "description": "OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), the reference binding, and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1606,12 +1605,12 @@
         "clip": {
           "type": "string",
           "pattern": "^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
-          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...). Render, reference and the AUTO mode are taken through the placement; a content id uses its first placement."
+          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...). Render and the AUTO mode are taken through the placement; a content id uses its first placement."
         },
         "sections": {
           "description": "Parts to return. Default: all of them.",
           "minItems": 1,
-          "maxItems": 7,
+          "maxItems": 6,
           "type": "array",
           "items": {
             "type": "string",
@@ -1621,7 +1620,6 @@
               "analysis",
               "render",
               "time_grid",
-              "reference",
               "auto_modes"
             ]
           }
@@ -1647,7 +1645,7 @@
   {
     "name": "opentune_get_settings",
     "title": "Get OpenTune settings",
-    "description": "OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, reference alignment mode, experimental features, language, onboarding shown, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, experimental features, language, onboarding shown, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1692,7 +1690,7 @@
   {
     "name": "opentune_set_settings",
     "title": "Set OpenTune settings",
-    "description": "OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, f0_model, reference_align_mode; values of vocoder_weight and f0_model: see options of opentune_get_settings. audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.",
+    "description": "OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, f0_model; values of vocoder_weight and f0_model: see options of opentune_get_settings. audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1720,7 +1718,7 @@
               "type": "boolean"
             },
             "experimental_features": {
-              "description": "Show or hide experimental features such as reference binding.",
+              "description": "Show or hide experimental features.",
               "type": "boolean"
             },
             "vocoder_weight": {
@@ -1742,14 +1740,6 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64
-            },
-            "reference_align_mode": {
-              "description": "Reference alignment mode of AUTO Ref, an experimental feature.",
-              "type": "string",
-              "enum": [
-                "standardAuto",
-                "game"
-              ]
             }
           },
           "additionalProperties": false
@@ -2111,7 +2101,7 @@
   {
     "name": "opentune_edit_arrangement",
     "title": "Edit OpenTune clips on the timeline",
-    "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade, set_reference (experimental) run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy).",
+    "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy).",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2291,27 +2281,6 @@
                 "required": [
                   "op",
                   "clips"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "op": {
-                    "type": "string",
-                    "const": "set_reference"
-                  },
-                  "clip": {
-                    "type": "string"
-                  },
-                  "reference_clip": {
-                    "description": "An overlapping clip; leave out to unbind.",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "op",
-                  "clip"
                 ],
                 "additionalProperties": false
               },
@@ -2816,7 +2785,7 @@
   {
     "name": "opentune_manage_ui",
     "title": "Manage OpenTune window state",
-    "description": "OpenTune (audio vocal pitch editor): op focus_clip selects a clip (placement id), optionally opening it in the piano roll. Selecting can make OpenTune generate the clip notes (no undo entry, project marked changed), queue reference analysis and change the transport-bar scale; dry_run predicts this, and a real result names it first. dismiss_dialogs closes all dialogs like Escape; a dialog that commits its value on close (track colour) is refused unless accept_commit is true, which only the user may allow. dismiss_onboarding marks the first-run onboarding as shown (global, cannot be undone).",
+    "description": "OpenTune (audio vocal pitch editor): op focus_clip selects a clip (placement id), optionally opening it in the piano roll. Selecting can make OpenTune generate the clip notes (no undo entry, project marked changed) and change the transport-bar scale; dry_run predicts this, and a real result names it first. dismiss_dialogs closes all dialogs like Escape; a dialog that commits its value on close (track colour) is refused unless accept_commit is true, which only the user may allow. dismiss_onboarding marks the first-run onboarding as shown (global, cannot be undone).",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",

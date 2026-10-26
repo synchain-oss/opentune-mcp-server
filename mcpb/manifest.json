@@ -60,7 +60,7 @@
     },
     {
       "name": "opentune_autotune_range",
-      "description": "OpenTune (audio vocal pitch editor): runs AUTO on a clip with an explicit mode. regenerate rebuilds notes in ranges from the sung pitch, snapped to scale; snapNotes moves existing note targets to scale; notesOnly replaces ALL notes, cannot be undone, needs replace_edited_notes true; reference aligns to the reference clip (needs reference.v1). Ranges: source-audio seconds, default whole clip, max 16, one undo step. Unset parameters use generator defaults, not window knobs. retune_speed 0..1: 0 keeps natural movement, 1 sounds mechanical."
+      "description": "OpenTune (audio vocal pitch editor): runs AUTO on a clip with an explicit mode. regenerate rebuilds notes in ranges from the sung pitch, snapped to scale; snapNotes moves existing note targets to scale; notesOnly replaces ALL notes, cannot be undone, needs replace_edited_notes true. Ranges: source-audio seconds, default whole clip, max 16, one undo step. Unset parameters use generator defaults, not window knobs. retune_speed 0..1: 0 keeps natural movement, 1 sounds mechanical."
     },
     {
       "name": "opentune_edit_notes",
@@ -92,15 +92,15 @@
     },
     {
       "name": "opentune_get_clip_details",
-      "description": "OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), the reference binding, and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only."
+      "description": "OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only."
     },
     {
       "name": "opentune_get_settings",
-      "description": "OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, reference alignment mode, experimental features, language, onboarding shown, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only."
+      "description": "OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, experimental features, language, onboarding shown, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only."
     },
     {
       "name": "opentune_set_settings",
-      "description": "OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, f0_model, reference_align_mode; values of vocoder_weight and f0_model: see options of opentune_get_settings. audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them."
+      "description": "OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, f0_model; values of vocoder_weight and f0_model: see options of opentune_get_settings. audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them."
     },
     {
       "name": "opentune_estimate_key",
@@ -120,7 +120,7 @@
     },
     {
       "name": "opentune_edit_arrangement",
-      "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade, set_reference (experimental) run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy)."
+      "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy)."
     },
     {
       "name": "opentune_set_tracks",
@@ -136,7 +136,7 @@
     },
     {
       "name": "opentune_manage_ui",
-      "description": "OpenTune (audio vocal pitch editor): op focus_clip selects a clip (placement id), optionally opening it in the piano roll. Selecting can make OpenTune generate the clip notes (no undo entry, project marked changed), queue reference analysis and change the transport-bar scale; dry_run predicts this, and a real result names it first. dismiss_dialogs closes all dialogs like Escape; a dialog that commits its value on close (track colour) is refused unless accept_commit is true, which only the user may allow. dismiss_onboarding marks the first-run onboarding as shown (global, cannot be undone)."
+      "description": "OpenTune (audio vocal pitch editor): op focus_clip selects a clip (placement id), optionally opening it in the piano roll. Selecting can make OpenTune generate the clip notes (no undo entry, project marked changed) and change the transport-bar scale; dry_run predicts this, and a real result names it first. dismiss_dialogs closes all dialogs like Escape; a dialog that commits its value on close (track colour) is refused unless accept_commit is true, which only the user may allow. dismiss_onboarding marks the first-run onboarding as shown (global, cannot be undone)."
     }
   ],
   "tools_generated": false,

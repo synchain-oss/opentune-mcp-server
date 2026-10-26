@@ -45,7 +45,6 @@ import {
   type RequestId,
 } from './protocol.js';
 import { readHandlers } from './reads.js';
-import { referenceHandlers } from './reference.js';
 import { timingHandlers } from './timing.js';
 import { trackHandlers } from './tracks.js';
 import { transportHandlers } from './transport.js';
@@ -83,7 +82,6 @@ export const MOCK_CAPABILITIES: readonly string[] = [
   'transport.v1',
   'ui.bridge',
   'ui.onboardingClose',
-  'reference.v1',
   'project.io',
   'prefs.write',
   'audio.device',
@@ -177,10 +175,6 @@ export interface OtcpMock {
   removeClip(placementId: string): void;
   /** The next `times` attempts to render a content fail, so that an export of it fails (PROTOCOL.md section 19 rule 6). */
   failRender(contentId: string, times?: number): void;
-  /** A reference analysis that has to compute alignment data ends as `fault` says (null: it completes). */
-  setReferenceFault(fault: 'stalled' | 'timeout' | 'failed' | null): void;
-  /** The alignment data of every content is gone, so that a reference analysis has to compute it again. */
-  forgetAlignment(): void;
   /**
    * `stuck`: a reconfiguration of the vocoder never finishes, so that a prefsApply job passes its wait limit and fails
    * with MODEL_UNAVAILABLE(vocoder_not_ready); `loadFails`: the vocoder can load only the weight and rendering priority
@@ -364,7 +358,6 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       vocoderReady: world.vocoder.ready,
       vocoderReconfiguring: world.vocoder.reconfiguring,
       experimentalFeatures: world.prefs.experimentalFeatures,
-      referenceAlignMode: world.prefs.referenceAlignMode,
       nullReasons: {
         backend: 'unavailable',
         ...(carries(world.prefs.vocoderWeight) ? {} : { vocoderWeight: 'unavailable' }),
@@ -440,7 +433,6 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     ...arrangementHandlers,
     ...transportHandlers,
     ...uiHandlers,
-    ...referenceHandlers,
     ...prefsHandlers,
     ...audioHandlers,
     ...projects.handlers,
@@ -773,12 +765,6 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     failRender(contentId, times = 2) {
       exporter.failRender(world.content(contentId), times);
-    },
-    setReferenceFault(fault) {
-      world.referenceFault = fault;
-    },
-    forgetAlignment() {
-      for (const content of world.contents.values()) content.alignmentReady = false;
     },
     setVocoderFault(fault) {
       world.setVocoderFault(fault);

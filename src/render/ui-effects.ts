@@ -63,10 +63,6 @@ const UNKNOWN = HIDDEN('unknown', 'Look at the OpenTune window.');
 
 const SIDE_EFFECT_WHERE = table<Where & { effect: string }>({
   notesGenerated: { ...HIDDEN('piano roll', 'Open the clip in the piano roll.'), effect: 'notes generated' },
-  referenceAnalysisQueued: {
-    ...HIDDEN('background work', 'The analysis runs in the background.'),
-    effect: 'reference analysis queued',
-  },
   reRenderQueued: {
     ...HIDDEN('background work', 'Playback and export use the new result once rendering is done.'),
     effect: 'rendering queued again',

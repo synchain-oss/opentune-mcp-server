@@ -2,11 +2,9 @@
 // SPDX-License-Identifier: MIT
 
 // opentune_get_clip_details: the state of one clip besides its notes: key, pitch shift, the pitch
-// analysis and its last failure, whether the audible render is current, the time grid, the
-// reference binding and the AUTO modes. The result carries the clip_revision, which the write tools
-// take as expected_revision. The AUTO fields are OTCP's; when the clip still has a reference
-// binding that the instance cannot act on, the result says what the specification leaves open
-// instead of inventing a field (a notice of this server, not an OTCP warning).
+// analysis and its last failure, whether the audible render is current, the time grid and the AUTO
+// modes. The result carries the clip_revision, which the write tools take as expected_revision. The
+// AUTO fields are OTCP's.
 
 import { z } from 'zod';
 
@@ -22,15 +20,7 @@ const NAME_RE = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 /** Most time handles one result lists; handleCount says how many there are. */
 export const MAX_HANDLES = 200;
 
-export const CLIP_SECTIONS = [
-  'key',
-  'pitch_shift',
-  'analysis',
-  'render',
-  'time_grid',
-  'reference',
-  'auto_modes',
-] as const;
+export const CLIP_SECTIONS = ['key', 'pitch_shift', 'analysis', 'render', 'time_grid', 'auto_modes'] as const;
 type Section = (typeof CLIP_SECTIONS)[number];
 
 /** The member of content.getDetails that carries each section. */
@@ -40,7 +30,6 @@ const MEMBER: Readonly<Record<Section, string>> = {
   analysis: 'analysis',
   render: 'render',
   time_grid: 'timeGrid',
-  reference: 'reference',
   auto_modes: 'autoModes',
 };
 
@@ -99,28 +88,6 @@ export async function getClipDetails(ctx: ToolContext, args: GetClipDetailsArgs)
       }
     }
 
-    // MCP-layer notices, not OTCP warnings: the code is not in registry/warnings.json and the list is
-    // not called warnings, so nothing treats it as an OTCP warning envelope.
-    const notices: Json[] = [];
-    const reference = isObject(details.reference) ? details.reference : null;
-    const autoModes = isObject(details.autoModes) ? details.autoModes : null;
-    if (
-      (wanted.has('reference') || wanted.has('auto_modes')) &&
-      reference !== null &&
-      typeof reference.referencePlacementId === 'string' &&
-      !session.hello.capabilities.includes('reference.v1')
-    ) {
-      notices.push({
-        code: 'RESIDUAL_REFERENCE_BINDING',
-        message:
-          'The clip still has a reference binding, but this OpenTune build does not report reference.v1, so ' +
-          'autoModes.uiButtonRuns does not take the binding into account. The specification does not say what ' +
-          'the AUTO button runs in this case: it may run AUTO Ref against the old binding. Do not rely on ' +
-          'uiButtonRuns here; name the mode explicitly in opentune_autotune_range, and tell the user to clear ' +
-          'the reference in the OpenTune window before they press AUTO.',
-      });
-    }
-
     const parts: string[] = [];
     const render = isObject(details.render) ? details.render : null;
     if (wanted.has('render') && render !== null && typeof render.current === 'boolean') {
@@ -136,18 +103,12 @@ export async function getClipDetails(ctx: ToolContext, args: GetClipDetailsArgs)
       const failure = trustedToken(analysis?.failure, NAME_RE);
       parts.push(`the pitch analysis state is ${f0State}${failure === null ? '' : ` (failed: ${failure})`}`);
     }
+    const autoModes = isObject(details.autoModes) ? details.autoModes : null;
     const mode = trustedToken(autoModes?.uiButtonRuns, NAME_RE);
-    if (wanted.has('auto_modes') && mode !== null) {
-      // With a leftover binding the value is not reliable; do not state it as a fact.
-      if (notices.length === 0) parts.push(`the AUTO button would run ${mode}`);
-      else parts.push('autoModes.uiButtonRuns is not reliable here (see notices)');
-    }
+    if (wanted.has('auto_modes') && mode !== null) parts.push(`the AUTO button would run ${mode}`);
     const summary =
-      (notices.length > 0
-        ? 'Read the details of the clip. Caution: a reference binding is left over, so the AUTO button may run ' +
-          'AUTO Ref and autoModes.uiButtonRuns cannot be relied on (see notices)'
-        : 'Read the details of the clip') +
-      (parts.length > 0 ? `${notices.length > 0 ? '; ' : ': '}${parts.join('; ')}` : '') +
+      'Read the details of the clip' +
+      (parts.length > 0 ? `: ${parts.join('; ')}` : '') +
       '. Times are in seconds; clip_revision can be passed as expected_revision to a write tool.';
 
     return {
@@ -160,7 +121,6 @@ export async function getClipDetails(ctx: ToolContext, args: GetClipDetailsArgs)
         durationSec: details.durationSec ?? null,
         clip_revision: revision,
         ...members,
-        ...(notices.length > 0 ? { notices } : {}),
         derived: Array.isArray(details.derived) ? details.derived : [],
         ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}),
       },
@@ -174,16 +134,16 @@ export const getClipDetailsTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones ' +
     'and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid ' +
-    'handles (seconds, content and output clock), the reference binding, and the AUTO modes (which one the AUTO ' +
-    'button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; ' +
+    'handles (seconds, content and output clock), and the AUTO modes (which one the AUTO button runs, which ' +
+    'can be run). Returns clip_revision for expected_revision. sections limits the result; ' +
     'default all. Read-only.',
   inputSchema: z.strictObject({
     clip: z
       .string()
       .regex(CLIP_RE)
       .describe(
-        'Clip placement id (p:...) from opentune_get_project, or a content id (c:...). Render, reference and ' +
-          'the AUTO mode are taken through the placement; a content id uses its first placement.',
+        'Clip placement id (p:...) from opentune_get_project, or a content id (c:...). Render and the AUTO mode ' +
+          'are taken through the placement; a content id uses its first placement.',
       ),
     sections: z
       .array(z.enum(CLIP_SECTIONS))

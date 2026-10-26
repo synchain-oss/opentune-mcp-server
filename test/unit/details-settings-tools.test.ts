@@ -3,8 +3,7 @@
 
 // opentune_get_clip_details and opentune_get_settings against the mock: every section, a missing
 // capability, a stale handle, the clip_revision that agrees with get_notes and works as the
-// expected_revision of a write tool, the residual reference binding, untrusted strings and the
-// output budget.
+// expected_revision of a write tool, untrusted strings and the output budget.
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -83,9 +82,9 @@ describe('opentune_get_clip_details', () => {
       analysis: { f0State: 'ready', failure: null },
       render: { current: true },
       timeGrid: { seeded: false, handleCount: 0, handles: [] },
-      reference: { referencePlacementId: null },
       autoModes: { uiButtonRuns: 'regenerate' },
     });
+    expect(out).not.toHaveProperty('reference');
     expect(out).not.toHaveProperty('asOf');
     expect(out).not.toHaveProperty('notices');
     expect(decodeClipRevision(out.clip_revision as string)).toEqual({
@@ -164,41 +163,6 @@ describe('opentune_get_clip_details', () => {
     const ids = mock.given({ clips: [clip()], withoutCapabilities: ['read.v1'] });
     const error = failure(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') }));
     expect(error).toMatchObject({ kind: 'UNSUPPORTED', reason: 'capability_missing' });
-  });
-
-  it('lists the reference mode when AUTO would run it, and names no warning', async () => {
-    const { mock, ctx } = await withMock();
-    const ids = mock.given({
-      clips: [clip({ bind: 'ref', startTimelineSec: 10 }), clip({ referenceClip: 'ref', startTimelineSec: 0 })],
-    });
-    const out = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') }));
-    expect(out.reference).toMatchObject({ referencePlacementId: ids['ref.placementId'] });
-    expect(out.autoModes).toMatchObject({ uiButtonRuns: 'reference' });
-    expect(out).not.toHaveProperty('notices');
-  });
-
-  it('warns about a residual reference binding when the instance does not report reference.v1', async () => {
-    const { mock, ctx } = await withMock();
-    const ids = mock.given({
-      clips: [clip({ bind: 'ref', startTimelineSec: 10 }), clip({ referenceClip: 'ref', startTimelineSec: 0 })],
-      withoutCapabilities: ['reference.v1'],
-    });
-    const out = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') }));
-    expect(out.reference).toMatchObject({ referencePlacementId: ids['ref.placementId'] });
-    expect(out.autoModes).toMatchObject({ uiButtonRuns: 'regenerate' });
-    const [notice] = out.notices as { code: string; message: string }[];
-    expect(notice?.code).toBe('RESIDUAL_REFERENCE_BINDING');
-    expect(notice?.message).toContain('AUTO Ref');
-    expect(out).not.toHaveProperty('warnings');
-    // The first sentence says the AUTO button may run AUTO Ref; it does not state the mode as a fact.
-    expect(out.summary).toMatch(
-      /^Read the details of the clip\. Caution: a reference binding is left over, so the AUTO button may run AUTO Ref and autoModes\.uiButtonRuns cannot be relied on/,
-    );
-    expect(out.summary).not.toContain('would run regenerate');
-    // Not asking for the sections that would show it leaves the warning out.
-    expect(
-      body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId'), sections: ['key'] })),
-    ).not.toHaveProperty('notices');
   });
 
   it.each(HOSTILE)('keeps an untrusted f0State, failure and uiButtonRuns out of the summary: %j', async (hostile) => {
@@ -438,17 +402,17 @@ describe('opentune_get_settings', () => {
     await hookCalls(ctx, (method, result) => {
       const processing = result.processing as Record<string, unknown> | undefined;
       if (processing === undefined) return;
-      if (method === 'session.info') Object.assign(processing, { referenceAlignMode: 'beat', renderingPriority: null });
+      if (method === 'session.info') Object.assign(processing, { f0Model: 'beat', renderingPriority: null });
       if (method === 'prefs.get') {
-        Object.assign(processing, { referenceAlignMode: null, renderingPriority: null });
-        processing.nullReasons = { referenceAlignMode: 'x', renderingPriority: 'unavailable_in_prefs' };
+        Object.assign(processing, { f0Model: null, renderingPriority: null });
+        processing.nullReasons = { f0Model: 'x', renderingPriority: 'unavailable_in_prefs' };
       }
     });
     const processing = body(await getSettings(ctx, { sections: ['processing'] })).processing as Record<string, unknown>;
-    expect(processing.referenceAlignMode).toBe('beat');
+    expect(processing.f0Model).toBe('beat');
     expect(processing.renderingPriority).toBeNull();
     expect(processing.nullReasons).toMatchObject({ renderingPriority: expect.any(String) as string });
-    expect(processing.nullReasons).not.toHaveProperty('referenceAlignMode');
+    expect(processing.nullReasons).not.toHaveProperty('f0Model');
   });
 
   it('without read.v1 returns the session.info values, with onboardingShown null and a reason', async () => {
@@ -465,7 +429,7 @@ describe('opentune_get_settings', () => {
     expect((processing.nullReasons as Record<string, unknown>).options).toBe('capability_missing:read.v1');
   });
 
-  it('reports the options of the vocoder weight, pitch model, rendering priority and alignment mode', async () => {
+  it('reports the options of the vocoder weight, pitch model and rendering priority', async () => {
     const { mock, ctx } = await withMock();
     mock.given({
       clips: [clip()],
@@ -478,7 +442,6 @@ describe('opentune_get_settings', () => {
       vocoderWeight: ['a.onnx', 'b.onnx'],
       f0Model: ['fcpe', 'rmvpe'],
       renderingPriority: ['gpuFirst', 'cpuFirst'],
-      referenceAlignMode: ['standardAuto', 'game'],
     });
     // Nothing is missing, so no reason is attached to the options.
     expect(processing.nullReasons ?? {}).not.toHaveProperty('options');

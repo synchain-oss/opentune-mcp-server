@@ -62,19 +62,19 @@
     ],
     "revisionDiff": {
       "arrangement": {
-        "before": "a38",
-        "after": "a40"
+        "before": "a34",
+        "after": "a36"
       },
       "trackState": null,
       "contents": []
     },
     "tokens": {
-      "arrangementRevision": "a40",
+      "arrangementRevision": "a36",
       "contents": [],
       "placements": [
         {
           "placementId": "p:01234567:0:6",
-          "geometryHash": "h39"
+          "geometryHash": "h35"
         }
       ]
     },
@@ -84,7 +84,7 @@
       "revert": {
         "method": "arrangement.edit",
         "params": {
-          "expectedArrangementRevision": "a40",
+          "expectedArrangementRevision": "a36",
           "ops": [
             {
               "op": "split",
@@ -182,7 +182,7 @@
         "revert": {
           "method": "arrangement.edit",
           "params": {
-            "expectedArrangementRevision": "a40",
+            "expectedArrangementRevision": "a36",
             "ops": [
               {
                 "op": "split",
@@ -195,7 +195,7 @@
         "restore": {
           "tool": "opentune_edit_arrangement",
           "arguments": {
-            "expected_revision": "ar1.YTQw",
+            "expected_revision": "ar1.YTM2",
             "ops": [
               {
                 "clip": "p:01234567:0:6",
@@ -207,7 +207,7 @@
         }
       }
     ],
-    "arrangement_revision": "ar1.YTQw",
+    "arrangement_revision": "ar1.YTM2",
     "clip_ids": {
       "created": [
         "p:01234567:0:6"

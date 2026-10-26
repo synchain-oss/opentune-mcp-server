@@ -661,7 +661,6 @@ export function createEffects(mode) {
           vocoderReady: true,
           vocoderReconfiguring: false,
           experimentalFeatures: false,
-          referenceAlignMode: null,
         },
       });
     }
@@ -674,7 +673,6 @@ export function createEffects(mode) {
         f0Model: 'fake',
         renderingPriority: 'gpuFirst',
         experimentalFeatures: false,
-        referenceAlignMode: 'standardAuto',
       };
       // An instance of an earlier release candidate does not report the options.
       if (mode !== 'effects-no-options') {
@@ -682,7 +680,6 @@ export function createEffects(mode) {
           vocoderWeight: weights,
           f0Model: ['fake'],
           renderingPriority: ['gpuFirst', 'cpuFirst'],
-          referenceAlignMode: ['standardAuto', 'game'],
         };
       }
       return ok(id, { processing, onboardingShown: true, language: 'en', recentProjects: [] });

@@ -181,7 +181,6 @@ export function copyPlacement(
     gainLinear: source.gainLinear,
     fadeInSec: source.fadeInSec,
     fadeOutSec: source.fadeOutSec,
-    reference: source.reference,
   });
 }
 

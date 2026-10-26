@@ -62,23 +62,23 @@
     ],
     "revisionDiff": {
       "arrangement": {
-        "before": "a35",
-        "after": "a38"
+        "before": "a31",
+        "after": "a34"
       },
       "trackState": null,
       "contents": []
     },
     "tokens": {
-      "arrangementRevision": "a38",
+      "arrangementRevision": "a34",
       "contents": [],
       "placements": [
         {
           "placementId": "p:01234567:0:4",
-          "geometryHash": "h36"
+          "geometryHash": "h32"
         },
         {
           "placementId": "p:01234567:0:5",
-          "geometryHash": "h37"
+          "geometryHash": "h33"
         }
       ]
     },
@@ -88,7 +88,7 @@
       "revert": {
         "method": "arrangement.edit",
         "params": {
-          "expectedArrangementRevision": "a38",
+          "expectedArrangementRevision": "a34",
           "ops": [
             {
               "op": "merge",
@@ -208,7 +208,7 @@
         "revert": {
           "method": "arrangement.edit",
           "params": {
-            "expectedArrangementRevision": "a38",
+            "expectedArrangementRevision": "a34",
             "ops": [
               {
                 "op": "merge",
@@ -221,7 +221,7 @@
         "restore": {
           "tool": "opentune_edit_arrangement",
           "arguments": {
-            "expected_revision": "ar1.YTM4",
+            "expected_revision": "ar1.YTM0",
             "ops": [
               {
                 "op": "merge",
@@ -233,7 +233,7 @@
         }
       }
     ],
-    "arrangement_revision": "ar1.YTM4",
+    "arrangement_revision": "ar1.YTM0",
     "clip_ids": {
       "created": [
         "p:01234567:0:4",

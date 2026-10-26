@@ -55,8 +55,8 @@
     ],
     "revisionDiff": {
       "arrangement": {
-        "before": "a40",
-        "after": "a50"
+        "before": "a36",
+        "after": "a45"
       },
       "trackState": null,
       "contents": [
@@ -65,50 +65,46 @@
           "changed": {
             "notes": {
               "before": null,
-              "after": "n41"
+              "after": "n37"
             },
             "pitch": {
               "before": null,
-              "after": "p42"
+              "after": "p38"
             },
             "content": {
               "before": null,
-              "after": "c43"
+              "after": "c39"
             },
             "grid": {
               "before": null,
-              "after": "g44"
+              "after": "g40"
             },
             "key": {
               "before": null,
-              "after": "k45"
+              "after": "k41"
             },
             "pitchShift": {
               "before": null,
-              "after": "s46"
-            },
-            "reference": {
-              "before": null,
-              "after": "f47"
+              "after": "s42"
             }
           }
         }
       ]
     },
     "tokens": {
-      "arrangementRevision": "a50",
+      "arrangementRevision": "a45",
       "contents": [
         {
           "contentId": "c:01234567:0:4",
-          "revision": "r48",
-          "gridRevision": "g44",
-          "keyRevision": "k45"
+          "revision": "r43",
+          "gridRevision": "g40",
+          "keyRevision": "k41"
         }
       ],
       "placements": [
         {
           "placementId": "p:01234567:0:7",
-          "geometryHash": "h49"
+          "geometryHash": "h44"
         }
       ]
     },
@@ -118,7 +114,7 @@
       "revert": {
         "method": "arrangement.edit",
         "params": {
-          "expectedArrangementRevision": "a50",
+          "expectedArrangementRevision": "a45",
           "ops": [
             {
               "op": "delete",
@@ -205,7 +201,7 @@
         "revert": {
           "method": "arrangement.edit",
           "params": {
-            "expectedArrangementRevision": "a50",
+            "expectedArrangementRevision": "a45",
             "ops": [
               {
                 "op": "delete",
@@ -220,7 +216,7 @@
         "restore": {
           "tool": "opentune_edit_arrangement",
           "arguments": {
-            "expected_revision": "ar1.YTUw",
+            "expected_revision": "ar1.YTQ1",
             "ops": [
               {
                 "op": "delete",
@@ -233,7 +229,7 @@
         }
       }
     ],
-    "arrangement_revision": "ar1.YTUw",
+    "arrangement_revision": "ar1.YTQ1",
     "clip_ids": {
       "created": [
         "p:01234567:0:7"

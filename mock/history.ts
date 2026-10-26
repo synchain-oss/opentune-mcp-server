@@ -68,35 +68,18 @@ function applyPatch(world: World, patch: Patch | null): Effect {
     const content = world.contents.get(patch.content.objectId);
     if (content !== undefined) restore(world, content, patch.content.snap, effect);
   }
-  for (const { serial, state, reference } of patch?.placements ?? []) {
+  for (const { serial, state } of patch?.placements ?? []) {
     const placement = world.placements.get(serial);
     if (placement === undefined) continue;
     const before = stateOf(placement);
-    const referenceBefore = placement.reference;
     const changed = applyState(world, placement, state);
-    // A reference clip that was deleted since is gone for good: the reference goes back as null on purpose,
-    // there is nothing left to point at.
-    const referenceAfter = reference === undefined ? referenceBefore : (world.placements.get(reference ?? -1) ?? null);
-    const referenceMoved = referenceAfter !== referenceBefore;
-    if (referenceMoved) {
-      placement.reference = referenceAfter;
-      world.touchArrangement();
-    }
-    if (changed.length === 0 && !referenceMoved) continue;
-    const fields: Record<string, unknown> = fieldChanges(before, stateOf(placement));
-    if (referenceMoved) {
-      fields.referencePlacementId = {
-        before: referenceBefore?.id ?? null,
-        after: referenceAfter?.id ?? null,
-        unit: null,
-      };
-    }
+    if (changed.length === 0) continue;
     effect.placements.push(placement);
     effect.changes.push({
       entity: 'placement',
       ref: { placementId: placement.id },
       label: placementLabel(world, placement),
-      fields,
+      fields: fieldChanges(before, stateOf(placement)),
     });
   }
   return effect;

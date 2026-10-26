@@ -3,7 +3,7 @@
 
 // opentune_edit_arrangement: clip edits on the timeline, as OpenTune's arrangement view makes them
 // (OTCP arrangement.edit and arrangement.copy, capability arrangement.v1). Times are on the timeline
-// clock, in seconds. One call is one request: move, trim, gain, fade and set_reference ops run in
+// clock, in seconds. One call is one request: move, trim, gain and fade ops run in
 // order as one undo step; split, merge and delete go alone, because OpenTune cannot undo them (it
 // frees objects its own undo entry needs, PROTOCOL.md section 15.4 rule 1); copy goes alone,
 // because it has no undo entry at all and undoing the rest would not take it back. Only the
@@ -54,11 +54,6 @@ const OP = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('split'), clip: CLIP, at_timeline_sec: SEC }),
   z.strictObject({ op: z.literal('merge'), leading_clip: CLIP, trailing_clip: CLIP }),
   z.strictObject({ op: z.literal('delete'), clips: CLIPS }),
-  z.strictObject({
-    op: z.literal('set_reference'),
-    clip: CLIP,
-    reference_clip: CLIP.optional().describe('An overlapping clip; leave out to unbind.'),
-  }),
   z.strictObject({
     op: z.literal('copy'),
     clips: CLIPS,
@@ -122,8 +117,6 @@ function otcpOp(op: Exclude<ArrangementOp, { op: 'copy' }>, index: number): Json
     case 'delete':
       // OTCP takes each clip once.
       return { op: 'delete', placementIds: [...new Set(op.clips)] };
-    case 'set_reference':
-      return { op: 'setReference', placementId: op.clip, referencePlacementId: op.reference_clip ?? null };
   }
 }
 
@@ -146,13 +139,6 @@ function clipsOf(op: ArrangementOp): [string, string][] {
     case 'delete':
     case 'copy':
       return op.clips.map((clip) => ['clips', clip]);
-    case 'set_reference':
-      return op.reference_clip === undefined
-        ? [['clip', op.clip]]
-        : [
-            ['clip', op.clip],
-            ['reference_clip', op.reference_clip],
-          ];
     default:
       return [['clip', op.clip]];
   }
@@ -270,10 +256,6 @@ export const ERROR_STEPS = table<NextStep>({
   'INVALID_ARGUMENT/trim_out_of_range': agent(
     'A trim moves an edge only within the audio of the clip content, and the start must stay before the end. Read ' +
       'the clip with opentune_get_project and choose a position inside that range.',
-  ),
-  'INVALID_ARGUMENT/reference_ineligible': agent(
-    'A clip can refer only to another clip that overlaps it in time and does not refer back to it, directly or ' +
-      'through others. Choose another clip, or remove the binding: set_reference without reference_clip.',
   ),
   'REVISION_CONFLICT/arrangement_changed': reread(
     'The clips changed since the arrangement_revision was read (in the OpenTune window or by another call). Read ' +
@@ -426,7 +408,7 @@ export const editArrangementTool = defineTool({
   title: 'Edit OpenTune clips on the timeline',
   description:
     'OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, ' +
-    'fade, set_reference (experimental) run in order as one undo step. split, merge, delete and copy each go alone ' +
+    'fade run in order as one undo step. split, merge, delete and copy each go alone ' +
     'in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs ' +
     'confirm. dry_run previews (not copy).',
   inputSchema: z.strictObject({
