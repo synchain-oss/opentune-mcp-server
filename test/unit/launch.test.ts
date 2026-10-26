@@ -132,7 +132,7 @@ const launchFiles = (discovery: string) => readdirSync(launchDir(discovery)).sor
 
 /** The status sentence of a started OpenTune whose vocoder has not loaded yet. */
 const READY_FRESH =
-  'OpenTune is running and ready. The vocoder loads when the first render needs it, so it not being loaded just after start is normal.';
+  'OpenTune is running and ready. The vocoder is not loaded yet; it loads when the first render needs it. If it is still not loaded after a render, tell the user.';
 
 describe('opentune_launch', () => {
   it(

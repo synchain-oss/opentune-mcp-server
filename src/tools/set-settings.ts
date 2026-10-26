@@ -32,7 +32,12 @@ import {
   startAndWait,
 } from './follow-job.js';
 import { jobSentence } from './jobs.js';
-import { BACKEND_NOT_CONFIRMED, BACKEND_STILL_RELOADING, GPU_FIRST_REQUESTED_CPU_RUNS } from './processing-text.js';
+import {
+  BACKEND_NOT_CONFIRMED,
+  BACKEND_NOT_CONFIRMED_STATE_UNKNOWN,
+  BACKEND_STILL_RELOADING,
+  GPU_FIRST_REQUESTED_CPU_RUNS,
+} from './processing-text.js';
 import {
   WRITE_RESULT_OUTPUT,
   defineTool,
@@ -181,21 +186,28 @@ const namesWeightOrPriority = (step: Step): boolean =>
   step.method === 'prefs.set' && ('vocoderWeight' in step.params || 'renderingPriority' in step.params);
 
 /**
- * Whether the vocoder is ready and not reconfiguring, read from session.info before a call that changes the weight or
- * the rendering priority. A job waits for the vocoder only if it was ready before the call (PROTOCOL.md section 12.7
- * rule 4), so this is what tells whether the job waited for the new weight or backend to load. A read that fails
- * counts as not ready: the conditional wording holds in either case.
+ * The state of the vocoder before a call: 'ready' (ready and not reconfiguring), 'not_ready', or 'unknown' when
+ * session.info could not be read.
  */
-async function vocoderReadyBefore(ctx: ToolContext, session: OtcpSession): Promise<boolean> {
+type VocoderBefore = 'ready' | 'not_ready' | 'unknown';
+
+/**
+ * The state of the vocoder, read from session.info before a call that changes the weight or the rendering priority.
+ * A job waits for the vocoder only if it was ready before the call (PROTOCOL.md section 12.7 rule 4), so this is what
+ * tells whether the job waited for the new weight or backend to load. A read that fails is 'unknown', not 'not_ready':
+ * the wording of the re-render is conditional either way (a state that is not 'ready' is worded as one that may not have
+ * waited), but the reason given for the unconfirmed backend must not claim a vocoder that was not ready.
+ */
+async function vocoderBefore(ctx: ToolContext, session: OtcpSession): Promise<VocoderBefore> {
   try {
     const info = await session.call('session.info', {}, INFO_TIMEOUT_MS);
     const processing = isObject(info.processing) ? info.processing : {};
-    return processing.vocoderReady === true && processing.vocoderReconfiguring !== true;
+    return processing.vocoderReady === true && processing.vocoderReconfiguring !== true ? 'ready' : 'not_ready';
   } catch (error) {
     ctx.logger.warn(
       `reading session.info to word the re-render failed (${error instanceof Error ? error.message : 'unknown error'})`,
     );
-    return false;
+    return 'unknown';
   }
 }
 
@@ -235,7 +247,8 @@ const sleep = (ms: number) =>
  * OpenTune tries the GPU under gpuFirst and falls back to the CPU without a word, so the request does not say what
  * runs. A vocoder that is still reloading is waited for within a limit, and said to be reloading when it still is.
  * A job does not wait for a vocoder that was not ready before the call (rule 4), and it can then end before the vocoder
- * loads again; what is read afterwards may still be the backend from before. Then `confirmed` is false with its reason,
+ * loads again; what is read afterwards may still be the backend from before. Then `confirmed` is false with its reason
+ * (`vocoder_not_ready_before_change`, or `ready_state_unavailable` when the vocoder could not be read before the call),
  * and a CPU under gpuFirst is not called a fall back: it is said not to be known yet.
  * The sentence is composed of enumerated values only; the backend string of OpenTune stays a JSON value. A read that
  * fails adds nothing to the sentence and is reported as null with its reason.
@@ -245,8 +258,9 @@ async function withBackend(
   session: OtcpSession,
   body: Body,
   requested: unknown,
-  readyBefore: boolean,
+  before: VocoderBefore,
 ): Promise<Body> {
+  const readyBefore = before === 'ready';
   /** The processing section of session.info, or null when OpenTune could not be asked. */
   const read = async (): Promise<Json | null> => {
     try {
@@ -278,7 +292,9 @@ async function withBackend(
     : cpuUnderGpuFirst
       ? readyBefore
         ? GPU_FIRST_REQUESTED_CPU_RUNS
-        : BACKEND_NOT_CONFIRMED
+        : before === 'unknown'
+          ? BACKEND_NOT_CONFIRMED_STATE_UNKNOWN
+          : BACKEND_NOT_CONFIRMED
       : null;
   return {
     ...body,
@@ -288,7 +304,11 @@ async function withBackend(
       backend,
       vocoder_reloading: reloading,
       confirmed: readyBefore,
-      unconfirmed_reason: readyBefore ? null : 'vocoder_not_ready_before_change',
+      unconfirmed_reason: readyBefore
+        ? null
+        : before === 'unknown'
+          ? 'ready_state_unavailable'
+          : 'vocoder_not_ready_before_change',
     },
   };
 }
@@ -407,7 +427,8 @@ async function runSteps(
   for (const [index, step] of steps.entries()) {
     // The only extra read before a call, and only for a call that names a weight or the rendering priority: whether
     // the job will wait for the vocoder.
-    const readyBefore = namesWeightOrPriority(step) && (await vocoderReadyBefore(ctx, session));
+    const before: VocoderBefore = namesWeightOrPriority(step) ? await vocoderBefore(ctx, session) : 'not_ready';
+    const readyBefore = before === 'ready';
     let run;
     try {
       run = await startAndWait(ctx, session, step.method, step.params, waitSeconds);
@@ -476,7 +497,7 @@ async function runSteps(
     if (!outcome.ok) return stop(outcome);
     const body =
       step.method === 'prefs.set' && changedPriority(result)
-        ? await withBackend(ctx, session, outcome.body, step.params.renderingPriority, readyBefore)
+        ? await withBackend(ctx, session, outcome.body, step.params.renderingPriority, before)
         : outcome.body;
     results.push({ method: step.method, label: step.label, body });
   }
