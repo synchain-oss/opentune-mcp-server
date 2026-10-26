@@ -505,6 +505,88 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
     expect(await processing(session)).toMatchObject({ vocoderWeight: 'hifigan_coulin9.onnx' });
   });
 
+  describe('a vocoder that loads at the first render', () => {
+    const shift = (ids: Record<string, string>) => ({
+      contentId: ids['clip.contentId'],
+      expectedRevision: ids['clip.revision'],
+      ops: [{ op: 'shiftCents', select: { indices: [0] }, deltaCents: 10 }],
+    });
+    const renderOf = async (session: TestSession, ids: Record<string, string>) =>
+      field(await session.ok('content.getDetails', { contentId: ids['clip.contentId'] }), 'render') as {
+        current: boolean;
+        publishedRevision: string;
+      };
+
+    it('is not ready until an edit has to be rendered, then loads, and publishes the render only once it has', async () => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock, vocoder: { reconfiguringMs: 100 } });
+      const { mock, ok } = session;
+      const ids = mock.given({ clips: [clip()] });
+      // By default the vocoder is ready from the start.
+      expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+      mock.setVocoderLoadOnDemand(true);
+      expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: false });
+      // Nothing is rendered, so nothing loads it.
+      clock.advance(1000);
+      expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: false });
+      const published = (await renderOf(session, ids)).publishedRevision;
+
+      const edited = await ok('content.editNotes', shift(ids));
+      expect((await renderOf(session, ids)).current).toBe(false);
+      // The command is queued first; then the vocoder loads, and the render, done by now, waits for it.
+      clock.advance(6);
+      expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+      clock.advance(40);
+      expect((await renderOf(session, ids)).current).toBe(false);
+      clock.advance(70);
+      expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+      const after = await renderOf(session, ids);
+      expect(after.current).toBe(true);
+      expect(after.publishedRevision).not.toBe(published);
+
+      // Loaded now: a further render needs no load and settles on its own.
+      await ok('edit.undo', { expectedUndoId: field(edited, 'undo', 'undoId') });
+      clock.advance(30);
+      expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+      expect((await renderOf(session, ids)).current).toBe(true);
+    });
+
+    it('keeps the vocoder not ready, and the render waiting, when the load never ends', async () => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock });
+      const { mock, ok } = session;
+      const ids = mock.given({ clips: [clip()] });
+      mock.setVocoderLoadOnDemand(true);
+      mock.setVocoderFault('stuck');
+      await ok('content.editNotes', shift(ids));
+      clock.advance(10_000);
+      expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+      expect((await renderOf(session, ids)).current).toBe(false);
+      // Once the fault is gone, the load ends and the render is published.
+      mock.setVocoderFault(null);
+      expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+      expect((await renderOf(session, ids)).current).toBe(true);
+    });
+
+    it('is ready from the start again when switched off, and publishes the renders that waited', async () => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock });
+      const { mock, ok } = session;
+      const ids = mock.given({ clips: [clip()] });
+      mock.setVocoderLoadOnDemand(true);
+      mock.setVocoderFault('stuck');
+      await ok('content.editNotes', shift(ids));
+      clock.advance(1000);
+      expect((await renderOf(session, ids)).current).toBe(false);
+      // A reconfiguration is running, so switching off leaves the vocoder alone until it ends.
+      mock.setVocoderLoadOnDemand(false);
+      expect(await vocoderOf(session)).toEqual({ ready: false, reconfiguring: true });
+      mock.setVocoderFault(null);
+      expect(await vocoderOf(session)).toEqual({ ready: true, reconfiguring: false });
+      expect((await renderOf(session, ids)).current).toBe(true);
+    });
+  });
+
   it('lets only the latest reconfiguration end the vocoder, so an earlier one never ends a later job early', async () => {
     const clock = new ManualClock();
     const session = await sessions.open({ clock });
