@@ -12,7 +12,13 @@ import { OtcpSession } from '../../src/otcp/client.js';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { encodeClipRevision } from '../../src/otcp/tokens.js';
 import { render, type Outcome } from '../../src/tools/registry.js';
-import { editTiming, editTimingTool, type EditTimingArgs } from '../../src/tools/timing.js';
+import {
+  CALL_BUDGET_MS,
+  CLIENT_TIMEOUT_MS,
+  editTiming,
+  editTimingTool,
+  type EditTimingArgs,
+} from '../../src/tools/timing.js';
 import { tempDir, testContext, type TestContext } from '../support/context.js';
 import { clip, need } from '../support/mock-client.js';
 
@@ -56,6 +62,30 @@ function recordCalls(): { method: string; params: Record<string, unknown> }[] {
 }
 
 const call = (ctx: TestContext, args: EditTimingArgs) => editTiming(ctx, args);
+
+/**
+ * A clock that moves only when a request is made, by the time that request is given (its timeout when
+ * `cost` is null: the worst case, every request taking its whole timeout). `sent` has the clock reading at
+ * which each request left, so a test can check when a write was sent.
+ */
+function clockPerRequest(ctx: TestContext, cost: number | null) {
+  let elapsed = 0;
+  const sent: { method: string; at: number; timeout: number }[] = [];
+  // eslint-disable-next-line @typescript-eslint/unbound-method
+  const original = OtcpSession.prototype.call;
+  vi.spyOn(OtcpSession.prototype, 'call').mockImplementation(async function (
+    this: OtcpSession,
+    method,
+    params,
+    timeout,
+  ) {
+    sent.push({ method, at: elapsed, timeout });
+    const result = await original.call(this, method, params, timeout);
+    elapsed += cost ?? timeout;
+    return result;
+  });
+  return { ctx: { ...ctx, now: () => elapsed }, sent, elapsed: () => elapsed };
+}
 
 const HANDLES = 400;
 const SPACING = 0.5;
@@ -199,7 +229,8 @@ describe('opentune_edit_timing: up to 64 operations in one call', () => {
   it('stops between two operations when the call has used its time, and says where to go on', async () => {
     const { ctx, revision, placement } = await longSeeded();
     const calls = recordCalls();
-    // Each request sent counts as 20 seconds: the third operation would start after 40 seconds.
+    // Each request sent counts as 20 seconds: the third operation would start at 40 seconds, and 40 s + the
+    // 20 s a write may take + the 15 s of the read after it do not fit in 60 s.
     const slow = { ...ctx, now: () => calls.filter((c) => c.method === 'content.shiftTiming').length * 20_000 };
     const out = body(await call(slow, { clip: placement, expected_revision: revision, ops: phrases(10) }));
 
@@ -222,6 +253,48 @@ describe('opentune_edit_timing: up to 64 operations in one call', () => {
     );
     expect(rest.stopped).toBeUndefined();
     expect(rest.summary).toMatch(/applied 8 operations/);
+  });
+
+  it('derives the budget from the client timeout and the longest a write and the read after it may take', () => {
+    expect(CLIENT_TIMEOUT_MS).toBe(60_000);
+    // 60 s - 20 s (a write at its timeout) - 15 s (the read of the handles at its timeout)
+    expect(CALL_BUDGET_MS).toBe(25_000);
+  });
+
+  it('sends no write that could end after the client timeout, even when every request takes its whole timeout', async () => {
+    for (const count of [1, 2, 3, 10, 64]) {
+      const { ctx, revision, placement } = await longSeeded();
+      vi.restoreAllMocks();
+      const worst = clockPerRequest(ctx, null);
+      const outcome = await call(worst.ctx, { clip: placement, expected_revision: revision, ops: phrases(count) });
+      const out = body(outcome);
+      const writes = worst.sent.filter((r) => r.method === 'content.shiftTiming');
+      // The call as a whole, with every request at its timeout, ended inside the client timeout.
+      expect(worst.elapsed(), `${String(count)} operations`).toBeLessThanOrEqual(CLIENT_TIMEOUT_MS);
+      // Every write after the first left with room for itself and for the read of the handles.
+      for (const write of writes.slice(1)) {
+        expect(write.at + write.timeout + 15_000, `${String(count)} operations`).toBeLessThanOrEqual(CLIENT_TIMEOUT_MS);
+      }
+      // The look-up of the clip (a project.get at its timeout) counts: here it leaves room for one write only.
+      expect(writes).toHaveLength(Math.min(count, 1));
+      if (count > 1) expect(out.stopped).toMatchObject({ applied: 1, total: count, next_operation: 2 });
+      else expect(out.stopped).toBeUndefined();
+    }
+  });
+
+  it('keeps sending while the worst case fits, and stops at the first operation that would not', async () => {
+    const { ctx, revision, placement } = await longSeeded();
+    vi.restoreAllMocks();
+    // Every request takes 7 s: writes leave at 7 s (after the look-up), 14 s, 21 s and 28 s; the one at 28 s
+    // would be 28 + 20 + 15 = 63 s in the worst case, so the call stops with four applied.
+    const typical = clockPerRequest(ctx, 7000);
+    const out = body(await call(typical.ctx, { clip: placement, expected_revision: revision, ops: phrases(10) }));
+    const writes = typical.sent.filter((r) => r.method === 'content.shiftTiming');
+    expect(writes.map((w) => w.at)).toEqual([7000, 14_000, 21_000]);
+    expect(out.stopped).toMatchObject({ applied: 3, total: 10, next_operation: 4 });
+    expect(21_000 + 20_000 + 15_000).toBeLessThan(CLIENT_TIMEOUT_MS);
+    expect(28_000 + 20_000 + 15_000).toBeGreaterThanOrEqual(CLIENT_TIMEOUT_MS);
+    expect(out.summary).toContain('applied 3 of 10 operations');
   });
 
   it('keeps the full steps when a short call is stopped, and never stops before the first operation', async () => {

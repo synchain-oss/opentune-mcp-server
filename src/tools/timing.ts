@@ -49,10 +49,18 @@ export const MAX_MOVE_CHARS = 6000;
 /** Handles a compact result lists; the count of all of them is always given. */
 export const COMPACT_LISTED_HANDLES = 40;
 /**
- * A call that has run this long sends no further operation and reports how far it got, so a long list
- * ends with a usable clip_revision before a client gives up waiting for the result.
+ * How long a client waits for a result before it gives up: 60 seconds is the usual default, and a result that
+ * arrives later is lost together with the clip_revision it carries.
  */
-export const CALL_BUDGET_MS = 40_000;
+export const CLIENT_TIMEOUT_MS = 60_000;
+/**
+ * The time since the start of the call (the lookup of the clip included) up to which a next operation may
+ * be sent. The worst case after sending it: the request takes its whole WRITE_TIMEOUT_MS (20 s), and the
+ * read of the handles after the last operation takes its whole READ_TIMEOUT_MS (15 s), so
+ * elapsed + 20 s + 15 s must stay below CLIENT_TIMEOUT_MS (60 s), which makes elapsed < 25 s. A call that
+ * is past it sends no further operation and reports how far it got, with the clip_revision to go on with.
+ */
+export const CALL_BUDGET_MS = CLIENT_TIMEOUT_MS - WRITE_TIMEOUT_MS - READ_TIMEOUT_MS;
 /** Largest shift of one operation, the OTCP limit (deltaSec). */
 export const MAX_DELTA_MS = 10_000;
 
@@ -389,6 +397,7 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
   }
   const capabilities = ['timing.v1', ...(calls.some((c) => c.kind === 'seed') ? ['jobs.v1'] : []), 'read.v1'];
   return withInstance(ctx, { instanceId: args.instance_id }, capabilities, async (session) => {
+    const started = ctx.now();
     const resolved = await contentIdOf(session, args.clip);
     if (typeof resolved !== 'string') return resolved;
     const contentId = resolved;
@@ -396,14 +405,15 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
     // Many operations get compact steps, so the result stays readable and inside the 20,000 character budget.
     const compact = calls.length > FULL_STEPS_MAX;
     const handleCap = compact ? COMPACT_LISTED_HANDLES : MAX_LISTED_HANDLES;
-    const started = ctx.now();
     let current = tokens;
     let last: Json = {};
     try {
       for (const [index, call] of calls.entries()) {
-        // Stop between two operations when the call has used its time: what was applied stays applied and the
-        // result has the clip_revision to go on with. The next operation is never sent half-way.
-        if (index > 0 && ctx.now() - started >= CALL_BUDGET_MS) break;
+        // Stop between two operations when the next one could not finish in time even in the worst case (its
+        // request at its whole timeout, then the read of the handles at its whole timeout, see CALL_BUDGET_MS):
+        // what was applied stays applied and the result has the clip_revision to go on with. The first
+        // operation is always sent, and none is ever stopped half-way.
+        if (index > 0 && ctx.now() - started + WRITE_TIMEOUT_MS + READ_TIMEOUT_MS >= CLIENT_TIMEOUT_MS) break;
         if (call.kind === 'seed') {
           return await withHandles(
             session,
