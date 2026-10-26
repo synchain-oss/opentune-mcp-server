@@ -22,30 +22,48 @@
         "applied": true,
         "noOp": false,
         "dryRun": false,
-        "changes": [
-          {
-            "entity": "key",
-            "ref": {
-              "contentId": "c:01234567:0:1"
-            },
-            "label": "Content 1",
-            "fields": {
-              "root": {
-                "before": 9,
-                "after": 0,
-                "unit": null
+        "undo": {
+          "undoable": false,
+          "reason": "ui_parity",
+          "revert": {
+            "method": "content.setKey",
+            "params": {
+              "contentId": "c:01234567:0:1",
+              "key": {
+                "root": 9,
+                "scale": "minor"
               },
-              "scale": {
-                "before": "minor",
-                "after": "major",
-                "unit": null
+              "expectedKeyRevision": "k13"
+            }
+          }
+        },
+        "lines": [
+          {
+            "kind": "revert",
+            "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_clip with the arguments in restore, adding expected_revision: the latest clip_revision you read for the clip.",
+            "revert": {
+              "method": "content.setKey",
+              "params": {
+                "contentId": "c:01234567:0:1",
+                "key": {
+                  "root": 9,
+                  "scale": "minor"
+                },
+                "expectedKeyRevision": "k13"
+              }
+            },
+            "restore": {
+              "tool": "opentune_set_clip",
+              "arguments": {
+                "clip": "c:01234567:0:1",
+                "key": {
+                  "root": 9,
+                  "scale": "minor"
+                }
               }
             }
           }
         ],
-        "created": [],
-        "removed": [],
-        "idMap": [],
         "revisionDiff": {
           "arrangement": null,
           "trackState": null,
@@ -73,21 +91,6 @@
           ],
           "placements": []
         },
-        "undo": {
-          "undoable": false,
-          "reason": "ui_parity",
-          "revert": {
-            "method": "content.setKey",
-            "params": {
-              "contentId": "c:01234567:0:1",
-              "key": {
-                "root": 9,
-                "scale": "minor"
-              },
-              "expectedKeyRevision": "k13"
-            }
-          }
-        },
         "dirty": {
           "before": true,
           "after": true
@@ -102,6 +105,30 @@
         "sideEffects": {},
         "warnings": [],
         "job": null,
+        "changes": [
+          {
+            "entity": "key",
+            "ref": {
+              "contentId": "c:01234567:0:1"
+            },
+            "label": "Content 1",
+            "fields": {
+              "root": {
+                "before": 9,
+                "after": 0,
+                "unit": null
+              },
+              "scale": {
+                "before": "minor",
+                "after": "major",
+                "unit": null
+              }
+            }
+          }
+        ],
+        "created": [],
+        "removed": [],
+        "idMap": [],
         "uiEffects": [
           {
             "surface": "transport bar key selector",
@@ -137,34 +164,7 @@
             }
           ],
           "omittedChangeCount": 0
-        },
-        "lines": [
-          {
-            "kind": "revert",
-            "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_clip with the arguments in restore, adding expected_revision: the latest clip_revision you read for the clip.",
-            "revert": {
-              "method": "content.setKey",
-              "params": {
-                "contentId": "c:01234567:0:1",
-                "key": {
-                  "root": 9,
-                  "scale": "minor"
-                },
-                "expectedKeyRevision": "k13"
-              }
-            },
-            "restore": {
-              "tool": "opentune_set_clip",
-              "arguments": {
-                "clip": "c:01234567:0:1",
-                "key": {
-                  "root": 9,
-                  "scale": "minor"
-                }
-              }
-            }
-          }
-        ]
+        }
       },
       {
         "method": "content.setPitchShift",
@@ -172,30 +172,44 @@
         "applied": true,
         "noOp": false,
         "dryRun": false,
-        "changes": [
+        "undo": {
+          "undoable": true,
+          "undoId": "u:01234567:2",
+          "description": "Pitch shift",
+          "innerActions": [
+            "setPitchShift"
+          ],
+          "steps": 1
+        },
+        "lines": [
           {
-            "entity": "pitchShift",
-            "ref": {
+            "kind": "warning",
+            "code": "KEY_NOT_TRANSPOSED",
+            "text": "The clip's pitch shift changed but its key was not transposed with it.",
+            "subject": {
               "contentId": "c:01234567:0:1"
             },
-            "label": "Content 1",
-            "fields": {
-              "semitones": {
-                "before": 2,
-                "after": 0,
-                "unit": "semitones"
-              },
-              "cents": {
-                "before": -10,
-                "after": 0,
-                "unit": "cents"
-              }
-            }
+            "data": null
+          },
+          {
+            "kind": "sideEffect",
+            "name": "reRenderQueued",
+            "text": "Rendering of one or more contents was queued again.",
+            "details": {
+              "contentIds": [
+                "c:01234567:0:1"
+              ],
+              "revert": null
+            },
+            "revert": null
+          },
+          {
+            "kind": "undo",
+            "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:2.",
+            "undoId": "u:01234567:2",
+            "description": "Pitch shift"
           }
         ],
-        "created": [],
-        "removed": [],
-        "idMap": [],
         "revisionDiff": {
           "arrangement": null,
           "trackState": null,
@@ -222,15 +236,6 @@
             }
           ],
           "placements": []
-        },
-        "undo": {
-          "undoable": true,
-          "undoId": "u:01234567:2",
-          "description": "Pitch shift",
-          "innerActions": [
-            "setPitchShift"
-          ],
-          "steps": 1
         },
         "dirty": {
           "before": true,
@@ -261,6 +266,30 @@
           }
         ],
         "job": null,
+        "changes": [
+          {
+            "entity": "pitchShift",
+            "ref": {
+              "contentId": "c:01234567:0:1"
+            },
+            "label": "Content 1",
+            "fields": {
+              "semitones": {
+                "before": 2,
+                "after": 0,
+                "unit": "semitones"
+              },
+              "cents": {
+                "before": -10,
+                "after": 0,
+                "unit": "cents"
+              }
+            }
+          }
+        ],
+        "created": [],
+        "removed": [],
+        "idMap": [],
         "uiEffects": [
           {
             "surface": "clip pitch shift",
@@ -303,36 +332,7 @@
             }
           ],
           "omittedChangeCount": 0
-        },
-        "lines": [
-          {
-            "kind": "warning",
-            "code": "KEY_NOT_TRANSPOSED",
-            "text": "The clip's pitch shift changed but its key was not transposed with it.",
-            "subject": {
-              "contentId": "c:01234567:0:1"
-            },
-            "data": null
-          },
-          {
-            "kind": "sideEffect",
-            "name": "reRenderQueued",
-            "text": "Rendering of one or more contents was queued again.",
-            "details": {
-              "contentIds": [
-                "c:01234567:0:1"
-              ],
-              "revert": null
-            },
-            "revert": null
-          },
-          {
-            "kind": "undo",
-            "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:2.",
-            "undoId": "u:01234567:2",
-            "description": "Pitch shift"
-          }
-        ]
+        }
       }
     ],
     "clip_revision": "cr1.WyJyOSIsImc2IiwiazEzIiwiaDEwIl0"

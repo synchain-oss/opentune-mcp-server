@@ -53,10 +53,25 @@
     "applied": true,
     "noOp": true,
     "dryRun": false,
-    "changes": [],
-    "created": [],
-    "removed": [],
-    "idMap": [],
+    "undo": {
+      "undoable": false,
+      "reason": "no_op",
+      "revert": null
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      }
+    ],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -66,11 +81,6 @@
       "arrangementRevision": "a1",
       "contents": [],
       "placements": []
-    },
-    "undo": {
-      "undoable": false,
-      "reason": "no_op",
-      "revert": null
     },
     "dirty": {
       "before": false,
@@ -95,6 +105,10 @@
     },
     "warnings": [],
     "job": null,
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "window title",
@@ -114,20 +128,6 @@
     "changeTable": {
       "rows": [],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      }
-    ]
+    }
   }
 }

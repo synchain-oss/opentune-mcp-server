@@ -1076,6 +1076,33 @@ describe('tool declarations', () => {
     expect(properties(autotuneTool).replace_edited_notes?.description).toContain('consent');
   });
 
+  it('explain in the parameters of opentune_edit_notes which one answers a request such as "less vibrato"', () => {
+    interface Node {
+      description?: string;
+      properties?: Record<string, Node & { const?: string }>;
+      oneOf?: Node[];
+      anyOf?: Node[];
+      items?: Node;
+    }
+    const schema = z.toJSONSchema(editNotesTool.inputSchema) as Node;
+    const branches = schema.properties?.ops?.items;
+    const ops = branches?.oneOf ?? branches?.anyOf ?? [];
+    const branch = (name: string) => ops.find((o) => o.properties?.op?.const === name)?.properties ?? {};
+    const params = branch('setParams');
+    // The one that a user's "vibrato" usually means is the voice's own wobble, and the added vibrato is apart.
+    expect(params.pitch_drift_scale?.description).toContain("voice's own pitch wobble");
+    expect(params.pitch_drift_scale?.description).toContain('usual meaning of vibrato');
+    expect(params.pitch_drift_scale?.description).toContain('below 1 weakens it');
+    expect(params.vibrato_depth?.description).toContain('Synthetic vibrato added on top');
+    expect(params.vibrato_depth?.description).toContain('default 0');
+    expect(params.vibrato_rate_hz?.description).toContain('added vibrato');
+    expect(params.retune_speed?.description).toContain('0 keeps the natural movement, 1 sounds mechanical');
+    expect(branch('shiftCents').delta_cents?.description).toContain('Cents to raise (+) or lower (-)');
+    // The ranges that the descriptions speak of are the ones of the schema.
+    expect(params.pitch_drift_scale).toMatchObject({ minimum: -2, maximum: 3 });
+    expect(params.vibrato_depth).toMatchObject({ minimum: 0, maximum: 100 });
+  });
+
   it('render a rendered body that the shared output schema accepts', async () => {
     const env = await setup();
     const outcome = await setClip(env.ctx, {

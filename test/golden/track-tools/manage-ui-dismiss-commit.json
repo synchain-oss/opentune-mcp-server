@@ -10,38 +10,6 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
-      {
-        "entity": "track",
-        "ref": {
-          "trackId": 1
-        },
-        "label": "Track 2",
-        "fields": {
-          "colour": {
-            "before": "#64B5F6",
-            "after": "#445566",
-            "unit": null
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": {
-        "before": "t2",
-        "after": "t11"
-      },
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "ui_parity",
@@ -56,105 +24,6 @@
           ]
         }
       }
-    },
-    "dirty": {
-      "before": false,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "dialogClosed": {
-        "dialogs": [
-          {
-            "kind": "trackColour",
-            "trackId": 1
-          }
-        ],
-        "revert": null
-      },
-      "dialogCommitted": {
-        "kind": "trackColour",
-        "trackId": 1,
-        "colourBefore": "#64B5F6",
-        "colourAfter": "#445566",
-        "revert": {
-          "method": "track.set",
-          "params": {
-            "tracks": [
-              {
-                "trackId": 1,
-                "colour": "#64B5F6"
-              }
-            ]
-          }
-        }
-      }
-    },
-    "warnings": [
-      {
-        "code": "DIALOG_CLOSE_COMMITTED",
-        "subject": {
-          "trackId": 1
-        },
-        "data": {
-          "kind": "trackColour"
-        }
-      }
-    ],
-    "job": null,
-    "uiEffects": [
-      {
-        "surface": "arrangement view",
-        "effect": "changed track",
-        "target": "track 1",
-        "visibleNow": true
-      },
-      {
-        "surface": "window title",
-        "effect": "unsaved-changes mark set",
-        "target": "project",
-        "visibleNow": false,
-        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
-      },
-      {
-        "surface": "dialog",
-        "effect": "dialog closed",
-        "target": "project",
-        "visibleNow": true
-      },
-      {
-        "surface": "dialog",
-        "effect": "dialog value committed",
-        "target": "project",
-        "visibleNow": true
-      }
-    ],
-    "changeTable": {
-      "rows": [
-        {
-          "kind": "changed",
-          "entity": "track",
-          "label": "Track 2",
-          "ref": {
-            "trackId": 1
-          },
-          "fields": [
-            {
-              "field": "colour",
-              "before": "#64B5F6",
-              "after": "#445566",
-              "unit": null
-            }
-          ]
-        }
-      ],
-      "omittedChangeCount": 0
     },
     "lines": [
       {
@@ -270,6 +139,137 @@
           }
         }
       }
-    ]
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": {
+        "before": "t2",
+        "after": "t11"
+      },
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "dialogClosed": {
+        "dialogs": [
+          {
+            "kind": "trackColour",
+            "trackId": 1
+          }
+        ],
+        "revert": null
+      },
+      "dialogCommitted": {
+        "kind": "trackColour",
+        "trackId": 1,
+        "colourBefore": "#64B5F6",
+        "colourAfter": "#445566",
+        "revert": {
+          "method": "track.set",
+          "params": {
+            "tracks": [
+              {
+                "trackId": 1,
+                "colour": "#64B5F6"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "warnings": [
+      {
+        "code": "DIALOG_CLOSE_COMMITTED",
+        "subject": {
+          "trackId": 1
+        },
+        "data": {
+          "kind": "trackColour"
+        }
+      }
+    ],
+    "job": null,
+    "changes": [
+      {
+        "entity": "track",
+        "ref": {
+          "trackId": 1
+        },
+        "label": "Track 2",
+        "fields": {
+          "colour": {
+            "before": "#64B5F6",
+            "after": "#445566",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "changed track",
+        "target": "track 1",
+        "visibleNow": true
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      },
+      {
+        "surface": "dialog",
+        "effect": "dialog closed",
+        "target": "project",
+        "visibleNow": true
+      },
+      {
+        "surface": "dialog",
+        "effect": "dialog value committed",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "track",
+          "label": "Track 2",
+          "ref": {
+            "trackId": 1
+          },
+          "fields": [
+            {
+              "field": "colour",
+              "before": "#64B5F6",
+              "after": "#445566",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
   }
 }

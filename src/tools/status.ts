@@ -6,6 +6,10 @@
 // instances in it (session.hello and session.info), OpenTune processes that opentune_launch started
 // and that have not announced themselves yet, other OpenTune processes without a discovery file,
 // and finally the configured executable. Starting OpenTune is opentune_launch's job.
+//
+// A ready instance is also asked what its window shows (ui.getState, capability ui.bridge): the first-run
+// welcome page and any dialog make OpenTune refuse every write (BUSY modal_open). Said here, the agent closes
+// it before the first write instead of meeting the refusal there. A failed read leaves READY as it is.
 
 import { z } from 'zod';
 
@@ -14,8 +18,10 @@ import { troubleshootingUrl } from '../errors/next-step.js';
 import { OtcpError, type NextStep } from '../errors/tool-error.js';
 import { checkLaunchConfig, isWsl, readOsRelease } from '../launch/config.js';
 import { launchDir, liveRecords } from '../launch/records.js';
-import type { Json } from '../otcp/client.js';
+import type { Json, OtcpSession } from '../otcp/client.js';
 import { instanceSummary, selectInstance } from '../otcp/instances.js';
+import { isObject } from '../render/changes.js';
+import { VOCODER_NOTE } from './processing-text.js';
 import { defineTool, type Outcome, type ToolContext } from './registry.js';
 
 export const STATUS_STATES = [
@@ -123,6 +129,62 @@ export const STATUS_REASON_STEPS: Readonly<Record<string, NextStep>> = {
   ),
 };
 
+/**
+ * What the window of a ready instance shows that makes writes refuse. The words are fixed here; nothing from
+ * OpenTune (a dialog title, for one) is put in them.
+ */
+const WINDOW_BLOCK = {
+  onboarding: {
+    summary:
+      'OpenTune is running, but it is showing the first-run welcome page, so write operations are refused until it is closed.',
+    hint: 'The first-run welcome page is open; writes are refused until it is closed.',
+    // Closing it marks onboarding as shown in the user's OpenTune and cannot be undone, so the user agrees first.
+    step: {
+      actor: 'user',
+      tool: 'opentune_manage_ui',
+      args: { op: 'dismiss_onboarding' },
+      message:
+        'Tell the user that OpenTune shows its first-run welcome page and that closing it marks it as seen, which ' +
+        'cannot be undone. Only after the user agrees, close it with opentune_manage_ui op dismiss_onboarding, then ' +
+        "continue with the user's request.",
+    },
+  },
+  dialog: {
+    summary: 'OpenTune is running, but it is showing a dialog, so write operations are refused until it is closed.',
+    hint: 'A dialog is open; writes are refused until it is closed.',
+    step: {
+      actor: 'agent',
+      tool: 'opentune_manage_ui',
+      args: { op: 'dismiss_dialogs' },
+      message:
+        "Close it with opentune_manage_ui op dismiss_dialogs, then continue with the user's request. If that is " +
+        'refused because closing would commit a value, ask the user first.',
+    },
+  },
+} as const satisfies Record<string, { summary: string; hint: string; step: NextStep }>;
+
+type WindowBlock = keyof typeof WINDOW_BLOCK;
+
+/**
+ * Whether the window blocks writes, read once with ui.getState: the first-run overlay when the state says it is
+ * showing, any other dialog otherwise; null when nothing blocks; 'unreadable' when the read failed and
+ * 'capability_missing' when the instance has no ui.bridge, so there is nothing to read. The two are told apart in the
+ * result: a missing member would read as "nothing blocks". A state that does not say what the overlay is gets the
+ * generic dialog, never a guess.
+ */
+async function windowBlock(session: OtcpSession): Promise<WindowBlock | 'unreadable' | 'capability_missing' | null> {
+  if (!session.hello.capabilities.includes('ui.bridge')) return 'capability_missing';
+  try {
+    const state = await session.call('ui.getState', {}, INFO_TIMEOUT_MS);
+    if (isObject(state.onboarding) && state.onboarding.showing === true) return 'onboarding';
+    const busy = isObject(state.busy) ? state.busy : {};
+    return busy.modalOpen === true || (Array.isArray(state.dialogs) && state.dialogs.length > 0) ? 'dialog' : null;
+  } catch (error) {
+    if (!(error instanceof OtcpError)) throw error;
+    return 'unreadable';
+  }
+}
+
 /** The reason of a NOT_READY or PROTOCOL_MISMATCH instance, from the failure of its session. */
 function failureState(error: OtcpError): { state: StatusState; reason: string } {
   const { kind, reason } = error.data;
@@ -157,13 +219,26 @@ async function instanceStatus(ctx: ToolContext, entry: DiscoveryEntry): Promise<
     if (!(error instanceof OtcpError)) throw error;
     return { ...base, ...failureState(error) };
   }
+  const block = await windowBlock(session);
   const ready = {
     ...base,
     state: 'READY' as const,
     reason: null,
     protocol: session.hello.protocol,
     capabilities: session.hello.capabilities,
+    ...(block === null
+      ? {}
+      : block === 'unreadable' || block === 'capability_missing'
+        ? { blockedBy: null }
+        : { blockedBy: { kind: block, hint: WINDOW_BLOCK[block].hint } }),
   };
+  // A blockedBy that is null says why: the read failed, or the instance cannot report its window at all.
+  const unread: Json =
+    block === 'unreadable'
+      ? { blockedBy: 'unavailable' }
+      : block === 'capability_missing'
+        ? { blockedBy: 'capability_missing' }
+        : {};
   try {
     const info = await session.call('session.info', {}, INFO_TIMEOUT_MS);
     const parts: Json = {
@@ -172,24 +247,29 @@ async function instanceStatus(ctx: ToolContext, entry: DiscoveryEntry): Promise<
       processing: pick(info.processing, ['editingScheme', 'tuningHz', 'vocoderReady']),
     };
     const missing = Object.keys(parts).filter((key) => parts[key] === null);
+    const reasons: Json = { ...unread, ...Object.fromEntries(missing.map((key) => [`info.${key}`, 'not_reported'])) };
     return {
       ...ready,
       info: { ...pick(info, ['appVersion', 'buildTag', 'sourceUrl', 'language']), ...parts },
-      ...(missing.length > 0
-        ? { nullReasons: Object.fromEntries(missing.map((key) => [`info.${key}`, 'not_reported'])) }
-        : {}),
+      ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}),
     };
   } catch (error) {
     if (!(error instanceof OtcpError)) throw error;
     // Reachable and verified; session.info waits for OpenTune's main thread and may fail on its own.
-    return { ...ready, info: null, nullReasons: { info: 'unavailable' } };
+    return { ...ready, info: null, nullReasons: { ...unread, info: 'unavailable' } };
   }
 }
 
 /** A status result: the state's summary (or `summary`), the next step for the state and reason, the link. */
-export function status(state: StatusState, reason: string | null, extra: Json = {}, summary?: string): Outcome {
+export function status(
+  state: StatusState,
+  reason: string | null,
+  extra: Json = {},
+  summary?: string,
+  step?: NextStep,
+): Outcome {
   const text = STATUS_TEXT[state];
-  const nextStep = (reason === null ? undefined : STATUS_REASON_STEPS[`${state}/${reason}`]) ?? text.step;
+  const nextStep = step ?? (reason === null ? undefined : STATUS_REASON_STEPS[`${state}/${reason}`]) ?? text.step;
   return {
     ok: true,
     body: {
@@ -228,11 +308,31 @@ export async function getStatus(ctx: ToolContext, instanceId: string | undefined
       : state === 'READY'
         ? null
         : ((first?.reason as string | null) ?? null);
-    const summary = multiple
+    // A window that refuses writes is said first, with the call that closes it, but only when one instance is
+    // meant; with several, the user chooses first and each instance entry says what its window shows.
+    const blocked = !multiple && state === 'READY' ? first?.blockedBy : undefined;
+    const blockedKind = isObject(blocked) && typeof blocked.kind === 'string' ? (blocked.kind as WindowBlock) : null;
+    const words = blockedKind === null ? null : WINDOW_BLOCK[blockedKind];
+    const vocoder =
+      !multiple &&
+      state === 'READY' &&
+      isObject(first?.info) &&
+      isObject(first.info.processing) &&
+      first.info.processing.vocoderReady === false;
+    const text = multiple
       ? `${String(instances.length)} OpenTune instances are running (${String(readyCount)} ready); pass instance_id ` +
         'to choose one.'
-      : undefined;
-    return status(state, reason, { ...extra, instances }, summary);
+      : words === null
+        ? STATUS_TEXT[state].summary
+        : words.summary;
+    const summary = vocoder ? `${text} ${VOCODER_NOTE}` : text;
+    return status(
+      state,
+      reason,
+      { ...extra, instances, ...(words === null ? {} : { blockedBy: blocked }) },
+      summary === STATUS_TEXT[state].summary ? undefined : summary,
+      words?.step,
+    );
   }
 
   // Processes opentune_launch started: still within the launch wait (STARTING), or past it and

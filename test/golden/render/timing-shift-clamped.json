@@ -108,26 +108,49 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:1",
+      "description": "Move time handles",
+      "innerActions": [
+        "moveTimeHandles"
+      ],
+      "steps": 1
+    },
+    "lines": [
       {
-        "entity": "timeHandle",
-        "ref": {
+        "kind": "warning",
+        "code": "CLAMPED",
+        "text": "A value was limited as OpenTune limits it in its own editor; the applied value differs from the requested one.",
+        "subject": {
           "contentId": "c:01234567:0:1",
           "handleId": "th:1:2"
         },
-        "label": "Handle at 2.00 s",
-        "fields": {
-          "outputSec": {
-            "before": 2,
-            "after": 2.95,
-            "unit": "sec"
-          }
+        "data": {
+          "field": "outputSec",
+          "requested": 3.5,
+          "applied": 2.95
         }
+      },
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
+        "undoId": "u:01234567:1",
+        "description": "Move time handles"
       }
     ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -154,15 +177,6 @@
         }
       ],
       "placements": []
-    },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:1",
-      "description": "Move time handles",
-      "innerActions": [
-        "moveTimeHandles"
-      ],
-      "steps": 1
     },
     "dirty": {
       "before": false,
@@ -205,6 +219,26 @@
         "appliedOutputSec": 2.95
       }
     ],
+    "changes": [
+      {
+        "entity": "timeHandle",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "handleId": "th:1:2"
+        },
+        "label": "Handle at 2.00 s",
+        "fields": {
+          "outputSec": {
+            "before": 2,
+            "after": 2.95,
+            "unit": "sec"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "piano roll",
@@ -249,40 +283,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "CLAMPED",
-        "text": "A value was limited as OpenTune limits it in its own editor; the applied value differs from the requested one.",
-        "subject": {
-          "contentId": "c:01234567:0:1",
-          "handleId": "th:1:2"
-        },
-        "data": {
-          "field": "outputSec",
-          "requested": 3.5,
-          "applied": 2.95
-        }
-      },
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
-        "undoId": "u:01234567:1",
-        "description": "Move time handles"
-      }
-    ]
+    }
   }
 }

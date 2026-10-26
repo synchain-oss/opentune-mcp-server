@@ -348,6 +348,20 @@ export class World {
   readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
   /** Test interface: the vocoder loads at the first render (setVocoderLoadOnDemand). */
   vocoderLoadOnDemand = false;
+  /**
+   * Test interface (setGpuAvailable): whether the GPU can create the inference session. null: the mock reports no
+   * backend, as before (processing.backend null, reason unavailable).
+   */
+  gpuAvailable: boolean | null = null;
+
+  /**
+   * The backend session.info reports. OpenTune tries the GPU under gpuFirst and falls back to the CPU when it cannot
+   * create the session; under cpuFirst it uses the CPU. It reports the CPU also when nothing was detected.
+   */
+  get backend(): string | null {
+    if (this.gpuAvailable === null) return null;
+    return this.prefs.renderingPriority === 'gpuFirst' && this.gpuAvailable ? 'directml' : 'cpu';
+  }
   /** The contents whose render finished while the vocoder was not ready (on demand), with the render they wait to publish. */
   readonly #rendersWaiting = new Map<ContentRec, string>();
   /** The fault the vocoder runs into (setVocoderFault). */

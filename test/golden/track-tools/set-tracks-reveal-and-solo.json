@@ -22,25 +22,28 @@
         "applied": true,
         "noOp": false,
         "dryRun": false,
-        "changes": [
+        "undo": {
+          "undoable": false,
+          "reason": "not_persisted_state",
+          "revert": null
+        },
+        "lines": [
           {
-            "entity": "track",
-            "ref": {
+            "kind": "warning",
+            "code": "NOT_PERSISTED",
+            "text": "The change is applied in the running session but is not stored in the project file.",
+            "subject": {
               "trackId": 4
             },
-            "label": "Track 5",
-            "fields": {
-              "visible": {
-                "before": false,
-                "after": true,
-                "unit": null
-              }
-            }
+            "data": null
+          },
+          {
+            "kind": "revert",
+            "text": "Not undoable (the state is not kept in the project). No request of the protocol can restore the previous state.",
+            "revert": null,
+            "restore": null
           }
         ],
-        "created": [],
-        "removed": [],
-        "idMap": [],
         "revisionDiff": {
           "arrangement": null,
           "trackState": {
@@ -53,11 +56,6 @@
           "arrangementRevision": "a1",
           "contents": [],
           "placements": []
-        },
-        "undo": {
-          "undoable": false,
-          "reason": "not_persisted_state",
-          "revert": null
         },
         "dirty": {
           "before": true,
@@ -85,6 +83,25 @@
           "before": 4,
           "after": 5
         },
+        "changes": [
+          {
+            "entity": "track",
+            "ref": {
+              "trackId": 4
+            },
+            "label": "Track 5",
+            "fields": {
+              "visible": {
+                "before": false,
+                "after": true,
+                "unit": null
+              }
+            }
+          }
+        ],
+        "created": [],
+        "removed": [],
+        "idMap": [],
         "uiEffects": [
           {
             "surface": "arrangement view",
@@ -113,24 +130,7 @@
             }
           ],
           "omittedChangeCount": 0
-        },
-        "lines": [
-          {
-            "kind": "warning",
-            "code": "NOT_PERSISTED",
-            "text": "The change is applied in the running session but is not stored in the project file.",
-            "subject": {
-              "trackId": 4
-            },
-            "data": null
-          },
-          {
-            "kind": "revert",
-            "text": "Not undoable (the state is not kept in the project). No request of the protocol can restore the previous state.",
-            "revert": null,
-            "restore": null
-          }
-        ]
+        }
       },
       {
         "method": "track.set",
@@ -138,6 +138,77 @@
         "applied": true,
         "noOp": false,
         "dryRun": false,
+        "undo": {
+          "undoable": false,
+          "reason": "ui_parity",
+          "revert": {
+            "method": "track.set",
+            "params": {
+              "tracks": [
+                {
+                  "trackId": 0,
+                  "solo": false
+                }
+              ]
+            }
+          }
+        },
+        "lines": [
+          {
+            "kind": "revert",
+            "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_tracks with the arguments in restore, as they are.",
+            "revert": {
+              "method": "track.set",
+              "params": {
+                "tracks": [
+                  {
+                    "trackId": 0,
+                    "solo": false
+                  }
+                ]
+              }
+            },
+            "restore": {
+              "tool": "opentune_set_tracks",
+              "arguments": {
+                "ops": [
+                  {
+                    "op": "solo",
+                    "track_id": 0,
+                    "on": false
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "revisionDiff": {
+          "arrangement": null,
+          "trackState": {
+            "before": "t12",
+            "after": "t13"
+          },
+          "contents": []
+        },
+        "tokens": {
+          "arrangementRevision": "a1",
+          "contents": [],
+          "placements": []
+        },
+        "dirty": {
+          "before": true,
+          "after": true
+        },
+        "ui": {
+          "workspace": "arrangement",
+          "pianoRollContentId": null,
+          "activeTrackId": 0,
+          "selectedPlacementIds": [],
+          "visibleTrackCount": 5
+        },
+        "sideEffects": {},
+        "warnings": [],
+        "job": null,
         "changes": [
           {
             "entity": "track",
@@ -199,48 +270,6 @@
         "created": [],
         "removed": [],
         "idMap": [],
-        "revisionDiff": {
-          "arrangement": null,
-          "trackState": {
-            "before": "t12",
-            "after": "t13"
-          },
-          "contents": []
-        },
-        "tokens": {
-          "arrangementRevision": "a1",
-          "contents": [],
-          "placements": []
-        },
-        "undo": {
-          "undoable": false,
-          "reason": "ui_parity",
-          "revert": {
-            "method": "track.set",
-            "params": {
-              "tracks": [
-                {
-                  "trackId": 0,
-                  "solo": false
-                }
-              ]
-            }
-          }
-        },
-        "dirty": {
-          "before": true,
-          "after": true
-        },
-        "ui": {
-          "workspace": "arrangement",
-          "pianoRollContentId": null,
-          "activeTrackId": 0,
-          "selectedPlacementIds": [],
-          "visibleTrackCount": 5
-        },
-        "sideEffects": {},
-        "warnings": [],
-        "job": null,
         "uiEffects": [
           {
             "surface": "arrangement view",
@@ -335,36 +364,7 @@
             }
           ],
           "omittedChangeCount": 0
-        },
-        "lines": [
-          {
-            "kind": "revert",
-            "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_tracks with the arguments in restore, as they are.",
-            "revert": {
-              "method": "track.set",
-              "params": {
-                "tracks": [
-                  {
-                    "trackId": 0,
-                    "solo": false
-                  }
-                ]
-              }
-            },
-            "restore": {
-              "tool": "opentune_set_tracks",
-              "arguments": {
-                "ops": [
-                  {
-                    "op": "solo",
-                    "track_id": 0,
-                    "on": false
-                  }
-                ]
-              }
-            }
-          }
-        ]
+        }
       }
     ]
   }

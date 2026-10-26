@@ -12,7 +12,7 @@ import { OtcpError, fromOtcpError, type ErrorData, type NextStep, type ToolError
 import type { Json, OtcpSession } from '../otcp/client.js';
 import { encodeArrangementRevision } from '../otcp/tokens.js';
 import { isObject } from '../render/changes.js';
-import { writeOutcome } from '../render/index.js';
+import { capEnvelope, writeOutcome } from '../render/index.js';
 import { leadFlags, reRenderSentence, summarize } from '../render/summary.js';
 import { WRITE_TIMEOUT_MS } from './clip-write.js';
 import type { Body, Outcome } from './registry.js';
@@ -56,7 +56,8 @@ export async function runWrites(
     }
     const outcome = writeOutcome(envelope, { tool });
     if (!outcome.ok) return { stopped: failedAfter(outcome.error) };
-    results.push({ method: call.method, body: outcome.body, envelope: envelope as Json });
+    // The combined summary speaks of the lists as the parts list them, so it reads the cut envelope too.
+    results.push({ method: call.method, body: outcome.body, envelope: capEnvelope(envelope as Json) });
   }
   return { results };
 }
@@ -70,7 +71,15 @@ export function arrangementRevisionOf(envelope: Json): string | null {
   return typeof token === 'string' && token.length > 0 && token.length <= 256 ? encodeArrangementRevision(token) : null;
 }
 
-/** One body for the results of a call: the single result as it is, or the combined one. */
+/**
+ * One body for the results of a call: the single result as it is, or the combined one.
+ *
+ * The re-render sentence below is the generic one, without the render state that the single-result path of
+ * opentune_set_settings passes (`ReRenderState`, which tells whether a changed vocoder weight has loaded). The state
+ * only exists for a vocoder-weight change, which only prefs.set makes, and no tool that combines results sends
+ * prefs.set (the track and transport tools send track.* and transport.* methods; a test keeps it so). A queued
+ * render in their results is a queued render of the tracks, and the generic words are the right ones.
+ */
 export function combineResults(tool: string, results: readonly WriteResult[]): Body {
   const [only] = results;
   if (results.length === 1 && only !== undefined) return only.body;

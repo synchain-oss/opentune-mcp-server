@@ -30,7 +30,7 @@ const TOOL = 'opentune_edit_timing';
 const CLIP_RE = /^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/;
 const JOB_ID_RE = /^j:[0-9a-f]{8}:[1-9][0-9]*$/;
 /** Most handles a result lists; the count of all of them is always given. */
-export const MAX_LISTED_HANDLES = 200;
+export const MAX_LISTED_HANDLES = 100;
 const WRITE_TIMEOUT_MS = 20_000;
 const READ_TIMEOUT_MS = 15_000;
 /** OTCP answers a job.get wait within waitMs + 1000 ms; this side allows a little more. */
@@ -431,7 +431,11 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
         const result = await session.call(method, params, WRITE_TIMEOUT_MS);
         const outcome = rendered(result, revisionAfter(result, contentId, current));
         if (!outcome.ok) return outcome;
-        steps.push({ body: outcome.body, clamped: Array.isArray(result.clamped) ? result.clamped.length : 0 });
+        steps.push({
+          body: outcome.body,
+          clamped: Array.isArray(result.clamped) ? result.clamped.length : 0,
+          moves: moveRows(result),
+        });
         last = result;
         const next = contentTokens(result, contentId)?.gridRevision;
         if (typeof next === 'string') current = { ...current, grid: next };
@@ -518,23 +522,32 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
   });
 }
 
-/** One applied operation: the rendered result of its OTCP request and how many moves it had limited. */
+/**
+ * One applied operation: the rendered result of its OTCP request, how many moves it had limited, and every move it
+ * made, read from the whole answer of OpenTune. The rendered body lists at most MAX_LISTED changes (capEnvelope),
+ * so the moves are taken before it, not from it: the counts of a compact result are facts about the edit and must
+ * not depend on how many entries the rendering lists.
+ */
 interface Step {
   readonly body: Body;
   readonly clamped: number;
+  readonly moves: readonly unknown[][];
 }
 
 const STEPS_FORMAT =
   'compact: per step operation (1-based), op, moved, clamped, undo_id and moves = [handle_id, ' +
   'before_output_sec, after_output_sec, requested_output_sec (only when the move was limited)]';
 
-/** The moves a step's result reports, as [handle_id, before, after] (+ requested when limited) rows. */
-function moveRows(body: Body): unknown[][] {
+/**
+ * The moves an OTCP write result reports, as [handle_id, before, after] (+ requested when limited) rows. It reads the
+ * result as OpenTune sent it, with every change in `changes`; never the rendered body, whose lists are cut.
+ */
+function moveRows(result: Json): unknown[][] {
   const requested = new Map<string, unknown>();
-  for (const item of Array.isArray(body.clamped) ? body.clamped : []) {
+  for (const item of Array.isArray(result.clamped) ? result.clamped : []) {
     if (isObject(item) && typeof item.handleId === 'string') requested.set(item.handleId, item.requestedOutputSec);
   }
-  return (Array.isArray(body.changes) ? body.changes : []).flatMap((change): unknown[][] => {
+  return (Array.isArray(result.changes) ? result.changes : []).flatMap((change): unknown[][] => {
     const ref = isObject(change) && isObject(change.ref) ? change.ref : null;
     const fields = isObject(change) && isObject(change.fields) ? change.fields : null;
     const output = fields !== null && isObject(fields.outputSec) ? fields.outputSec : null;
@@ -549,6 +562,10 @@ function moveRows(body: Body): unknown[][] {
  * The steps of a long call, one small object each: the undo id, how many handles moved and were limited,
  * and the moves themselves up to MAX_MOVE_CHARS characters in all (the rest is counted per step). The
  * full result of each request is not repeated: that is 2 KB or more per step.
+ *
+ * Which cut comes first: here the budget alone decides, over every move of the whole result. The cut of the
+ * rendering (capEnvelope, MAX_LISTED entries of `changes`) only shapes the full steps of a short call; it never
+ * reaches the counts or the moves of a compact step, so the two cuts neither apply twice nor disagree.
  */
 function compactSteps(
   steps: readonly Step[],
@@ -558,7 +575,7 @@ function compactSteps(
   let listed = 0;
   let total = 0;
   const out = steps.map((step, index): Json => {
-    const rows = moveRows(step.body);
+    const rows = step.moves;
     const kept: unknown[][] = [];
     for (const row of rows) {
       const size = JSON.stringify(row).length + 1;

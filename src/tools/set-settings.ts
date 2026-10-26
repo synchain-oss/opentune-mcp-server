@@ -32,6 +32,7 @@ import {
   startAndWait,
 } from './follow-job.js';
 import { jobSentence } from './jobs.js';
+import { BACKEND_NOT_CONFIRMED, BACKEND_STILL_RELOADING, GPU_FIRST_REQUESTED_CPU_RUNS } from './processing-text.js';
 import {
   WRITE_RESULT_OUTPUT,
   defineTool,
@@ -97,7 +98,9 @@ const processingSchema = z.strictObject({
   rendering_priority: z
     .enum(['gpuFirst', 'cpuFirst'])
     .optional()
-    .describe('Inference backend rendering prefers. Applied by a job.'),
+    .describe(
+      'gpuFirst tries the GPU, falling back to the CPU without notice; cpuFirst uses the CPU. Applied by a job: the vocoder reloads for seconds and nothing renders again. The result reads the backend in use.',
+    ),
   f0_model: z.string().min(1).max(64).optional().describe('Pitch model, one of the options of opentune_get_settings.'),
 });
 
@@ -170,14 +173,18 @@ const rendersAfterWeight = (envelope: Json): boolean =>
   isObject(envelope.sideEffects) &&
   'reRenderQueued' in envelope.sideEffects;
 
-/** Whether a step changes the vocoder weight: the one case whose wording depends on the vocoder before the call. */
-const namesWeight = (step: Step): boolean => step.method === 'prefs.set' && 'vocoderWeight' in step.params;
+/**
+ * Whether a step changes the vocoder weight or the rendering priority: the cases whose wording depends on the vocoder
+ * before the call.
+ */
+const namesWeightOrPriority = (step: Step): boolean =>
+  step.method === 'prefs.set' && ('vocoderWeight' in step.params || 'renderingPriority' in step.params);
 
 /**
- * Whether the vocoder is ready and not reconfiguring, read from session.info before a call that changes the weight.
- * A job waits for the vocoder only if it was ready before the call (PROTOCOL.md section 12.7 rule 4), so this is what
- * tells whether the job waited for the new weight to load. A read that fails counts as not ready: the conditional
- * wording holds in either case.
+ * Whether the vocoder is ready and not reconfiguring, read from session.info before a call that changes the weight or
+ * the rendering priority. A job waits for the vocoder only if it was ready before the call (PROTOCOL.md section 12.7
+ * rule 4), so this is what tells whether the job waited for the new weight or backend to load. A read that fails
+ * counts as not ready: the conditional wording holds in either case.
  */
 async function vocoderReadyBefore(ctx: ToolContext, session: OtcpSession): Promise<boolean> {
   try {
@@ -204,6 +211,86 @@ function renderContext(method: string, envelope: unknown, loaded: boolean): Rend
   if (method !== 'prefs.set' || !isObject(envelope) || !rendersAfterWeight(envelope)) return { tool: TOOL };
   const reRender: ReRenderState = loaded ? 'loaded' : 'afterLoad';
   return { tool: TOOL, reRender };
+}
+
+/** Whether a prefs.set result changed the rendering priority. */
+const changedPriority = (envelope: Json): boolean =>
+  asList(envelope.changes).some(
+    (change) => isObject(change) && isObject(change.ref) && change.ref.preference === 'renderingPriority',
+  );
+
+/**
+ * How long to wait for a vocoder that is still reloading before the backend in use is read: `maxPolls` reads of
+ * session.info, `pollMs` apart. Tests shorten it.
+ */
+export const backendWait = { pollMs: 250, maxPolls: 24 };
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
+ * After a change of the rendering priority: the backend OpenTune uses now, read once the job has ended (session.info).
+ * OpenTune tries the GPU under gpuFirst and falls back to the CPU without a word, so the request does not say what
+ * runs. A vocoder that is still reloading is waited for within a limit, and said to be reloading when it still is.
+ * A job does not wait for a vocoder that was not ready before the call (rule 4), and it can then end before the vocoder
+ * loads again; what is read afterwards may still be the backend from before. Then `confirmed` is false with its reason,
+ * and a CPU under gpuFirst is not called a fall back: it is said not to be known yet.
+ * The sentence is composed of enumerated values only; the backend string of OpenTune stays a JSON value. A read that
+ * fails adds nothing to the sentence and is reported as null with its reason.
+ */
+async function withBackend(
+  ctx: ToolContext,
+  session: OtcpSession,
+  body: Body,
+  requested: unknown,
+  readyBefore: boolean,
+): Promise<Body> {
+  /** The processing section of session.info, or null when OpenTune could not be asked. */
+  const read = async (): Promise<Json | null> => {
+    try {
+      const info = await session.call('session.info', {}, INFO_TIMEOUT_MS);
+      return isObject(info.processing) ? info.processing : {};
+    } catch (error) {
+      if (!(error instanceof OtcpError)) throw error;
+      ctx.logger.warn('reading the backend after a change of the rendering priority failed');
+      return null;
+    }
+  };
+  let processing = await read();
+  for (let polls = 0; processing?.vocoderReconfiguring === true && polls < backendWait.maxPolls; polls += 1) {
+    await sleep(backendWait.pollMs);
+    processing = await read();
+  }
+  if (processing === null) {
+    return {
+      ...body,
+      rendering_backend: null,
+      nullReasons: { ...(isObject(body.nullReasons) ? body.nullReasons : {}), rendering_backend: 'unavailable' },
+    };
+  }
+  const reloading = processing.vocoderReconfiguring === true;
+  const backend = typeof processing.backend === 'string' ? processing.backend : null;
+  const cpuUnderGpuFirst = requested === 'gpuFirst' && backend === 'cpu';
+  const sentence = reloading
+    ? BACKEND_STILL_RELOADING
+    : cpuUnderGpuFirst
+      ? readyBefore
+        ? GPU_FIRST_REQUESTED_CPU_RUNS
+        : BACKEND_NOT_CONFIRMED
+      : null;
+  return {
+    ...body,
+    summary: sentence === null ? body.summary : `${body.summary} ${sentence}`,
+    rendering_backend: {
+      requested: requested ?? null,
+      backend,
+      vocoder_reloading: reloading,
+      confirmed: readyBefore,
+      unconfirmed_reason: readyBefore ? null : 'vocoder_not_ready_before_change',
+    },
+  };
 }
 
 /** A summary without the tool prefix, for a sentence that composes several results. */
@@ -318,8 +405,9 @@ async function runSteps(
     results.length === 0 ? outcome : failedAfter(outcome.error);
 
   for (const [index, step] of steps.entries()) {
-    // The only extra read of a call, and only for a call that names a weight: whether the job will wait for it.
-    const readyBefore = namesWeight(step) && (await vocoderReadyBefore(ctx, session));
+    // The only extra read before a call, and only for a call that names a weight or the rendering priority: whether
+    // the job will wait for the vocoder.
+    const readyBefore = namesWeightOrPriority(step) && (await vocoderReadyBefore(ctx, session));
     let run;
     try {
       run = await startAndWait(ctx, session, step.method, step.params, waitSeconds);
@@ -386,7 +474,11 @@ async function runSteps(
     }
     const outcome = writeOutcome(result, renderContext(step.method, result, readyBefore));
     if (!outcome.ok) return stop(outcome);
-    results.push({ method: step.method, label: step.label, body: outcome.body });
+    const body =
+      step.method === 'prefs.set' && changedPriority(result)
+        ? await withBackend(ctx, session, outcome.body, step.params.renderingPriority, readyBefore)
+        : outcome.body;
+    results.push({ method: step.method, label: step.label, body });
   }
   return combined(results);
 }

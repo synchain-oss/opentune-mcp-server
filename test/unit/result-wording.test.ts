@@ -8,6 +8,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startMock, type OtcpMock } from '../../mock/server.js';
+import { MAX_LISTED } from '../../src/render/index.js';
 import { autotune, type AutotuneArgs } from '../../src/tools/autotune.js';
 import { editNotes } from '../../src/tools/edit-notes.js';
 import { getProject } from '../../src/tools/project.js';
@@ -64,14 +65,15 @@ describe('a listing that OpenTune cut short', () => {
     const omitted = out.omittedCount as { changes: number; created: number; removed: number };
     const listed = (out.created as unknown[]).length;
     const created = listed + omitted.created;
-    expect(listed).toBe(200);
+    // OpenTune lists 200 of them; the result lists MAX_LISTED, and counts the rest in omittedCount.
+    expect(listed).toBe(MAX_LISTED);
     expect(omitted.created).toBeGreaterThan(0);
     // The facts agree with one another: notes after = notes before - removed + created.
     expect(noteCount.after).toBe(noteCount.before - (out.removed as unknown[]).length + created);
     // The summary uses the real totals, and says that the list is shorter.
     expect(out.summary).toContain(`removed ${String((out.removed as unknown[]).length)} notes`);
     expect(out.summary).toContain(`created ${String(created)} notes`);
-    expect(out.summary).toContain('Only the first 200 entries of created are listed.');
+    expect(out.summary).toContain(`Only the first ${String(MAX_LISTED)} entries of created are listed.`);
     expect(out.summary).not.toContain('created 200 notes');
     // omittedCount counts, per kind, what OpenTune left out of changes, created and removed. omittedChangeCount of
     // the table counts every entity of the result that is not a row of it: those and the listed ones beyond its
@@ -97,9 +99,11 @@ describe('a listing that OpenTune cut short', () => {
         ops: [{ op: 'shiftCents', select: { all: true }, delta_cents: 10 }],
       }),
     );
-    expect(out.omittedChangeCount).toBe(250);
+    // OpenTune left 250 out of the 200 it listed; the result lists 20, so 430 are left out of it.
+    expect(out.omittedChangeCount).toBe(450 - MAX_LISTED);
+    expect(out.changes).toHaveLength(MAX_LISTED);
     expect(out.summary).toContain('changed 450 notes');
-    expect(out.summary).toContain('Only the first 200 entries of changes are listed.');
+    expect(out.summary).toContain(`Only the first ${String(MAX_LISTED)} entries of changes are listed.`);
     expect(out.summary).not.toContain('more not listed');
     const table = out.changeTable as ChangeTable;
     expect(table.rows.length + table.omittedChangeCount).toBe(450);

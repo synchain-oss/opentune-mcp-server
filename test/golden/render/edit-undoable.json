@@ -124,6 +124,88 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:1",
+      "description": "Edit notes",
+      "innerActions": [
+        "setNotes"
+      ],
+      "steps": 1
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
+        "undoId": "u:01234567:1",
+        "description": "Edit notes"
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n3",
+              "after": "n11"
+            },
+            "pitch": {
+              "before": "p4",
+              "after": "p12"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r13",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "omittedChangeCount": 0,
     "changes": [
       {
         "entity": "note",
@@ -175,68 +257,6 @@
     "created": [],
     "removed": [],
     "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "notes": {
-              "before": "n3",
-              "after": "n11"
-            },
-            "pitch": {
-              "before": "p4",
-              "after": "p12"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "revision": "r13",
-          "gridRevision": "g6",
-          "keyRevision": "k7"
-        }
-      ],
-      "placements": []
-    },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:1",
-      "description": "Edit notes",
-      "innerActions": [
-        "setNotes"
-      ],
-      "steps": 1
-    },
-    "dirty": {
-      "before": false,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "reRenderQueued": {
-        "contentIds": [
-          "c:01234567:0:1"
-        ],
-        "revert": null
-      }
-    },
-    "warnings": [],
-    "job": null,
-    "omittedChangeCount": 0,
     "uiEffects": [
       {
         "surface": "piano roll",
@@ -316,26 +336,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
-        "undoId": "u:01234567:1",
-        "description": "Edit notes"
-      }
-    ]
+    }
   }
 }

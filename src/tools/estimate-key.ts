@@ -42,7 +42,7 @@ import type { Json, OtcpSession } from '../otcp/client.js';
 import { resolvePath } from '../paths/index.js';
 import { extensionOf } from '../paths/validate.js';
 import { token } from '../render/text.js';
-import { CLIP_FIELD, INSTANCE_FIELD, READ_TIMEOUT_MS, invalid, isObject } from './clip-write.js';
+import { CLIP_FIELD, INSTANCE_FIELD, READ_TIMEOUT_MS, SCALES, invalid, isObject } from './clip-write.js';
 import { defineTool, withInstance, type Body, type Outcome, type ToolContext } from './registry.js';
 
 const TOOL = 'opentune_estimate_key';
@@ -271,11 +271,21 @@ function sameScaleSet(clipKey: ClipKey, key: KeyRef): boolean | null {
   return a.length === b.length && a.every((p) => b.includes(p));
 }
 
-/** "G major" for the two scales the estimate names; "dorian on root 2" for any other scale of the protocol. */
-function clipKeyName(clipKey: ClipKey): string {
-  return clipKey.scale === 'major' || clipKey.scale === 'minor'
-    ? keyName({ root: clipKey.root, scale: clipKey.scale })
-    : `${clipKey.scale} on root ${String(clipKey.root)}`;
+/** Said in place of a scale this server has no name for. */
+const OTHER_SCALE = 'another scale';
+
+/**
+ * "G major" for the two scales the estimate names; "dorian on root 2" for any other scale of the protocol. The scale
+ * is OpenTune's text: it is put in the sentence only as a token of the camel form that is also one of the scales of
+ * the protocol; any other word (the protocol may grow, a file may carry anything) is said as "another scale".
+ */
+export function clipKeyName(clipKey: Pick<ClipKey, 'root' | 'scale'>): string {
+  if (clipKey.scale === 'major' || clipKey.scale === 'minor') {
+    return keyName({ root: clipKey.root, scale: clipKey.scale });
+  }
+  const scale = token(clipKey.scale, 'camel');
+  const named = scale !== null && (SCALES as readonly string[]).includes(scale) ? scale : OTHER_SCALE;
+  return `${named} on root ${String(clipKey.root)}`;
 }
 
 /**
