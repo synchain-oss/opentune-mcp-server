@@ -239,6 +239,28 @@ async function fromMock(): Promise<Record<string, Scenario>> {
     envelope: await vocoder.ok('prefs.set', { f0Model: 'rmvpe' }),
   };
 
+  // A switch of the view during which the tempo field of the transport bar rounded the tempo (PROTOCOL.md section 14.6).
+  const rounded = await sessions.open({ instanceId: INSTANCE });
+  rounded.mock.given({ dirty: false, clips: [clip()] });
+  await rounded.ok('transport.setTempo', { bpm: 120.27 });
+  rounded.mock.given({ dirty: false });
+  out['tempo-rounded'] = {
+    description:
+      'A switch of the view during which the tempo field rounded the tempo from 120.27 to 120.3: nobody asked for it, so the first sentence says it with both values, and the revert line gives the call that sets the tempo back.',
+    tool: 'opentune_manage_ui',
+    envelope: await rounded.ok('ui.setWorkspace', { workspace: 'pianoRoll' }),
+  };
+  const unrestorable = await sessions.open({ instanceId: INSTANCE });
+  unrestorable.mock.given({ dirty: false, clips: [clip()] });
+  await unrestorable.ok('transport.setTempo', { bpm: 120.27 });
+  unrestorable.mock.given({ dirty: false, withoutCapabilities: ['transport.v1'] });
+  out['tempo-rounded-irreversible'] = {
+    description:
+      'The same on an instance that does not report transport.v1: no request can set the tempo back, so the revert is null, the warning IRREVERSIBLE is carried and the result is destructive.',
+    tool: 'opentune_manage_ui',
+    envelope: await unrestorable.ok('ui.setWorkspace', { workspace: 'pianoRoll' }),
+  };
+
   const replaced = await ok('content.autoTune', {
     contentId,
     mode: 'notesOnly',

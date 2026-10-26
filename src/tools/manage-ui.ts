@@ -10,8 +10,10 @@
 //
 // switch_view shows the arrangement view or the piano roll (capability ui.workspace); closing the piano
 // roll is switch_view arrangement. It changes view state only, so a result that reports nothing else says
-// that the project did not change, and whether the project still has the unsaved changes it had before; a
-// result that reports anything more gets the generic summary, which names it.
+// that the project did not change, and whether the project still has the unsaved changes it had before. The one
+// thing a switch can do besides, which OpenTune does by itself, is the rounding of a tempo that has more than one
+// decimal (side effect tempoRounded): that result says so in its first sentence. A result that reports anything
+// more gets the generic summary, which names it.
 
 import { z } from 'zod';
 
@@ -20,8 +22,9 @@ import { missingCapability } from '../otcp/instances.js';
 import type { Json } from '../otcp/client.js';
 import { isObject } from '../render/changes.js';
 import { writeBody } from '../render/index.js';
+import { revertPlan } from '../render/revert.js';
 import { warningCodes } from '../render/summary.js';
-import { SIDE_EFFECT_TEXT, token, viewName } from '../render/text.js';
+import { SIDE_EFFECT_TEXT, tempoRoundedWords, token, viewName } from '../render/text.js';
 import { INSTANCE_FIELD, invalid } from './clip-write.js';
 import { runWrites, type WriteCall, type WriteResult } from './multi-write.js';
 import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
@@ -60,7 +63,7 @@ function warningTail(envelope: Json): string {
 }
 
 /** Side effects whose words are written out in focusSummary; any other one is named by the fixed table. */
-const WORDED = new Set(['notesGenerated', 'uiScaleChanged', 'workspaceSwitched']);
+const WORDED = new Set(['notesGenerated', 'uiScaleChanged', 'workspaceSwitched', 'tempoRounded']);
 
 /**
  * The summary of a clip selection. The side effects nobody asked for come first: they are the
@@ -85,6 +88,10 @@ export function focusSummary(envelope: Json, openEditor = false): string {
   const switched = isObject(effects.workspaceSwitched) ? effects.workspaceSwitched : null;
   const route = switched === null ? '' : `from ${viewName(switched.from)} to ${viewName(switched.to)}`;
   if (switched !== null && !openEditor) unasked.push(`the window ${dry ? 'switches' : 'switched'} ${route}`);
+  // The window moved the keyboard focus away from the tempo field when it switched, and the field rounded the tempo.
+  if (isObject(effects.tempoRounded)) {
+    unasked.push(`${tempoRoundedWords(effects.tempoRounded, dry)}, and the project is marked as changed`);
+  }
   for (const name of Object.keys(effects)) {
     if (!WORDED.has(name)) {
       unasked.push(SIDE_EFFECT_TEXT[name] ?? `side effect ${token(name, 'camel') ?? 'with an unrecognized name'}`);
@@ -115,23 +122,27 @@ const workspaceOf = (value: unknown): keyof typeof WORKSPACE_WORDS | null =>
 
 /**
  * Nothing but the workspace changed: only the window is listed in `changes`, no content, no mark on the
- * project, no side effect besides the switch.
+ * project, no side effect besides the switch. With `tempo` true the rounding of the tempo by OpenTune's tempo
+ * field is allowed as well, with its entry in `changes` and the mark on the project that comes with it, and nothing
+ * else.
  */
-function viewOnly(envelope: Json): boolean {
+function viewOnly(envelope: Json, tempo = false): boolean {
   const effects = Object.keys(isObject(envelope.sideEffects) ? envelope.sideEffects : {});
   const diff = isObject(envelope.revisionDiff) ? envelope.revisionDiff : {};
   const dirty = isObject(envelope.dirty) ? envelope.dirty : {};
   return (
     Array.isArray(envelope.changes) &&
-    envelope.changes.every((change) => isObject(change) && change.entity === 'ui') &&
-    effects.every((name) => name === 'workspaceSwitched') &&
+    envelope.changes.every(
+      (change) => isObject(change) && (change.entity === 'ui' || (tempo && change.entity === 'tempo')),
+    ) &&
+    effects.every((name) => name === 'workspaceSwitched' || (tempo && name === 'tempoRounded')) &&
     warningCodes(envelope).length === 0 &&
     diff.arrangement === null &&
     diff.trackState === null &&
     Array.isArray(diff.contents) &&
     diff.contents.length === 0 &&
     typeof dirty.before === 'boolean' &&
-    dirty.before === dirty.after
+    (tempo ? dirty.after === true : dirty.before === dirty.after)
   );
 }
 
@@ -145,8 +156,9 @@ export function switchSummary(envelope: Json, view: (typeof VIEWS)[number], fall
   if (envelope.noOp === true) {
     return `${TOOL}: the window already shows ${WORKSPACE_WORDS[asked]}; nothing was changed.${warningTail(envelope)}`;
   }
-  if (!viewOnly(envelope)) return fallback;
   const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
+  const rounded = isObject(effects.tempoRounded) ? effects.tempoRounded : null;
+  if (!viewOnly(envelope, rounded !== null)) return fallback;
   const switched = isObject(effects.workspaceSwitched) ? effects.workspaceSwitched : {};
   const from = workspaceOf(switched.from);
   const ui = isObject(envelope.ui) ? envelope.ui : {};
@@ -156,6 +168,14 @@ export function switchSummary(envelope: Json, view: (typeof VIEWS)[number], fall
       : '';
   const origin = from === null ? '' : `from ${WORKSPACE_WORDS[from]} `;
   const back = from === null ? '' : `; switch back with switch_view ${VIEW_OF[from]}`;
+  if (rounded !== null) {
+    // The view is the one asked for; the tempo is what nobody asked for, so it is said right after it.
+    return (
+      `${TOOL}: switched the window ${origin}to ${WORKSPACE_WORDS[asked]}, and ALSO, which nobody asked for: ` +
+      `${tempoRoundedWords(rounded, false)}, and the project is marked as changed; no clip, note or other setting ` +
+      `changed${back}; ${tempoWayBack(rounded)}.${empty}`
+    );
+  }
   // viewOnly has checked that dirty.before is a boolean equal to dirty.after: a project that had unsaved changes
   // still has them, and the sentence must not read as if the project had none.
   const dirty = isObject(envelope.dirty) ? envelope.dirty : {};
@@ -167,6 +187,15 @@ export function switchSummary(envelope: Json, view: (typeof VIEWS)[number], fall
     `${TOOL}: switched the window ${origin}to ${WORKSPACE_WORDS[asked]}, which changes the view only: ` +
     `no clip, note or setting changed and ${mark}${back}.${empty}`
   );
+}
+
+/** Where the way back of a tempo that OpenTune's tempo field rounded is, for the end of the summary of a switch. */
+function tempoWayBack(rounded: Json): string {
+  const plan = revertPlan(rounded.revert);
+  if (plan.kind === 'tool') return 'the revert line gives the call that sets the tempo back';
+  if (plan.kind === 'manual')
+    return 'no tool of this server sets the tempo back, but the user can in the OpenTune window';
+  return 'no request can set the tempo back';
 }
 
 /** The error of switching the view on an instance that cannot: the user does it in the window. */

@@ -5,7 +5,8 @@
 // (spec/otcp/v1/PROTOCOL.md sections 13.2, 14.6, 15.4 rule 4 and 21 rule 3), and ui.setWorkspace
 // (capability ui.workspace, section 14.6). The window state it
 // reads and changes lives in the model: the dialogs, the first-run overlay, the selection, the
-// workspace and the scale shown in the transport bar.
+// workspace and the scale shown in the transport bar. A switch of the workspace also lets the tempo field
+// of the transport bar round the tempo (sideEffects.tempoRounded, section 14.6).
 
 import { envelope, type Handler, type MethodContext } from './context.js';
 import { refuse } from './errors.js';
@@ -204,6 +205,38 @@ const dismiss: Handler = (context) => {
   return context.params.target === 'onboarding' ? dismissOnboarding(context) : dismissDialogs(context);
 };
 
+// The tempo field ------------------------------------------------------------------------------------
+
+const TEMPO = { singleton: 'tempo' } as const;
+
+/**
+ * What the tempo field of the transport bar does when the window switches view (section 14.6): it shows the tempo
+ * with one decimal, and each switch moves the keyboard focus out of it, which makes it write the value it shows back
+ * to the project. So every switch, in either direction, rounds a tempo that has more than one decimal; null when it
+ * has at most one. The result describes the rounding; `apply` carries it out, which a dry run does not.
+ */
+function tempoRounding({ world, hasCapability }: MethodContext) {
+  const from = world.transport.bpm;
+  const to = Math.round(from * 10) / 10;
+  if (to === from) return null;
+  // The recipe needs transport.setTempo; an instance without it can restore nothing (section 15.2 rule 2).
+  const revert = hasCapability('transport.v1') ? { method: 'transport.setTempo', params: { bpm: from } } : null;
+  return {
+    change: {
+      entity: 'tempo',
+      ref: TEMPO,
+      label: 'Tempo',
+      fields: { bpm: { before: from, after: to, unit: 'bpm' } },
+    },
+    effect: { fromBpm: from, toBpm: to, revert },
+    warnings: revert === null ? [warning('IRREVERSIBLE', TEMPO)] : [],
+    apply: () => {
+      world.transport.bpm = to;
+      world.markDirty();
+    },
+  };
+}
+
 // ui.setSelection ------------------------------------------------------------------------------------
 
 const keyShown = (content: ContentRec) => content.key ?? (content.analysis === 'ready' ? DETECTED_KEY : null);
@@ -273,13 +306,20 @@ const setSelection: Handler = (context) => {
   const workspaceEffect = () => {
     sideEffects.workspaceSwitched = { from: world.workspace, to: 'pianoRoll', revert: null };
   };
-  const changes =
+  const changes: unknown[] =
     Object.keys(fields).length === 0 ? [] : [{ entity: 'selection', ref: SELECTION, label: 'Selection', fields }];
+  // The switch moves the keyboard focus out of the tempo field, which rounds the tempo (section 14.6).
+  const rounding = switches ? tempoRounding(context) : null;
+  if (rounding !== null) {
+    changes.push(rounding.change);
+    warnings.push(...rounding.warnings);
+  }
 
   if (dryRun) {
     if (generating !== undefined) effect(predictedNoteCount(generating));
     if (scaleChanged) scaleEffect();
     if (switches) workspaceEffect();
+    if (rounding !== null) sideEffects.tempoRounded = rounding.effect;
     return envelope(world, {
       applied: false,
       noOp: false,
@@ -302,6 +342,10 @@ const setSelection: Handler = (context) => {
   if (scaleChanged) scaleEffect();
   if (shownKey !== null) world.uiScale = { root: shownKey.root, scale: shownKey.scale };
   if (switches) workspaceEffect();
+  if (rounding !== null) {
+    sideEffects.tempoRounded = rounding.effect;
+    rounding.apply();
+  }
   // What the piano roll holds follows the selection, whichever view is shown; openEditor also switches the view.
   world.pianoRollContent = content ?? null;
   if (openEditor && content !== undefined) world.workspace = 'pianoRoll';
@@ -327,7 +371,8 @@ const setSelection: Handler = (context) => {
  * the project is not marked as changed. Switching to the piano roll shows the clip that is selected at that
  * moment, or nothing (`pianoRollContent` null) when no clip is selected, even if the piano roll showed another
  * clip before. Switching to the arrangement view leaves `pianoRollContent` as it is, as the editor keeps the
- * content it showed.
+ * content it showed. Each switch also takes the keyboard focus out of the tempo field, which rounds a tempo with
+ * more than one decimal and marks the project as changed (tempoRounding).
  */
 const setWorkspace: Handler = (context) => {
   const { world, params } = context;
@@ -350,6 +395,8 @@ const setWorkspace: Handler = (context) => {
     const shown = world.selectedPlacementIds[0];
     world.pianoRollContent = shown === undefined ? null : world.placement(shown).content;
   }
+  const rounding = tempoRounding(context);
+  rounding?.apply();
   return envelope(world, {
     applied: true,
     noOp: false,
@@ -360,6 +407,7 @@ const setWorkspace: Handler = (context) => {
         label: 'Workspace',
         fields: { workspace: { before: from, after: target, unit: null } },
       },
+      ...(rounding === null ? [] : [rounding.change]),
     ],
     diff: EMPTY_DIFF,
     contents: [],
@@ -369,7 +417,11 @@ const setWorkspace: Handler = (context) => {
       revert: { method: 'ui.setWorkspace', params: { workspace: from } },
     },
     dirtyBefore,
-    sideEffects: { workspaceSwitched: { from, to: target, revert: null } },
+    sideEffects: {
+      workspaceSwitched: { from, to: target, revert: null },
+      ...(rounding === null ? {} : { tempoRounded: rounding.effect }),
+    },
+    warnings: rounding === null ? [] : rounding.warnings,
   });
 };
 

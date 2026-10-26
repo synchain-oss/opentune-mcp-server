@@ -52,7 +52,7 @@ async function world(given: Parameters<Awaited<ReturnType<typeof startMock>>['gi
     ctx.instances.close();
   });
   const ids = mock.given(given);
-  return { ctx, ids };
+  return { ctx, ids, mock };
 }
 
 const arrangement = async (ctx: ToolContext): Promise<string> => {
@@ -299,6 +299,32 @@ async function scenarios(): Promise<Record<string, Scenario>> {
       'switch_view without a view: nothing is sent.',
       'opentune_manage_ui',
       { op: 'switch_view' },
+    );
+  }
+  {
+    // A tempo with two decimals, the way a client gets one: through the transport. The window rounds it when it
+    // switches view, and the result says so first.
+    const rounded = async () => {
+      const opened = await world({ clips: [clip({ bind: 'a', trackId: 0 })], dirty: false });
+      await tool('opentune_transport').run(tool('opentune_transport').inputSchema.parse({ bpm: 120.27 }), opened.ctx);
+      opened.mock.given({ dirty: false });
+      return opened;
+    };
+    const switching = await rounded();
+    await run(
+      switching.ctx,
+      'manage-ui-switch-view-tempo-rounded',
+      'Showing the piano roll while the tempo field rounds the tempo: the first sentence says that OpenTune changed the tempo from 120.27 to 120.3, which nobody asked for, and the revert line sets it back.',
+      'opentune_manage_ui',
+      { op: 'switch_view', view: 'piano_roll' },
+    );
+    const focusing = await rounded();
+    await run(
+      focusing.ctx,
+      'manage-ui-focus-tempo-rounded',
+      'Opening a clip in the piano roll is a switch of the view too: the switch is what open_editor asked for, the rounded tempo is what nobody asked for, and both have a way back.',
+      'opentune_manage_ui',
+      { op: 'focus_clip', clip: focusing.ids['a.placementId'] ?? '', open_editor: true },
     );
   }
   {

@@ -1,0 +1,242 @@
+{
+  "description": "Opening a clip in the piano roll is a switch of the view too: the switch is what open_editor asked for, the rounded tempo is what nobody asked for, and both have a way back.",
+  "tool": "opentune_manage_ui",
+  "input": {
+    "op": "focus_clip",
+    "clip": "p:01234567:0:1",
+    "open_editor": true
+  },
+  "result": {
+    "summary": "opentune_manage_ui: selected the clip and switched the window from the arrangement view to the piano roll, as open_editor asked, and ALSO, which nobody asked for: OpenTune changed the tempo from 120.27 to 120.3 bpm, because its tempo field rounds it to one decimal when the window switches view, and the project is marked as changed.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "selection",
+        "ref": {
+          "singleton": "selection"
+        },
+        "label": "Selection",
+        "fields": {
+          "selectedPlacementIds": {
+            "before": [],
+            "after": [
+              "p:01234567:0:1"
+            ],
+            "unit": null
+          }
+        }
+      },
+      {
+        "entity": "tempo",
+        "ref": {
+          "singleton": "tempo"
+        },
+        "label": "Tempo",
+        "fields": {
+          "bpm": {
+            "before": 120.27,
+            "after": 120.3,
+            "unit": "bpm"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "not_persisted_state",
+      "revert": {
+        "method": "ui.setSelection",
+        "params": {
+          "trackId": 0
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "workspaceSwitched": {
+        "from": "arrangement",
+        "to": "pianoRoll",
+        "revert": null
+      },
+      "tempoRounded": {
+        "fromBpm": 120.27,
+        "toBpm": 120.3,
+        "revert": {
+          "method": "transport.setTempo",
+          "params": {
+            "bpm": 120.27
+          }
+        }
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "unknown",
+        "effect": "changed selection",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Look at the OpenTune window."
+      },
+      {
+        "surface": "transport bar",
+        "effect": "changed tempo",
+        "target": "project",
+        "visibleNow": true
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      },
+      {
+        "surface": "main window",
+        "effect": "workspace switched",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "selection",
+          "label": "Selection",
+          "ref": {
+            "singleton": "selection"
+          },
+          "fields": [
+            {
+              "field": "selectedPlacementIds",
+              "before": [],
+              "after": [
+                "p:01234567:0:1"
+              ],
+              "unit": null
+            }
+          ]
+        },
+        {
+          "kind": "changed",
+          "entity": "tempo",
+          "label": "Tempo",
+          "ref": {
+            "singleton": "tempo"
+          },
+          "fields": [
+            {
+              "field": "bpm",
+              "before": 120.27,
+              "after": 120.3,
+              "unit": "bpm"
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "workspaceSwitched",
+        "text": "The window switched between the arrangement and the piano roll.",
+        "details": {
+          "from": "arrangement",
+          "to": "pianoRoll",
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "Switch the window back to the arrangement view with the op switch_view of opentune_manage_ui: call it with the arguments in restore, as they are (reverts side effect workspaceSwitched).",
+        "revert": null,
+        "restore": {
+          "tool": "opentune_manage_ui",
+          "arguments": {
+            "op": "switch_view",
+            "view": "arrangement"
+          }
+        }
+      },
+      {
+        "kind": "sideEffect",
+        "name": "tempoRounded",
+        "text": "The tempo field of the transport bar wrote the tempo it shows, rounded to one decimal, back to the project.",
+        "details": {
+          "fromBpm": 120.27,
+          "toBpm": 120.3,
+          "revert": {
+            "method": "transport.setTempo",
+            "params": {
+              "bpm": 120.27
+            }
+          }
+        },
+        "revert": {
+          "method": "transport.setTempo",
+          "params": {
+            "bpm": 120.27
+          }
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Restore: call opentune_transport with the arguments in restore, as they are. (reverts side effect tempoRounded)",
+        "revert": {
+          "method": "transport.setTempo",
+          "params": {
+            "bpm": 120.27
+          }
+        },
+        "restore": {
+          "tool": "opentune_transport",
+          "arguments": {
+            "bpm": 120.27
+          }
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (the state is not kept in the project). No tool of this server can carry out this restore yet; the user can restore it by hand in the OpenTune window.",
+        "revert": {
+          "method": "ui.setSelection",
+          "params": {
+            "trackId": 0
+          }
+        },
+        "restore": null
+      }
+    ]
+  }
+}

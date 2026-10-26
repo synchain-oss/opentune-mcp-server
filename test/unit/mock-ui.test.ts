@@ -405,6 +405,189 @@ describe('ui.setWorkspace', () => {
   });
 });
 
+describe('the tempo field when the window switches view', () => {
+  const warningCodes = (result: Record<string, unknown>) => (result.warnings as { code: string }[]).map((w) => w.code);
+
+  /** Whether the project tempo is now `bpm`: asking for the tempo it has changes nothing. */
+  async function tempoIs(session: TestSession, bpm: number): Promise<boolean> {
+    const result = await session.ok('transport.setTempo', { bpm });
+    return result.noOp === true;
+  }
+
+  it('rounds a tempo with two decimals when ui.setWorkspace switches, and reports it as setTempo does', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: false });
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({
+      applied: true,
+      noOp: false,
+      changes: [
+        { entity: 'ui', ref: { singleton: 'workspace' } },
+        {
+          entity: 'tempo',
+          ref: { singleton: 'tempo' },
+          fields: { bpm: { before: 120.27, after: 120.3, unit: 'bpm' } },
+        },
+      ],
+      revisionDiff: { arrangement: null, trackState: null, contents: [] },
+      // The undo descriptor describes the switch alone; the tempo has its recipe in the side effect.
+      undo: { undoable: false, reason: 'not_persisted_state', revert: { method: 'ui.setWorkspace' } },
+      sideEffects: {
+        workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null },
+        tempoRounded: {
+          fromBpm: 120.27,
+          toBpm: 120.3,
+          revert: { method: 'transport.setTempo', params: { bpm: 120.27 } },
+        },
+      },
+      warnings: [],
+    });
+    expect(await tempoIs(session, 120.3)).toBe(true);
+  });
+
+  it('keeps the time signature, and marks a clean project as changed', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    // The tempo is set with transport.setTempo, which marks the project; clear the mark to see the switch's own.
+    await ok('transport.setTempo', { bpm: 99.04, timeSignature: { numerator: 3, denominator: 4 } });
+    mock.given({ dirty: false });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({ dirty: { before: false, after: true } });
+    expect(opened.changes as unknown[]).toHaveLength(2);
+    const sameTime = await ok('transport.setTempo', { bpm: 99, timeSignature: { numerator: 3, denominator: 4 } });
+    expect(sameTime).toMatchObject({ noOp: true, tempo: { bpm: 99, timeSignature: { numerator: 3, denominator: 4 } } });
+  });
+
+  it('sends a revert recipe that sets the previous tempo back', async () => {
+    const session = await sessions.open();
+    const { ok } = session;
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    const recipe = field(opened, 'sideEffects', 'tempoRounded', 'revert') as Revert;
+    const restored = await ok(recipe.method, recipe.params);
+    expect(restored).toMatchObject({
+      changes: [{ entity: 'tempo', fields: { bpm: { before: 120.3, after: 120.27 } } }],
+      tempo: { bpm: 120.27 },
+    });
+  });
+
+  it.each([120, 133.5, 120.3, 99.9])('leaves a tempo with at most one decimal (%d) as it is', async (bpm) => {
+    const session = await sessions.open();
+    const { ok } = session;
+    await ok('transport.setTempo', { bpm });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened.sideEffects).toEqual({
+      workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null },
+    });
+    expect(opened.changes as unknown[]).toHaveLength(1);
+    expect(await tempoIs(session, bpm)).toBe(true);
+  });
+
+  it('rounds the tempo at every switch, in both directions, and not otherwise', async () => {
+    const session = await sessions.open();
+    const { ok } = session;
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const toRoll = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(field(toRoll, 'sideEffects', 'tempoRounded')).toMatchObject({ fromBpm: 120.27, toBpm: 120.3 });
+    // The tempo has one decimal now: the way back finds nothing to round, and the project is left as it was.
+    const back = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(back.sideEffects).toEqual({ workspaceSwitched: { from: 'pianoRoll', to: 'arrangement', revert: null } });
+    expect(back.changes as unknown[]).toHaveLength(1);
+    // A tempo with two decimals set while the piano roll is shown is rounded by the switch back.
+    await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    await ok('transport.setTempo', { bpm: 99.04 });
+    const rounded = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(rounded).toMatchObject({
+      sideEffects: {
+        workspaceSwitched: { from: 'pianoRoll', to: 'arrangement' },
+        tempoRounded: { fromBpm: 99.04, toBpm: 99 },
+      },
+      dirty: { after: true },
+    });
+    expect(await tempoIs(session, 99)).toBe(true);
+  });
+
+  it('leaves dirty as it was when the tempo has one decimal', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    await ok('transport.setTempo', { bpm: 120.3 });
+    mock.given({ dirty: false });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({ dirty: { before: false, after: false } });
+    expect(opened.sideEffects).toEqual({ workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null } });
+  });
+
+  it('does nothing to the tempo when the window already shows the view asked for', async () => {
+    const session = await sessions.open();
+    const { ok } = session;
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const same = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(same).toMatchObject({ noOp: true, changes: [], sideEffects: {} });
+    expect(await tempoIs(session, 120.27)).toBe(true);
+  });
+
+  it('rounds the tempo when ui.setSelection really switches the view, and only then', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    await ok('transport.setTempo', { bpm: 120.27 });
+    // Selecting without openEditor switches nothing.
+    const selected = await ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+    expect(selected.sideEffects).toEqual({});
+    expect(await tempoIs(session, 120.27)).toBe(true);
+    const opened = await ok('ui.setSelection', { placementId: ids['clip.placementId'], openEditor: true });
+    // The clip was selected by the call before, so the selection is not listed again.
+    expect(opened).toMatchObject({
+      changes: [{ entity: 'tempo', fields: { bpm: { before: 120.27, after: 120.3, unit: 'bpm' } } }],
+      sideEffects: {
+        workspaceSwitched: { from: 'arrangement', to: 'pianoRoll' },
+        tempoRounded: { fromBpm: 120.27, toBpm: 120.3, revert: { method: 'transport.setTempo' } },
+      },
+      dirty: { after: true },
+    });
+    expect(await tempoIs(session, 120.3)).toBe(true);
+    // The piano roll is shown now: opening the clip again switches nothing, so the tempo is not touched again.
+    await ok('transport.setTempo', { bpm: 88.88 });
+    const again = await ok('ui.setSelection', { placementId: ids['clip.placementId'], openEditor: true });
+    expect(again.sideEffects).toEqual({});
+    expect(await tempoIs(session, 88.88)).toBe(true);
+  });
+
+  it('predicts the rounding in a dry run and changes nothing', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    await ok('transport.setTempo', { bpm: 120.27 });
+    mock.given({ dirty: false });
+    const predicted = await ok('ui.setSelection', {
+      placementId: ids['clip.placementId'],
+      openEditor: true,
+      dryRun: true,
+    });
+    expect(predicted).toMatchObject({
+      applied: false,
+      dryRun: true,
+      changes: [{ entity: 'selection' }, { entity: 'tempo' }],
+      sideEffects: { tempoRounded: { fromBpm: 120.27, toBpm: 120.3 } },
+      dirty: { before: false, after: false },
+    });
+    expect(await tempoIs(session, 120.27)).toBe(true);
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+  });
+
+  it('gives no revert recipe, and warns IRREVERSIBLE, on an instance without transport.v1', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    await ok('transport.setTempo', { bpm: 120.27 });
+    mock.given({ withoutCapabilities: ['transport.v1'] });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened.sideEffects).toMatchObject({ tempoRounded: { fromBpm: 120.27, toBpm: 120.3, revert: null } });
+    expect(warningCodes(opened)).toEqual(['IRREVERSIBLE']);
+  });
+});
+
 describe('ui.dismiss', () => {
   it('commits the colour of a track-colour dialog only with confirm, and its revert recipe sets the old colour', async () => {
     const session = await sessions.open();
