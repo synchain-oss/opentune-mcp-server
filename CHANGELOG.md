@@ -66,6 +66,8 @@ versioned separately and has its own changelog.
 - The `beat-grid` skill no longer declares `allowed-tools`. That line let every shell command and file read or write
   run without asking while the skill was loaded; now the user's own permission settings apply to each command of the
   skill.
+- The `lyrics-timeline` skill no longer declares `allowed-tools`. Until now, while that skill was loaded, any Bash
+  command and any file read or write ran without Claude Code asking the user.
 
 ### Changed
 
