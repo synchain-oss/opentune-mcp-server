@@ -241,7 +241,9 @@ const setSelection: Handler = (context) => {
   const scaleChanged =
     shownKey !== null && (shownKey.root !== world.uiScale.root || shownKey.scale !== world.uiScale.scale);
   const switches = openEditor && world.workspace !== 'pianoRoll';
-  const reopens = openEditor && content !== undefined && world.pianoRollContent !== content;
+  // The piano roll holds the selected clip, also while the window shows the arrangement view; with a track selected
+  // (no clip) it holds none, as ui.setWorkspace shows it.
+  const loads = (content ?? null) !== world.pianoRollContent;
 
   const revert =
     previous.activeTrackId === null
@@ -300,11 +302,10 @@ const setSelection: Handler = (context) => {
   if (scaleChanged) scaleEffect();
   if (shownKey !== null) world.uiScale = { root: shownKey.root, scale: shownKey.scale };
   if (switches) workspaceEffect();
-  if (openEditor && content !== undefined) {
-    world.workspace = 'pianoRoll';
-    world.pianoRollContent = content;
-  }
-  const noOp = changes.length === 0 && Object.keys(sideEffects).length === 0 && !reopens && !switches;
+  // What the piano roll holds follows the selection, whichever view is shown; openEditor also switches the view.
+  world.pianoRollContent = content ?? null;
+  if (openEditor && content !== undefined) world.workspace = 'pianoRoll';
+  const noOp = changes.length === 0 && Object.keys(sideEffects).length === 0 && !loads && !switches;
   return envelope(world, {
     applied: true,
     noOp,

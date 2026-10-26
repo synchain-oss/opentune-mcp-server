@@ -92,6 +92,9 @@ async function runSession(): Promise<Session> {
     runningJob: need(ids, 'imp'),
     savingJob: need(ids, 'save'),
     audioFile,
+    endSavingJob: () => {
+      expect(mock.endJob(need(ids, 'save'))).toBe(true);
+    },
   };
 
   const env = { OPENTUNE_MCP_DISCOVERY_DIR: dir.dir };

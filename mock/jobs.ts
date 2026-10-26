@@ -305,6 +305,24 @@ export class JobStore {
     return [...this.#jobs.values()].some((r) => r.view.kind === kind && r.view.finishedAtMs === null);
   }
 
+  /** The kinds of the jobs that have not finished, oldest job first, each kind once. */
+  activeKinds(): string[] {
+    const kinds = [...this.#jobs.values()].filter((r) => r.view.finishedAtMs === null).map((r) => r.view.kind);
+    return [...new Set(kinds)];
+  }
+
+  /**
+   * Ends a job that `given` made and that nothing drives, as cancelled: the work it stands for is over. False
+   * for an unknown job, one that has ended already, and one the store drives itself.
+   */
+  end(jobId: string): boolean {
+    const record = this.#jobs.get(jobId);
+    // finishedAtMs is null exactly while the job runs, so an unknown job (undefined) falls out here too.
+    if (record?.view.finishedAtMs !== null || record.driver !== undefined) return false;
+    this.#finish(record, { state: 'cancelled' });
+    return true;
+  }
+
   get(jobId: string): JobView | undefined {
     this.#evict(this.clock.now(), JOB_RETENTION_COUNT);
     return this.#jobs.get(jobId)?.view;

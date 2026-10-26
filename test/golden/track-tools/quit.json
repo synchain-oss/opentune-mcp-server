@@ -1,0 +1,17 @@
+{
+  "description": "Nothing to lose: closed, and the instance is gone before the result comes back.",
+  "tool": "opentune_quit",
+  "input": {},
+  "result": {
+    "summary": "OpenTune closed. The project had no file: it was never saved. To work again, start OpenTune with opentune_launch.",
+    "quitting": true,
+    "exited": true,
+    "discardedUnsavedChanges": false,
+    "projectPath": null,
+    "nullReasons": {
+      "projectPath": "no_project_path"
+    },
+    "exitDeadlineMs": 5000,
+    "warnings": []
+  }
+}

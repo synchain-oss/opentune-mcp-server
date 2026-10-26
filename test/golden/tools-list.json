@@ -221,6 +221,33 @@
     }
   },
   {
+    "name": "opentune_quit",
+    "title": "Quit OpenTune",
+    "description": "OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES, so save first with opentune_save_project, or pass discard_unsaved: true only when the user explicitly agreed to lose the changes (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune again with opentune_launch.",
+    "inputSchema": {
+      "type": "object",
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "discard_unsaved": {
+          "description": "true only when the user explicitly agreed to lose the unsaved changes. Default false.",
+          "type": "boolean"
+        },
+        "instance_id": {
+          "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
+          "type": "string",
+          "pattern": "^[0-9a-f]{32}$"
+        }
+      },
+      "additionalProperties": false
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "idempotentHint": true,
+      "openWorldHint": false
+    }
+  },
+  {
     "name": "opentune_set_clip",
     "title": "Set OpenTune clip key and pitch shift",
     "description": "OpenTune (audio vocal pitch editor): sets the key (root and scale) and/or the pitch shift (whole semitones plus cents) of a clip. The key change cannot be undone (as in OpenTune); the result gives the opentune_set_clip call that restores the previous key. The pitch shift is one undo step; it does not transpose the key. With both, two requests run, key first, and the result reports each. Needs the clip_revision as expected_revision; only the key part of it is checked. The result returns the new clip_revision. Setting the current value changes nothing.",

@@ -13,6 +13,7 @@ import { exportAudioTool } from './export-audio.js';
 import { launchTool } from './launch.js';
 import { manageUiTool } from './manage-ui.js';
 import { getNotesTool } from './notes.js';
+import { quitTool } from './quit.js';
 import { openAudioTool } from './open-audio.js';
 import { getProjectTool } from './project.js';
 import { openProjectTool, overwriteProjectTool, saveProjectTool } from './project-files.js';
@@ -33,6 +34,7 @@ export const TOOLS: readonly ToolDefinition[] = [
   getJobTool,
   cancelJobTool,
   launchTool,
+  quitTool,
   setClipTool,
   autotuneTool,
   editNotesTool,
