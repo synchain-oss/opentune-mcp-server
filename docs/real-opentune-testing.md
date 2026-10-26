@@ -706,7 +706,8 @@ The edit and the undo are in `calls`, and the step's note says that the vocoder 
 is large on purpose: with hybrid mode on (OpenTune's default, and on in the data template), a render block whose voiced
 frames are all corrected by 75 cents or less is done by resampling, which needs no vocoder and loads none; that is how
 OpenTune renders, whatever `prefs.get` reports, so the step does not look at `hybridMode`. It is 200 cents, not 100,
-because the generated notes lie on the nearest semitone and can be 50 cents from the pitch that was sung. Where the
+because a note on a semitone can be up to 50 cents from the pitch that was sung (the tone of this run is 30 cents above
+its semitones), and the correction is measured from the sung pitch. Where the
 vocoder is ready, no edit is made; where the clip has no voiced note, none is made either and the note says so. A
 vocoder that is still not ready afterwards skips `renderingPriority` and `vocoderWeight` with the reason "the vocoder
 was not ready within 30 s, so the job would not wait for it"; an edit that is refused fails the step, and one that

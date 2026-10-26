@@ -1173,9 +1173,9 @@ const VOCODER_LOAD_MS = 60_000;
  * to be well beyond 75 cents: with hybrid mode on (OpenTune's default, and on in the data template of this run), a
  * render block whose voiced frames are all corrected by 75 cents or less is done by resampling the audio, which needs
  * no vocoder and loads none. That is how OpenTune renders, whatever prefs.get reports, so the step does not look at
- * hybridMode: it always moves a note far enough. The notes OpenTune generates sit on the detected pitch rounded to a
- * semitone, so a note can already be up to 50 cents from the pitch it was sung at; 200 cents keeps every frame beyond
- * 75 cents whichever way the note lies, which 100 cents does not.
+ * hybridMode: it always moves a note far enough. A note that sits on a semitone can already be up to 50 cents from the
+ * pitch it was sung at (the tone of this run is 30 cents above its semitones), and the correction is measured from the
+ * sung pitch: 100 cents can leave it at 70, 200 cents keeps every frame beyond 75 cents whichever way the note lies.
  */
 export const VOCODER_LOAD_SHIFT_CENTS = 200;
 
