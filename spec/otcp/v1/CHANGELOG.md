@@ -2,7 +2,7 @@
 
 All notable changes to the OTCP specification are recorded here. Versions follow `MAJOR.MINOR.PATCH` (README.md, "Versions"); each released version is tagged `spec-v<version>`.
 
-## [1.0.0-rc.7] - unreleased
+## [1.0.0-rc.7] - 2026-10-26
 
 Seventh release candidate of protocol major 1, proposed as the text of 1.0.0. It adds a method that switches the OpenTune window between the arrangement view and the piano roll, because `ui.setSelection` could only open the piano roll and no request led back to the arrangement view. It adds a method that quits OpenTune, because an agent that has finished could save the project but could not close the application. It also removes the reference alignment: OpenTune's upstream project retired the experimental reference track and its AUTO Ref button, and the control interface no longer reads, writes or reports it. The wire version stays `1.0`. Protocol major 1 has only release candidates so far, and a release candidate may remove members; from 1.0.0 on, a minor version only adds (README.md, "Versions"). The registries still keep every capability, reason and warning code that was sent, and mark the ones that are no longer sent. A client of rc.6 that sends a removed member gets `INVALID_ARGUMENT(invalid_params)` from a server of rc.7 (PROTOCOL.md section 2.3 rule 3), and the results of a server of rc.6 carry members that a client of rc.7 does not know and ignores (section 2.3 rules 1 and 4).
 

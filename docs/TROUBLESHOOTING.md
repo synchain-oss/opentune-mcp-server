@@ -351,7 +351,8 @@ reason `capability_missing`, which does not mean that no dialog is open.
 (`processing.backend`). With `gpuFirst` OpenTune tries the GPU each time the vocoder loads and falls back to the CPU
 without a word when that fails, so the GPU is not guaranteed. When the priority is `gpuFirst`, the backend is `cpu` and
 the vocoder is loaded (`processing.vocoderReady` is true), the summary says so; a vocoder that is not loaded can still
-report the backend from before, so nothing is concluded from it. To see why, read the log: `opentune_get_settings` with sections `["log"]` and `log_lines` 30 shows
+report the backend from before, so nothing is concluded from it. To see why, read the log: `opentune_get_settings` with
+sections `["log"]` and `log_lines` 30 shows
 the lines about the backend. On Windows also run `opentune-mcp doctor`: it checks the Direct3D 12 runtime that a test
 build lists in `opentune-control.json` (see [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied)). After a change of the
 rendering priority, `opentune_set_settings` reads the backend once the job has ended and reports it in
