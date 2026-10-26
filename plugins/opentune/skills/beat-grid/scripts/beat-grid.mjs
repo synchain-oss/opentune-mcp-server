@@ -6,13 +6,15 @@
 // no third-party dependencies. The plugin already needs Node for the MCP server, so this skill
 // ships no Python.
 //
-// Usage:
+// Usage (every command also takes --home <folder> and --help):
 //   node beat-grid.mjs status
 //   node beat-grid.mjs install --model final|small [--yes]
 //   node beat-grid.mjs analyze <wav> [--model final|small] [--out <file>.json [--force]] [--summary]
 //                                  [--no-refine] [--min-segment-beats <n>]
 //   node beat-grid.mjs timing-plan --grid <grid.json> --notes <notes.json> --grid-offset-sec <s>
-//                                  [--threshold-ms 30] [--subdivision 1|2|4]
+//                                  [--threshold-ms 30] [--subdivision 1|2|4] [--merge-gap-ms 30]
+//                                  [--merge-cents 300] [--min-note-ms 60]
+//   node beat-grid.mjs align --vocal <wav> --backing <wav> [--max-lag-sec 2]
 //
 // Exit codes: 0 success; 2 usage or unreadable input; 3 not installed (or no data folder);
 // 4 install, download or checksum failure; 5 the analyzer reported an error (its JSON is printed).
@@ -28,7 +30,9 @@ import { gunzipSync, inflateRawSync } from 'node:zlib';
 
 export const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 export const MANIFEST_FILE = path.join(SCRIPT_DIR, 'manifest.json');
-export const HOME_ENV = Object.freeze(['CLAUDE_PLUGIN_DATA', 'OPENTUNE_BEATS_HOME']);
+// The data folder, by priority: --home, then these two variables in this order.
+export const HOME_ENV = Object.freeze(['OPENTUNE_BEATS_HOME', 'CLAUDE_PLUGIN_DATA']);
+export const HOME_OPTION = '--home';
 export const MODELS = Object.freeze(['final', 'small']);
 export const TARGETS = Object.freeze(['win-x64', 'macos-universal2']);
 export const SUBDIVISIONS = Object.freeze([1, 2, 4]);
@@ -43,8 +47,23 @@ export const DOWNLOAD_HOSTS = Object.freeze([
   'release-assets.githubusercontent.com',
 ]);
 export const DEFAULT_THRESHOLD_MS = 30;
-export const MAX_OPS_PER_CALL = 8;
+// opentune_edit_timing takes up to 64 operations in one call (each shift is one request and one undo step).
+export const MAX_OPS_PER_CALL = 64;
 export const MAX_DELTA_MS = 10_000;
+// Merging the fragments of one sung syllable into a single rhythm onset (see timingPlan). Two voiced
+// notes belong to one chain when the next starts less than DEFAULT_MERGE_GAP_MS after the previous
+// ends (automatic note splitting cuts a glide into pieces that touch) and their pitches differ by
+// less than DEFAULT_MERGE_CENTS (a glide stays inside a few semitones; a new syllable on a new pitch
+// is a leap). A note shorter than DEFAULT_MIN_NOTE_MS that is not part of a chain is a fragment, not an
+// onset a listener hears.
+export const DEFAULT_MERGE_GAP_MS = 30;
+export const DEFAULT_MERGE_CENTS = 300;
+export const DEFAULT_MIN_NOTE_MS = 60;
+// align: onset envelopes at 100 Hz, searched within +-2 s; the peak must beat the next-best peak by
+// this ratio for the answer to be called confident.
+export const ALIGN_FRAME_HZ = 100;
+export const ALIGN_MAX_LAG_SEC = 2;
+export const ALIGN_MIN_CONFIDENCE = 1.5;
 export const EXIT = Object.freeze({
   OK: 0,
   USAGE: 2,
@@ -57,31 +76,70 @@ const SHA256_RE = /^[0-9a-f]{64}$/;
 const VERSION_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const INSTALL_DIR_RE = /^opentune-beats-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)-(win-x64|macos-universal2)$/;
 
+const HOME_HELP = `  --home <folder>   The data folder (the analyzer is installed under <folder>/bin). Priority: --home,
+                    then OPENTUNE_BEATS_HOME, then CLAUDE_PLUGIN_DATA. An empty value, or a variable that
+                    was not replaced, counts as not given. Accepted by every command; only status,
+                    install and analyze use it.`;
+
+/** The usage text of each command, printed by `<command> --help` and `help <command>` (exit code 0). */
+const COMMAND_HELP = Object.freeze({
+  status: `beat-grid status [--home <folder>]
+    Whether opentune-beats is installed, its version and folder, the models it has, and where the data
+    folder came from (homeSource: --home, OPENTUNE_BEATS_HOME or CLAUDE_PLUGIN_DATA). JSON.
+
+${HOME_HELP}
+`,
+  install: `beat-grid install --model final|small [--yes] [--home <folder>]
+    Without --yes: print what would be downloaded, its size and its licence, and change nothing.
+    With --yes: download, verify every sha256, extract, install and check --version.
+
+${HOME_HELP}
+`,
+  analyze: `beat-grid analyze <wav> [--model final|small] [--out <file>.json [--force]] [--summary]
+                        [--no-refine] [--min-segment-beats <n>] [--home <folder>]
+    Run the analyzer on a WAV file (an absolute path). Without --summary the analyzer's JSON is printed,
+    or written to --out (a .json path that must not exist yet, unless --force) with one line on stdout;
+    with --summary the beat list is left out (segments, tempi, confidence and warnings only).
+    --no-refine turns off the analyzer's beat refinement; --min-segment-beats sets the shortest
+    constant-tempo segment it reports (an integer of 1 or more).
+
+${HOME_HELP}
+`,
+  'timing-plan': `beat-grid timing-plan --grid <grid.json> --notes <notes.json> --grid-offset-sec <s>
+                        [--threshold-ms 30] [--subdivision 1|2|4] [--merge-gap-ms 30]
+                        [--merge-cents 300] [--min-note-ms 60] [--home <folder>]
+    Turn a grid and the notes of a vocal clip into opentune_edit_timing suggestions to review before any
+    call. --notes is the file written by opentune_get_notes with output_path (the older saved pages of
+    several results are read too). The singer's overall lead or lag (the median) is removed before the
+    threshold is applied.
+    Fragments are merged first: a note that starts less than --merge-gap-ms after the previous one ends
+    and whose pitch is within --merge-cents of it belongs to the same chain; only the start of a chain is
+    a rhythm onset and gets a suggestion, and the chain's span is the range of its op. A note shorter than
+    --min-note-ms that is not in a chain gets none. The output lists every batch of up to 64 ops in
+    calls; apply calls[0] only, then read the notes again and plan again.
+    --home is accepted and ignored.
+`,
+  align: `beat-grid align --vocal <wav> --backing <wav> [--max-lag-sec 2] [--home <folder>]
+    Find how much later (positive) or earlier (negative) the events of the vocal file are than those of
+    the backing file, from their onset envelopes (100 Hz frames, cross-correlated within +-max-lag-sec,
+    default 2, at most 10). Prints lagSec, confidence (the peak over the next-best peak; 1.5 or more is
+    confident) and gridOffsetSec = (vocal clip startTimelineSec - clipInContentSec) + lagSec as a formula.
+    Reads 16, 24 and 32 bit PCM and 32 bit float WAV files (absolute paths). --home is accepted and ignored.
+`,
+});
+
 const USAGE = `beat-grid: tempo and beat grid for OpenTune, from the opentune-beats analyzer.
 
-  node beat-grid.mjs status
-      Whether opentune-beats is installed, its version and folder, and the models it has (JSON).
+Commands (beat-grid <command> --help prints the usage of one):
 
-  node beat-grid.mjs install --model final|small [--yes]
-      Without --yes: print what would be downloaded, its size and its licence, and change nothing.
-      With --yes: download, verify every sha256, extract, install and check --version.
-
-  node beat-grid.mjs analyze <wav> [--model final|small] [--out <file>.json [--force]] [--summary]
-                                 [--no-refine] [--min-segment-beats <n>]
-      Run the analyzer on a WAV file. Without --summary the analyzer's JSON is printed, or written
-      to --out (a .json path that must not exist yet, unless --force) with one line on stdout; with --summary the beat list is left out (segments, tempi,
-      confidence and warnings only). --no-refine turns off the analyzer's beat refinement;
-      --min-segment-beats sets the shortest constant-tempo segment it reports (an integer of 1 or
-      more).
-
-  node beat-grid.mjs timing-plan --grid <grid.json> --notes <notes.json> --grid-offset-sec <s>
-                                 [--threshold-ms 30] [--subdivision 1|2|4]
-      Turn a grid and the notes of a vocal clip (opentune_get_notes) into opentune_edit_timing
-      suggestions to review before any call. The singer's overall lead or lag (the median) is
-      removed before the threshold is applied.
+  status        Whether opentune-beats is installed, and where the data folder is.
+  install       Download and install the analyzer (asks for --yes).
+  analyze       Run the analyzer on a WAV file.
+  timing-plan   Turn a beat grid and the notes of a vocal into opentune_edit_timing batches.
+  align         Check whether a vocal file and a backing file start together.
 
 Exit codes: 0 success, 2 usage or unreadable input, 3 not installed, 4 install failure,
-5 the analyzer reported an error. Data folders: CLAUDE_PLUGIN_DATA, else OPENTUNE_BEATS_HOME.
+5 the analyzer reported an error. Data folder: --home, else OPENTUNE_BEATS_HOME, else CLAUDE_PLUGIN_DATA.
 `;
 
 export class BeatGridError extends Error {
@@ -204,17 +262,30 @@ export function installDir(home, manifest, target) {
   return path.join(binDir(home), installDirName(manifest, target));
 }
 
-/** The folder under CLAUDE_PLUGIN_DATA (or OPENTUNE_BEATS_HOME); an error when neither is set. */
-export function dataHome(env = process.env) {
+/** Whether a --home value is empty or a variable reference the shell or the skill did not replace. */
+export function unusableHomeOption(value) {
+  const text = typeof value === 'string' ? value.trim() : '';
+  return text === '' || /^\$\{?[A-Za-z_][A-Za-z0-9_]*\}?$/.test(text) || /^%[A-Za-z_][A-Za-z0-9_]*%$/.test(text);
+}
+
+/**
+ * The data folder and where it came from. Priority: the --home option, then OPENTUNE_BEATS_HOME, then
+ * CLAUDE_PLUGIN_DATA. An empty --home, or one that is still an unreplaced variable such as
+ * ${CLAUDE_PLUGIN_DATA} (the skill text is only filled in when it runs as part of the plugin), counts as
+ * not given. An error when no folder is given at all.
+ */
+export function dataHome(env = process.env, homeOption = null) {
+  if (!unusableHomeOption(homeOption)) return { home: path.resolve(homeOption.trim()), source: HOME_OPTION };
   for (const name of HOME_ENV) {
     const value = (env[name] ?? '').trim();
     if (value !== '') return { home: path.resolve(value), source: name };
   }
   throw new BeatGridError(
     'NO_HOME',
-    'Neither CLAUDE_PLUGIN_DATA nor OPENTUNE_BEATS_HOME is set, so there is no folder for the analyzer. ' +
-      'When the skill runs as part of the plugin, CLAUDE_PLUGIN_DATA is set. Otherwise choose a short folder ' +
-      'with ASCII characters only (for example C:/OpenTuneBeats), set OPENTUNE_BEATS_HOME to it and run again.',
+    'No data folder is given: --home is empty or missing, and neither OPENTUNE_BEATS_HOME nor CLAUDE_PLUGIN_DATA is set. ' +
+      'When the skill runs as part of the plugin, pass --home with the plugin data folder (CLAUDE_PLUGIN_DATA). ' +
+      'Otherwise choose a short folder with ASCII characters only (for example C:/OpenTuneBeats) and pass it as --home ' +
+      '(or set OPENTUNE_BEATS_HOME to it), the same one for install and for every run.',
     EXIT.NOT_INSTALLED,
   );
 }
@@ -964,6 +1035,7 @@ export function status({
   env = process.env,
   platform = process.platform,
   arch = process.arch,
+  homeOption = null,
 } = {}) {
   const target = detectTarget(platform, arch);
   const base = {
@@ -998,8 +1070,12 @@ export function status({
         'refuses until it is and the manifest carries its sha256 values',
     );
   let homeInfo;
+  if (typeof homeOption === 'string' && homeOption.trim() !== '' && unusableHomeOption(homeOption))
+    base.notes.push(
+      `--home was given as ${JSON.stringify(homeOption)}, which is a variable that was not replaced; it was ignored`,
+    );
   try {
-    homeInfo = dataHome(env);
+    homeInfo = dataHome(env, homeOption);
   } catch (error) {
     if (error instanceof BeatGridError) {
       base.homeError = error.detail;
@@ -1206,14 +1282,27 @@ function notesFromJson(value) {
   visit(value);
   if (pages.length === 0) throw new BeatGridError('NOTES_UNREADABLE', 'the notes file holds no notes', EXIT.USAGE);
   const notes = [];
+  // The clip each note was read from, so that fragments of different clips are never chained together.
+  const clipOf = new Map();
   for (const page of pages) {
-    for (const note of page.notes) if (isObject(note)) notes.push(note);
+    const key =
+      typeof page.placementId === 'string'
+        ? page.placementId
+        : typeof page.contentId === 'string'
+          ? page.contentId
+          : null;
+    for (const note of page.notes) {
+      if (!isObject(note)) continue;
+      notes.push(note);
+      clipOf.set(note, key);
+    }
   }
   const placementIds = new Set(pages.map((page) => page.placementId).filter((id) => typeof id === 'string'));
   const contentIds = new Set(pages.map((page) => page.contentId).filter((id) => typeof id === 'string'));
   const revisions = new Set(pages.map((page) => page.clip_revision).filter((revision) => typeof revision === 'string'));
   return {
     notes,
+    clipOf,
     pages: pages.length,
     placementId: placementIds.size === 1 ? [...placementIds][0] : null,
     contentId: contentIds.size === 1 ? [...contentIds][0] : null,
@@ -1278,6 +1367,95 @@ function segmentAt(segments, time) {
   return found;
 }
 
+const pitchOf = (note) => {
+  if (isFiniteNumber(note.detectedMidi)) return note.detectedMidi;
+  if (isFiniteNumber(note.targetMidi)) return note.targetMidi;
+  return null;
+};
+
+/** The span of a note on the content clock, or null when it has no content start. */
+function contentSpan(note) {
+  if (!isFiniteNumber(note.startContentSec)) return null;
+  const start = note.startContentSec;
+  let end = start;
+  if (isFiniteNumber(note.endContentSec)) end = note.endContentSec;
+  else if (isFiniteNumber(note.endTimelineSec) && isFiniteNumber(note.startTimelineSec))
+    end = start + (note.endTimelineSec - note.startTimelineSec);
+  return { start, end: Math.max(end, start) };
+}
+
+/**
+ * Groups voiced notes of one clip into chains of fragments of the same sung syllable. Notes are taken
+ * in order of their content start; a note joins the chain before it when it starts less than
+ * `mergeGapMs` after the chain ends (an overlap counts as a gap of 0 or less) and its pitch is within
+ * `mergeCents` of the previous note's (detectedMidi, else targetMidi; with no pitch on either side only
+ * the gap decides). Notes of different clips (`keyOf`) never join. Returns chains in order, each with
+ * its notes, its start and its end (the latest end of its notes) on the content clock.
+ */
+export function chainNotes(
+  notes,
+  { mergeGapMs = DEFAULT_MERGE_GAP_MS, mergeCents = DEFAULT_MERGE_CENTS, keyOf = () => null } = {},
+) {
+  const entries = [];
+  for (const note of notes) {
+    const span = contentSpan(note);
+    if (span !== null) entries.push({ note, span, key: keyOf(note) });
+  }
+  entries.sort((a, b) => {
+    if (a.key !== b.key) return String(a.key) < String(b.key) ? -1 : 1;
+    return a.span.start - b.span.start || a.span.end - b.span.end;
+  });
+  const chains = [];
+  let current = null;
+  for (const { note, span, key } of entries) {
+    if (current !== null && current.key === key) {
+      // Rounded to a microsecond, so a gap of exactly the threshold is not decided by floating point error.
+      const gapMs = Math.round((span.start - current.end) * 1e6) / 1e3;
+      const before = pitchOf(current.notes[current.notes.length - 1]);
+      const after = pitchOf(note);
+      const centsApart = before === null || after === null ? 0 : Math.round(Math.abs(after - before) * 1e5) / 1e3;
+      if (gapMs < mergeGapMs && centsApart < mergeCents) {
+        current.notes.push(note);
+        current.end = Math.max(current.end, span.end);
+        continue;
+      }
+    }
+    current = { key, notes: [note], start: span.start, end: span.end };
+    chains.push(current);
+  }
+  return chains;
+}
+
+/** Rounds down or up to four decimals, tolerating the error of a product such as 6.3 * 10000. */
+const floor4 = (value) => Math.floor(value * 1e4 + 1e-6) / 1e4;
+const ceil4 = (value) => Math.ceil(value * 1e4 - 1e-6) / 1e4;
+
+const SETTING_REASONS = Object.freeze({
+  thresholdMs:
+    'a rhythm onset must be at least this far from the grid, after the singer’s overall lead or lag is removed, to get a suggestion; raise it to correct less',
+  subdivision: '1 compares with the beats, 2 with eighth notes, 4 with sixteenth notes',
+  mergeGapMs:
+    'notes cut from one continuous voiced stretch (a glide that automatic note splitting broke into pieces) touch each other; a pause longer than this means the singer stopped, so the next note is a new onset',
+  mergeCents:
+    'the pieces of a glide stay within a few semitones of each other; a jump of this much or more is a new syllable on a new pitch even when the notes touch',
+  minNoteMs:
+    'a lone note shorter than this is a fragment (a consonant, a click, a splitting artifact), not an onset a listener hears, so it gets no suggestion; the start of a chain always does',
+  maxOpsPerCall: 'the number of operations opentune_edit_timing takes in one call',
+});
+
+const BATCH_BASIS =
+  'content.shiftTiming moves every handle whose output position lies in the range and leaves the others, so the audio ' +
+  'between a moved handle and a handle that stays is stretched or compressed; a content range is mapped through the ' +
+  'grid as it is at expectedGridRevision; a move is limited by the minimum spacing to the neighbouring handles ' +
+  '(CLAMPED), and where handles lie is up to OpenTune. Every call changes the grid revision.';
+
+const BETWEEN_BATCHES = Object.freeze([
+  'Apply calls[0] only: it carries the expected_revision read with the notes. The later batches are previews of what is left; their expected_revision is null on purpose.',
+  'After a batch the grid revision is new and the handles it moved have stretched the audio next to them, so the timeline position of the notes near those handles, and with it the delta of every later suggestion, is no longer what this plan measured; a move next to a neighbour may also have been limited (CLAMPED).',
+  'Therefore do not send batch 2 from this plan. Read the notes again with opentune_get_notes and output_path (same clip, same range), run timing-plan again, and apply its calls[0]. Repeat until calls is empty or a round no longer lowers counts.flagged; two to four rounds is usual.',
+  'Each operation is its own undo step; undoing a batch takes one opentune_undo per operation, newest first (the result lists the undo ids).',
+]);
+
 /**
  * Turns a grid and the notes of a vocal clip into opentune_edit_timing suggestions.
  *
@@ -1286,8 +1464,26 @@ function segmentAt(segments, time) {
  * The notes carry both clocks (opentune_get_notes with a placement id): startTimelineSec is used to
  * find the nearest beat, startContentSec to give opentune_edit_timing its range. The singer's
  * overall lead or lag is the median deviation and is removed before the threshold is applied.
+ *
+ * Automatic note splitting cuts one sung syllable into many touching fragments, and every fragment
+ * start is not a rhythm onset. The notes are therefore merged into chains first (chainNotes); only
+ * the start of a chain is compared with the grid, and the range of its op is the span of the whole
+ * chain, so the handles inside it move together. A note shorter than `minNoteMs` that is not part
+ * of a chain gets no suggestion.
+ *
+ * The suggestions are cut into batches of up to MAX_OPS_PER_CALL ops (`calls`). Only the first batch
+ * can be applied from this plan: see BETWEEN_BATCHES.
  */
-export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_THRESHOLD_MS, subdivision = 1 } = {}) {
+export function timingPlan({
+  grid,
+  notes,
+  gridOffsetSec,
+  thresholdMs = DEFAULT_THRESHOLD_MS,
+  subdivision = 1,
+  mergeGapMs = DEFAULT_MERGE_GAP_MS,
+  mergeCents = DEFAULT_MERGE_CENTS,
+  minNoteMs = DEFAULT_MIN_NOTE_MS,
+} = {}) {
   if (!isObject(grid) || !Array.isArray(grid.beats) || grid.beats.length === 0)
     throw new BeatGridError(
       'NO_BEATS',
@@ -1304,6 +1500,14 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
     throw new BeatGridError('USAGE', '--threshold-ms must be a number of milliseconds, 0 or more', EXIT.USAGE);
   if (!SUBDIVISIONS.includes(subdivision))
     throw new BeatGridError('USAGE', '--subdivision must be 1, 2 or 4', EXIT.USAGE);
+  for (const [name, value] of [
+    ['--merge-gap-ms', mergeGapMs],
+    ['--merge-cents', mergeCents],
+    ['--min-note-ms', minNoteMs],
+  ]) {
+    if (!isFiniteNumber(value) || value < 0)
+      throw new BeatGridError('USAGE', `${name} must be a number, 0 or more`, EXIT.USAGE);
+  }
 
   const parsedNotes = notesFromJson(notes);
   const warnings = [];
@@ -1323,15 +1527,15 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
     warnings.push({
       code: 'NO_CLIP',
       detail:
-        'the notes file does not name the clip; save the whole opentune_get_notes result (it has placementId and ' +
-        'clip_revision) to get ready-to-use calls',
+        'the notes file does not name the clip; use the file opentune_get_notes writes with output_path (it has ' +
+        'placementId and clip_revision) to get ready-to-use calls',
     });
   if (parsedNotes.clipRevision === null)
     warnings.push({
       code: 'NO_REVISION',
       detail: parsedNotes.hasRevision
         ? 'the saved pages were read at different clip revisions; read the clip again before applying a call'
-        : 'the notes file has no clip_revision; read the clip again with opentune_get_project before applying a call',
+        : 'the notes file has no clip_revision; read the clip again with opentune_get_notes and output_path before applying a call',
     });
 
   const beats = grid.beats
@@ -1349,18 +1553,43 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
   const points = gridPoints(beats, subdivision, gridOffsetSec);
   const first = points[0].timelineSec;
   const last = points[points.length - 1].timelineSec;
-  const considered = [];
+
+  // Voiced notes with a content time are merged into chains; the start of a chain is the rhythm onset.
+  const voiced = [];
   let skippedUnvoiced = 0;
+  for (const note of parsedNotes.notes) {
+    if (note.voiced === false) skippedUnvoiced += 1;
+    else voiced.push(note);
+  }
+  const chainable = voiced.filter((note) => isFiniteNumber(note.startContentSec));
+  const skippedWithoutContent = voiced.length - chainable.length;
+  const chains = chainNotes(chainable, {
+    mergeGapMs,
+    mergeCents,
+    keyOf: (note) => parsedNotes.clipOf.get(note) ?? null,
+  });
+  const onsets = [];
+  let shortSkipped = 0;
+  for (const [index, chain] of chains.entries()) {
+    if (chain.notes.length < 2 && Math.round((chain.end - chain.start) * 1e6) / 1e3 < minNoteMs) {
+      shortSkipped += 1;
+      continue;
+    }
+    // The span of the op stops where the next chain starts, so two ops never share a handle.
+    const next = chains[index + 1];
+    const end =
+      next !== undefined && next.key === chain.key ? Math.max(chain.start, Math.min(chain.end, next.start)) : chain.end;
+    onsets.push({ chain, note: chain.notes[0], startContentSec: chain.start, endContentSec: end });
+  }
+
+  const considered = [];
   let skippedOutside = 0;
   let skippedWithoutTimeline = 0;
   let clockMismatch = 0;
   let placementOffset = null;
 
-  for (const note of parsedNotes.notes) {
-    if (note.voiced === false) {
-      skippedUnvoiced += 1;
-      continue;
-    }
+  for (const onset of onsets) {
+    const { note } = onset;
     if (!isFiniteNumber(note.startTimelineSec)) {
       skippedWithoutTimeline += 1;
       continue;
@@ -1369,42 +1598,49 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
       skippedOutside += 1;
       continue;
     }
-    const offset =
-      isFiniteNumber(note.startContentSec) && isFiniteNumber(note.startTimelineSec)
-        ? note.startContentSec - note.startTimelineSec
-        : null;
-    if (offset !== null) {
-      if (placementOffset === null) placementOffset = offset;
-      else if (Math.abs(offset - placementOffset) > 0.002) clockMismatch += 1;
-    }
+    const offset = note.startContentSec - note.startTimelineSec;
+    if (placementOffset === null) placementOffset = offset;
+    else if (Math.abs(offset - placementOffset) > 0.002) clockMismatch += 1;
     const point = nearestPoint(points, note.startTimelineSec);
     const segment = segmentAt(segments, point.timeSec);
-    considered.push({ note, point, segment, offset });
+    considered.push({ note, onset, point, segment });
   }
   if (skippedWithoutTimeline > 0 && considered.length === 0)
     throw new BeatGridError(
       'NOTES_WITHOUT_TIMELINE',
       'the notes have no startTimelineSec; call opentune_get_notes with the clip placement id (p:...) so each note ' +
-        'carries both clocks, then save the result',
+        'carries both clocks, then run the plan on that file',
       EXIT.USAGE,
     );
   if (skippedOutside > 0)
     warnings.push({
       code: 'OUTSIDE_GRID',
-      detail: `${String(skippedOutside)} note(s) start before the first or after the last beat and were left out`,
+      detail: `${String(skippedOutside)} onset(s) start before the first or after the last beat and were left out`,
     });
   if (skippedUnvoiced > 0)
     warnings.push({ code: 'UNVOICED_NOTES', detail: `${String(skippedUnvoiced)} unvoiced note(s) were left out` });
+  if (skippedWithoutContent > 0)
+    warnings.push({
+      code: 'NOTES_WITHOUT_CONTENT',
+      detail: `${String(skippedWithoutContent)} note(s) have no startContentSec and were left out`,
+    });
   if (skippedWithoutTimeline > 0)
     warnings.push({
       code: 'NOTES_WITHOUT_TIMELINE',
-      detail: `${String(skippedWithoutTimeline)} note(s) have no timeline time and were left out`,
+      detail: `${String(skippedWithoutTimeline)} onset(s) have no timeline time and were left out`,
+    });
+  if (shortSkipped > 0)
+    warnings.push({
+      code: 'SHORT_NOTES',
+      detail:
+        `${String(shortSkipped)} note(s) shorter than ${String(minNoteMs)} ms that start no chain were left out ` +
+        '(fragments, not onsets); lower --min-note-ms to include them',
     });
   if (clockMismatch > 0)
     warnings.push({
       code: 'CLOCK_MISMATCH',
       detail:
-        `${String(clockMismatch)} note(s) do not share the same content-to-timeline offset; the ranges use each ` +
+        `${String(clockMismatch)} onset(s) do not share the same content-to-timeline offset; the ranges use each ` +
         "note's own content times, but check the clip placement before applying anything",
     });
 
@@ -1416,7 +1652,7 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
   // those plans give the numbers and the warnings without a call.
   const callable =
     clip !== null && parsedNotes.clipRevision !== null && !parsedNotes.mixedPlacement && !parsedNotes.mixedRevision;
-  for (const { note, point, segment, offset } of considered) {
+  for (const { note, onset, point, segment } of considered) {
     const deviationMs = (note.startTimelineSec - point.timelineSec) * 1000;
     const adjustedMs = deviationMs - (globalOffsetMs ?? 0);
     if (Math.abs(adjustedMs) < thresholdMs) continue;
@@ -1427,28 +1663,19 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
       deltaTooLarge += 1;
       continue;
     }
-    const startContentSec = isFiniteNumber(note.startContentSec)
-      ? note.startContentSec
-      : offset === null
-        ? null
-        : note.startTimelineSec + offset;
-    const endContentSec = isFiniteNumber(note.endContentSec)
-      ? note.endContentSec
-      : isFiniteNumber(note.endTimelineSec)
-        ? note.endTimelineSec + (offset ?? 0)
-        : null;
-    if (startContentSec === null) continue;
-    const start = round(startContentSec, 4);
-    const end = round(Math.max(endContentSec ?? startContentSec + 0.001, start + 0.001), 4);
+    // The range covers the whole chain (rounded outwards, so a handle at its edge stays inside).
+    const start = floor4(onset.startContentSec);
+    const end = Math.max(ceil4(onset.endContentSec), round(start + 0.001, 4));
     const op = { op: 'shift', start_content_sec: start, end_content_sec: end, delta_ms: deltaMs };
     const beat = beats[point.beatIndex];
     // opentune_edit_timing has no dry_run: this plan is the preview. A suggestion carries only its
-    // op, never a ready call: the one call in `calls` below is what may be applied, so an agent
-    // cannot read a call out of every suggestion and issue one call per suggestion. A plan that
-    // cannot make a call (no single clip and revision) carries no op either.
+    // op, never a ready call: `calls` below holds the batches, so an agent cannot read a call out of
+    // every suggestion and issue one call per suggestion. A plan that cannot make a call (no single
+    // clip and revision) carries no op either.
     suggestions.push({
       noteIndex: isFiniteNumber(note.index) ? note.index : null,
-      noteStartContentSec: round(startContentSec, 4),
+      chainLength: onset.chain.notes.length,
+      noteStartContentSec: round(onset.startContentSec, 4),
       noteStartTimelineSec: round(note.startTimelineSec, 4),
       gridPoint: {
         timeSec: round(point.timeSec, 4),
@@ -1481,35 +1708,65 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
   if (considered.length === 0)
     warnings.push({
       code: 'NO_USABLE_NOTES',
-      detail: 'no note with both a timeline time inside the grid and a content time was found',
+      detail: 'no onset with both a timeline time inside the grid and a content time was found',
     });
 
-  // One call at a time: a write moves the notes and changes the revision, so every later
-  // suggestion is stale after the first call. Only the first call is given (its ops are the first
-  // suggestions' ops); the rest are listed as data and are planned again from fresh notes.
+  // Every batch is listed so that the size of the job is visible, but only the first can be applied:
+  // see BETWEEN_BATCHES. The later ones carry no revision on purpose.
   const calls = [];
   if (callable && suggestions.length > 0) {
-    const ops = suggestions.slice(0, MAX_OPS_PER_CALL).map((suggestion) => suggestion.op);
-    calls.push({ clip, expected_revision: parsedNotes.clipRevision, ops });
+    const total = Math.ceil(suggestions.length / MAX_OPS_PER_CALL);
+    for (let batch = 0; batch < total; batch++) {
+      calls.push({
+        batch: batch + 1,
+        batches: total,
+        ready: batch === 0,
+        clip,
+        expected_revision: batch === 0 ? parsedNotes.clipRevision : null,
+        ops: suggestions
+          .slice(batch * MAX_OPS_PER_CALL, (batch + 1) * MAX_OPS_PER_CALL)
+          .map((suggestion) => suggestion.op),
+      });
+    }
   }
   const remainingSuggestions = callable ? Math.max(0, suggestions.length - MAX_OPS_PER_CALL) : 0;
   if (remainingSuggestions > 0)
     warnings.push({
       code: 'REPLAN_AFTER_CALL',
       detail:
-        `${String(remainingSuggestions)} more suggestion(s) are listed without a call. After the first call is applied ` +
-        'and the user has heard it, read the notes again with opentune_get_notes and run timing-plan again; do not reuse this plan for them.',
+        `${String(remainingSuggestions)} more suggestion(s) are in batches 2 to ${String(calls.length)}, listed as previews. ` +
+        'Apply calls[0] only; after it, read the notes again with opentune_get_notes and output_path and run ' +
+        'timing-plan again; do not send the later batches from this plan.',
     });
 
+  const settings = {
+    thresholdMs,
+    subdivision,
+    mergeGapMs,
+    mergeCents,
+    minNoteMs,
+    maxOpsPerCall: MAX_OPS_PER_CALL,
+    reasons: SETTING_REASONS,
+  };
   return {
     schemaVersion: 1,
     tool: 'beat-grid',
     command: 'timing-plan',
-    params: { gridOffsetSec, thresholdMs, subdivision, model: grid.model?.name ?? null },
+    params: {
+      gridOffsetSec,
+      thresholdMs,
+      subdivision,
+      mergeGapMs,
+      mergeCents,
+      minNoteMs,
+      model: grid.model?.name ?? null,
+    },
+    settings,
     conventions: {
-      deviationMs: 'note start minus the nearest grid point; positive means the note is late',
+      deviationMs: 'onset start minus the nearest grid point; positive means the onset is late',
       globalOffsetMs: 'median deviation removed before the threshold; positive means the singer is late overall',
-      deltaMs: 'the shift to apply, the negative of the adjusted deviation; negative moves the note earlier',
+      deltaMs: 'the shift to apply, the negative of the adjusted deviation; negative moves the onset earlier',
+      onset: 'the start of a chain of touching notes, or a lone note of at least minNoteMs',
     },
     clock: {
       grid: 'seconds from the start of the backing-track file the grid was analyzed from',
@@ -1534,17 +1791,24 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
       contentId: parsedNotes.contentId,
       clipRevision: parsedNotes.clipRevision,
     },
+    merge: {
+      voicedNotes: chainable.length,
+      chains: chains.length,
+      mergedAway: chainable.length - chains.length,
+      onsets: onsets.length,
+      shortNotesSkipped: shortSkipped,
+    },
     globalOffsetMs: globalOffsetMs === null ? null : round(globalOffsetMs, 1),
     counts: { flagged: suggestions.length, calls: calls.length, remainingSuggestions },
     apply: {
       tool: 'opentune_edit_timing',
       maxOpsPerCall: MAX_OPS_PER_CALL,
       note:
-        'opentune_edit_timing has no dry-run parameter: this plan is the preview. Show it to the user and get ' +
-        'their agreement before calling. Each suggestion carries only its op, and null when no call can be made; ' +
-        'calls holds the one call that may be applied (at most maxOpsPerCall ops, built from the first suggestions, ' +
-        'with expected_revision). After it, read the notes again and run timing-plan again for the rest. Each call is ' +
-        'one undo step.',
+        'opentune_edit_timing has no dry-run parameter: this plan is the preview. Each suggestion carries only its op, ' +
+        'and null when no call can be made; calls holds the batches (at most maxOpsPerCall ops each, each op its own ' +
+        'undo step). Apply calls[0] only, then plan again from fresh notes.',
+      betweenBatches: BETWEEN_BATCHES,
+      basis: BATCH_BASIS,
     },
     suggestions,
     calls,
@@ -1552,16 +1816,354 @@ export function timingPlan({ grid, notes, gridOffsetSec, thresholdMs = DEFAULT_T
   };
 }
 
+/** A plan without the list of suggestions: the counts, the settings, the batches and the ten largest shifts. */
+export function summarizePlan(plan) {
+  const { suggestions, ...rest } = plan;
+  const worst = [...suggestions]
+    .sort((a, b) => Math.abs(b.deltaMs) - Math.abs(a.deltaMs))
+    .slice(0, 10)
+    .map(({ noteIndex, chainLength, noteStartTimelineSec, gridPoint, deviationMs, deltaMs, segment }) => ({
+      noteIndex,
+      chainLength,
+      noteStartTimelineSec,
+      gridPointTimelineSec: gridPoint.timelineSec,
+      deviationMs,
+      deltaMs,
+      segmentIndex: segment === null ? null : segment.index,
+    }));
+  return { ...rest, suggestions: undefined, suggestionsOmitted: suggestions.length, largestShifts: worst };
+}
+
+// ---------------------------------------------------------------------------------------------
+// align: does the vocal start together with the backing track?
+
+const WAV_BLOCK_BYTES = 1 << 20;
+const WAV_FORMAT_PCM = 1;
+const WAV_FORMAT_FLOAT = 3;
+const WAV_FORMAT_EXTENSIBLE = 0xfffe;
+// Local maxima closer than this to the main peak are its own ripple, not a rival (50 ms).
+const ALIGN_PEAK_EXCLUSION_FRAMES = 5;
+const ALIGN_CONFIDENCE_CAP = 100;
+// The level of an onset envelope is compared with its mean over this many frames either side (0.5 s).
+const ALIGN_LOCAL_MEAN_FRAMES = 25;
+
+function wavError(detail) {
+  return new BeatGridError('WAV_UNSUPPORTED', detail, EXIT.USAGE);
+}
+
+function readAt(fd, position, length) {
+  const buffer = Buffer.alloc(length);
+  const read = fs.readSync(fd, buffer, 0, length, position);
+  return buffer.subarray(0, read);
+}
+
+/**
+ * The format of a RIFF/WAVE file and where its samples lie. Reads 16, 24 and 32 bit PCM, 32 and 64 bit
+ * float, also in a WAVE_FORMAT_EXTENSIBLE header. A data chunk that claims no length, a streaming
+ * placeholder or more than the file holds is read to the end of the file.
+ */
+export function readWavHeader(fd, size) {
+  const head = readAt(fd, 0, 12);
+  if (head.length < 12) throw wavError('the file is too short to be a WAV file');
+  const magic = head.toString('latin1', 0, 4);
+  if (magic === 'RF64' || magic === 'BW64')
+    throw wavError('RF64 files (over 4 GiB) are not supported; export the audio as an ordinary WAV file');
+  if (magic !== 'RIFF' || head.toString('latin1', 8, 12) !== 'WAVE') throw wavError('the file is not a RIFF/WAVE file');
+  let format = null;
+  let position = 12;
+  while (position + 8 <= size) {
+    const chunk = readAt(fd, position, 8);
+    if (chunk.length < 8) break;
+    const id = chunk.toString('latin1', 0, 4);
+    const chunkSize = chunk.readUInt32LE(4);
+    const body = position + 8;
+    if (id === 'fmt ') {
+      if (chunkSize < 16) throw wavError('the fmt chunk of the file is too short');
+      const fmt = readAt(fd, body, Math.min(chunkSize, 40));
+      let tag = fmt.readUInt16LE(0);
+      if (tag === WAV_FORMAT_EXTENSIBLE) {
+        if (fmt.length < 26) throw wavError('the extensible fmt chunk of the file is too short');
+        tag = fmt.readUInt16LE(24);
+      }
+      format = {
+        tag,
+        channels: fmt.readUInt16LE(2),
+        sampleRate: fmt.readUInt32LE(4),
+        bitsPerSample: fmt.readUInt16LE(14),
+      };
+    } else if (id === 'data') {
+      if (format === null) throw wavError('the data chunk comes before the fmt chunk');
+      const available = size - body;
+      const dataBytes = chunkSize === 0 || chunkSize === 0xffffffff || chunkSize > available ? available : chunkSize;
+      return { ...format, dataStart: body, dataBytes };
+    }
+    position = body + chunkSize + (chunkSize % 2);
+  }
+  throw wavError(format === null ? 'the file has no fmt chunk' : 'the file has no data chunk');
+}
+
+/** A function that reads sample `index` (a byte offset) of a buffer as a number from -1 to 1, or null. */
+function sampleReader({ tag, bitsPerSample }) {
+  if (tag === WAV_FORMAT_PCM) {
+    if (bitsPerSample === 16) return (buffer, at) => buffer.readInt16LE(at) / 32768;
+    if (bitsPerSample === 24) return (buffer, at) => buffer.readIntLE(at, 3) / 8388608;
+    if (bitsPerSample === 32) return (buffer, at) => buffer.readInt32LE(at) / 2147483648;
+  }
+  if (tag === WAV_FORMAT_FLOAT) {
+    if (bitsPerSample === 32) return (buffer, at) => buffer.readFloatLE(at);
+    if (bitsPerSample === 64) return (buffer, at) => buffer.readDoubleLE(at);
+  }
+  return null;
+}
+
+/**
+ * The mean square of each 10 ms frame (frameHz) of a WAV file, channels averaged, read in blocks so a
+ * long file is never held in memory whole. A last frame that is not complete is dropped.
+ */
+export function frameEnergies(file, { frameHz = ALIGN_FRAME_HZ } = {}) {
+  let fd;
+  try {
+    fd = fs.openSync(file, 'r');
+  } catch (error) {
+    throw new BeatGridError(
+      'INPUT_UNREADABLE',
+      `cannot open ${file}: ${error instanceof Error ? error.message : String(error)}`,
+      EXIT.USAGE,
+    );
+  }
+  try {
+    const size = fs.fstatSync(fd).size;
+    const header = readWavHeader(fd, size);
+    const { channels, sampleRate, bitsPerSample } = header;
+    const read = sampleReader(header);
+    if (read === null || channels < 1 || sampleRate < 1000 || bitsPerSample % 8 !== 0)
+      throw wavError(
+        `unsupported WAV format (tag ${String(header.tag)}, ${String(bitsPerSample)} bit, ${String(channels)} channel(s), ` +
+          `${String(sampleRate)} Hz); use 16, 24 or 32 bit PCM or 32 bit float`,
+      );
+    const bytesPerSample = bitsPerSample / 8;
+    const frameBytes = bytesPerSample * channels;
+    const totalFrames = Math.floor(header.dataBytes / frameBytes);
+    if (totalFrames === 0) throw wavError('the file holds no samples');
+    const framesPerBlock = Math.max(1, Math.floor(WAV_BLOCK_BYTES / frameBytes));
+    const buffer = Buffer.alloc(framesPerBlock * frameBytes);
+    const energies = [];
+    let frame = 0;
+    let boundary = Math.round(sampleRate / frameHz);
+    let sampleNumber = 0;
+    let sum = 0;
+    let count = 0;
+    for (let done = 0; done < totalFrames;) {
+      const want = Math.min(framesPerBlock, totalFrames - done);
+      const got = Math.floor(
+        fs.readSync(fd, buffer, 0, want * frameBytes, header.dataStart + done * frameBytes) / frameBytes,
+      );
+      if (got === 0) break;
+      for (let i = 0; i < got; i++) {
+        let mono = 0;
+        for (let channel = 0; channel < channels; channel++)
+          mono += read(buffer, (i * channels + channel) * bytesPerSample);
+        mono /= channels;
+        sum += mono * mono;
+        count += 1;
+        sampleNumber += 1;
+        if (sampleNumber >= boundary) {
+          energies.push(sum / count);
+          sum = 0;
+          count = 0;
+          frame += 1;
+          boundary = Math.round(((frame + 1) * sampleRate) / frameHz);
+        }
+      }
+      done += got;
+    }
+    return {
+      energies,
+      info: {
+        sampleRate,
+        channels,
+        bitsPerSample,
+        format: header.tag === WAV_FORMAT_FLOAT ? 'float' : 'pcm',
+        seconds: round(totalFrames / sampleRate, 3),
+      },
+    };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * An onset envelope from frame energies: the rise of the level in dB-like units (log of the mean
+ * square), kept where it exceeds its own local mean, then centred and scaled to unit length. Returns a
+ * Float64Array; all zeros (norm 0) when the audio is silent.
+ */
+export function onsetEnvelope(energies) {
+  const count = energies.length;
+  const level = new Float64Array(count);
+  for (let i = 0; i < count; i++) level[i] = Math.log1p(1e6 * energies[i]);
+  const rise = new Float64Array(count);
+  for (let i = 1; i < count; i++) rise[i] = Math.max(0, level[i] - level[i - 1]);
+  const prefix = new Float64Array(count + 1);
+  for (let i = 0; i < count; i++) prefix[i + 1] = prefix[i] + rise[i];
+  const envelope = new Float64Array(count);
+  let total = 0;
+  for (let i = 0; i < count; i++) {
+    const low = Math.max(0, i - ALIGN_LOCAL_MEAN_FRAMES);
+    const high = Math.min(count, i + ALIGN_LOCAL_MEAN_FRAMES + 1);
+    const mean = (prefix[high] - prefix[low]) / (high - low);
+    envelope[i] = Math.max(0, rise[i] - mean);
+    total += envelope[i];
+  }
+  const centre = count === 0 ? 0 : total / count;
+  let norm = 0;
+  for (let i = 0; i < count; i++) {
+    envelope[i] -= centre;
+    norm += envelope[i] * envelope[i];
+  }
+  norm = Math.sqrt(norm);
+  if (norm > 0) for (let i = 0; i < count; i++) envelope[i] /= norm;
+  return envelope;
+}
+
+/**
+ * The normalized cross-correlation r[k] of two envelopes for k from -maxLag to maxLag frames, as
+ * sum over t of vocal[t] * backing[t - k]: the best k is positive when the vocal events come later.
+ */
+export function crossCorrelation(vocal, backing, maxLag) {
+  const result = new Float64Array(2 * maxLag + 1);
+  for (let k = -maxLag; k <= maxLag; k++) {
+    const from = Math.max(0, k);
+    const to = Math.min(vocal.length, backing.length + k);
+    let sum = 0;
+    for (let t = from; t < to; t++) sum += vocal[t] * backing[t - k];
+    result[k + maxLag] = sum;
+  }
+  return result;
+}
+
+/**
+ * Peak, interpolated lag and confidence of a correlation curve. Confidence is the peak divided by the
+ * highest other local maximum (further than 50 ms from the peak), capped at 100; a curve with no
+ * rival peak, or a rival that is not above zero, gets the cap.
+ */
+export function pickPeak(correlation, maxLag) {
+  let peak = 0;
+  for (let i = 1; i < correlation.length; i++) if (correlation[i] > correlation[peak]) peak = i;
+  const value = correlation[peak];
+  let rival = null;
+  for (let i = 1; i < correlation.length - 1; i++) {
+    if (Math.abs(i - peak) <= ALIGN_PEAK_EXCLUSION_FRAMES) continue;
+    if (correlation[i] > correlation[i - 1] && correlation[i] >= correlation[i + 1]) {
+      if (rival === null || correlation[i] > correlation[rival]) rival = i;
+    }
+  }
+  let fraction = 0;
+  if (peak > 0 && peak < correlation.length - 1) {
+    const left = correlation[peak - 1];
+    const right = correlation[peak + 1];
+    const denominator = left - 2 * value + right;
+    if (denominator < 0) fraction = (0.5 * (left - right)) / denominator;
+  }
+  const rivalValue = rival === null ? 0 : correlation[rival];
+  const confidence = !(value > 0)
+    ? 0
+    : rivalValue <= 0
+      ? ALIGN_CONFIDENCE_CAP
+      : Math.min(ALIGN_CONFIDENCE_CAP, value / rivalValue);
+  return {
+    lagFrames: peak - maxLag + fraction,
+    correlation: value,
+    confidence,
+    atLimit: peak === 0 || peak === correlation.length - 1,
+    rival: rival === null ? null : { lagFrames: rival - maxLag, correlation: rivalValue },
+  };
+}
+
+/**
+ * Whether the events of a vocal file and a backing file line up, and by how much they are apart:
+ * onset envelopes of both at ALIGN_FRAME_HZ, cross-correlated within +-maxLagSec.
+ *
+ * `lagSec` is positive when the vocal's events come later in its file than the same events in the
+ * backing file. A beat at backing time b is then at vocal-file time b + lagSec, which is why
+ * gridOffsetSec for a vocal clip is (its startTimelineSec - clipInContentSec) + lagSec.
+ */
+export function align({ vocal, backing, maxLagSec = ALIGN_MAX_LAG_SEC } = {}) {
+  if (typeof vocal !== 'string' || vocal === '' || typeof backing !== 'string' || backing === '')
+    throw new BeatGridError('USAGE', 'align needs --vocal <wav> and --backing <wav>', EXIT.USAGE);
+  if (!isFiniteNumber(maxLagSec) || maxLagSec <= 0 || maxLagSec > 10)
+    throw new BeatGridError('USAGE', '--max-lag-sec must be a number above 0 and at most 10', EXIT.USAGE);
+  const vocalFrames = frameEnergies(vocal);
+  const backingFrames = frameEnergies(backing);
+  const warnings = [];
+  const maxLag = Math.max(1, Math.round(maxLagSec * ALIGN_FRAME_HZ));
+  const vocalEnvelope = onsetEnvelope(vocalFrames.energies);
+  const backingEnvelope = onsetEnvelope(backingFrames.energies);
+  const silent = (envelope) => envelope.every((value) => value === 0);
+  if (silent(vocalEnvelope) || silent(backingEnvelope)) {
+    warnings.push({
+      code: 'NO_ONSETS',
+      detail: `${silent(vocalEnvelope) ? 'the vocal' : 'the backing'} file has no level changes to compare (silence or a constant tone)`,
+    });
+  }
+  const noOnsets = warnings.length > 0;
+  const peak = noOnsets
+    ? { lagFrames: 0, correlation: 0, confidence: 0, atLimit: false, rival: null }
+    : pickPeak(crossCorrelation(vocalEnvelope, backingEnvelope, maxLag), maxLag);
+  const lagSec = round(peak.lagFrames / ALIGN_FRAME_HZ, 4);
+  const confident = peak.confidence >= ALIGN_MIN_CONFIDENCE;
+  if (peak.atLimit)
+    warnings.push({
+      code: 'LAG_AT_LIMIT',
+      detail: `the best match is at the edge of the search range (+-${String(maxLagSec)} s); the true offset may be larger`,
+    });
+  if (!noOnsets && !confident)
+    warnings.push({
+      code: 'LOW_CONFIDENCE',
+      detail:
+        `the best match is only ${String(round(peak.confidence, 2))} times better than the next best one (confident from ` +
+        `${String(ALIGN_MIN_CONFIDENCE)}); a steady rhythm or a vocal that does not follow the backing's events makes several offsets look alike`,
+    });
+  return {
+    schemaVersion: 1,
+    tool: 'beat-grid',
+    command: 'align',
+    lagSec,
+    confidence: round(peak.confidence, 2),
+    confident,
+    confidenceThreshold: ALIGN_MIN_CONFIDENCE,
+    peakCorrelation: round(peak.correlation, 4),
+    nextBest:
+      peak.rival === null
+        ? null
+        : { lagSec: round(peak.rival.lagFrames / ALIGN_FRAME_HZ, 4), correlation: round(peak.rival.correlation, 4) },
+    searched: { maxLagSec, frameHz: ALIGN_FRAME_HZ },
+    conventions: {
+      lagSec:
+        'positive: the events of the vocal file come later than the same events of the backing file; negative: earlier',
+      confidence:
+        'the correlation at the best offset divided by the highest other peak (at least 50 ms away), capped at 100',
+      gridOffsetSec:
+        'for the timing plan: (startTimelineSec - clipInContentSec of the vocal clip) + lagSec, when the grid was analyzed from the backing file',
+    },
+    vocal: vocalFrames.info,
+    backing: backingFrames.info,
+    warnings,
+  };
+}
+
 // ---------------------------------------------------------------------------------------------
 // command line
 
-function usageError(detail) {
-  return new BeatGridError('USAGE', `${detail}\n\n${USAGE}`, EXIT.USAGE);
+function usageError(detail, command = null) {
+  const usage = command !== null && COMMAND_HELP[command] !== undefined ? COMMAND_HELP[command] : USAGE;
+  return new BeatGridError('USAGE', `${detail}\n\n${usage}`, EXIT.USAGE);
 }
 
+// Every command takes --home, so the skill can put it on each command line; commands that need no
+// data folder accept it and ignore it.
 const COMMAND_OPTIONS = Object.freeze({
-  status: {},
-  install: { model: 'value', yes: 'flag' },
+  status: { home: 'value' },
+  install: { model: 'value', yes: 'flag', home: 'value' },
   analyze: {
     model: 'value',
     out: 'value',
@@ -1569,6 +2171,7 @@ const COMMAND_OPTIONS = Object.freeze({
     summary: 'flag',
     'no-refine': 'flag',
     'min-segment-beats': 'value',
+    home: 'value',
   },
   'timing-plan': {
     grid: 'value',
@@ -1576,16 +2179,34 @@ const COMMAND_OPTIONS = Object.freeze({
     'grid-offset-sec': 'value',
     'threshold-ms': 'value',
     subdivision: 'value',
+    'merge-gap-ms': 'value',
+    'merge-cents': 'value',
+    'min-note-ms': 'value',
+    summary: 'flag',
+    home: 'value',
   },
+  align: { vocal: 'value', backing: 'value', 'max-lag-sec': 'value', home: 'value' },
 });
 
-/** Reads one command line into `{ command, options, positionals }`; usage errors throw. */
+/**
+ * Reads one command line into `{ command, options, positionals }`; usage errors throw. A help request
+ * (`--help`, `-h`, `help`, `help <command>`, `<command> --help`) gives `{ command: 'help', topic }`,
+ * where topic is the command to describe or null.
+ */
 export function parseArgs(argv) {
-  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help')
-    return { command: 'help', options: {}, positionals: [] };
+  if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h')
+    return { command: 'help', topic: null, options: {}, positionals: [] };
+  if (argv[0] === 'help') {
+    const topic = argv[1];
+    if (topic !== undefined && COMMAND_OPTIONS[topic] === undefined)
+      throw usageError(`unknown command ${JSON.stringify(topic)}`);
+    return { command: 'help', topic: topic ?? null, options: {}, positionals: [] };
+  }
   const [command, ...rest] = argv;
   const spec = COMMAND_OPTIONS[command];
   if (spec === undefined) throw usageError(`unknown command ${JSON.stringify(command)}`);
+  if (rest.includes('--help') || rest.includes('-h'))
+    return { command: 'help', topic: command, options: {}, positionals: [] };
   const options = {};
   const positionals = [];
   for (let i = 0; i < rest.length; i++) {
@@ -1597,14 +2218,15 @@ export function parseArgs(argv) {
     const equals = token.indexOf('=');
     const name = equals < 0 ? token.slice(2) : token.slice(2, equals);
     const kind = spec[name];
-    if (kind === undefined) throw usageError(`unknown option --${name} for ${command}`);
+    if (kind === undefined) throw usageError(`unknown option --${name} for ${command}`, command);
     if (kind === 'flag') {
-      if (equals >= 0) throw usageError(`--${name} takes no value`);
+      if (equals >= 0) throw usageError(`--${name} takes no value`, command);
       options[name] = true;
       continue;
     }
     const value = equals >= 0 ? token.slice(equals + 1) : rest[++i];
-    if (value === undefined || value === '') throw usageError(`--${name} needs a value`);
+    // An empty --home is what a shell makes of an unset variable: it counts as not given.
+    if (value === undefined || (value === '' && name !== 'home')) throw usageError(`--${name} needs a value`, command);
     options[name] = value;
   }
   const allowedPositionals = command === 'analyze' ? 1 : 0;
@@ -1613,6 +2235,7 @@ export function parseArgs(argv) {
       command === 'analyze'
         ? 'analyze takes exactly one WAV path'
         : `${command} takes no positional arguments (found ${positionals.length})`,
+      command,
     );
   return { command, options, positionals };
 }
@@ -1661,12 +2284,13 @@ export async function main(
   const currentManifest = () => manifest ?? loadManifest();
   try {
     const parsed = parseArgs(argv);
+    const homeOption = parsed.options.home ?? null;
     if (parsed.command === 'help') {
-      out(USAGE);
+      out(parsed.topic === null ? USAGE : COMMAND_HELP[parsed.topic]);
       return EXIT.OK;
     }
     if (parsed.command === 'status') {
-      writeJson(out, status({ manifest: currentManifest(), env, platform, arch }));
+      writeJson(out, status({ manifest: currentManifest(), env, platform, arch, homeOption }));
       return EXIT.OK;
     }
     if (parsed.command === 'install') {
@@ -1676,7 +2300,7 @@ export async function main(
       const target = detectTarget(platform, arch);
       let home = null;
       try {
-        home = dataHome(env).home;
+        home = dataHome(env, homeOption).home;
       } catch {
         home = null;
       }
@@ -1685,7 +2309,7 @@ export async function main(
         out(formatPlan(plan));
         return EXIT.OK;
       }
-      const resolved = dataHome(env);
+      const resolved = dataHome(env, homeOption);
       if (plan.problems.length > 0)
         throw new BeatGridError('INSTALL_REFUSED', plan.problems.join('; '), EXIT.INSTALL_FAILED);
       const result = await install({
@@ -1710,7 +2334,7 @@ export async function main(
           : parseIntegerOption(parsed.options, 'min-segment-beats', { min: 1 });
       const result = analyze({
         manifest: loadedManifest,
-        home: dataHome(env).home,
+        home: dataHome(env, homeOption).home,
         target: detectTarget(platform, arch),
         input: parsed.positionals[0],
         model,
@@ -1743,6 +2367,9 @@ export async function main(
       });
       const thresholdMs = parseNumberOption(parsed.options, 'threshold-ms', { fallback: DEFAULT_THRESHOLD_MS });
       const subdivision = parseNumberOption(parsed.options, 'subdivision', { fallback: 1, min: 1, max: 4 });
+      const mergeGapMs = parseNumberOption(parsed.options, 'merge-gap-ms', { fallback: DEFAULT_MERGE_GAP_MS });
+      const mergeCents = parseNumberOption(parsed.options, 'merge-cents', { fallback: DEFAULT_MERGE_CENTS });
+      const minNoteMs = parseNumberOption(parsed.options, 'min-note-ms', { fallback: DEFAULT_MIN_NOTE_MS });
       const readJson = (file, code) => {
         try {
           return JSON.parse(fs.readFileSync(path.resolve(cwd, file), 'utf8').replace(/^\uFEFF/, ''));
@@ -1760,8 +2387,29 @@ export async function main(
         gridOffsetSec,
         thresholdMs,
         subdivision,
+        mergeGapMs,
+        mergeCents,
+        minNoteMs,
       });
-      writeJson(out, plan);
+      writeJson(out, parsed.options.summary === true ? summarizePlan(plan) : plan);
+      return EXIT.OK;
+    }
+    if (parsed.command === 'align') {
+      if (parsed.options.vocal === undefined) throw usageError('align needs --vocal <wav>', 'align');
+      if (parsed.options.backing === undefined) throw usageError('align needs --backing <wav>', 'align');
+      const maxLagSec = parseNumberOption(parsed.options, 'max-lag-sec', {
+        fallback: ALIGN_MAX_LAG_SEC,
+        min: 0.01,
+        max: 10,
+      });
+      writeJson(
+        out,
+        align({
+          vocal: path.resolve(cwd, parsed.options.vocal),
+          backing: path.resolve(cwd, parsed.options.backing),
+          maxLagSec,
+        }),
+      );
       return EXIT.OK;
     }
     throw usageError(`unknown command ${JSON.stringify(parsed.command)}`);
