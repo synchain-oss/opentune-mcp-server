@@ -12,7 +12,7 @@
 // The `smoke*` modes also answer the calls of the end-to-end smoke scenario (import, AUTO, export)
 // with canned results, enough to walk the protocol; no audio is analysed. `smoke-dry` lists the
 // content in dryContents, `smoke-backend` fails the import with an unavailable inference backend,
-// `smoke-no-export` does not report export.v1, `smoke-auto-job` hands AUTO to a job,
+// `smoke-no-export` does not report export.v1,
 // `smoke-open-scale` reports a scale AUTO's closed list does not have, `smoke-busy` refuses the
 // import with BUSY modal_open and answers ui.getState (with ui.bridge reported), `smoke-busy-nobridge`
 // does the same without reporting ui.bridge. Every reply of these modes
@@ -201,9 +201,7 @@ function smokeReply(request) {
       });
     }
     let jobResult;
-    if (job.kind === 'referenceAnalysis') {
-      jobResult = autoResult(job.params);
-    } else if (job.kind === 'import') {
+    if (job.kind === 'import') {
       jobResult = {
         ...envelope('r1'),
         items: [
@@ -263,7 +261,6 @@ function smokeReply(request) {
       analysis: { f0State: 'ready', failure: null, hopSec: 0.01 },
       render: { current: true, publishedRevision: 'r1', desiredRevision: 'r1' },
       timeGrid: { seeded: true, identity: true, handles: [], minHandleSpacingSec: 0.05 },
-      reference: { referencePlacementId: null, alignmentReady: false },
       autoModes: {
         editingScheme: 'openDyne',
         uiButtonRuns: 'regenerate',
@@ -274,18 +271,6 @@ function smokeReply(request) {
   if (method === 'content.autoTune') {
     if (mode === 'smoke-open-scale' && params.key?.scale !== 'chromatic') {
       return failure(id, 'INVALID_ARGUMENT', 'bad_params');
-    }
-    if (mode === 'smoke-auto-job') {
-      const jobId = `j:0123abcd:${String(jobs.size + 1)}`;
-      jobs.set(jobId, { kind: 'referenceAnalysis', polls: 0, params });
-      return result({
-        ...envelope('r2', { jobId, kind: 'referenceAnalysis', state: 'queued' }),
-        mode: params.mode,
-        keyUsed: params.key,
-        paramsUsed: null,
-        noteCount: null,
-        omittedCount: { changes: 0, created: 0, removed: 0 },
-      });
     }
     return result(autoResult(params));
   }

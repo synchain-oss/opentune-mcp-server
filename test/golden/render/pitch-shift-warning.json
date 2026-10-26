@@ -33,7 +33,7 @@
           "changed": {
             "pitchShift": {
               "before": "s8",
-              "after": "p28"
+              "after": "p27"
             }
           }
         }
@@ -44,7 +44,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r26",
+          "revision": "r25",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }
@@ -123,7 +123,7 @@
           "changed": {
             "pitchShift": {
               "before": "s8",
-              "after": "p28"
+              "after": "p27"
             }
           }
         }
@@ -134,7 +134,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r26",
+          "revision": "r25",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }

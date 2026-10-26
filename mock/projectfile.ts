@@ -29,8 +29,6 @@ export interface ProjectClipFile {
   gainLinear: number;
   fadeInSec: number;
   fadeOutSec: number;
-  /** The index in `clips` of the clip this one is bound to as reference, or null. */
-  referenceClipIndex: number | null;
 }
 
 export interface ProjectFile {
@@ -71,7 +69,6 @@ export function projectOf(world: World): ProjectFile {
       gainLinear: p.gainLinear,
       fadeInSec: p.fadeInSec,
       fadeOutSec: p.fadeOutSec,
-      referenceClipIndex: p.reference === null ? null : placements.indexOf(p.reference),
     })),
   };
 }
@@ -129,7 +126,7 @@ const validContent = (value: unknown): boolean =>
   Array.isArray(value.handles) &&
   value.handles.every(validHandle);
 
-const validClip = (value: unknown, contentCount: number, clipCount: number): boolean =>
+const validClip = (value: unknown, contentCount: number): boolean =>
   isRecord(value) &&
   isIndex(value.contentIndex, contentCount) &&
   isIndex(value.trackId, TRACK_SLOTS) &&
@@ -139,8 +136,7 @@ const validClip = (value: unknown, contentCount: number, clipCount: number): boo
   isNumber(value.clipInContentSec) &&
   isNumber(value.gainLinear) &&
   isNumber(value.fadeInSec) &&
-  isNumber(value.fadeOutSec) &&
-  (value.referenceClipIndex === null || isIndex(value.referenceClipIndex, clipCount));
+  isNumber(value.fadeOutSec);
 
 /** The project a file holds, or undefined when the text is not a project file this mock wrote or its structure is damaged. */
 export function parseProject(text: string): ProjectFile | undefined {
@@ -156,7 +152,7 @@ export function parseProject(text: string): ProjectFile | undefined {
   if (!isNumber(value.bpm) || !isRecord(timeSignature)) return undefined;
   if (!isNumber(timeSignature.numerator) || !isNumber(timeSignature.denominator)) return undefined;
   if (!tracks.every(validTrack) || !contents.every(validContent)) return undefined;
-  if (!clips.every((clip) => validClip(clip, contents.length, clips.length))) return undefined;
+  if (!clips.every((clip) => validClip(clip, contents.length))) return undefined;
   return value as unknown as ProjectFile;
 }
 
@@ -189,7 +185,6 @@ export function singleClipProject(mediaPath: string, durationSec: number): Proje
         gainLinear: 1,
         fadeInSec: 0,
         fadeOutSec: 0,
-        referenceClipIndex: null,
       },
     ],
   };

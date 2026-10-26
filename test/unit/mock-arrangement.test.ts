@@ -251,13 +251,13 @@ describe('arrangement.edit', () => {
     expect(mock.snapshot().placements).toMatchObject([{ durationSec: 3.5, fadeInSec: 0.9, fadeOutSec: 1.5 }]);
   });
 
-  it('needs confirm for a delete, drops the references to deleted clips, and gives no revert', async () => {
+  it('needs confirm for a delete and gives no revert', async () => {
     const session = await sessions.open();
     const { mock, ok, fails } = session;
     const ids = mock.given({
       clips: [
         clip({ bind: 'a', startTimelineSec: 0, durationSec: 4 }),
-        clip({ bind: 'b', trackId: 1, startTimelineSec: 1, durationSec: 4, referenceClip: 'a' }),
+        clip({ bind: 'b', trackId: 1, startTimelineSec: 1, durationSec: 4 }),
       ],
     });
     const request = {
@@ -268,44 +268,8 @@ describe('arrangement.edit', () => {
     expect(await ok('arrangement.edit', { ...request, dryRun: true })).toMatchObject({ dryRun: true });
     const deleted = await ok('arrangement.edit', { ...request, confirm: true });
     expect(deleted.undo).toEqual({ undoable: false, reason: 'upstream_undo_defect', revert: null });
-    expect(deleted.changes).toMatchObject([{ fields: { referencePlacementId: { after: null } } }]);
     expect(deleted.warnings).toMatchObject([{ code: 'UPSTREAM_UNDO_DEFECT' }, { code: 'IRREVERSIBLE' }]);
     expect(mock.snapshot().contents).toHaveLength(1);
-  });
-
-  it('binds a clip to an overlapping clip only, and takes the binding back with the revert recipe', async () => {
-    const session = await sessions.open();
-    const { mock, ok, fails } = session;
-    const ids = mock.given({
-      clips: [
-        clip({ bind: 'a', startTimelineSec: 0, durationSec: 4 }),
-        clip({ bind: 'b', trackId: 1, startTimelineSec: 2, durationSec: 4 }),
-        clip({ bind: 'c', trackId: 2, startTimelineSec: 20, durationSec: 2 }),
-      ],
-    });
-    const bind = (placement: string, reference: string | null) => async () =>
-      session.call('arrangement.edit', {
-        expectedArrangementRevision: await arrangementRevision(session),
-        ops: [{ op: 'setReference', placementId: ids[`${placement}.placementId`], referencePlacementId: reference }],
-      });
-    const far = await bind('a', ids['c.placementId'] ?? null)();
-    expect(far.error?.data).toMatchObject({ reason: 'reference_ineligible' });
-    const first = await ok('arrangement.edit', {
-      expectedArrangementRevision: await arrangementRevision(session),
-      ops: [{ op: 'setReference', placementId: ids['a.placementId'], referencePlacementId: ids['b.placementId'] }],
-    });
-    expect(first.warnings).toMatchObject([{ code: 'EXPERIMENTAL_FEATURE' }]);
-    // b would refer back to a: a cycle.
-    expect((await bind('b', ids['a.placementId'] ?? null)()).error?.data).toMatchObject({
-      reason: 'reference_ineligible',
-    });
-    const before = mock.snapshot();
-    const undoId = field(first, 'undo', 'undoId');
-    await ok('edit.undo', { expectedUndoId: undoId });
-    expect(mock.snapshot().placements.find((p) => p.reference !== null)).toBeUndefined();
-    await ok('edit.redo', { expectedUndoId: undoId });
-    expect(mock.snapshot()).toEqual(before);
-    expect((await fails('arrangement.edit', { expectedArrangementRevision: 'stale', ops: [] })).code).toBeDefined();
   });
 });
 

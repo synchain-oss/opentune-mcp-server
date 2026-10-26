@@ -1,5 +1,5 @@
 {
-  "description": "A pitch model and a reference alignment mode set in one call, which finishes inside the call: the alignment mode is an experimental feature, and the revert recipe restores both.",
+  "description": "A pitch model set in one call, which finishes inside the call: no job is followed, and the revert recipe restores the previous model.",
   "tool": "opentune_set_settings",
   "input": {
     "applied": true,
@@ -19,20 +19,6 @@
             "unit": null
           }
         }
-      },
-      {
-        "entity": "preference",
-        "ref": {
-          "preference": "referenceAlignMode"
-        },
-        "label": "Reference alignment mode",
-        "fields": {
-          "referenceAlignMode": {
-            "before": "standardAuto",
-            "after": "game",
-            "unit": null
-          }
-        }
       }
     ],
     "created": [],
@@ -54,8 +40,7 @@
       "revert": {
         "method": "prefs.set",
         "params": {
-          "f0Model": "fcpe",
-          "referenceAlignMode": "standardAuto"
+          "f0Model": "fcpe"
         }
       }
     },
@@ -77,23 +62,15 @@
         "subject": null,
         "data": {
           "preferences": [
-            "f0Model",
-            "referenceAlignMode"
+            "f0Model"
           ]
         }
-      },
-      {
-        "code": "EXPERIMENTAL_FEATURE",
-        "subject": {
-          "preference": "referenceAlignMode"
-        },
-        "data": null
       }
     ],
     "job": null
   },
   "rendered": {
-    "summary": "opentune_set_settings: this changes user-global OpenTune settings, which belong to the installation and not to the project, and OpenTune records no undo entry for it: the revert line gives the opentune_set_settings call that puts the previous values back. changed 2 preferences (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_settings, see the revert line). Warnings: GLOBAL_PREFERENCE, EXPERIMENTAL_FEATURE.",
+    "summary": "opentune_set_settings: this changes user-global OpenTune settings, which belong to the installation and not to the project, and OpenTune records no undo entry for it: the revert line gives the opentune_set_settings call that puts the previous values back. changed 1 preference (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_settings, see the revert line). Warnings: GLOBAL_PREFERENCE.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -111,20 +88,6 @@
             "unit": null
           }
         }
-      },
-      {
-        "entity": "preference",
-        "ref": {
-          "preference": "referenceAlignMode"
-        },
-        "label": "Reference alignment mode",
-        "fields": {
-          "referenceAlignMode": {
-            "before": "standardAuto",
-            "after": "game",
-            "unit": null
-          }
-        }
       }
     ],
     "created": [],
@@ -146,8 +109,7 @@
       "revert": {
         "method": "prefs.set",
         "params": {
-          "f0Model": "fcpe",
-          "referenceAlignMode": "standardAuto"
+          "f0Model": "fcpe"
         }
       }
     },
@@ -169,17 +131,9 @@
         "subject": null,
         "data": {
           "preferences": [
-            "f0Model",
-            "referenceAlignMode"
+            "f0Model"
           ]
         }
-      },
-      {
-        "code": "EXPERIMENTAL_FEATURE",
-        "subject": {
-          "preference": "referenceAlignMode"
-        },
-        "data": null
       }
     ],
     "job": null,
@@ -209,22 +163,6 @@
               "unit": null
             }
           ]
-        },
-        {
-          "kind": "changed",
-          "entity": "preference",
-          "label": "Reference alignment mode",
-          "ref": {
-            "preference": "referenceAlignMode"
-          },
-          "fields": [
-            {
-              "field": "referenceAlignMode",
-              "before": "standardAuto",
-              "after": "game",
-              "unit": null
-            }
-          ]
         }
       ],
       "omittedChangeCount": 0
@@ -237,19 +175,9 @@
         "subject": null,
         "data": {
           "preferences": [
-            "f0Model",
-            "referenceAlignMode"
+            "f0Model"
           ]
         }
-      },
-      {
-        "kind": "warning",
-        "code": "EXPERIMENTAL_FEATURE",
-        "text": "The feature used is experimental in OpenTune.",
-        "subject": {
-          "preference": "referenceAlignMode"
-        },
-        "data": null
       },
       {
         "kind": "revert",
@@ -257,16 +185,14 @@
         "revert": {
           "method": "prefs.set",
           "params": {
-            "f0Model": "fcpe",
-            "referenceAlignMode": "standardAuto"
+            "f0Model": "fcpe"
           }
         },
         "restore": {
           "tool": "opentune_set_settings",
           "arguments": {
             "processing": {
-              "f0_model": "fcpe",
-              "reference_align_mode": "standardAuto"
+              "f0_model": "fcpe"
             }
           }
         }

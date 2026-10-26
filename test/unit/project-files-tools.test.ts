@@ -17,7 +17,6 @@ import { getJob } from '../../src/tools/jobs.js';
 import { TOOLS } from '../../src/tools/index.js';
 import {
   openProject,
-  openedSentences,
   openProjectTool,
   overwriteProject,
   overwriteProjectTool,
@@ -264,17 +263,6 @@ describe('opentune_open_project', () => {
       await openProject(second.ctx, { path: need(ids2, 'existing'), discard_unsaved: true, ...wait }),
     );
     expect(discarded.summary).toMatch(/which cannot be undone or restored/);
-  });
-
-  it('says how many reference bindings were not restored', () => {
-    // The mock cannot make a project with reference bindings, so the rendering is checked on a result built by hand.
-    const sentences = openedSentences({ skipped: { media: [], placementCount: 0, referenceBindingCount: 2 } }).join(
-      ' ',
-    );
-    expect(sentences).toMatch(/2 reference bindings could not be restored/);
-    expect(
-      openedSentences({ skipped: { media: [], placementCount: 0, referenceBindingCount: 0 } }).join(' '),
-    ).not.toMatch(/reference binding/);
   });
 
   it('fails with UNSAVED_CHANGES and never saves; discard_unsaved opens and says it discarded', async () => {

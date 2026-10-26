@@ -19,9 +19,9 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r26",
+          "revision": "r25",
           "gridRevision": "g6",
-          "keyRevision": "k30"
+          "keyRevision": "k29"
         }
       ],
       "placements": []
@@ -65,9 +65,9 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r26",
+          "revision": "r25",
           "gridRevision": "g6",
-          "keyRevision": "k30"
+          "keyRevision": "k29"
         }
       ],
       "placements": []

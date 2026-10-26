@@ -140,12 +140,6 @@ function clipOp(raw: unknown): ClipOp | null {
         ? null
         : { op: { op: 'delete', clips }, omitted: false };
     }
-    case 'setReference': {
-      // The tool unbinds when reference_clip is left out.
-      if (op.referencePlacementId === null) return withClip({ op: 'set_reference' });
-      const reference = clipOf(op.referencePlacementId);
-      return reference === null ? null : withClip({ op: 'set_reference', reference_clip: reference });
-    }
     default:
       return null;
   }
@@ -215,7 +209,6 @@ function preferenceRevert(params: Json): Mapped | null {
     'vocoderWeight',
     'renderingPriority',
     'f0Model',
-    'referenceAlignMode',
   ]);
   const take = (member: string, argument: string, acceptable: boolean): void => {
     if (params[member] === undefined) return;
@@ -239,11 +232,6 @@ function preferenceRevert(params: Json): Mapped | null {
     params.renderingPriority === 'gpuFirst' || params.renderingPriority === 'cpuFirst',
   );
   take('f0Model', 'f0_model', optionName(params.f0Model));
-  take(
-    'referenceAlignMode',
-    'reference_align_mode',
-    params.referenceAlignMode === 'standardAuto' || params.referenceAlignMode === 'game',
-  );
   // A member this function does not know is counted as omitted on purpose: the conservative reading, so the
   // restore is never presented as complete when the recipe named more than it can put back.
   if (Object.keys(params).some((key) => !known.has(key))) omitted = true;

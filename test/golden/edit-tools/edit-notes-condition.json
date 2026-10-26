@@ -26,7 +26,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 5,
-            "atRevision": "r24"
+            "atRevision": "r23"
           }
         },
         "label": "#5 A4 3.50-4.50s",
@@ -50,12 +50,12 @@
           "contentId": "c:01234567:0:1",
           "changed": {
             "notes": {
-              "before": "n18",
-              "after": "n22"
+              "before": "n17",
+              "after": "n21"
             },
             "pitch": {
-              "before": "p19",
-              "after": "p23"
+              "before": "p18",
+              "after": "p22"
             }
           }
         }
@@ -66,9 +66,9 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r24",
+          "revision": "r23",
           "gridRevision": "g6",
-          "keyRevision": "k17"
+          "keyRevision": "k16"
         }
       ],
       "placements": []
@@ -130,7 +130,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 5,
-              "atRevision": "r24"
+              "atRevision": "r23"
             }
           },
           "fields": [
@@ -171,6 +171,6 @@
         "matched": 1
       }
     ],
-    "clip_revision": "cr1.WyJyMjQiLCJnNiIsImsxNyIsImgxMSJd"
+    "clip_revision": "cr1.WyJyMjMiLCJnNiIsImsxNiIsImgxMCJd"
   }
 }

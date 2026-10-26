@@ -35,7 +35,6 @@ export interface GivenClip {
   readonly key?: { root: number; scale: string };
   readonly pitchShift?: PitchShiftRec;
   readonly timeGrid?: readonly { bind: string; contentSec: number }[];
-  readonly referenceClip?: string;
   readonly fadeInSec?: number;
   readonly fadeOutSec?: number;
 }
@@ -76,7 +75,6 @@ export interface GivenState {
     readonly vocoderWeight?: string;
     readonly renderingPriority?: string;
     readonly f0Model?: string;
-    readonly referenceAlignMode?: string;
     /** The weight files and the pitch models the installation offers (prefs.get, processing.options). */
     readonly options?: { readonly vocoderWeight?: readonly string[]; readonly f0Model?: readonly string[] };
     /** The binds of given files, the most recent first. */
@@ -273,19 +271,11 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
   if (given.editingScheme !== undefined) world.editingScheme = given.editingScheme;
   const byBind = new Map<string, PlacementRec>();
   for (const clip of given.clips ?? []) byBind.set(clip.bind, createClip(world, files, clip, bindings));
-  for (const clip of given.clips ?? []) {
-    const reference = clip.referenceClip === undefined ? undefined : byBind.get(clip.referenceClip);
-    if (clip.referenceClip !== undefined && reference === undefined) {
-      throw new Error(`clip ${clip.bind} refers to the reference clip ${clip.referenceClip}, which no clip binds`);
-    }
-    const placement = byBind.get(clip.bind);
-    if (placement !== undefined && reference !== undefined) placement.reference = reference;
-  }
   if (given.clipOnEveryTrack === true) {
     const used = new Set([...world.placements.values()].map((p) => p.trackId));
     for (let trackId = 0; trackId < TRACK_SLOTS; trackId++) {
       if (used.has(trackId)) continue;
-      // No name binds these clips, so their bindings go nowhere.
+      // No name binds these clips.
       const filler = {
         bind: `track${String(trackId)}Filler`,
         trackId,
@@ -340,9 +330,6 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
       world.prefs.renderingPriority = given.preferences.renderingPriority;
     }
     if (given.preferences.f0Model !== undefined) world.prefs.f0Model = given.preferences.f0Model;
-    if (given.preferences.referenceAlignMode !== undefined) {
-      world.prefs.referenceAlignMode = given.preferences.referenceAlignMode;
-    }
     if (options?.vocoderWeight !== undefined) world.prefs.options.vocoderWeight = [...options.vocoderWeight];
     if (options?.f0Model !== undefined) world.prefs.options.f0Model = [...options.f0Model];
     if (recentProjects !== undefined) {

@@ -78,7 +78,6 @@ export const WARNING_TEXT = table<string>({
 /** Side-effect names of PROTOCOL.md section 14.6. */
 export const SIDE_EFFECT_TEXT = table<string>({
   notesGenerated: 'OpenTune generated notes for a content',
-  referenceAnalysisQueued: 'reference alignment analysis was queued',
   reRenderQueued: 'rendering of one or more contents was queued again',
   uiScaleChanged: 'the scale shown in the transport bar changed',
   workspaceSwitched: 'the window switched between the arrangement and the piano roll',

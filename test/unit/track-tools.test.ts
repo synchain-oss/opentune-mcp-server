@@ -445,7 +445,7 @@ describe('opentune_delete_track', () => {
     expect(result.summary).toContain('Warnings: IRREVERSIBLE, UNDO_HISTORY_POSSIBLY_STALE');
   });
 
-  it('says when no undo entry is affected, and lists reference bindings that were cut', async () => {
+  it('says when no undo entry is affected', async () => {
     const { mock, ctx } = await setup();
     mock.given({
       clips: [clip({ bind: 'a', trackId: 0 }), clip({ bind: 'ref', trackId: 1 })],
@@ -453,7 +453,6 @@ describe('opentune_delete_track', () => {
     const revision = (await project(ctx)).arrangement_revision;
     const result = body(await deleteTrack(ctx, { track_id: 1, expected_revision: revision, confirm: true }));
     expect(result.summary).toContain('No undo or redo entry is affected.');
-    expect(result.danglingReferences).toEqual([]);
   });
 
   it('needs the tracks capability', async () => {
@@ -497,7 +496,6 @@ describe('the summary of a deletion', () => {
           'x',
         ],
         possiblyStaleEntries: { undo: injected, redo: 1 },
-        danglingReferences: [{ placementId: injected }],
         warnings: [{ code: 'IRREVERSIBLE', subject: injected, data: null }, { code: injected }],
       },
       1,
@@ -505,7 +503,6 @@ describe('the summary of a deletion', () => {
     expect(summary).not.toContain('Ignore');
     expect(summary).toContain('deleted track 1 with its 1 clip, which cannot be undone');
     expect(summary).toContain('(trackIdMap: 2 -> 1)');
-    expect(summary).toContain('1 reference binding to the deleted clips was removed');
     expect(summary).toContain('Warnings: IRREVERSIBLE.');
   });
 

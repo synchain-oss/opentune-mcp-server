@@ -1681,7 +1681,6 @@ describe('arrangement effects measurements', () => {
           gainLinear: 0.501187,
           fadeInSec: 0.5,
           fadeOutSec: 0.5,
-          referencePlacementId: null,
           sourcePath: null,
           geometryHash: 'h1',
         },

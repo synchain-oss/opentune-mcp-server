@@ -56,7 +56,7 @@ checks by reading it back; a state that does not read back as asked is skipped, 
 | `runner.stalePlacementId`, `runner.staleContentId` | A handle of valid form whose instance part differs (vectors/README.md). |
 | `runner.lastTrackId`, `runner.unknownTrackId`, `runner.arrangementRevision` | Read from `project.get` once the preconditions are in place. |
 | `given.files` | `audio`, `absent`, `existing` (with its `.next` name) and `undecodable`, in the vector's own folder. `noAccess` (needs an access control list) and `project` / `projectMissingMedia` (need a project OpenTune wrote) are skipped. |
-| `given.clips` | Only a plain clip (bind, track, start, duration, `ready`): the generated audio is imported without notes and the analysis awaited; the names `<bind>.contentId`, `.placementId`, `.sourcePath` and the tokens are bound last. A clip described by notes, key, time grid, reference, fades or pitch shift is skipped with "needs exact content (notes, key, time grid or reference); covered by the fork's headless runner"; so is an analysis that is not `ready`. |
+| `given.clips` | Only a plain clip (bind, track, start, duration, `ready`): the generated audio is imported without notes and the analysis awaited; the names `<bind>.contentId`, `.placementId`, `.sourcePath` and the tokens are bound last. A clip described by notes, key, time grid, fades or pitch shift is skipped with "needs exact content (notes, key, time grid, fades or pitch shift); covered by the fork's headless runner"; so is an analysis that is not `ready`. |
 | `given.dirty` | `true`: a tempo change that is taken back at once (else a mute that is). `false`: the project is saved to a file of the vector's folder when earlier steps made it dirty. |
 | `given.visibleTrackCount` | `track.add` up to the number (or all slots); tracks cannot be hidden, so a number below what is shown is skipped. |
 | `given.history` | Only undo entries made through the API (`pitchShift`, `clipMove`) on a clip of `clips`; entries made in the UI, redo entries and entries made possibly stale by a track deletion are skipped. |
@@ -114,7 +114,7 @@ Result file, one per runner (UTF-8 JSON):
   "commit": "<sha of the build under test>",
   "vectors": [
     { "id": "session/hello-ok", "status": "PASS" },
-    { "id": "edit/redo-ok", "status": "SKIP", "reason": "needs exact content (notes, key, time grid or reference); covered by the fork's headless runner" }
+    { "id": "edit/redo-ok", "status": "SKIP", "reason": "needs exact content (notes, key, time grid, fades or pitch shift); covered by the fork's headless runner" }
   ]
 }
 ```

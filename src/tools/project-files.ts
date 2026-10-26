@@ -330,7 +330,6 @@ export function openedSentences(result: Json): string[] {
   const restored = isObject(result.restored) ? natural(result.restored.placementCount) : 0;
   const discarded = previous.discarded === true;
   const plan = revertPlan(isObject(result.undo) ? result.undo.revert : null);
-  const bindings = natural(skipped.referenceBindingCount);
   const undoText =
     plan.kind === 'tool'
       ? 'which cannot be undone with opentune_undo, but opening the previous project again restores it (see the restore line).'
@@ -346,9 +345,6 @@ export function openedSentences(result: Json): string[] {
     parts.push(
       `${count(media, 'media file')} could not be found or read (listed in skipped.media), so ${count(clips, 'clip')} ${clips === 1 ? 'was' : 'were'} not restored.`,
     );
-  }
-  if (bindings > 0) {
-    parts.push(`${count(bindings, 'reference binding')} could not be restored.`);
   }
   return parts;
 }

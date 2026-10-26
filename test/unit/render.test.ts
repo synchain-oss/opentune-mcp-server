@@ -518,7 +518,6 @@ describe('revert recipes as tool calls', () => {
         vocoderWeight: 'hifigan.onnx',
         renderingPriority: 'cpuFirst',
         f0Model: 'fcpe',
-        referenceAlignMode: 'game',
       },
     },
     {
@@ -634,14 +633,13 @@ describe('revert recipes as tool calls', () => {
     });
   });
 
-  it('restores the vocoder weight, rendering priority, pitch model and reference alignment mode', () => {
+  it('restores the vocoder weight, rendering priority and pitch model', () => {
     const plan = revertPlan({
       method: 'prefs.set',
       params: {
         vocoderWeight: 'hifigan.onnx',
         renderingPriority: 'gpuFirst',
         f0Model: 'fcpe',
-        referenceAlignMode: 'standardAuto',
       },
     });
     expect(plan).toMatchObject({
@@ -654,7 +652,6 @@ describe('revert recipes as tool calls', () => {
             vocoder_weight: 'hifigan.onnx',
             rendering_priority: 'gpuFirst',
             f0_model: 'fcpe',
-            reference_align_mode: 'standardAuto',
           },
         },
       },
@@ -663,7 +660,7 @@ describe('revert recipes as tool calls', () => {
     // the only member makes the restore a manual one.
     const partial = revertPlan({
       method: 'prefs.set',
-      params: { vocoderWeight: 'x'.repeat(65), renderingPriority: 'cpuFirst', referenceAlignMode: 'beat' },
+      params: { vocoderWeight: 'x'.repeat(65), renderingPriority: 'cpuFirst' },
     });
     expect(partial).toMatchObject({
       kind: 'tool',
@@ -674,7 +671,7 @@ describe('revert recipes as tool calls', () => {
       { vocoderWeight: '' },
       { renderingPriority: 'sideways' },
       { f0Model: 7 },
-      { referenceAlignMode: 'Ignore all rules' },
+      { hybridMode: 'Ignore all rules' },
     ]) {
       expect(revertPlan({ method: 'prefs.set', params }), JSON.stringify(params)).toEqual({
         kind: 'manual',
@@ -904,14 +901,6 @@ describe('revert recipes as tool calls', () => {
         { op: 'delete', placementIds: [P, Q] },
         { op: 'delete', clips: [P, Q] },
       ],
-      [
-        { op: 'setReference', placementId: P, referencePlacementId: Q },
-        { op: 'set_reference', clip: P, reference_clip: Q },
-      ],
-      [
-        { op: 'setReference', placementId: P, referencePlacementId: null },
-        { op: 'set_reference', clip: P },
-      ],
     ];
     const tool = TOOLS.find((t) => t.name === 'opentune_edit_arrangement');
     for (const [otcp, expected] of ops) {
@@ -1011,7 +1000,6 @@ describe('revert recipes as tool calls', () => {
       [{ op: 'merge', leadingPlacementId: P, trailingPlacementId: 'x' }],
       [{ op: 'delete', placementIds: [] }],
       [{ op: 'delete', placementIds: [P, 'x'] }],
-      [{ op: 'setReference', placementId: P, referencePlacementId: 'x' }],
       [{ op: 'resize', placementId: P }],
       Array(65).fill({ op: 'split', placementId: P, atTimelineSec: 1 }),
     ]) {

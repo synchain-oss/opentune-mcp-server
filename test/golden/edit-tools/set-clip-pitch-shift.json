@@ -47,7 +47,7 @@
           "changed": {
             "pitchShift": {
               "before": "s8",
-              "after": "p12"
+              "after": "p11"
             }
           }
         }
@@ -58,7 +58,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r10",
+          "revision": "r9",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }
@@ -182,6 +182,6 @@
         "description": "Pitch shift"
       }
     ],
-    "clip_revision": "cr1.WyJyMTAiLCJnNiIsIms3IiwiaDExIl0"
+    "clip_revision": "cr1.WyJyOSIsImc2IiwiazciLCJoMTAiXQ"
   }
 }
