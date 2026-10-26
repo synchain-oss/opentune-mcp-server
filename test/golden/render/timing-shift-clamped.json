@@ -104,7 +104,7 @@
     ]
   },
   "rendered": {
-    "summary": "opentune_edit_timing: changed 1 timeHandle (side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:1. Warnings: CLAMPED.",
+    "summary": "opentune_edit_timing: changed 1 timeHandle (side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:1. Warnings: CLAMPED.",
     "applied": true,
     "noOp": false,
     "dryRun": false,

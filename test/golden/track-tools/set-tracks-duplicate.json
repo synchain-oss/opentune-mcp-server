@@ -10,7 +10,7 @@
     ]
   },
   "result": {
-    "summary": "opentune_set_tracks: changed 1 track, created 1 placement, 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_delete_track only after the user explicitly agrees).",
+    "summary": "opentune_set_tracks: changed 1 track, created 1 placement, 1 content (revealed the hidden track 5; the colour of track 5 changed from #4DB6AC to #E57373; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_delete_track only after the user explicitly agrees).",
     "applied": true,
     "noOp": false,
     "dryRun": false,

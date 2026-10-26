@@ -1,0 +1,162 @@
+{
+  "description": "The first save to a new place: a new file is written, and the audio is copied next to it.",
+  "tool": "opentune_save_project",
+  "input": {
+    "mode": "save_as",
+    "path": "<tmp-1>/fresh.otproj",
+    "wait_seconds": 10
+  },
+  "result": {
+    "summary": "opentune_save_project: wrote a new project file (path in path); no existing file was replaced, and from now on it is the project's file. OpenTune also copies the audio the project uses into the Project_Media folder next to the project file. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "project",
+        "ref": {
+          "singleton": "project"
+        },
+        "label": "Project",
+        "fields": {
+          "path": {
+            "before": null,
+            "after": "<tmp-1>/fresh.otproj",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "dirty": {
+      "before": true,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      },
+      {
+        "code": "NOT_SAVED_IN_PROJECT",
+        "subject": null,
+        "data": {
+          "items": [
+            "visibleTrackCount",
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      }
+    ],
+    "job": {
+      "jobId": "j:01234567:1",
+      "kind": "projectSave",
+      "state": "succeeded"
+    },
+    "path": "<tmp-1>/fresh.otproj",
+    "sizeBytes": "<size>",
+    "uiEffects": [
+      {
+        "surface": "window title",
+        "effect": "changed project",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Look at the window title."
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark cleared",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "project",
+          "label": "Project",
+          "ref": {
+            "singleton": "project"
+          },
+          "fields": [
+            {
+              "field": "path",
+              "before": null,
+              "after": "<tmp-1>/fresh.otproj",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "NOT_SAVED_IN_PROJECT",
+        "text": "The change is not saved in the project file.",
+        "subject": null,
+        "data": {
+          "items": [
+            "visibleTrackCount",
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ],
+    "notSavedInProject": [
+      "visibleTrackCount",
+      "undoHistory",
+      "preferences"
+    ],
+    "mediaFolder": "<tmp-1>/Project_Media",
+    "requestedPath": "<tmp-1>/fresh.otproj"
+  }
+}

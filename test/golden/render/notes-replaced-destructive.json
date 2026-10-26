@@ -556,7 +556,7 @@
     }
   },
   "rendered": {
-    "summary": "opentune_autotune_range: created 11 notes, removed 30 notes (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; cannot be restored by any request; side effects: rendering of one or more contents was queued again). Warnings: REPLACES_ALL_NOTES, IRREVERSIBLE.",
+    "summary": "opentune_autotune_range: created 11 notes, removed 30 notes (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; cannot be restored by any request; side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Warnings: REPLACES_ALL_NOTES, IRREVERSIBLE.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
