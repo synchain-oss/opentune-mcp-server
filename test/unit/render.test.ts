@@ -12,12 +12,29 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Json } from '../../src/otcp/client.js';
 import { encodeArrangementRevision, encodeClipRevision } from '../../src/otcp/tokens.js';
-import { MAX_TABLE_ROWS, isWriteEnvelope, renderWrite, writeBody, writeOutcome } from '../../src/render/index.js';
+import {
+  MAX_LISTED,
+  MAX_TABLE_ROWS,
+  capEnvelope,
+  isWriteEnvelope,
+  renderWrite,
+  writeBody,
+  writeOutcome,
+} from '../../src/render/index.js';
 import { RESTORABLE_METHODS, revertPlan, revertText } from '../../src/render/revert.js';
-import { SIDE_EFFECT_TEXT, UNDO_REASON_TEXT, WARNING_TEXT, token, undoReasonText } from '../../src/render/text.js';
+import {
+  SIDE_EFFECT_TEXT,
+  UNDO_REASON_TEXT,
+  WARNING_TEXT,
+  reRenderNote,
+  token,
+  undoReasonText,
+} from '../../src/render/text.js';
 import { TOOLS } from '../../src/tools/index.js';
 import { combineResults } from '../../src/tools/multi-write.js';
 import { WRITE_RESULT_OUTPUT } from '../../src/tools/registry.js';
+import { deleteTrackTool, setTracksTool } from '../../src/tools/tracks.js';
+import { transportTool } from '../../src/tools/transport.js';
 import { Sessions, clip } from '../support/mock-client.js';
 import { SPEC_ROOT } from '../support/otcp-spec.js';
 
@@ -1068,11 +1085,14 @@ describe('revert recipes as tool calls', () => {
 });
 
 describe('change table', () => {
-  it('lists at most 20 rows and counts the rest with those the method left out', () => {
+  it('lists at most MAX_TABLE_ROWS rows and counts the rest with those the method left out', () => {
     const changes = Array.from({ length: 25 }, () => change('note'));
     const r = render({ changes, omittedChangeCount: 7 });
     expect(r.changeTable.rows).toHaveLength(MAX_TABLE_ROWS);
-    expect(r.changeTable.omittedChangeCount).toBe(12);
+    // 25 changes are cut to the 20 listed, which counts 5 more as left out next to the 7 of the method: 12; the 20
+    // listed entries beyond the 10 rows are 10 more.
+    expect(r.changeTable.omittedChangeCount).toBe(12 + (MAX_LISTED - MAX_TABLE_ROWS));
+    expect(r.changeTable.rows.length + r.changeTable.omittedChangeCount).toBe(25 + 7);
     expect(r.changeTable.rows[0]).toEqual({
       kind: 'changed',
       entity: 'note',
@@ -1089,12 +1109,14 @@ describe('change table', () => {
       removed: [change('placement'), change('content')],
       omittedCount: { changes: 0, created: 762, removed: 0 },
     });
-    // The 202 listed beyond the first 20 rows, and the 762 the method did not list: all that is not a row.
-    expect(r.changeTable.omittedChangeCount).toBe(202 - MAX_TABLE_ROWS + 762);
+    // The 200 created are cut to the 20 listed (180 more left out); the 22 listed entities beyond the first 10 rows,
+    // and the 942 left out: all that is not a row.
+    expect(r.changeTable.omittedChangeCount).toBe(MAX_LISTED + 2 - MAX_TABLE_ROWS + 180 + 762);
     expect(r.changeTable.rows.length + r.changeTable.omittedChangeCount).toBe(200 + 2 + 762);
     expect(r.summary).toContain('created 962 notes');
     expect(r.summary).toContain('removed 1 placement, 1 content');
-    expect(r.summary).toContain('Only the first 200 entries of created are listed.');
+    expect(r.summary).toContain('Only the first 20 entries of created are listed.');
+    expect((r.summary.match(/Only the first/g) ?? []).length).toBe(1);
     expect(r.summary).not.toContain('Only the first 2 entries of removed');
 
     // Mixed entities in a cut list are counted as items; a list nothing was left out of is not annotated.
@@ -1392,5 +1414,109 @@ describe('the shared outputSchema and the test mock', () => {
       expect(WRITE_RESULT_OUTPUT.safeParse(body).success, method).toBe(true);
       expect(typeof body.summary, method).toBe('string');
     }
+  });
+});
+
+describe('long lists of a write result', () => {
+  const many = (n: number, entity = 'note') =>
+    Array.from({ length: n }, (_, i) => change(entity, { contentId: CONTENT, note: { index: i } }));
+
+  it('lists the first MAX_LISTED of each list and counts the rest next to what the method left out', () => {
+    const whole = envelope({
+      changes: many(30),
+      created: many(25),
+      removed: many(3),
+      idMap: Array.from({ length: 22 }, () => ({ entity: 'placement', relation: 'shift', from: [], to: [] })),
+      omittedCount: { changes: 0, created: 7, removed: 0 },
+      omittedChangeCount: 4,
+    });
+    const capped = capEnvelope(whole);
+    expect((capped.changes as unknown[]).length).toBe(MAX_LISTED);
+    expect((capped.created as unknown[]).length).toBe(MAX_LISTED);
+    expect((capped.removed as unknown[]).length).toBe(3);
+    expect((capped.idMap as unknown[]).length).toBe(MAX_LISTED);
+    // The first entries stay, in order.
+    expect((capped.created as Json[])[19]?.ref).toEqual({ contentId: CONTENT, note: { index: 19 } });
+    expect(capped.omittedCount).toEqual({ changes: 10 + 4, created: 5 + 7, removed: 0, idMap: 2 });
+    // The count of the method for `changes` is brought to the same total.
+    expect(capped.omittedChangeCount).toBe(14);
+    // Nothing but the lists and their counts is touched, and the input is not changed.
+    expect(capped.tokens).toBe(whole.tokens);
+    expect(capped.undo).toBe(whole.undo);
+    expect((whole.changes as unknown[]).length).toBe(30);
+    expect(whole.omittedCount).toEqual({ changes: 0, created: 7, removed: 0 });
+    // Cutting again changes nothing.
+    expect(capEnvelope(capped)).toBe(capped);
+  });
+
+  it('returns an envelope that needs no cut as it is, and adds no count member', () => {
+    const small = envelope({ changes: many(MAX_LISTED), created: many(2) });
+    expect(capEnvelope(small)).toBe(small);
+    expect(capEnvelope(envelope({ omittedChangeCount: 4, changes: many(3) }))).toMatchObject({ omittedChangeCount: 4 });
+    // omittedChangeCount is only brought to the total when the method sent it.
+    expect(capEnvelope(envelope({ changes: many(MAX_LISTED + 1) }))).not.toHaveProperty('omittedChangeCount');
+  });
+
+  it('says in the summary and the table what the lists leave out, with the real totals', () => {
+    const r = render({ created: many(1200), removed: many(1200), omittedCount: { created: 487, removed: 0 } });
+    expect(r.summary).toContain('created 1687 notes, removed 1200 notes');
+    expect(r.summary).toContain('Only the first 20 entries of created are listed.');
+    expect(r.summary).toContain('Only the first 20 entries of removed are listed.');
+    expect(r.changeTable.rows).toHaveLength(MAX_TABLE_ROWS);
+    expect(r.changeTable.rows.length + r.changeTable.omittedChangeCount).toBe(1687 + 1200);
+  });
+
+  it('puts the undo information right after the summary and the lists last', () => {
+    const undo = { undoable: true, undoId: 'u:01234567:1', description: 'Auto-tune', innerActions: [], steps: 1 };
+    const body = writeBody(
+      envelope({ undo, created: many(500), sideEffects: { reRenderQueued: { contentIds: [CONTENT] } } }),
+      { tool: 'opentune_test' },
+    );
+    const order = Object.keys(body);
+    expect(order.slice(0, 6)).toEqual(['summary', 'applied', 'noOp', 'dryRun', 'undo', 'lines']);
+    expect(order.slice(-6)).toEqual(['changes', 'created', 'removed', 'idMap', 'uiEffects', 'changeTable']);
+    expect(body.undo).toBe(undo);
+    // Every member of the envelope is still there.
+    for (const member of Object.keys(envelope())) expect(order, member).toContain(member);
+    const text = JSON.stringify(body);
+    expect(text.indexOf('u:01234567:1')).toBeLessThan(1000);
+    expect(text.indexOf('"created"')).toBeGreaterThan(text.indexOf('"warnings"'));
+  });
+
+  it('puts the way back of a result that cannot be undone up front too', () => {
+    const undo = { undoable: false, reason: 'ui_parity', revert: SET_KEY };
+    const body = writeBody(envelope({ undo, removed: many(500) }), { tool: 'opentune_test' });
+    const text = JSON.stringify(body);
+    expect(text.indexOf('"revert"')).toBeGreaterThan(0);
+    expect(text.indexOf('"revert"')).toBeLessThan(text.indexOf('"removed"'));
+    expect(text.indexOf('"restore"')).toBeLessThan(text.indexOf('"removed"'));
+  });
+
+  it('keeps the lists of every part of a combined result cut', () => {
+    const part = (n: number) => {
+      const outcome = writeOutcome(envelope({ created: many(n) }), { tool: 'opentune_test' });
+      if (!outcome.ok) throw new Error('not a write envelope');
+      return { method: 'x.y', body: outcome.body, envelope: capEnvelope(envelope({ created: many(n) })) };
+    };
+    const combined = combineResults('opentune_test', [part(50), part(60)]);
+    const parts = combined.results as { created: unknown[] }[];
+    expect(parts.map((p) => p.created.length)).toEqual([MAX_LISTED, MAX_LISTED]);
+    expect(combined.summary).toContain('Only the first 20 entries of created are listed.');
+  });
+
+  it('words a queued render of a combined result generically, because no tool that combines results sets the vocoder weight', () => {
+    // The render state of a weight change belongs to prefs.set; none of the tools that combine results sends it.
+    for (const tool of [setTracksTool, deleteTrackTool, transportTool]) {
+      expect(tool.otcpMethods, tool.name).not.toContain('prefs.set');
+    }
+    const queued = envelope({ sideEffects: { reRenderQueued: { contentIds: [CONTENT], revert: null } } });
+    const part = () => {
+      const outcome = writeOutcome(queued, { tool: 'opentune_test' });
+      if (!outcome.ok) throw new Error('not a write envelope');
+      return { method: 'x.y', body: outcome.body, envelope: queued };
+    };
+    const combined = combineResults('opentune_test', [part(), part()]);
+    expect(combined.summary).toContain(reRenderNote());
+    expect(combined.summary).not.toContain('new vocoder weight');
   });
 });

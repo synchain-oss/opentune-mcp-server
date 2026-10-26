@@ -9,25 +9,28 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "lines": [
       {
-        "entity": "preference",
-        "ref": {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
           "preference": "onboardingShown"
         },
-        "label": "First-run onboarding",
-        "fields": {
-          "onboardingShown": {
-            "before": false,
-            "after": true,
-            "unit": null
-          }
-        }
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
       }
     ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -37,11 +40,6 @@
       "arrangementRevision": "a1",
       "contents": [],
       "placements": []
-    },
-    "undo": {
-      "undoable": false,
-      "reason": "no_upstream_undo",
-      "revert": null
     },
     "dirty": {
       "before": true,
@@ -67,6 +65,25 @@
       }
     ],
     "job": null,
+    "changes": [
+      {
+        "entity": "preference",
+        "ref": {
+          "preference": "onboardingShown"
+        },
+        "label": "First-run onboarding",
+        "fields": {
+          "onboardingShown": {
+            "before": false,
+            "after": true,
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "preferences",
@@ -96,23 +113,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "IRREVERSIBLE",
-        "text": "This change can be neither undone nor reverted by any request of the protocol.",
-        "subject": {
-          "preference": "onboardingShown"
-        },
-        "data": null
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
-        "revert": null,
-        "restore": null
-      }
-    ]
+    }
   }
 }

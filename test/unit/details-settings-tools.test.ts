@@ -628,3 +628,123 @@ describe('opentune_get_settings', () => {
     expect([...getSettingsTool.otcpMethods].sort()).toEqual(['app.getLog', 'audio.get', 'prefs.get', 'session.info']);
   });
 });
+
+describe('opentune_get_settings: rendering priority and vocoder', () => {
+  const processingOf = (outcome: Outcome) => body(outcome).processing as Record<string, unknown>;
+
+  it('gives next to the options one sentence per rendering priority: what it means and when it takes effect', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    const processing = processingOf(await getSettings(ctx, { sections: ['processing'] }));
+    const notes = (processing.optionNotes as { renderingPriority: Record<string, string> }).renderingPriority;
+    expect(Object.keys(notes)).toEqual(['gpuFirst', 'cpuFirst']);
+    expect(notes.gpuFirst).toContain('falls back to the CPU when that fails, so the GPU is not guaranteed');
+    expect(notes.gpuFirst).toContain('processing.backend is what runs now');
+    expect(notes.cpuFirst).toContain('Always uses the CPU');
+    for (const note of Object.values(notes)) {
+      // When it takes effect, and that the sound stays.
+      expect(note).toContain('Takes effect at once: the vocoder reloads for a few seconds, nothing is rendered again');
+    }
+    // The tool description is not where they are: it has no room left.
+    expect(getSettingsTool.description).not.toContain('falls back');
+  });
+
+  it('writes a note only for a value the options list, and none without the options', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      if (method !== 'prefs.get') return;
+      const options = (result.processing as { options: Record<string, unknown> }).options;
+      options.renderingPriority = ['cpuFirst', 'turboFirst'];
+    });
+    const notes = (
+      processingOf(await getSettings(ctx, { sections: ['processing'] })).optionNotes as {
+        renderingPriority: Record<string, string>;
+      }
+    ).renderingPriority;
+    // A value that OpenTune lists and this server does not know gets no note, and its name is not repeated.
+    expect(Object.keys(notes)).toEqual(['cpuFirst']);
+    expect(JSON.stringify(notes)).not.toContain('turboFirst');
+    // An instance that does not report the options has nothing to annotate.
+    const bare = await withMock();
+    bare.mock.given({ clips: [clip()] });
+    await hookCalls(bare.ctx, (method, result) => {
+      if (method === 'prefs.get') delete (result.processing as Record<string, unknown>).options;
+    });
+    expect(processingOf(await getSettings(bare.ctx, { sections: ['processing'] }))).not.toHaveProperty('optionNotes');
+  });
+
+  it('says that the CPU is in use under gpuFirst, with the log and the doctor as the places to look', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setGpuAvailable(false);
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.processing).toMatchObject({ renderingPriority: 'gpuFirst', backend: 'cpu' });
+    expect(out.summary).toContain(
+      'The rendering priority is gpuFirst but OpenTune is using the CPU: the GPU may be unavailable or have fallen back.',
+    );
+    expect(out.summary).toContain('read the log (opentune_get_settings with sections ["log"] and log_lines 30)');
+    expect(out.summary).toContain('"opentune-mcp doctor" checks Direct3D 12');
+    // The log it points at can be read with exactly those arguments.
+    body(await getSettings(ctx, { sections: ['log'], log_lines: 30 }));
+  });
+
+  it('says nothing about the CPU when the GPU runs, when the CPU was asked for, or when the backend is not reported', async () => {
+    const gpu = await withMock();
+    gpu.mock.given({ clips: [clip()] });
+    gpu.mock.setGpuAvailable(true);
+    expect(body(await getSettings(gpu.ctx, { sections: ['processing'] })).summary).not.toContain('using the CPU');
+    const cpu = await withMock();
+    cpu.mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+    cpu.mock.setGpuAvailable(true);
+    expect(body(await getSettings(cpu.ctx, { sections: ['processing'] })).summary).not.toContain('using the CPU');
+    const none = await withMock();
+    none.mock.given({ clips: [clip()] });
+    const out = body(await getSettings(none.ctx, { sections: ['processing'] }));
+    expect((out.processing as Record<string, unknown>).backend).toBeNull();
+    expect(out.summary).not.toContain('using the CPU');
+  });
+
+  it('builds the sentence from enumerated values only: a backend name that is not exactly cpu adds nothing', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      if (method === 'session.info') (result.processing as Record<string, unknown>).backend = `cpu ${INJECTION}`;
+    });
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.summary).not.toContain('using the CPU');
+    expect(out.summary).not.toContain('Ignore all previous');
+    expect(text(await getSettings(ctx, { sections: ['processing'] }))).toContain('Ignore all previous');
+  });
+
+  it('does not report a vocoder that is not loaded as a problem, and keeps the field as OpenTune reports it', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setVocoderLoadOnDemand(true);
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.processing).toMatchObject({ vocoderReady: false });
+    expect(out.summary).toContain(
+      'The vocoder loads when the first render needs it, so it not being loaded just after start is normal.',
+    );
+    mock.setVocoderLoadOnDemand(false);
+    expect(body(await getSettings(ctx, { sections: ['processing'] })).summary).not.toContain('vocoder loads');
+  });
+
+  it('keeps a long log within the budget with the two sentences in the summary', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setGpuAvailable(false);
+    mock.setVocoderLoadOnDemand(true);
+    for (let i = 0; i < 400; i += 1) mock.logLine(`${String(i)} ${'z'.repeat(2000)}`);
+    const outcome = await getSettings(ctx, {
+      sections: ['processing', 'audio_device', 'recent', 'export_caps', 'log'],
+      log_lines: 500,
+    });
+    const out = body(outcome);
+    expect(out.summary).toContain('using the CPU');
+    expect(out.summary).toContain('vocoder loads');
+    const result = render(outcome);
+    expect(JSON.stringify(result.structuredContent).length).toBeLessThanOrEqual(OUTPUT_BUDGET);
+    expect((result.content[0] as { text: string }).text.length).toBeLessThanOrEqual(OUTPUT_BUDGET);
+  });
+});

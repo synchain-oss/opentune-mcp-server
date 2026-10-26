@@ -28,29 +28,35 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:5",
+      "description": "Edit notes",
+      "innerActions": [
+        "setNotes"
+      ],
+      "steps": 1
+    },
+    "lines": [
       {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 5,
-            "atRevision": "r27"
-          }
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
         },
-        "label": "#5 A4 3.50-4.50s",
-        "fields": {
-          "targetMidi": {
-            "before": 69.3,
-            "after": 69,
-            "unit": "midi"
-          }
-        }
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:5.",
+        "undoId": "u:01234567:5",
+        "description": "Edit notes"
       }
     ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -82,15 +88,6 @@
       ],
       "placements": []
     },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:5",
-      "description": "Edit notes",
-      "innerActions": [
-        "setNotes"
-      ],
-      "steps": 1
-    },
     "dirty": {
       "before": true,
       "after": true
@@ -113,6 +110,29 @@
     "warnings": [],
     "job": null,
     "omittedChangeCount": 0,
+    "changes": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 5,
+            "atRevision": "r27"
+          }
+        },
+        "label": "#5 A4 3.50-4.50s",
+        "fields": {
+          "targetMidi": {
+            "before": 69.3,
+            "after": 69,
+            "unit": "midi"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "piano roll",
@@ -154,26 +174,6 @@
       ],
       "omittedChangeCount": 0
     },
-    "lines": [
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:5.",
-        "undoId": "u:01234567:5",
-        "description": "Edit notes"
-      }
-    ],
     "clip_revision": "cr1.WyJyMjciLCJnNiIsImsxNiIsImgxMCJd"
   }
 }

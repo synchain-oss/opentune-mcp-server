@@ -11,77 +11,10 @@
     "expected_revision": "<arrangement_revision>"
   },
   "result": {
-    "summary": "opentune_edit_arrangement: this split cannot be undone: OpenTune frees objects its own undo entry needs, so undoing a split makes its audio vanish from the timeline; opentune_undo refuses it, and the user should not undo it in the OpenTune window either. Ask the user before every split, merge or delete. Created 2 placements, removed 1 placement (destructive; not undoable: OpenTune cannot undo this reliably; can be restored with opentune_edit_arrangement only after the user explicitly agrees). Warnings: SPLIT_SNAPPED, UPSTREAM_UNDO_DEFECT.",
+    "summary": "opentune_edit_arrangement: this split cannot be undone: OpenTune frees objects its own undo entry needs, so undoing a split makes its audio vanish from the timeline; opentune_undo refuses it, and the user should not undo it in the OpenTune window either; the revert line says how to put it back. Created 2 placements, removed 1 placement (destructive; not undoable: OpenTune cannot undo this reliably; can be restored with opentune_edit_arrangement only after the user explicitly agrees). Warnings: SPLIT_SNAPPED, UPSTREAM_UNDO_DEFECT.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [],
-    "created": [
-      {
-        "entity": "placement",
-        "ref": {
-          "placementId": "p:01234567:0:4"
-        },
-        "label": "Clip 4 on Track 3"
-      },
-      {
-        "entity": "placement",
-        "ref": {
-          "placementId": "p:01234567:0:5"
-        },
-        "label": "Clip 5 on Track 3"
-      }
-    ],
-    "removed": [
-      {
-        "entity": "placement",
-        "ref": {
-          "placementId": "p:01234567:0:3"
-        },
-        "label": "Clip 3 on Track 3"
-      }
-    ],
-    "idMap": [
-      {
-        "entity": "placement",
-        "relation": "split",
-        "from": [
-          {
-            "placementId": "p:01234567:0:3"
-          }
-        ],
-        "to": [
-          {
-            "placementId": "p:01234567:0:4"
-          },
-          {
-            "placementId": "p:01234567:0:5"
-          }
-        ]
-      }
-    ],
-    "revisionDiff": {
-      "arrangement": {
-        "before": "a31",
-        "after": "a34"
-      },
-      "trackState": null,
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a34",
-      "contents": [],
-      "placements": [
-        {
-          "placementId": "p:01234567:0:4",
-          "geometryHash": "h32"
-        },
-        {
-          "placementId": "p:01234567:0:5",
-          "geometryHash": "h33"
-        }
-      ]
-    },
     "undo": {
       "undoable": false,
       "reason": "upstream_undo_defect",
@@ -98,87 +31,6 @@
           ]
         }
       }
-    },
-    "dirty": {
-      "before": true,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 6
-    },
-    "sideEffects": {},
-    "warnings": [
-      {
-        "code": "SPLIT_SNAPPED",
-        "subject": {
-          "placementId": "p:01234567:0:3"
-        },
-        "data": {
-          "requestedTimelineSec": 11.504,
-          "appliedTimelineSec": 11.5
-        }
-      },
-      {
-        "code": "UPSTREAM_UNDO_DEFECT",
-        "subject": {
-          "placementId": "p:01234567:0:3"
-        },
-        "data": null
-      }
-    ],
-    "job": null,
-    "uiEffects": [
-      {
-        "surface": "arrangement view",
-        "effect": "created placement",
-        "target": "p:01234567:0:4",
-        "visibleNow": true
-      },
-      {
-        "surface": "arrangement view",
-        "effect": "created placement",
-        "target": "p:01234567:0:5",
-        "visibleNow": true
-      },
-      {
-        "surface": "arrangement view",
-        "effect": "removed placement",
-        "target": "p:01234567:0:3",
-        "visibleNow": true
-      }
-    ],
-    "changeTable": {
-      "rows": [
-        {
-          "kind": "created",
-          "entity": "placement",
-          "label": "Clip 4 on Track 3",
-          "ref": {
-            "placementId": "p:01234567:0:4"
-          }
-        },
-        {
-          "kind": "created",
-          "entity": "placement",
-          "label": "Clip 5 on Track 3",
-          "ref": {
-            "placementId": "p:01234567:0:5"
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "placement",
-          "label": "Clip 3 on Track 3",
-          "ref": {
-            "placementId": "p:01234567:0:3"
-          }
-        }
-      ],
-      "omittedChangeCount": 0
     },
     "lines": [
       {
@@ -233,6 +85,154 @@
         }
       }
     ],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a31",
+        "after": "a34"
+      },
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a34",
+      "contents": [],
+      "placements": [
+        {
+          "placementId": "p:01234567:0:4",
+          "geometryHash": "h32"
+        },
+        {
+          "placementId": "p:01234567:0:5",
+          "geometryHash": "h33"
+        }
+      ]
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 6
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "SPLIT_SNAPPED",
+        "subject": {
+          "placementId": "p:01234567:0:3"
+        },
+        "data": {
+          "requestedTimelineSec": 11.504,
+          "appliedTimelineSec": 11.5
+        }
+      },
+      {
+        "code": "UPSTREAM_UNDO_DEFECT",
+        "subject": {
+          "placementId": "p:01234567:0:3"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "changes": [],
+    "created": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:4"
+        },
+        "label": "Clip 4 on Track 3"
+      },
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:5"
+        },
+        "label": "Clip 5 on Track 3"
+      }
+    ],
+    "removed": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:3"
+        },
+        "label": "Clip 3 on Track 3"
+      }
+    ],
+    "idMap": [
+      {
+        "entity": "placement",
+        "relation": "split",
+        "from": [
+          {
+            "placementId": "p:01234567:0:3"
+          }
+        ],
+        "to": [
+          {
+            "placementId": "p:01234567:0:4"
+          },
+          {
+            "placementId": "p:01234567:0:5"
+          }
+        ]
+      }
+    ],
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "created placement",
+        "target": "p:01234567:0:4",
+        "visibleNow": true
+      },
+      {
+        "surface": "arrangement view",
+        "effect": "created placement",
+        "target": "p:01234567:0:5",
+        "visibleNow": true
+      },
+      {
+        "surface": "arrangement view",
+        "effect": "removed placement",
+        "target": "p:01234567:0:3",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "created",
+          "entity": "placement",
+          "label": "Clip 4 on Track 3",
+          "ref": {
+            "placementId": "p:01234567:0:4"
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "placement",
+          "label": "Clip 5 on Track 3",
+          "ref": {
+            "placementId": "p:01234567:0:5"
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "placement",
+          "label": "Clip 3 on Track 3",
+          "ref": {
+            "placementId": "p:01234567:0:3"
+          }
+        }
+      ],
+      "omittedChangeCount": 0
+    },
     "arrangement_revision": "ar1.YTM0",
     "clip_ids": {
       "created": [

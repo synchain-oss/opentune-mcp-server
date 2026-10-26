@@ -100,50 +100,6 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
-      {
-        "entity": "key",
-        "ref": {
-          "contentId": "c:01234567:0:1"
-        },
-        "label": null,
-        "fields": {
-          "root": {
-            "before": 9,
-            "after": 0,
-            "unit": null
-          },
-          "scale": {
-            "before": "minor",
-            "after": "major",
-            "unit": null
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "key": {
-              "before": "k1",
-              "after": "k2"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "ui_parity",
@@ -158,84 +114,6 @@
           "expectedKeyRevision": "k2"
         }
       }
-    },
-    "dirty": {
-      "before": false,
-      "after": true
-    },
-    "ui": {
-      "workspace": "pianoRoll",
-      "pianoRollContentId": "c:01234567:0:1",
-      "activeTrackId": 0,
-      "selectedPlacementIds": [
-        "p:01234567:0:1"
-      ],
-      "visibleTrackCount": 1
-    },
-    "sideEffects": {
-      "uiScaleChanged": {
-        "revert": {
-          "method": "content.setKey",
-          "params": {
-            "contentId": "c:01234567:0:1",
-            "key": {
-              "root": 9,
-              "scale": "minor"
-            },
-            "expectedKeyRevision": "k2"
-          }
-        }
-      }
-    },
-    "warnings": [],
-    "job": null,
-    "uiEffects": [
-      {
-        "surface": "transport bar key selector",
-        "effect": "changed key",
-        "target": "c:01234567:0:1",
-        "visibleNow": true
-      },
-      {
-        "surface": "window title",
-        "effect": "unsaved-changes mark set",
-        "target": "project",
-        "visibleNow": false,
-        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
-      },
-      {
-        "surface": "transport bar",
-        "effect": "scale changed",
-        "target": "project",
-        "visibleNow": true
-      }
-    ],
-    "changeTable": {
-      "rows": [
-        {
-          "kind": "changed",
-          "entity": "key",
-          "label": null,
-          "ref": {
-            "contentId": "c:01234567:0:1"
-          },
-          "fields": [
-            {
-              "field": "root",
-              "before": 9,
-              "after": 0,
-              "unit": null
-            },
-            {
-              "field": "scale",
-              "before": "minor",
-              "after": "major",
-              "unit": null
-            }
-          ]
-        }
-      ],
-      "omittedChangeCount": 0
     },
     "lines": [
       {
@@ -317,6 +195,128 @@
           }
         }
       }
-    ]
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "key": {
+              "before": "k1",
+              "after": "k2"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 1
+    },
+    "sideEffects": {
+      "uiScaleChanged": {
+        "revert": {
+          "method": "content.setKey",
+          "params": {
+            "contentId": "c:01234567:0:1",
+            "key": {
+              "root": 9,
+              "scale": "minor"
+            },
+            "expectedKeyRevision": "k2"
+          }
+        }
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "changes": [
+      {
+        "entity": "key",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": null,
+        "fields": {
+          "root": {
+            "before": 9,
+            "after": 0,
+            "unit": null
+          },
+          "scale": {
+            "before": "minor",
+            "after": "major",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "transport bar key selector",
+        "effect": "changed key",
+        "target": "c:01234567:0:1",
+        "visibleNow": true
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      },
+      {
+        "surface": "transport bar",
+        "effect": "scale changed",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "key",
+          "label": null,
+          "ref": {
+            "contentId": "c:01234567:0:1"
+          },
+          "fields": [
+            {
+              "field": "root",
+              "before": 9,
+              "after": 0,
+              "unit": null
+            },
+            {
+              "field": "scale",
+              "before": "minor",
+              "after": "major",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
   }
 }

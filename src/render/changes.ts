@@ -18,8 +18,18 @@
 
 import type { Json } from '../otcp/client.js';
 
-/** Rows a rendered result lists; the rest is only counted. */
-export const MAX_TABLE_ROWS = 20;
+/**
+ * Rows of the change table, a short preview of the first entities with each field as before -> after. The lists
+ * of the envelope (MAX_LISTED entries each) carry the same entities in full, so the table is kept short.
+ */
+export const MAX_TABLE_ROWS = 10;
+
+/**
+ * Entries a rendered result lists in each of `changes`, `created`, `removed` and `idMap`; the rest is only counted
+ * (see capEnvelope). A call on a whole song can create or remove a thousand notes, and the host refuses a result
+ * that is too long as a whole, undo id included.
+ */
+export const MAX_LISTED = 20;
 
 export interface TableField {
   readonly field: string;
@@ -89,6 +99,33 @@ export function methodOmitted(envelope: Json): Record<TableRow['kind'], number> 
     changed: Math.max(count(kinds.changes), count(envelope.omittedChangeCount)),
     created: count(kinds.created),
     removed: count(kinds.removed),
+  };
+}
+
+/**
+ * The envelope with each of `changes`, `created`, `removed` and `idMap` cut to MAX_LISTED entries, and what was cut
+ * counted in `omittedCount` (per member, next to what the method itself left out); `omittedChangeCount`, when the
+ * method sent it, is brought to the same total for `changes`. An envelope that needs no cut is returned as it is.
+ * Everything else, the tokens and the undo descriptor included, is untouched. Cutting again changes nothing.
+ */
+export function capEnvelope(envelope: Json): Json {
+  const left = methodOmitted(envelope);
+  const kindOf = { changes: 'changed', created: 'created', removed: 'removed' } as const;
+  const kinds = isObject(envelope.omittedCount) ? envelope.omittedCount : {};
+  const lists: Json = {};
+  const counts: Record<string, number> = {};
+  for (const member of ['changes', 'created', 'removed', 'idMap'] as const) {
+    const list = envelope[member];
+    if (!Array.isArray(list) || list.length <= MAX_LISTED) continue;
+    lists[member] = list.slice(0, MAX_LISTED);
+    counts[member] = list.length - MAX_LISTED + (member === 'idMap' ? count(kinds.idMap) : left[kindOf[member]]);
+  }
+  if (Object.keys(counts).length === 0) return envelope;
+  return {
+    ...envelope,
+    ...lists,
+    omittedCount: { ...kinds, ...counts },
+    ...(counts.changes !== undefined && 'omittedChangeCount' in envelope ? { omittedChangeCount: counts.changes } : {}),
   };
 }
 

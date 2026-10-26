@@ -11,7 +11,7 @@
 import { toolError } from '../errors/tool-error.js';
 import type { Json } from '../otcp/client.js';
 import type { Body, Outcome } from '../tools/registry.js';
-import { asList, changeTable, isObject, type ChangeTable } from './changes.js';
+import { asList, capEnvelope, changeTable, isObject, type ChangeTable } from './changes.js';
 import { restoreCall, revertPlan, revertText, type RestoreCall } from './revert.js';
 import { summarize } from './summary.js';
 import {
@@ -28,7 +28,7 @@ import {
 import { uiEffects, type UiEffect } from './ui-effects.js';
 
 export type { ChangeTable, TableField, TableRow } from './changes.js';
-export { MAX_TABLE_ROWS } from './changes.js';
+export { MAX_LISTED, MAX_TABLE_ROWS, capEnvelope } from './changes.js';
 export type { RestoreCall } from './revert.js';
 export type { UiEffect } from './ui-effects.js';
 export type { ReRenderState } from './text.js';
@@ -168,8 +168,12 @@ function undoLines(envelope: Json): Line[] {
   return [revertLine(undo.revert ?? null, (s) => `Not undoable (${undoReasonText(undo.reason)}). ${s}`)];
 }
 
-/** Renders an envelope that has been checked against the OTCP write envelope schema. */
-export function renderWrite(envelope: Json, ctx: RenderContext): Rendering {
+/**
+ * Renders an envelope that has been checked against the OTCP write envelope schema. The lists of the envelope are cut
+ * first (capEnvelope), so that the summary, the table and the counts all speak of the same result.
+ */
+export function renderWrite(whole: Json, ctx: RenderContext): Rendering {
+  const envelope = capEnvelope(whole);
   return {
     summary: summarize(envelope, ctx.tool, ctx.reRender === undefined ? {} : { reRender: ctx.reRender }),
     uiEffects: uiEffects(envelope),
@@ -197,17 +201,39 @@ export function isWriteEnvelope(value: unknown): value is Json {
   );
 }
 
+/** The members a reader must still have when the end of a long result is cut off. */
+const FRONT = ['applied', 'noOp', 'dryRun', 'undo'] as const;
+/** The members that grow with the size of the edit; they come last. */
+const BULK = ['changes', 'created', 'removed', 'idMap'] as const;
+const RENDERED = ['summary', 'lines', 'uiEffects', 'changeTable'];
+
+const pick = (from: Json, members: readonly string[]): Json =>
+  Object.fromEntries(members.filter((m) => m in from).map((m) => [m, from[m]]));
+
 /**
- * The body of a write tool's result: summary first, then the whole envelope as OpenTune sent it,
- * then uiEffects, changeTable and lines. Members of the envelope are never changed or dropped.
+ * The body of a write tool's result. The summary comes first, then the state of the call, the undo descriptor and
+ * the lines (which say what undoes or restores the change), so that a host that cuts a long result off takes the
+ * lists and not those; then the other members of the envelope as OpenTune sent them, and last the lists, cut to
+ * MAX_LISTED entries each with the rest counted in omittedCount (capEnvelope), and the table. Nothing else of the
+ * envelope is changed or dropped.
  */
-export function writeBody(envelope: Json, ctx: RenderContext): Body {
+export function writeBody(whole: Json, ctx: RenderContext): Body {
+  const envelope = capEnvelope(whole);
   const rendering = renderWrite(envelope, ctx);
-  // The leading summary keeps it first; the rendering, spread last, wins over a same-named envelope
-  // member. Spreading defines members, so an envelope member named __proto__ stays a data member
-  // instead of replacing the prototype of the body, as Object.assign would.
-  const leading: Json = { summary: rendering.summary, ...envelope };
-  return { ...leading, ...rendering };
+  // The rendering wins over a same-named envelope member. Spreading and fromEntries define members, so an
+  // envelope member named __proto__ stays a data member instead of replacing the prototype of the body, as
+  // Object.assign or an assignment would.
+  const placed = new Set<string>([...FRONT, ...BULK, ...RENDERED]);
+  const rest = Object.fromEntries(Object.entries(envelope).filter(([member]) => !placed.has(member)));
+  return {
+    summary: rendering.summary,
+    ...pick(envelope, FRONT),
+    lines: rendering.lines,
+    ...rest,
+    ...pick(envelope, BULK),
+    uiEffects: rendering.uiEffects,
+    changeTable: rendering.changeTable,
+  };
 }
 
 /** The outcome for the result of a write call: the rendered body, or INTERNAL when it is no write envelope. */

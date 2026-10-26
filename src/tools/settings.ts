@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { Json } from '../otcp/client.js';
 import { serializeResult } from '../sanitize/untrusted.js';
 import { OUTPUT_BUDGET } from './notes.js';
+import { GPU_FIRST_ON_CPU, RENDERING_PRIORITY_NOTES, VOCODER_NOTE, gpuFirstOnCpu } from './processing-text.js';
 import { defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
 
 const READ_TIMEOUT_MS = 15_000;
@@ -20,7 +21,7 @@ type Section = (typeof SETTINGS_SECTIONS)[number];
 const DEFAULT_SECTIONS: readonly Section[] = ['processing', 'audio_device', 'recent', 'export_caps'];
 export const DEFAULT_LOG_LINES = 100;
 export const MAX_LOG_LINES = 500;
-const SUMMARY_ROOM = 700;
+const SUMMARY_ROOM = 1200;
 
 const isObject = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -70,6 +71,13 @@ function mergeProcessing(
   // The values opentune_set_settings accepts. Only prefs.get has them, and an instance of an earlier release
   // candidate of the specification does not report them: null with a reason, never an error.
   merged.options = isObject(prefsValues.options) ? withoutRetired(prefsValues.options) : null;
+  // What each rendering priority listed in options means and when it takes effect, in words of this server: next to
+  // the options, not in the description of opentune_set_settings, which has little room left.
+  const priorities = isObject(merged.options) ? merged.options.renderingPriority : undefined;
+  if (Array.isArray(priorities)) {
+    const notes = Object.entries(RENDERING_PRIORITY_NOTES).filter(([value]) => priorities.includes(value));
+    if (notes.length > 0) merged.optionNotes = { renderingPriority: Object.fromEntries(notes) };
+  }
   const reasons: Json = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value !== null) continue;
@@ -172,6 +180,12 @@ export async function getSettings(ctx: ToolContext, args: GetSettingsArgs): Prom
       }
     }
 
+    // Two things a reader of the processing section tends to take for a fault. Only enumerated values are compared.
+    const processing = isObject(body.processing) ? body.processing : null;
+    const processingNotes = [
+      processing !== null && gpuFirstOnCpu(processing.renderingPriority, processing.backend) ? GPU_FIRST_ON_CPU : null,
+      processing?.vocoderReady === false ? VOCODER_NOTE : null,
+    ].filter((note): note is string => note !== null);
     const returned = SETTINGS_SECTIONS.filter((s) => wanted.has(s) && body[s] !== null && body[s] !== undefined);
     const unavailable = SETTINGS_SECTIONS.filter((s) => wanted.has(s) && body[s] === null);
     const summary =
@@ -186,7 +200,8 @@ export async function getSettings(ctx: ToolContext, args: GetSettingsArgs): Prom
         : '') +
       (logKept === 0 && logTrimmed > 0
         ? ' No log lines fit into the result next to the other sections; ask for the log alone.'
-        : '');
+        : '') +
+      processingNotes.map((note) => ` ${note}`).join('');
     return {
       ok: true,
       body: { summary, ...body, ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}) },

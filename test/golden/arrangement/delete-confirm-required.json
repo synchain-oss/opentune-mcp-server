@@ -19,8 +19,8 @@
       "retryable": false,
       "executed": false,
       "nextStep": {
-        "actor": "user",
-        "message": "Deleting clips cannot be undone or restored, and a content no other clip shows leaves the project with them. Tell the user which clips would go (dry_run: true lists them); only after the user explicitly agrees, call again with confirm: true."
+        "actor": "agent",
+        "message": "Deleting clips cannot be undone or restored, and a content no other clip shows leaves the project with them. If the user asked for this delete and named the clips, call again with confirm: true. Otherwise tell the user which clips would go (dry_run: true lists them) and call again with confirm: true only after the user explicitly agrees."
       },
       "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-invalid_argument"
     }

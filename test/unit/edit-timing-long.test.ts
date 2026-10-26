@@ -11,10 +11,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OtcpSession } from '../../src/otcp/client.js';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { encodeClipRevision } from '../../src/otcp/tokens.js';
+import { MAX_LISTED } from '../../src/render/index.js';
 import { render, type Outcome } from '../../src/tools/registry.js';
 import {
   CALL_BUDGET_MS,
   CLIENT_TIMEOUT_MS,
+  MAX_LISTED_HANDLES,
   editTiming,
   editTimingTool,
   type EditTimingArgs,
@@ -222,8 +224,59 @@ describe('opentune_edit_timing: up to 64 operations in one call', () => {
     expect(steps).toHaveLength(8);
     expect(steps[0]?.summary).toMatch(/^opentune_edit_timing: changed /);
     expect(steps[0]?.changes.length).toBeGreaterThan(0);
-    expect((out.time_grid_handles as unknown[]).length).toBe(200);
+    // A full-format result lists MAX_LISTED_HANDLES handles (100 since the write results of a long edit were cut to
+    // stay inside the host's limit; the 200 this test once had named the old value), and counts all of them.
+    expect((out.time_grid_handles as unknown[]).length).toBe(MAX_LISTED_HANDLES);
+    expect(out.time_grid_handle_count).toBe(HANDLES);
+    expect(out.time_grid_handles_truncated).toBe(true);
     expect(out.summary).toContain('newest first: ');
+  });
+
+  it('keeps counting every move when the result lists only some of its changes', async () => {
+    // A phrase of 12 seconds holds 24 handles, more than the MAX_LISTED changes a rendered write result lists.
+    const wide = (count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        op: 'shift' as const,
+        start_content_sec: 0.9 + i * 12,
+        end_content_sec: 12.9 + i * 12,
+        delta_ms: 10,
+      }));
+    const { ctx, revision, placement } = await longSeeded();
+    // What OpenTune answers to each request, whole: the truth the counts are compared with.
+    const answers: { changes: unknown[] }[] = [];
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const original = OtcpSession.prototype.call;
+    vi.spyOn(OtcpSession.prototype, 'call').mockImplementation(async function (
+      this: OtcpSession,
+      method,
+      params,
+      timeout,
+    ) {
+      const result = await original.call(this, method, params, timeout);
+      if (method === 'content.shiftTiming') answers.push(result as { changes: unknown[] });
+      return result;
+    });
+
+    // Nine operations: more than eight, so the steps are compact and carry the counts.
+    const out = body(await call(ctx, { clip: placement, expected_revision: revision, ops: wide(9) }));
+    const moved = answers.map((a) => a.changes.length);
+    expect(moved).toHaveLength(9);
+    expect(moved.every((n) => n > MAX_LISTED)).toBe(true);
+    const steps = out.steps as Compact[];
+    expect(steps.map((s) => s.moved)).toEqual(moved);
+    expect(out.moves_total).toBe(moved.reduce((total, n) => total + n, 0));
+    expect(steps.reduce((total, s) => total + s.moves.length + (s.moves_omitted ?? 0), 0)).toBe(out.moves_total);
+
+    // Eight operations: the full format lists MAX_LISTED changes of each step and says how many it left out.
+    const full = body(
+      await call(ctx, { clip: placement, expected_revision: out.clip_revision as string, ops: wide(8) }),
+    );
+    const fullSteps = full.steps as { changes: unknown[]; omittedCount: { changes: number } }[];
+    expect(fullSteps).toHaveLength(8);
+    for (const [index, step] of fullSteps.entries()) {
+      expect(step.changes).toHaveLength(MAX_LISTED);
+      expect(step.changes.length + step.omittedCount.changes).toBe(answers[9 + index]?.changes.length);
+    }
   });
 
   it('stops between two operations when the call has used its time, and says where to go on', async () => {
