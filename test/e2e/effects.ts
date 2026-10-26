@@ -413,6 +413,69 @@ export interface EffectsConfig {
   readonly timingLengthsSec: readonly number[];
   /** Which variable the data template of `exe` came from, for the report; null (or absent) for none. */
   readonly dataTemplateFrom?: DataTemplateSource | null;
+  /**
+   * For the unit tests against a stand-in only: run just these checks (by step name, see
+   * EFFECT_CHECK_NAMES, and `timing <n> s` for a length in `timingLengthsSec`), with the set-up steps they
+   * need (launch, import, the fixed note parameters, the baseline; the extra clips for the note-split,
+   * vibrato and drift checks). The other checks are not run and do not appear in the report. Every
+   * check is judged exactly as in a full run. Absent in every run against a real instance:
+   * effectsSetupFromEnv never sets it and no variable reaches it. A name that is not a check is an
+   * error, and so is an empty list, so that a typo cannot run nothing and pass.
+   */
+  readonly onlyChecks?: readonly string[];
+}
+
+/**
+ * The checks of the scenario by step name, in the order they run. The timing steps (`timing <n> s`) are
+ * named by `timingLengthsSec`.
+ */
+export const EFFECT_CHECK_NAMES = [
+  'export before any edit',
+  'setTargetPitch +100 cents',
+  'shiftCents +100 cents',
+  'setPitchShift +2 semitones',
+  'AUTO regenerate pulls the sharp note back',
+  'AUTO snapNotes pulls the sharp note back',
+  'setParams retuneSpeed 1',
+  'snapToScale returns an off-scale note to the scale',
+  'prefs.set tuningHz 442',
+  'race: +100 cents, export, -100 cents',
+  'shiftTiming +30 ms',
+  'moveHandles +30 ms',
+  'extra clips for the note-split, vibrato and drift checks',
+  'AUTO regenerate noteSplitCents',
+  'setParams vibratoDepth and vibratoRateHz',
+  'setParams pitchDriftScale 0',
+  'prefs.set hybridMode',
+] as const;
+
+/** The checks that run on the extra clips, which the step of that name makes. */
+const EXTRA_CLIPS_STEP = 'extra clips for the note-split, vibrato and drift checks';
+const NEEDS_EXTRA_CLIPS: readonly string[] = [
+  'AUTO regenerate noteSplitCents',
+  'setParams vibratoDepth and vibratoRateHz',
+  'setParams pitchDriftScale 0',
+];
+
+/** The checks to run for `onlyChecks` (with what they need), undefined for all; throws for a name that is none. */
+function selectedChecks(config: EffectsConfig): ReadonlySet<string> | undefined {
+  const names = config.onlyChecks;
+  if (names === undefined) return undefined;
+  const known = new Set<string>([
+    ...EFFECT_CHECK_NAMES,
+    ...config.timingLengthsSec.map((n) => `timing ${String(n)} s`),
+  ]);
+  if (names.length === 0)
+    throw new Error('onlyChecks is empty: name the checks to run, or leave it out to run them all');
+  const unknown = names.filter((name) => !known.has(name));
+  if (unknown.length > 0) {
+    throw new Error(
+      `onlyChecks names no check: ${unknown.map((n) => JSON.stringify(n)).join(', ')} (the checks are: ${[...known].join('; ')})`,
+    );
+  }
+  const selected = new Set(names);
+  if (names.some((name) => NEEDS_EXTRA_CLIPS.includes(name))) selected.add(EXTRA_CLIPS_STEP);
+  return selected;
 }
 
 /** The variables a data template can come from: the scenario's own wins over the shared one. */
@@ -506,6 +569,8 @@ export interface EffectsReport {
   readonly hybridMode: boolean | null;
   /** Which variable the instance's data template came from; null when none was copied in. */
   readonly dataTemplateFrom: DataTemplateSource | null;
+  /** The checks the run was limited to (EffectsConfig.onlyChecks); absent for a full run. */
+  readonly onlyChecks?: readonly string[];
   readonly startedAt: string;
   readonly totalMs: number;
   readonly steps: readonly StepReport[];
@@ -1373,6 +1438,7 @@ export async function waitForAnalysis(session: OtcpSession, contentId: string, t
 }
 
 export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}): Promise<EffectsReport> {
+  const selected = selectedChecks(config);
   const started = performance.now();
   const startedAt = new Date().toISOString();
   const target = hooks.target ?? exeTarget(config.exe);
@@ -1424,6 +1490,8 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
   };
 
   const step = async (name: string, body: () => Promise<string>, options: StepOptions = {}) => {
+    // A check that was not asked for (EffectsConfig.onlyChecks) is not run and not reported.
+    if (options.check === true && selected !== undefined && !selected.has(name)) return;
     if (halted !== undefined && options.always !== true) {
       steps.push({ name, result: 'SKIP', ms: 0, note: `not run: ${halted}` });
       return;
@@ -3578,6 +3646,7 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
     notices: hybridMode === true ? [HYBRID_MODE_NOTICE] : [],
     hybridMode,
     dataTemplateFrom: config.dataTemplateFrom ?? null,
+    ...(config.onlyChecks === undefined ? {} : { onlyChecks: [...config.onlyChecks] }),
     startedAt,
     totalMs: Math.round(performance.now() - started),
     steps: steps.map((st) => ({ ...st, ms: Math.round(st.ms) })),

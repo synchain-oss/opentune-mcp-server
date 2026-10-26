@@ -476,6 +476,18 @@ and these:
 Like the smoke report it holds no absolute path and no token. Timeouts for clients are not derived
 here; the timings are recorded for that.
 
+### Running only some of the checks (unit tests only)
+
+`EffectsConfig.onlyChecks` limits a run to the named checks (the step names of the table above, and
+`timing <n> s`), with the set-up steps they need; the others are not run and are not in the report, which
+then has `onlyChecks` at the top level. Every check that runs is judged as in a full run. It exists so
+that the unit tests against the stand-in (`test/unit/exe-effects*.test.ts`) can run the one or two checks
+a defect is about and not the whole scenario each time (a full run takes a few seconds on a developer
+machine, several times that with coverage on the CI runners). A real run never sets it: `effectsSetupFromEnv` has no
+variable for it (a unit test checks that, and that no file of `test/e2e` but `effects.ts` names it), so
+`npm run e2e:exe` and `OTCP_TARGET_EXE` runs always run every check. A name that is not a check, or an
+empty list, is an error and not a run of nothing.
+
 ## Arrangement effects scenario
 
 The arrangement effects scenario (`test/e2e/arrangement-effects.ts`) checks that an arrangement or

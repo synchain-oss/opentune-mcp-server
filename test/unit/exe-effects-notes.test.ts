@@ -36,19 +36,21 @@ import { decodeWav } from '../support/wav-decode.js';
 
 const FAKE = fileURLToPath(new URL('../support/fake-opentune.mjs', import.meta.url));
 /**
- * Timeout of a test that runs the whole scenario against the stand-in, once or twice (about 10 s a run on a
- * developer machine). Measured on the CI runners, with coverage: a run takes about 40 s, the slowest test
- * (two runs) 98 s, and the whole file 681 s. 330 s is 3.4 times the slowest test, and a test that hangs
- * still fails.
+ * Timeout of a test that runs part of the scenario against the stand-in. Measured on a developer machine
+ * with coverage, as in the CI job: the slowest test takes 11 s and the file 94 s (19 s without coverage;
+ * 357 s with coverage before the tests ran only the checks they are about, when the CI runners took 681 s,
+ * 1.9 times as long, so the slowest test takes about 20 s there). 90 s is 4.5 times that, and still 2.8
+ * times if the runners were 3 times slower than this machine; a test that hangs still fails.
  */
-const SCENARIO_TIMEOUT_MS = 330_000;
+const SCENARIO_TIMEOUT_MS = 90_000;
 
-const config = (mode: string): EffectsConfig => ({
+const config = (mode: string, extra: Partial<EffectsConfig> = {}): EffectsConfig => ({
   exe: { exe: process.execPath, args: [FAKE, `--mode=${mode}`], timeoutMs: 15_000 },
   stepTimeoutMs: 20_000,
   reportPath: undefined,
   audioPath: undefined,
   timingLengthsSec: [3],
+  ...extra,
 });
 
 const results = (report: EffectsReport) => Object.fromEntries(report.steps.map((s) => [s.name, s.result]));
@@ -61,15 +63,21 @@ const MOVE = 'moveHandles +30 ms';
 const SPLIT = 'AUTO regenerate noteSplitCents';
 const VIBRATO = 'setParams vibratoDepth and vibratoRateHz';
 const DRIFT = 'setParams pitchDriftScale 0';
-const NEW_CHECKS = [SNAP, TUNING, HYBRID, MOVE, SPLIT, VIBRATO, DRIFT] as const;
+const RACE = 'race: +100 cents, export, -100 cents';
+/**
+ * A test of a defect runs only the check the defect is about (EffectsConfig.onlyChecks; a run of the whole
+ * scenario takes 3.4 s here and 18 s with coverage) and these two, which it must not fail: they
+ * run on the same instance after it, one on the notes and one on the time grid.
+ */
+const COMPANIONS = [SNAP, MOVE];
 
-/** Runs the scenario against a stand-in that gets one thing wrong; only `wrong` fails, every other new check passes. */
-async function onlyFails(mode: string, wrong: string): Promise<EffectsReport> {
-  const report = await runEffects(config(mode));
+/** Runs the scenario against a stand-in that gets one thing wrong; only `wrong` fails, the companion checks pass. */
+async function onlyFails(mode: string, wrong: string, more: readonly string[] = []): Promise<EffectsReport> {
+  const companions = [...COMPANIONS.filter((n) => n !== wrong), ...more];
+  const report = await runEffects(config(mode, { onlyChecks: [wrong, ...companions], timingLengthsSec: [] }));
   const r = results(report);
   expect(r[wrong], `${mode}: ${wrong}`).toBe('FAIL');
-  for (const name of NEW_CHECKS.filter((n) => n !== wrong)) expect(r[name], `${mode}: ${name}`).toBe('PASS');
-  expect(r['timing 3 s']).toBe('PASS');
+  for (const name of companions) expect(r[name], `${mode}: ${name}`).toBe('PASS');
   expect(r.shutdown).toBe('PASS');
   return report;
 }
@@ -144,7 +152,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
   it(
     'fails the moveHandles check when the handle did not move although the result says it did',
     async () => {
-      const report = await onlyFails('effects-move-ignored', MOVE);
+      const report = await onlyFails('effects-move-ignored', MOVE, ['shiftTiming +30 ms']);
       expect(noteOf(report, MOVE)).toMatch(/handle [0-9]+ outputSec: the result says [0-9.]+, read back [0-9.]+/);
       // shiftTiming moved its handle in the same instance.
       expect(results(report)['shiftTiming +30 ms']).toBe('PASS');
@@ -155,14 +163,16 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
   it(
     'puts the hybrid mode back when the check fails half-way, and the checks after it run on the instance as it began',
     async () => {
-      const report = await runEffects(config('effects-hybrid-export-fails'));
+      const report = await runEffects(
+        config('effects-hybrid-export-fails', { onlyChecks: [HYBRID, ...COMPANIONS, 'timing 3 s'] }),
+      );
       const r = results(report);
       expect(r[HYBRID]).toBe('FAIL');
       expect(noteOf(report, HYBRID)).toContain('INTERNAL(fake_export_failed)');
       // No later check halted, and the exports of the timing step work again: the preference was restored.
       expect(r['timing 3 s']).toBe('PASS');
       expect(r.shutdown).toBe('PASS');
-      for (const name of NEW_CHECKS.filter((n) => n !== HYBRID)) expect(r[name], name).toBe('PASS');
+      for (const name of COMPANIONS) expect(r[name], name).toBe('PASS');
     },
     SCENARIO_TIMEOUT_MS,
   );
@@ -170,7 +180,9 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
   it(
     'stops the checks, and names the preference and its value at the start, when a preference cannot be put back',
     async () => {
-      const report = await runEffects(config('effects-pref-stuck'));
+      const report = await runEffects(
+        config('effects-pref-stuck', { onlyChecks: [TUNING, RACE, HYBRID], timingLengthsSec: [] }),
+      );
       const r = results(report);
       expect(r[TUNING]).toBe('FAIL');
       expect(noteOf(report, TUNING)).toContain(
@@ -188,10 +200,13 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
   // The revert recipe of prefs.set is data the instance returns: the scenario uses it only as a prefs.set of
   // the preferences it changed, else it puts them back from what prefs.get read at the start, and says so.
   const PREF_CHECKS = [TUNING, HYBRID];
+  /** The preference checks, a companion pair and a timing step after them, to see that later exports work. */
+  const prefRun = (mode: string) =>
+    runEffects(config(mode, { onlyChecks: [...PREF_CHECKS, ...COMPANIONS, 'timing 3 s'] }));
   const othersPass = (report: EffectsReport, failing: readonly string[]) => {
     const r = results(report);
     for (const name of failing) expect(r[name], name).toBe('FAIL');
-    for (const name of NEW_CHECKS.filter((n) => !failing.includes(n))) expect(r[name], name).toBe('PASS');
+    for (const name of COMPANIONS) expect(r[name], name).toBe('PASS');
     // The preferences were put back: later exports work (an instance left in hybrid mode would differ), the run ends.
     expect(r['timing 3 s']).toBe('PASS');
     expect(r.shutdown).toBe('PASS');
@@ -200,7 +215,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
   it(
     'fails a preference check whose result gives no revert recipe, and puts the preference back from its start value',
     async () => {
-      const report = await runEffects(config('effects-pref-recipe-missing'));
+      const report = await prefRun('effects-pref-recipe-missing');
       othersPass(report, PREF_CHECKS);
       for (const name of PREF_CHECKS) {
         expect(noteOf(report, name), name).toContain(
@@ -214,7 +229,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
   it(
     'does not call a method the revert recipe names but prefs.set, and puts the preference back from its start value',
     async () => {
-      const report = await runEffects(config('effects-pref-recipe-foreign'));
+      const report = await prefRun('effects-pref-recipe-foreign');
       othersPass(report, PREF_CHECKS);
       for (const name of PREF_CHECKS) {
         const note = noteOf(report, name);
@@ -231,7 +246,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
   it(
     'fails a preference check whose revert recipe also sets another preference, and sends only the one it changed',
     async () => {
-      const report = await runEffects(config('effects-pref-recipe-extra'));
+      const report = await prefRun('effects-pref-recipe-extra');
       othersPass(report, PREF_CHECKS);
       // The problem names the key the recipe has too much (an instance defect: the recipe would change a
       // preference the write did not touch).
@@ -254,7 +269,7 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
   it(
     'writes the problems of a put-back that runs after a failed check to the report',
     async () => {
-      const report = await runEffects(config('effects-hybrid-export-fails-foreign'));
+      const report = await prefRun('effects-hybrid-export-fails-foreign');
       othersPass(report, PREF_CHECKS);
       // The hybrid check failed half-way, on its export; the put-back ran as its cleanup.
       expect(noteOf(report, HYBRID)).toContain('INTERNAL(fake_export_failed)');
@@ -270,7 +285,12 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
   it(
     'skips the preference checks without prefs.write, and runs the others',
     async () => {
-      const report = await runEffects(config('effects-no-prefs'));
+      const report = await runEffects(
+        config('effects-no-prefs', {
+          onlyChecks: [TUNING, HYBRID, SNAP, MOVE, SPLIT, VIBRATO, DRIFT],
+          timingLengthsSec: [],
+        }),
+      );
       const r = results(report);
       expect(r[TUNING]).toBe('SKIP');
       expect(noteOf(report, TUNING)).toBe('the instance does not report prefs.write');

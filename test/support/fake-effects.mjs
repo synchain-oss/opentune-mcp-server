@@ -431,7 +431,15 @@ export function createEffects(mode) {
     job: null,
     ...extra,
   });
-  const startJob = (kind, run, polls = 1) => {
+  /**
+   * A job runs, lazily, when it is first read with job.get, and has ended by then: `polls` is how many
+   * reads still find it running first. The default is none. A read that finds a job running makes the
+   * scenario wait 100 ms before the next one, which this file's tests do not test (the smoke tests do,
+   * with the stand-in whose jobs take two reads), and which would add 100 ms to each of the 20 to 30
+   * exports of a run. A write that comes after export.start and before the first read still finds the
+   * export job running: the race check depends on that, and the job takes its snapshot at the start.
+   */
+  const startJob = (kind, run, polls = 0) => {
     const jobId = `j:${SHORT}:${String(jobs.size + 1)}`;
     jobs.set(jobId, { kind, run, polls, state: 'running', result: null, error: null });
     return { jobId, kind, state: 'queued' };
@@ -718,7 +726,7 @@ export function createEffects(mode) {
         notes: target.notes.map((n) => ({ ...n })),
       };
       exportLock = state;
-      const job = startJob('export', () => finishExport(state), 2);
+      const job = startJob('export', () => finishExport(state));
       return ok(id, { ...envelope(target, { applied: false, undo: null }), job });
     }
     if (c === undefined) return fail(id, 'UNSUPPORTED', 'capability_missing');
