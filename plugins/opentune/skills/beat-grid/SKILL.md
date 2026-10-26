@@ -44,12 +44,12 @@ the script that file with `--paths-file`:
 { "input": "<backing wav>", "vocal": "<vocal wav>", "backing": "<backing wav>", "notes": "<output.path>" }
 ```
 
-Put in only the keys a command needs: `analyze` reads `input`, `align` reads `vocal` and `backing`,
-`timing-plan` reads `notes` (and `grid`); other keys are left alone, so one file serves all of them. Write
-the paths as given (`\\` for a backslash in JSON) and put the file next to `grid.json` in the temp folder
-(resolve it once, for example with `echo $TEMP`; file tools do not expand `$TEMP`). A path given on the
-command line and in the file is refused. A path the user typed may be given on the command line in single quotes;
-if it holds a single quote, `$`, a backtick, `;`, `|` or a line break, put it in the file instead.
+Put in only the keys a command needs: `analyze` reads `input`, `align` reads `vocal` and `backing`, `timing-plan` reads
+`notes` (and `grid`, only when `--grid` is not on the command line); other keys are left alone, so one file serves all of them.
+Write the paths as given (`\\` for a backslash in JSON) and put the file next to `grid.json` in the temp folder (resolve it
+once, for example with `echo $TEMP`; file tools do not expand `$TEMP`). A path given on the command line and in the file is
+refused ("given twice"): step 3 gives `--grid` on the command line, so leave `grid` out of the file. A path the user typed may
+be given on the command line in single quotes; if it holds a single quote, `$`, a backtick, `;`, `|` or a line break, put it in the file instead.
 
 ## When to use it
 
@@ -178,6 +178,7 @@ nothing is installed; with an installed analyzer the release state is irrelevant
      expressive timing. `--subdivision 2` or `4` matches eighth or sixteenth notes.
    - `merge` and `warnings` say how many notes were merged and skipped (`SHORT_NOTES`). Lower
      `--merge-gap-ms` if two syllables were joined; raise it if one syllable still gives several onsets.
+   - `RANGE_TOO_NARROW` names an onset that got no op because the next chain starts under 0.2 ms after it; say so in the report.
    - If `calls` is empty and the warning names `NO_REVISION`, `REVISION_MISMATCH` or `MIXED_PLACEMENTS`,
      do not guess a revision or a clip: read the notes of one clip again and make one plan per clip.
 4. **Show the plan.** Summarize: how many onsets are off, the overall lead or lag, the largest shifts with

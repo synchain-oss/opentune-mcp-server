@@ -1641,10 +1641,11 @@ export function timingPlan({
       shortSkipped += 1;
       continue;
     }
-    // The span of the op stops where the next chain starts, so two ops never share a handle. The next
-    // chain's start is kept as it is (limitContentSec) and rounded below, with the same rounding as the
-    // ranges: the end of this range rounds outwards and the start of the next one inwards, so rounding
-    // the two separately could let them overlap by 0.1 ms.
+    // The span of the op stops before the next chain starts, so two ops never share a handle (a range is a
+    // closed interval, so the two must not even meet at one point). The next chain's start is kept as it
+    // is (limitContentSec) and rounded below, with the same rounding as the ranges: the end of this range
+    // rounds outwards and the start of the next one inwards, so rounding the two separately could let
+    // them overlap by 0.1 ms.
     const next = chains[index + 1];
     const limit = next !== undefined && next.key === chain.key ? Math.max(chain.start, next.start) : null;
     const end = limit === null ? chain.end : Math.min(chain.end, limit);
@@ -1723,6 +1724,7 @@ export function timingPlan({
   const globalOffsetMs = median(deviations);
   const suggestions = [];
   let deltaTooLarge = 0;
+  const tooClose = [];
   // A ready call needs one clip and one revision: a mixed or missing one would be guessed, so
   // those plans give the numbers and the warnings without a call.
   const callable =
@@ -1744,9 +1746,16 @@ export function timingPlan({
     if (onset.limitContentSec === null) {
       end = Math.max(ceil4(onset.endContentSec), round(start + 0.001, 4));
     } else {
-      // Not past where the next chain's range starts (floor4 of its start), whatever the rounding.
-      end = Math.min(ceil4(onset.endContentSec), floor4(onset.limitContentSec));
-      if (end <= start) end = round(start + 0.0001, 4);
+      // A range is a closed interval: a handle exactly at its end moves too. So the end stays one step (0.1 ms,
+      // the rounding of the ranges) before where the next chain's range starts (floor4 of its start), whatever
+      // the rounding; two ranges that met at one point would move the handle there twice.
+      end = Math.min(ceil4(onset.endContentSec), round(floor4(onset.limitContentSec) - 0.0001, 4));
+      if (end <= start) {
+        // No room is left for a range: the next chain starts less than 0.2 ms after this one. Nothing is
+        // planned for this onset, and the plan says so instead of dropping it silently.
+        tooClose.push({ note, onset, deltaMs });
+        continue;
+      }
     }
     const op = { op: 'shift', start_content_sec: start, end_content_sec: end, delta_ms: deltaMs };
     const beat = beats[point.beatIndex];
@@ -1787,6 +1796,18 @@ export function timingPlan({
       code: 'DELTA_TOO_LARGE',
       detail: `${String(deltaTooLarge)} suggestion(s) would move more than ${String(MAX_DELTA_MS)} ms and were left out`,
     });
+  for (const { note, onset, deltaMs } of tooClose) {
+    warnings.push({
+      code: 'RANGE_TOO_NARROW',
+      detail:
+        `the onset at ${String(round(onset.startContentSec, 6))} s of the content ` +
+        `(note index ${isFiniteNumber(note.index) ? String(note.index) : 'unknown'}) was skipped, with its shift ` +
+        `of ${String(deltaMs)} ms: the next chain starts at ${String(round(onset.limitContentSec, 6))} s, so the ` +
+        'range of this one would end at or before its own start. Ranges are closed intervals and must not share ' +
+        'an end point (a handle there would move twice), so a range ends at least 0.1 ms before the next one ' +
+        'starts. Nothing was planned for this onset; fix its timing by hand if it matters',
+    });
+  }
   if (considered.length === 0)
     warnings.push({
       code: 'NO_USABLE_NOTES',
