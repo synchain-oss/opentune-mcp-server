@@ -72,6 +72,7 @@ interface InstallPlan {
   version: string | null;
   assets: { kind: string; asset: string; approxBytes: number }[];
   otherModel: { name: string; totalBytes: number | null };
+  installed: { version: string; target: string; dir: string; models: Record<string, boolean> } | null;
 }
 interface InstallResult {
   dir: string;
@@ -113,7 +114,7 @@ interface BeatGridModule {
   analyze: (options: Json) => AnalyzeResult;
   compareVersions: (a: string, b: string) => number;
   currentInstallation: (home: string, manifest: Manifest, target: string) => { dir: string; executable: string } | null;
-  dataHome: (env: Record<string, string | undefined>) => { home: string; source: string };
+  dataHome: (env: Record<string, string | undefined>, homeOption?: string | null) => { home: string; source: string };
   detectTarget: (platform?: string, arch?: string) => string | null;
   downloadAsset: (url: string, dest: string, sha: string, what: string, options?: Json) => Promise<string>;
   executableName: (target: string) => string;
@@ -384,6 +385,26 @@ describe('the shipped manifest', () => {
     expect(fs.existsSync(path.join(home.dir, 'bin'))).toBe(false);
   });
 
+  it('has no problem in the plan of an analyzer that is installed, whatever the release state is', () => {
+    const home = tempHome();
+    cleanup.push(home.remove);
+    expect(manifest.released).toBe(false);
+    const empty = installPlan({ manifest, target: 'win-x64', model: 'final', home: home.dir });
+    expect(empty.installed).toBeNull();
+    expect(empty.problems.length).toBeGreaterThan(0);
+
+    const dir = fakeInstall(home.dir, manifest, 'win-x64');
+    const plan = installPlan({ manifest, target: 'win-x64', model: 'final', home: home.dir });
+    expect(plan.problems).toEqual([]);
+    expect(plan.installed).toMatchObject({ version: manifest.version, target: 'win-x64', dir });
+    expect(plan.installed).toMatchObject({ models: { mel: true, final: true, small: false } });
+    expect(formatPlan(plan)).toContain('already installed');
+    // The model asked for decides: the small one is not there, so that plan is blocked as before.
+    const small = installPlan({ manifest, target: 'win-x64', model: 'small', home: home.dir });
+    expect(small.installed).toBeNull();
+    expect(small.problems.join('\n')).toContain('is not published yet');
+  });
+
   it('reports the size of the final and the small download in the plan', () => {
     const final = installPlan({ manifest, target: 'win-x64', model: 'final', home: null });
     const small = installPlan({ manifest, target: 'win-x64', model: 'small', home: null });
@@ -394,17 +415,25 @@ describe('the shipped manifest', () => {
 });
 
 describe('dataHome and detectTarget', () => {
-  it('prefers CLAUDE_PLUGIN_DATA, then OPENTUNE_BEATS_HOME, and says how to set one', () => {
-    expect(dataHome({ CLAUDE_PLUGIN_DATA: 'C:/data', OPENTUNE_BEATS_HOME: 'C:/other' })).toEqual({
+  it('prefers --home, then OPENTUNE_BEATS_HOME, then CLAUDE_PLUGIN_DATA, and says how to set one', () => {
+    const env = { CLAUDE_PLUGIN_DATA: 'C:/data', OPENTUNE_BEATS_HOME: 'C:/other' };
+    expect(dataHome(env, 'C:/option')).toEqual({ home: path.resolve('C:/option'), source: '--home' });
+    expect(dataHome(env)).toEqual({ home: path.resolve('C:/other'), source: 'OPENTUNE_BEATS_HOME' });
+    expect(dataHome({ CLAUDE_PLUGIN_DATA: 'C:/data' })).toEqual({
       home: path.resolve('C:/data'),
       source: 'CLAUDE_PLUGIN_DATA',
     });
-    expect(dataHome({ OPENTUNE_BEATS_HOME: 'C:/other' })).toEqual({
-      home: path.resolve('C:/other'),
-      source: 'OPENTUNE_BEATS_HOME',
-    });
     expect(() => dataHome({})).toThrow(BeatGridError);
+    expect(() => dataHome({})).toThrow(/--home/);
     expect(() => dataHome({})).toThrow(/OPENTUNE_BEATS_HOME/);
+  });
+
+  it('treats an empty --home and a variable that was not replaced as not given', () => {
+    const env = { CLAUDE_PLUGIN_DATA: 'C:/data' };
+    for (const unusable of ['', '  ', '${CLAUDE_PLUGIN_DATA}', '$CLAUDE_PLUGIN_DATA', '%CLAUDE_PLUGIN_DATA%', null]) {
+      expect(dataHome(env, unusable)).toEqual({ home: path.resolve('C:/data'), source: 'CLAUDE_PLUGIN_DATA' });
+    }
+    expect(() => dataHome({}, '${CLAUDE_PLUGIN_DATA}')).toThrow(/--home is empty or missing/);
   });
 
   it('maps only Windows x64 and macOS to a release target', () => {
@@ -1094,7 +1123,16 @@ describe('status', () => {
     expect(result.current).toMatchObject({ version: '0.1.0', target: 'win-x64', dir });
     expect(result.models).toEqual({ mel: true, final: true, small: false });
     expect(result.homeSource).toBe('OPENTUNE_BEATS_HOME');
-    expect(result.notes.join(' ')).toContain('not published yet');
+    // The release is not published (the shipped manifest), but the analyzer is installed: nothing to warn about.
+    expect(manifest.released).toBe(false);
+    expect(result.notes.join(' ')).not.toContain('not published yet');
+
+    // With nothing installed the note stays: it explains why an install would refuse.
+    const empty = tempHome();
+    cleanup.push(empty.remove);
+    const unused = status({ manifest, env: { OPENTUNE_BEATS_HOME: empty.dir }, platform: 'win32', arch: 'x64' });
+    expect(unused.installed).toBe(false);
+    expect(unused.notes.join(' ')).toContain('not published yet');
   });
 
   it('orders installations by semantic version, newest first', () => {
@@ -1211,6 +1249,9 @@ describe('the timing plan', () => {
     expect(flagged).not.toHaveProperty('expected_revision');
     expect(plan.calls).toEqual([
       {
+        batch: 1,
+        batches: 1,
+        ready: true,
         clip: 'p:1234abcd:1:1',
         expected_revision: 'r:1234abcd:1:1:abc',
         ops: [op],
@@ -1248,7 +1289,11 @@ describe('the timing plan', () => {
 
     // At a sixteenth grid the same note is near the 1.25 s point as well; at 1.16 s it is the
     // 1.125 s point (division 1 of 4) that is nearest.
-    const sixteenth = page([note(0, 0.5, 0.5), note(1, 1.0, 1.0), note(2, 1.16, 1.16)]);
+    const sixteenth = page([
+      note(0, 0.5, 0.5),
+      note(1, 1.0, 1.0, { endTimelineSec: 1.1, endContentSec: 1.1 }),
+      note(2, 1.16, 1.16),
+    ]);
     const sixteenths = timingPlan({ grid, notes: sixteenth, gridOffsetSec: 0, thresholdMs: 30, subdivision: 4 });
     expect(sixteenths.suggestions).toHaveLength(1);
     expect(sixteenths.suggestions[0]?.gridPoint).toMatchObject({ kind: 'subdivision', division: 1 });
@@ -1278,7 +1323,7 @@ describe('the timing plan', () => {
       note(1, 1.6, 1.6),
       note(2, 0.5, 0.5, { voiced: false }),
       note(3, 9.5, 9.5),
-      note(4, null, 1.0),
+      note(4, null, 3.0),
     ]);
     const plan = timingPlan({ grid, notes, gridOffsetSec: 0, thresholdMs: 30 });
     expect(plan.notes.used).toBe(2);
@@ -1337,52 +1382,85 @@ describe('the timing plan', () => {
     expect(plan.suggestions.map((s) => s.noteIndex)).toEqual([0, 1]);
   });
 
-  it('gives only the first call of at most eight ops and asks to plan again for the rest', () => {
+  /** A grid of 0.5 s beats and one sung note, a little off, on each beat: `count` onsets in all. */
+  function songOf(count: number): { longGrid: Json; many: Json } {
     const longGrid: Json = {
       ...grid,
-      beats: Array.from({ length: 11 }, (_, i) => ({
+      beats: Array.from({ length: count + 1 }, (_, i) => ({
         index: i,
         timeSec: i * 0.5,
         isDownbeat: i % 4 === 0,
         segment: 0,
       })),
-      segments: [{ index: 0, startSec: 0, endSec: 5.5, bpm: 120, confidence: 0.9 }],
+      segments: [{ index: 0, startSec: 0, endSec: count * 0.5 + 0.25, bpm: 120, confidence: 0.9 }],
     };
-    const many = page(Array.from({ length: 10 }, (_, i) => note(i, i * 0.5 + (i % 2 === 0 ? 0.1 : -0.1), i * 0.5)));
+    const many = page(Array.from({ length: count }, (_, i) => note(i, i * 0.5 + (i % 2 === 0 ? 0.1 : -0.1), i * 0.5)));
+    return { longGrid, many };
+  }
+
+  it('lists every batch of at most 64 ops, applies only the first, and asks to plan again for the rest', () => {
+    const { longGrid, many } = songOf(150);
     const plan = timingPlan({ grid: longGrid, notes: many, gridOffsetSec: 0, thresholdMs: 10 });
-    expect(plan.suggestions).toHaveLength(10);
-    expect(plan.calls).toHaveLength(1);
-    expect(plan.calls[0]?.ops).toHaveLength(8);
-    expect(plan.calls[0]?.ops).toEqual(plan.suggestions.slice(0, 8).map((suggestion) => suggestion.op));
-    expect(plan.calls[0]).toMatchObject({ expected_revision: 'r:1234abcd:1:1:abc' });
-    expect(plan.calls[0]?.ops[0]).not.toHaveProperty('dry_run');
-    expect(plan.counts).toEqual({ flagged: 10, calls: 1, remainingSuggestions: 2 });
-    // Every suggestion carries its op; the ninth and tenth are not in `calls`, so after the first
-    // call changes the revision they are planned again from fresh notes.
-    expect(plan.suggestions[8]?.op).toBeDefined();
-    expect(plan.suggestions[9]?.op).toBeDefined();
+    expect(plan.suggestions).toHaveLength(150);
+    expect(plan.calls.map((call) => call.ops.length)).toEqual([64, 64, 22]);
+    const calls = plan.calls as unknown as {
+      batch: number;
+      batches: number;
+      ready: boolean;
+      expected_revision: string | null;
+      ops: Json[];
+    }[];
+    expect(calls.map((call) => [call.batch, call.batches, call.ready])).toEqual([
+      [1, 3, true],
+      [2, 3, false],
+      [3, 3, false],
+    ]);
+    // Only the first batch carries the revision that was read; a later one would be stale after it.
+    expect(calls[0]?.expected_revision).toBe('r:1234abcd:1:1:abc');
+    expect(calls[1]?.expected_revision).toBeNull();
+    expect(calls[2]?.expected_revision).toBeNull();
+    // The batches are the suggestions in order, cut every 64.
+    expect(calls.flatMap((call) => call.ops)).toEqual(plan.suggestions.map((suggestion) => suggestion.op));
+    expect(calls[0]?.ops[0]).not.toHaveProperty('dry_run');
+    expect(plan.counts).toEqual({ flagged: 150, calls: 3, remainingSuggestions: 86 });
     for (const suggestion of plan.suggestions) {
       expect(suggestion).not.toHaveProperty('editTiming');
       expect(suggestion.op).not.toHaveProperty('clip');
       expect(suggestion.op).not.toHaveProperty('expected_revision');
     }
     const replan = plan.warnings.find((warning) => warning.code === 'REPLAN_AFTER_CALL') as { detail?: string };
-    expect(replan.detail ?? '').toContain('2 more suggestion(s)');
+    expect(replan.detail ?? '').toContain('86 more suggestion(s)');
+    expect(replan.detail ?? '').toContain('batches 2 to 3');
     expect(replan.detail ?? '').toContain('run timing-plan again');
   });
 
-  it('gives exactly one call and no re-plan warning for eight suggestions', () => {
-    const longGrid: Json = {
-      ...grid,
-      beats: Array.from({ length: 9 }, (_, i) => ({ index: i, timeSec: i * 0.5, isDownbeat: i % 4 === 0, segment: 0 })),
-      segments: [{ index: 0, startSec: 0, endSec: 4.5, bpm: 120, confidence: 0.9 }],
-    };
-    const eight = page(Array.from({ length: 8 }, (_, i) => note(i, i * 0.5 + (i % 2 === 0 ? 0.1 : -0.1), i * 0.5)));
-    const plan = timingPlan({ grid: longGrid, notes: eight, gridOffsetSec: 0, thresholdMs: 10 });
+  it('says what to do between batches and why, from the semantics of the time grid', () => {
+    const { longGrid, many } = songOf(70);
+    const plan = timingPlan({ grid: longGrid, notes: many, gridOffsetSec: 0, thresholdMs: 10 });
+    const apply = (plan as unknown as { apply: { maxOpsPerCall: number; betweenBatches: string[]; basis: string } })
+      .apply;
+    expect(apply.maxOpsPerCall).toBe(64);
+    const steps = apply.betweenBatches.join(' ');
+    expect(steps).toContain('Apply calls[0] only');
+    expect(steps).toContain('Read the notes again with opentune_get_notes and output_path');
+    expect(steps).toContain('run timing-plan again');
+    expect(apply.basis).toContain('every handle whose output position lies in the range');
+    expect(apply.basis).toContain('expectedGridRevision');
+    expect(apply.basis).toContain('CLAMPED');
+  });
+
+  it('gives exactly one call and no re-plan warning for 64 suggestions, and a second batch for 66', () => {
+    const exact = songOf(64);
+    const plan = timingPlan({ grid: exact.longGrid, notes: exact.many, gridOffsetSec: 0, thresholdMs: 10 });
     expect(plan.calls).toHaveLength(1);
-    expect(plan.calls[0]?.ops).toHaveLength(8);
+    expect(plan.calls[0]?.ops).toHaveLength(64);
     expect(plan.counts.remainingSuggestions).toBe(0);
     expect(plan.warnings.map((warning) => warning.code)).not.toContain('REPLAN_AFTER_CALL');
+    // An odd number of onsets would leave one at the median, which is not flagged; 66 flag all 66.
+    const over = songOf(66);
+    const more = timingPlan({ grid: over.longGrid, notes: over.many, gridOffsetSec: 0, thresholdMs: 10 });
+    expect(more.calls.map((call) => call.ops.length)).toEqual([64, 2]);
+    expect(more.counts.remainingSuggestions).toBe(2);
   });
 
   it('leaves out a note whose shift rounds to zero milliseconds', () => {

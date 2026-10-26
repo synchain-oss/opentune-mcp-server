@@ -65,7 +65,7 @@
   {
     "name": "opentune_get_notes",
     "title": "Get OpenTune notes",
-    "description": "OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (limit default 100, at most 200; fewer when the page would be large). Each note has its index, start and end seconds on the content clock (source audio) and, for a clip placement, on the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock says which clock from and to use; timeline needs a placement id. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (default 100, at most 200, fewer when large). Each note has its index, start and end seconds on the content clock and, for a placement, the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock picks the clock of from and to; timeline needs a placement id. output_path saves all notes of the range to a new .json file (for the beat-grid skill) and returns a summary. OpenTune is not changed.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -105,6 +105,12 @@
           "minimum": 1,
           "maximum": 200
         },
+        "output_path": {
+          "description": "Absolute path of a new .json file for all notes of the range, read page by page for you; leave out cursor and limit. The folder must exist. Never overwrites: a taken name gets \" (2)\", \" (3)\" ...",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        },
         "instance_id": {
           "description": "OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.",
           "type": "string",
@@ -118,9 +124,9 @@
       "additionalProperties": false
     },
     "annotations": {
-      "readOnlyHint": true,
+      "readOnlyHint": false,
       "destructiveHint": false,
-      "idempotentHint": true,
+      "idempotentHint": false,
       "openWorldHint": false
     }
   },
@@ -1474,7 +1480,7 @@
         },
         "ops": {
           "minItems": 1,
-          "maxItems": 8,
+          "maxItems": 64,
           "type": "array",
           "items": {
             "oneOf": [
@@ -1573,7 +1579,7 @@
               }
             ]
           },
-          "description": "Operations in order. seed must be alone."
+          "description": "Operations in order, up to 64, each its own undo step; more than 8 give a compact result. seed must be alone."
         },
         "wait_seconds": {
           "description": "Seed only (refused with shift or move). How long seed waits for its job, 0 to 30. Default 10; then the job id is returned.",

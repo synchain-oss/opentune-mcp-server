@@ -417,8 +417,10 @@ describe('opentune_get_notes', () => {
     expect(error.nextStep.tool).toBe('opentune_get_notes');
   });
 
-  it('is declared as a read-only tool whose clock is required', () => {
-    expect(getNotesTool.annotations.readOnlyHint).toBe(true);
+  it('is declared as a tool that writes only the file asked for, and its clock is required', () => {
+    // It reads from OpenTune only, but output_path makes it write a new file, so it is not read-only.
+    expect(getNotesTool.annotations.readOnlyHint).toBe(false);
+    expect(getNotesTool.annotations.destructiveHint).toBe(false);
     expect(getNotesTool.inputSchema.safeParse({ clip: 'p:01234567:0:1' }).success).toBe(false);
     expect(getNotesTool.inputSchema.safeParse({ clip: 'p:01234567:0:1', clock: 'content' }).success).toBe(true);
     expect(getNotesTool.inputSchema.safeParse({ clip: 'p:01234567:0:1', clock: 'output' }).success).toBe(false);

@@ -46,9 +46,9 @@ OTCP capabilities: `read.v1`. OTCP methods: `project.get`.
 
 ### `opentune_get_notes`
 
-**Get OpenTune notes**: read-only, not destructive, idempotent, closed world.
+**Get OpenTune notes**: changes state, not destructive, not idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (limit default 100, at most 200; fewer when the page would be large). Each note has its index, start and end seconds on the content clock (source audio) and, for a clip placement, on the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock says which clock from and to use; timeline needs a placement id. Read-only.
+OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (default 100, at most 200, fewer when large). Each note has its index, start and end seconds on the content clock and, for a placement, the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock picks the clock of from and to; timeline needs a placement id. output_path saves all notes of the range to a new .json file (for the beat-grid skill) and returns a summary. OpenTune is not changed.
 
 OTCP capabilities: `read.v1`. OTCP methods: `content.getNotes`, `project.get`.
 
@@ -60,6 +60,7 @@ OTCP capabilities: `read.v1`. OTCP methods: `content.getNotes`, `project.get`.
 | `to` | number | no | Range end in seconds on the given clock. Notes overlapping the range. |
 | `cursor` | string | no | next_cursor of the previous page, passed back unchanged. |
 | `limit` | integer, 1 to 200 | no | Notes per page, 1 to 200. Default 100. |
+| `output_path` | string | no | Absolute path of a new .json file for all notes of the range, read page by page for you; leave out cursor and limit. The folder must exist. Never overwrites: a taken name gets " (2)", " (3)" ... |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
 
 ### `opentune_get_job`
@@ -268,7 +269,7 @@ OTCP capabilities: `timing.v1`, `jobs.v1`, `read.v1`. OTCP methods: `content.shi
 | --- | --- | --- | --- |
 | `clip` | string, matching `^[pc]:[0-9a-f]{8}:(0\|[1-9][0-9]*):(0\|[1-9][0-9]*)$` | yes | Clip placement id (p:...) from opentune_get_project, or a content id (c:...). |
 | `expected_revision` | string | no | clip_revision of the clip. Required for shift and move; not needed for seed. |
-| `ops` | array | yes | Operations in order. seed must be alone. |
+| `ops` | array | yes | Operations in order, up to 64, each its own undo step; more than 8 give a compact result. seed must be alone. |
 | `wait_seconds` | number, 0 to 30 | no | Seed only (refused with shift or move). How long seed waits for its job, 0 to 30. Default 10; then the job id is returned. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
 

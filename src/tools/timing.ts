@@ -37,7 +37,30 @@ const READ_TIMEOUT_MS = 15_000;
 const WAIT_MARGIN_MS = 4000;
 export const DEFAULT_WAIT_SECONDS = 10;
 export const MAX_WAIT_SECONDS = 30;
-export const MAX_OPS = 8;
+/**
+ * Most operations of one call. Each shift or move is one OTCP request (and one undo step), so the
+ * bound is a result-size and time bound; a move names at most 64 handles, the limit of moveHandles.
+ */
+export const MAX_OPS = 64;
+/** Up to this many operations a result lists every step in full; more are listed compactly. */
+export const FULL_STEPS_MAX = 8;
+/** Characters of handle moves a compact result lists; the rest is counted (steps[].moves_omitted). */
+export const MAX_MOVE_CHARS = 6000;
+/** Handles a compact result lists; the count of all of them is always given. */
+export const COMPACT_LISTED_HANDLES = 40;
+/**
+ * How long a client waits for a result before it gives up: 60 seconds is the usual default, and a result that
+ * arrives later is lost together with the clip_revision it carries.
+ */
+export const CLIENT_TIMEOUT_MS = 60_000;
+/**
+ * The time since the start of the call (the lookup of the clip included) up to which a next operation may
+ * be sent. The worst case after sending it: the request takes its whole WRITE_TIMEOUT_MS (20 s), and the
+ * read of the handles after the last operation takes its whole READ_TIMEOUT_MS (15 s), so
+ * elapsed + 20 s + 15 s must stay below CLIENT_TIMEOUT_MS (60 s), which makes elapsed < 25 s. A call that
+ * is past it sends no further operation and reports how far it got, with the clip_revision to go on with.
+ */
+export const CALL_BUDGET_MS = CLIENT_TIMEOUT_MS - WRITE_TIMEOUT_MS - READ_TIMEOUT_MS;
 /** Largest shift of one operation, the OTCP limit (deltaSec). */
 export const MAX_DELTA_MS = 10_000;
 
@@ -240,15 +263,15 @@ type HandleRead = { readonly listed: Json } | { readonly failed: string };
  * The time handles of a content as content.getDetails reports them, ids and positions with the clock in
  * the field names. A failed read is reported, not thrown: the write already happened and its result must not be lost.
  */
-async function handlesOf(session: OtcpSession, contentId: string): Promise<HandleRead> {
+async function handlesOf(session: OtcpSession, contentId: string, cap = MAX_LISTED_HANDLES): Promise<HandleRead> {
   try {
     const details = await session.call('content.getDetails', { contentId }, READ_TIMEOUT_MS);
     const all = listHandles(details);
     return {
       listed: {
-        time_grid_handles: all.slice(0, MAX_LISTED_HANDLES),
+        time_grid_handles: all.slice(0, cap),
         time_grid_handle_count: all.length,
-        ...(all.length > MAX_LISTED_HANDLES ? { time_grid_handles_truncated: true } : {}),
+        ...(all.length > cap ? { time_grid_handles_truncated: true } : {}),
       },
     };
   } catch (error) {
@@ -267,9 +290,14 @@ function handleFields(read: HandleRead, when: string): Json {
 }
 
 /** The outcome with the current handles of the content added to a success body. */
-async function withHandles(session: OtcpSession, contentId: string, outcome: Outcome): Promise<Outcome> {
+async function withHandles(
+  session: OtcpSession,
+  contentId: string,
+  outcome: Outcome,
+  cap = MAX_LISTED_HANDLES,
+): Promise<Outcome> {
   if (!outcome.ok) return outcome;
-  const read = await handlesOf(session, contentId);
+  const read = await handlesOf(session, contentId, cap);
   return { ok: true, body: { ...outcome.body, ...handleFields(read, 'the read after the write failed') } };
 }
 
@@ -369,14 +397,23 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
   }
   const capabilities = ['timing.v1', ...(calls.some((c) => c.kind === 'seed') ? ['jobs.v1'] : []), 'read.v1'];
   return withInstance(ctx, { instanceId: args.instance_id }, capabilities, async (session) => {
+    const started = ctx.now();
     const resolved = await contentIdOf(session, args.clip);
     if (typeof resolved !== 'string') return resolved;
     const contentId = resolved;
-    const steps: { body: Body; clamped: number }[] = [];
+    const steps: Step[] = [];
+    // Many operations get compact steps, so the result stays readable and inside the 20,000 character budget.
+    const compact = calls.length > FULL_STEPS_MAX;
+    const handleCap = compact ? COMPACT_LISTED_HANDLES : MAX_LISTED_HANDLES;
     let current = tokens;
     let last: Json = {};
     try {
-      for (const call of calls) {
+      for (const [index, call] of calls.entries()) {
+        // Stop between two operations when the next one could not finish in time even in the worst case (its
+        // request at its whole timeout, then the read of the handles at its whole timeout, see CALL_BUDGET_MS):
+        // what was applied stays applied and the result has the clip_revision to go on with. The first
+        // operation is always sent, and none is ever stopped half-way.
+        if (index > 0 && ctx.now() - started + WRITE_TIMEOUT_MS + READ_TIMEOUT_MS >= CLIENT_TIMEOUT_MS) break;
         if (call.kind === 'seed') {
           return await withHandles(
             session,
@@ -405,7 +442,7 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
               detail: 'OpenTune returned no grid revision, so the next operation cannot be sent safely',
               executed: true,
             }),
-            context: { completed: steps.map((s) => s.body) },
+            context: { completed: completedOf(steps, calls, compact) },
           };
         }
       }
@@ -415,7 +452,7 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
       const gridChanged = error.data.kind === 'REVISION_CONFLICT' && error.data.reason === 'grid_changed';
       // The grid moved under this call: the handles it reports now are the ones the next try needs.
       const currentHandles: Json = gridChanged
-        ? handleFields(await handlesOf(session, contentId), 'the read of the time grid failed')
+        ? handleFields(await handlesOf(session, contentId, handleCap), 'the read of the time grid failed')
         : {};
       if (steps.length === 0) return { ok: false, error: failure, ...(gridChanged ? { context: currentHandles } : {}) };
       const applied = steps.length;
@@ -434,26 +471,134 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
             message: `${failure.nextStep.message} Operations 1 to ${String(applied)} are applied: ${retry}`,
           },
         },
-        context: { ...currentHandles, completed: steps.map((s) => s.body) },
+        context: { ...currentHandles, completed: completedOf(steps, calls, compact) },
       };
     }
     const [only] = steps;
-    if (steps.length === 1 && only !== undefined) return withHandles(session, contentId, { ok: true, body: only.body });
-    return withHandles(session, contentId, {
-      ok: true,
-      body: {
-        summary: multiSummary(steps),
-        steps: steps.map((s) => s.body),
-        clip_revision: revisionAfter(last, contentId, tokens),
+    if (calls.length === 1 && steps.length === 1 && only !== undefined) {
+      return withHandles(session, contentId, { ok: true, body: only.body });
+    }
+    const clipRevision = revisionAfter(last, contentId, tokens);
+    const stopped = steps.length < calls.length;
+    const listed = compact ? compactSteps(steps, calls) : null;
+    return withHandles(
+      session,
+      contentId,
+      {
+        ok: true,
+        body: {
+          summary: multiSummary(steps, { total: calls.length, stopped, compact }),
+          steps: listed === null ? steps.map((s) => s.body) : listed.steps,
+          ...(listed === null
+            ? {}
+            : {
+                steps_format: STEPS_FORMAT,
+                moves_listed: listed.listed,
+                moves_total: listed.total,
+              }),
+          ...(stopped
+            ? {
+                stopped: {
+                  reason: 'time_budget',
+                  applied: steps.length,
+                  total: calls.length,
+                  next_operation: steps.length + 1,
+                  message:
+                    `The call used its ${String(CALL_BUDGET_MS / 1000)} second budget after ${String(steps.length)} of ` +
+                    `${String(calls.length)} operations. Operations ${String(steps.length + 1)} to ${String(calls.length)} ` +
+                    'were not sent. Send them in a new call with the clip_revision of this result.',
+                },
+              }
+            : {}),
+          clip_revision: clipRevision,
+        },
       },
-    });
+      handleCap,
+    );
   });
+}
+
+/** One applied operation: the rendered result of its OTCP request and how many moves it had limited. */
+interface Step {
+  readonly body: Body;
+  readonly clamped: number;
+}
+
+const STEPS_FORMAT =
+  'compact: per step operation (1-based), op, moved, clamped, undo_id and moves = [handle_id, ' +
+  'before_output_sec, after_output_sec, requested_output_sec (only when the move was limited)]';
+
+/** The moves a step's result reports, as [handle_id, before, after] (+ requested when limited) rows. */
+function moveRows(body: Body): unknown[][] {
+  const requested = new Map<string, unknown>();
+  for (const item of Array.isArray(body.clamped) ? body.clamped : []) {
+    if (isObject(item) && typeof item.handleId === 'string') requested.set(item.handleId, item.requestedOutputSec);
+  }
+  return (Array.isArray(body.changes) ? body.changes : []).flatMap((change): unknown[][] => {
+    const ref = isObject(change) && isObject(change.ref) ? change.ref : null;
+    const fields = isObject(change) && isObject(change.fields) ? change.fields : null;
+    const output = fields !== null && isObject(fields.outputSec) ? fields.outputSec : null;
+    if (typeof ref?.handleId !== 'string' || output === null) return [];
+    const row: unknown[] = [ref.handleId, output.before ?? null, output.after ?? null];
+    if (requested.has(ref.handleId)) row.push(requested.get(ref.handleId) ?? null);
+    return [row];
+  });
+}
+
+/**
+ * The steps of a long call, one small object each: the undo id, how many handles moved and were limited,
+ * and the moves themselves up to MAX_MOVE_CHARS characters in all (the rest is counted per step). The
+ * full result of each request is not repeated: that is 2 KB or more per step.
+ */
+function compactSteps(
+  steps: readonly Step[],
+  calls: readonly Call[],
+): { steps: Json[]; listed: number; total: number } {
+  let chars = 0;
+  let listed = 0;
+  let total = 0;
+  const out = steps.map((step, index): Json => {
+    const rows = moveRows(step.body);
+    const kept: unknown[][] = [];
+    for (const row of rows) {
+      const size = JSON.stringify(row).length + 1;
+      if (chars + size > MAX_MOVE_CHARS) break;
+      chars += size;
+      kept.push(row);
+    }
+    total += rows.length;
+    listed += kept.length;
+    const undo = isObject(step.body.undo) ? step.body.undo : null;
+    const undoId = undo?.undoable === true ? trustedToken(undo.undoId, /^[A-Za-z0-9:_-]{1,64}$/) : null;
+    return {
+      operation: index + 1,
+      op: calls[index]?.kind ?? null,
+      moved: rows.length,
+      clamped: step.clamped,
+      undo_id: undoId,
+      moves: kept,
+      ...(kept.length < rows.length ? { moves_omitted: rows.length - kept.length } : {}),
+    };
+  });
+  return { steps: out, listed, total };
+}
+
+/** The steps an error reports as completed: in full for a short call, compact for a long one. */
+function completedOf(steps: readonly Step[], calls: readonly Call[], compact: boolean): Json[] {
+  if (!compact) return steps.map((s) => s.body);
+  const { steps: listed } = compactSteps(steps, calls);
+  // The retry advice names the clip_revision of the last item: give it there, once.
+  const revision = steps.at(-1)?.body.clip_revision ?? null;
+  return listed.map((item, index) => (index === listed.length - 1 ? { ...item, clip_revision: revision } : item));
 }
 
 const keysOf = (value: unknown): string[] => (isObject(value) ? Object.keys(value) : []);
 
 /** The first sentence of a several-operation result: side effects, warnings and the undo order of all steps. */
-function multiSummary(steps: readonly { body: Body; clamped: number }[]): string {
+function multiSummary(
+  steps: readonly Step[],
+  shape: { readonly total: number; readonly stopped: boolean; readonly compact: boolean },
+): string {
   const clamped = steps.reduce((total, s) => total + s.clamped, 0);
   const effects = new Set(steps.flatMap((s) => keysOf(s.body.sideEffects)));
   const codes = new Set(
@@ -474,14 +619,20 @@ function multiSummary(steps: readonly { body: Body; clamped: number }[]): string
       SIDE_EFFECT_TEXT[name] ??
       `side effect ${trustedToken(name, /^[a-z][A-Za-z0-9]{0,63}$/) ?? 'with an unrecognized name'}`,
   );
+  const applied = shape.stopped
+    ? `applied ${String(steps.length)} of ${String(shape.total)} operations in order, each as its own undo step, then ` +
+      `stopped at the time budget; operations ${String(steps.length + 1)} to ${String(shape.total)} were NOT sent ` +
+      '(see stopped and steps)'
+    : `applied ${String(steps.length)} operations in order, each as its own undo step (see steps)`;
+  const undoOrder = shape.compact
+    ? 'newest operation first, the undo_id of each is in steps'
+    : `newest first: ${[...undoIds].reverse().join(', ')}`;
   return (
-    `${TOOL}: applied ${String(steps.length)} operations in order, each as its own undo step (see steps)` +
+    `${TOOL}: ${applied}` +
     (effectText.length > 0 ? `; side effects: ${effectText.join(', ')}` : '') +
     (clamped > 0 ? `; ${String(clamped)} handle move(s) were limited by the minimum spacing` : '') +
     (codes.size > 0 ? `; Warnings: ${[...codes].join(', ')}` : '') +
-    (undoIds.length > 0
-      ? `; undoing all takes ${String(undoIds.length)} steps, newest first: ${[...undoIds].reverse().join(', ')}`
-      : '') +
+    (undoIds.length > 0 ? `; undoing all takes ${String(undoIds.length)} steps, ${undoOrder}` : '') +
     '.'
   );
 }
@@ -506,7 +657,13 @@ export const editTimingTool = defineTool({
       .max(512)
       .optional()
       .describe('clip_revision of the clip. Required for shift and move; not needed for seed.'),
-    ops: z.array(opSchema).min(1).max(MAX_OPS).describe('Operations in order. seed must be alone.'),
+    ops: z
+      .array(opSchema)
+      .min(1)
+      .max(MAX_OPS)
+      .describe(
+        'Operations in order, up to 64, each its own undo step; more than 8 give a compact result. seed must be alone.',
+      ),
     wait_seconds: z
       .number()
       .min(0)
