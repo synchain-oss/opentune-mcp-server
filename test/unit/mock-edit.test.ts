@@ -365,6 +365,44 @@ describe('time grid', () => {
     expect(mock.snapshot().contents[0]?.handles.length).toBe(3);
   });
 
+  it('moves a handle that lies exactly on either end of the range', async () => {
+    const { session, contentId } = await setup({ timeGrid: GRID });
+    const { ok } = session;
+    const handles = async () =>
+      (
+        (await ok('content.getDetails', { contentId })).timeGrid as {
+          handles: { handleId: string; outputSec: number }[];
+        }
+      ).handles;
+    const shift = async (start: number, end: number, deltaSec: number) => {
+      const grid = field((await ok('content.getDetails', { contentId })).asOf, 'contents') as {
+        gridRevision: string;
+      }[];
+      return ok('content.shiftTiming', {
+        contentId,
+        expectedGridRevision: grid[0]?.gridRevision,
+        range: { startOutputSec: start, endOutputSec: end },
+        deltaSec,
+      });
+    };
+    const [h1, h2, h3] = await handles();
+    expect([h1?.outputSec, h2?.outputSec, h3?.outputSec]).toEqual([1, 2, 3]);
+
+    // The handle at 2 is the end of the range, and no other handle is inside it.
+    let result = await shift(1.5, 2, 0.1);
+    expect(result.changes).toMatchObject([{ entity: 'timeHandle', fields: { outputSec: { before: 2, after: 2.1 } } }]);
+    expect((await handles()).map((h) => h.outputSec)).toEqual([1, 2.1, 3]);
+
+    // The handle at 3 is the start of the range.
+    result = await shift(3, 3.5, 0.1);
+    expect(result.changes).toMatchObject([{ entity: 'timeHandle', fields: { outputSec: { before: 3, after: 3.1 } } }]);
+    expect((await handles()).map((h) => h.outputSec)).toEqual([1, 2.1, 3.1]);
+
+    // A range whose ends are both on a handle holds that handle.
+    result = await shift(1, 1, 0.1);
+    expect(result.changes).toMatchObject([{ entity: 'timeHandle', fields: { outputSec: { before: 1, after: 1.1 } } }]);
+  });
+
   it('undoes a move of handles and reads a content range through the grid', async () => {
     const { session, ids, contentId } = await setup({ timeGrid: GRID });
     const { ok, mock } = session;

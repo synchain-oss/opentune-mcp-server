@@ -8,11 +8,15 @@
 import { table } from '../render/text.js';
 
 /**
- * A vocoder that is not loaded is not a fault: OpenTune loads it when the first render needs it, so it is not
- * loaded right after the start.
+ * What a vocoder that is not loaded can mean. OpenTune loads it when the first render needs it, so right after the
+ * start it is not loaded and nothing is wrong. But session.info and prefs.get carry no member that tells "not loaded
+ * yet" from "could not load" or "stuck" (`vocoderReady` is false in all three, and `vocoderReconfiguring` is false
+ * unless a load is running), so the sentence must not call it normal: it says what to expect and what to do if it
+ * does not come true.
  */
 export const VOCODER_NOTE =
-  'The vocoder loads when the first render needs it, so it not being loaded just after start is normal.';
+  'The vocoder is not loaded yet; it loads when the first render needs it. If it is still not loaded after a render, ' +
+  'tell the user.';
 
 /**
  * What each value of the rendering priority means and when it takes effect (opentune_get_settings, next to
@@ -59,6 +63,19 @@ export const BACKEND_NOT_CONFIRMED =
   'The vocoder was not ready when the setting changed, so it may not have loaded again yet: which backend it uses is ' +
   'only known after the next load, so read opentune_get_settings again once a render has run.';
 
-/** Whether the settings say gpuFirst with the CPU in use. Enumerated values only. */
-export const gpuFirstOnCpu = (priority: unknown, backend: unknown): boolean =>
-  priority === 'gpuFirst' && backend === 'cpu';
+/**
+ * The sentence of opentune_set_settings after a change to gpuFirst that read the CPU, when session.info could not be
+ * read before the change: whether the vocoder was ready then is not known, so whether the job waited for it is not
+ * known either, and the fall back to the CPU is not claimed (BACKEND_NOT_CONFIRMED has the reasoning).
+ */
+export const BACKEND_NOT_CONFIRMED_STATE_UNKNOWN =
+  'Whether the vocoder was ready when the setting changed could not be read, so it may not have loaded again yet: ' +
+  'which backend it uses is only known after the next load, so read opentune_get_settings again once a render has run.';
+
+/**
+ * Whether the settings say gpuFirst with the CPU in use. Enumerated values only. The backend counts only while the
+ * vocoder is loaded: a vocoder that is not loaded (or still reloading) can still report the backend from before, so no
+ * fall back is concluded from it, the same rule opentune_set_settings applies after a change.
+ */
+export const gpuFirstOnCpu = (priority: unknown, backend: unknown, vocoderReady: unknown): boolean =>
+  priority === 'gpuFirst' && backend === 'cpu' && vocoderReady === true;

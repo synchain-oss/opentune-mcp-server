@@ -689,6 +689,45 @@ describe('opentune_get_settings: rendering priority and vocoder', () => {
     body(await getSettings(ctx, { sections: ['log'], log_lines: 30 }));
   });
 
+  it('does not call the CPU a fall back while the vocoder is not loaded: backend may be a value from before', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setGpuAvailable(false);
+    mock.setVocoderLoadOnDemand(true);
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    // The fields stay as OpenTune reports them; only the conclusion is withheld.
+    expect(out.processing).toMatchObject({ renderingPriority: 'gpuFirst', backend: 'cpu', vocoderReady: false });
+    expect(out.summary).not.toContain('using the CPU');
+    expect(out.summary).not.toContain('fallen back');
+    expect(out.summary).not.toContain('Direct3D 12');
+    // The sentence about the vocoder is there instead.
+    expect(out.summary).toContain('The vocoder is not loaded yet');
+    // A vocoder that is still reloading reports ready false too, and is not read as a fall back either.
+    mock.setVocoderLoadOnDemand(false);
+    await hookCalls(ctx, (method, result) => {
+      if (method === 'session.info') {
+        Object.assign(result.processing as Record<string, unknown>, {
+          vocoderReady: false,
+          vocoderReconfiguring: true,
+        });
+      }
+    });
+    expect(body(await getSettings(ctx, { sections: ['processing'] })).summary).not.toContain('using the CPU');
+  });
+
+  it('says the fall back once the vocoder is loaded, and then says nothing about an unloaded vocoder', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setGpuAvailable(false);
+    mock.setVocoderLoadOnDemand(true);
+    expect(body(await getSettings(ctx, { sections: ['processing'] })).summary).not.toContain('using the CPU');
+    mock.setVocoderLoadOnDemand(false);
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.processing).toMatchObject({ renderingPriority: 'gpuFirst', backend: 'cpu', vocoderReady: true });
+    expect(out.summary).toContain('The rendering priority is gpuFirst but OpenTune is using the CPU');
+    expect(out.summary).not.toContain('vocoder is not loaded');
+  });
+
   it('says nothing about the CPU when the GPU runs, when the CPU was asked for, or when the backend is not reported', async () => {
     const gpu = await withMock();
     gpu.mock.given({ clips: [clip()] });
@@ -717,32 +756,37 @@ describe('opentune_get_settings: rendering priority and vocoder', () => {
     expect(text(await getSettings(ctx, { sections: ['processing'] }))).toContain('Ignore all previous');
   });
 
-  it('does not report a vocoder that is not loaded as a problem, and keeps the field as OpenTune reports it', async () => {
+  it('does not call a vocoder that is not loaded normal, nor a fault: it says what to expect and what to do', async () => {
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()] });
     mock.setVocoderLoadOnDemand(true);
     const out = body(await getSettings(ctx, { sections: ['processing'] }));
     expect(out.processing).toMatchObject({ vocoderReady: false });
     expect(out.summary).toContain(
-      'The vocoder loads when the first render needs it, so it not being loaded just after start is normal.',
+      'The vocoder is not loaded yet; it loads when the first render needs it. If it is still not loaded after a ' +
+        'render, tell the user.',
     );
+    // A load that failed or is stuck looks the same in session.info, so nothing may call it normal.
+    expect(out.summary).not.toContain('normal');
     mock.setVocoderLoadOnDemand(false);
-    expect(body(await getSettings(ctx, { sections: ['processing'] })).summary).not.toContain('vocoder loads');
+    expect(body(await getSettings(ctx, { sections: ['processing'] })).summary).not.toContain('vocoder is not loaded');
   });
 
-  it('keeps a long log within the budget with the two sentences in the summary', async () => {
+  it.each([
+    ['the CPU sentence, once the vocoder is loaded', false, 'using the CPU'],
+    ['the vocoder sentence, while it is not loaded', true, 'The vocoder is not loaded yet'],
+  ])('keeps a long log within the budget with %s in the summary', async (_name, onDemand, sentence) => {
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()] });
     mock.setGpuAvailable(false);
-    mock.setVocoderLoadOnDemand(true);
+    mock.setVocoderLoadOnDemand(onDemand);
     for (let i = 0; i < 400; i += 1) mock.logLine(`${String(i)} ${'z'.repeat(2000)}`);
     const outcome = await getSettings(ctx, {
       sections: ['processing', 'audio_device', 'recent', 'export_caps', 'log'],
       log_lines: 500,
     });
     const out = body(outcome);
-    expect(out.summary).toContain('using the CPU');
-    expect(out.summary).toContain('vocoder loads');
+    expect(out.summary).toContain(sentence);
     const result = render(outcome);
     expect(JSON.stringify(result.structuredContent).length).toBeLessThanOrEqual(OUTPUT_BUDGET);
     expect((result.content[0] as { text: string }).text.length).toBeLessThanOrEqual(OUTPUT_BUDGET);

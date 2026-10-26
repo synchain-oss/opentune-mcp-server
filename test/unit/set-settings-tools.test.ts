@@ -866,13 +866,21 @@ describe('opentune_set_settings: the backend in use after a change of the render
         confirmed: false,
         unconfirmed_reason: 'vocoder_not_ready_before_change',
       });
-      // Once the vocoder has loaded, the same state is a real fall back and the settings say so.
+      // Once the vocoder has loaded, the same state is a real fall back and the settings say so (the settings do not
+      // conclude it from the backend before that).
       mock.setVocoderLoadOnDemand(false);
+      await untilVocoder(ctx, true);
       const again = body(await getSettings(ctx, { sections: ['processing'] }));
       expect(again.summary).toContain('OpenTune is using the CPU');
     });
 
-    it('counts a failed read before the call as not ready, and a ready vocoder as confirmed', async () => {
+    // When session.info cannot be read before the call, nothing is known about the vocoder: the reason says so, and the
+    // sentence does not claim a vocoder that was not ready.
+    const UNKNOWN =
+      'Whether the vocoder was ready when the setting changed could not be read, so it may not have loaded again yet: ' +
+      'which backend it uses is only known after the next load, so read opentune_get_settings again once a render has run.';
+
+    it('does not call a failed read before the call "not ready": the reason is ready_state_unavailable', async () => {
       const { mock, ctx } = await withMock();
       mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
       mock.setGpuAvailable(false);
@@ -888,10 +896,52 @@ describe('opentune_set_settings: the backend in use after a change of the render
         return result;
       };
       const out = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
+      expect(out.summary).toContain(UNKNOWN);
+      expect(out.summary).not.toContain(NOT_CONFIRMED);
+      expect(out.summary).not.toContain('using the CPU');
+      expect(out.rendering_backend).toEqual({
+        requested: 'gpuFirst',
+        backend: 'cpu',
+        vocoder_reloading: false,
+        confirmed: false,
+        unconfirmed_reason: 'ready_state_unavailable',
+      });
+    });
+
+    it('keeps vocoder_not_ready_before_change for a vocoder that was read as not ready', async () => {
+      const { mock, ctx } = await withMock();
+      mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+      mock.setGpuAvailable(false);
+      mock.setVocoderLoadOnDemand(true);
+      const out = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
       expect(out.summary).toContain(NOT_CONFIRMED);
+      expect(out.summary).not.toContain(UNKNOWN);
       expect(out.rendering_backend).toMatchObject({
         confirmed: false,
         unconfirmed_reason: 'vocoder_not_ready_before_change',
+      });
+    });
+
+    it('says nothing more about the backend for cpuFirst when the read before the call failed', async () => {
+      const { mock, ctx } = await withMock();
+      mock.given({ clips: [clip()] });
+      mock.setGpuAvailable(false);
+      const session = await rawSession(ctx);
+      const original = session.call.bind(session);
+      let jobEnded = false;
+      session.call = async (method: string, params: Json, timeoutMs: number) => {
+        if (method === 'session.info' && !jobEnded) {
+          throw new OtcpError({ kind: 'BUSY', reason: 'modal_open', retryable: true, detail: 'x', executed: false });
+        }
+        const result = await original(method, params, timeoutMs);
+        if (method === 'job.get') jobEnded = true;
+        return result;
+      };
+      const out = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
+      expect(out.summary).not.toContain(UNKNOWN);
+      expect(out.rendering_backend).toMatchObject({
+        requested: 'cpuFirst',
+        unconfirmed_reason: 'ready_state_unavailable',
       });
     });
 

@@ -15,7 +15,15 @@ import { startMock, type OtcpMock } from '../../mock/server.js';
 import { OtcpError } from '../../src/errors/tool-error.js';
 import type { OtcpSession } from '../../src/otcp/client.js';
 import { decodeClipRevision } from '../../src/otcp/tokens.js';
-import { FILE_PAGE_LIMIT, MAX_FILE_NOTES, OUTPUT_BUDGET, getNotes, getNotesTool } from '../../src/tools/notes.js';
+import { CLIENT_TIMEOUT_MS } from '../../src/tools/client-timeout.js';
+import {
+  FILE_PAGE_LIMIT,
+  FILE_READ_BUDGET_MS,
+  MAX_FILE_NOTES,
+  OUTPUT_BUDGET,
+  getNotes,
+  getNotesTool,
+} from '../../src/tools/notes.js';
 import { realFiles, type FileOps } from '../../src/tools/notes-file.js';
 import { render, type Outcome, type ToolContext } from '../../src/tools/registry.js';
 import { discoveryContent, tempDir, testContext, type TestContext } from '../support/context.js';
@@ -385,6 +393,119 @@ describe('opentune_get_notes output_path: a clip that changes during the read', 
     expect(error).toMatchObject({ kind: 'INTERNAL', reason: 'incomplete_read' });
     expect(pages).toBeLessThanOrEqual(Math.ceil(MAX_FILE_NOTES / FILE_PAGE_LIMIT) + 2);
     expect(readdirSync(out)).toEqual([]);
+  });
+});
+
+describe('opentune_get_notes output_path: the time one call may use', () => {
+  /**
+   * A context whose clock moves by `costs[n]` when page n is requested (the time that page takes) and whose pages
+   * hold `FILE_PAGE_LIMIT` notes each, `total` notes in all; a page after the last one cannot be asked for.
+   */
+  function slowInstance(costs: readonly number[], total: number) {
+    let elapsed = 0;
+    let pages = 0;
+    const base = fakeInstance(() => {
+      const index = pages;
+      pages += 1;
+      elapsed += costs[index] ?? 0;
+      const last = index === costs.length - 1;
+      const count = last ? total - FILE_PAGE_LIMIT * index : FILE_PAGE_LIMIT;
+      return pageOf(count, { totalCount: total, nextCursor: last ? null : 'more' });
+    });
+    return { ctx: { ...base, now: () => elapsed }, pages: () => pages };
+  }
+
+  it('keeps the budget below the time a client waits, with room for the last page and for the file', () => {
+    expect(CLIENT_TIMEOUT_MS).toBe(60_000);
+    // 60 s - 15 s (a page at its timeout) - 5 s (the write of the file)
+    expect(FILE_READ_BUDGET_MS).toBe(40_000);
+  });
+
+  it('stops before a page that could end after the client gave up, says so, and writes no file', async () => {
+    const { out } = await withMock();
+    // Every page takes its whole timeout. Pages are requested at 0, 15 and 30 s; the one at 45 s could end at 60 s,
+    // with no time left for the file, so it is not requested.
+    let elapsed = 0;
+    let pages = 0;
+    const base = fakeInstance(() => {
+      pages += 1;
+      elapsed += 15_000;
+      return pageOf(FILE_PAGE_LIMIT, { totalCount: 5000 });
+    });
+    const error = failure(
+      await getNotes(
+        { ...base, now: () => elapsed },
+        { clip: 'c:00000000:0:1', clock: 'content', output_path: path.join(out, 'n.json') },
+      ),
+    );
+    expect(pages).toBe(3);
+    expect(error).toMatchObject({ kind: 'REQUEST_TIMEOUT', reason: 'read_too_slow', retryable: true, executed: false });
+    expect(error.detail).toContain('1500 of 5000 notes read');
+    expect(error.detail).toContain('no file was written');
+    expect(error.nextStep).toMatchObject({ actor: 'agent', tool: 'opentune_get_notes' });
+    expect(error.nextStep.message).toMatch(/narrower range/);
+    expect(error.nextStep.message).toMatch(/no file was written/);
+    expect(readdirSync(out)).toEqual([]);
+    // Nothing is left to find when the call is repeated either: no file and no name taken by a later one.
+    expect(readdirSync(out)).toHaveLength(0);
+  });
+
+  it('always reads the first page, however late the call is already', async () => {
+    const { out } = await withMock();
+    let pages = 0;
+    const base = fakeInstance(() => {
+      pages += 1;
+      return pageOf(3, { totalCount: 3, nextCursor: null });
+    });
+    // The first reading of the clock is the start of the call; every later one is 50 s on, as if the look-ups before
+    // the first page had used up the budget. A check before the first page would stop here.
+    let readings = 0;
+    const outcome = await getNotes(
+      { ...base, now: () => (readings++ === 0 ? 0 : 50_000) },
+      { clip: 'c:00000000:0:1', clock: 'content', output_path: path.join(out, 'n.json') },
+    );
+    expect(pages).toBe(1);
+    expect(body(outcome).output).toMatchObject({ noteCount: 3 });
+    expect(readdirSync(out)).toEqual(['n.json']);
+  });
+
+  it('writes the file when the pages were slow but the read stayed inside the budget', async () => {
+    const { out } = await withMock();
+    // Pages requested at 0, 10 and 20 s: each fits (20 s + 15 s + 5 s is below 60 s), and the file is written at 30 s.
+    const slow = slowInstance([10_000, 10_000, 10_000], FILE_PAGE_LIMIT * 2 + 7);
+    const file = path.join(out, 'n.json');
+    const result = body(await getNotes(slow.ctx, { clip: 'c:00000000:0:1', clock: 'content', output_path: file }));
+    expect(slow.pages()).toBe(3);
+    expect(result.output).toMatchObject({ path: file, noteCount: FILE_PAGE_LIMIT * 2 + 7 });
+    expect(readFile(file).notes).toHaveLength(FILE_PAGE_LIMIT * 2 + 7);
+  });
+
+  it('writes no file when the last page used the time that the write needed', async () => {
+    const { out } = await withMock();
+    // The second page is requested at 10 s, in time, and takes 50 s: the read is complete at 60 s, the client has
+    // given up, and a file written now would be one that nobody knows about.
+    const slow = slowInstance([10_000, 50_000], FILE_PAGE_LIMIT + 5);
+    const error = failure(
+      await getNotes(slow.ctx, {
+        clip: 'c:00000000:0:1',
+        clock: 'content',
+        output_path: path.join(out, 'n.json'),
+      }),
+    );
+    expect(slow.pages()).toBe(2);
+    expect(error).toMatchObject({ kind: 'REQUEST_TIMEOUT', reason: 'read_too_slow', executed: false });
+    expect(readdirSync(out)).toEqual([]);
+  });
+
+  it('has no time limit of its own against the real mock: a normal read is not cut', async () => {
+    const { mock, ctx, out } = await withMock();
+    const ids = mock.given({ clips: [clip({ durationSec: 1300, notes: notes(1200) })] });
+    const file = path.join(out, 'notes.json');
+    const result = body(
+      await getNotes(ctx, { clip: need(ids, 'clip.placementId'), clock: 'content', output_path: file }),
+    );
+    expect(result.output).toMatchObject({ noteCount: 1200 });
+    expect(readdirSync(out)).toEqual(['notes.json']);
   });
 });
 

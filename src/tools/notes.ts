@@ -17,6 +17,7 @@ import type { Json, OtcpSession } from '../otcp/client.js';
 import { clipRevisionFrom } from '../otcp/tokens.js';
 import { resolvePath, systemOf, type PathSystem } from '../paths/index.js';
 import { serializeResult } from '../sanitize/untrusted.js';
+import { CLIENT_TIMEOUT_MS } from './client-timeout.js';
 import { FileWriteError, folderOf, realFiles, writeNewFile, type FileOps } from './notes-file.js';
 import { defineTool, withInstance, type Body, type Outcome, type ToolContext } from './registry.js';
 
@@ -29,6 +30,17 @@ export const FILE_PAGE_LIMIT = 500;
 /** Most notes one file holds (a song has a few thousand); more asks for a narrower range. */
 export const MAX_FILE_NOTES = 50_000;
 const READ_TIMEOUT_MS = 15_000;
+/** What is set aside, after the last page, for building the text of the file and writing it. */
+const FILE_WRITE_ALLOWANCE_MS = 5_000;
+/**
+ * The time since the start of a read for a file (output_path) up to which a next page may be requested, the same
+ * kind of budget as opentune_edit_timing has for its operations. The worst case after requesting a page: it takes its
+ * whole READ_TIMEOUT_MS (15 s), and the file is written within FILE_WRITE_ALLOWANCE_MS (5 s), so elapsed + 15 s + 5 s
+ * must stay below CLIENT_TIMEOUT_MS (60 s), which makes elapsed < 40 s. A read that is past it stops and fails
+ * without writing: a file written after the client gave up is one that nobody knows about, and the retry would write
+ * another one beside it.
+ */
+export const FILE_READ_BUDGET_MS = CLIENT_TIMEOUT_MS - READ_TIMEOUT_MS - FILE_WRITE_ALLOWANCE_MS;
 
 const CLIP_RE = /^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/;
 
@@ -214,6 +226,25 @@ const CHANGED_STEP = {
     'Call again with the same arguments.',
 } as const;
 
+/** The error of a read for a file that used up its time: nothing was written, and the way on is a narrower range. */
+const tooSlow = (read: number, total: number | null): Outcome => ({
+  ok: false,
+  error: toolError('REQUEST_TIMEOUT', {
+    reason: 'read_too_slow',
+    detail:
+      `reading the notes took longer than the ${String(FILE_READ_BUDGET_MS / 1000)} seconds one call may use ` +
+      `(${String(read)} of ${total === null ? 'an unknown number of' : String(total)} notes read); no file was written`,
+    nextStep: {
+      actor: 'agent',
+      tool: 'opentune_get_notes',
+      message:
+        'Reading all pages took longer than a client waits for a result, so the read stopped and no file was ' +
+        'written. Read a narrower range with from and to (and clock) into several files, or call again when ' +
+        'OpenTune is less busy.',
+    },
+  }),
+});
+
 const changedWhileReading = (): Outcome => ({
   ok: false,
   error: toolError('REVISION_CONFLICT', {
@@ -283,6 +314,8 @@ async function notesToFile(ctx: ToolContext, args: GetNotesArgs, range: Json | n
     return invalid('output_path reads every note of the range in one call: leave out cursor and limit');
   }
   const system = systemOf(ctx.platform);
+  // The client's clock starts when it sends the call: the time budget counts from here, lookups included.
+  const started = ctx.now();
   const resolved = resolvePath(args.output_path ?? '', ctx, 'output_path', '.json');
   if (!resolved.ok) return { ok: false, error: resolved.error };
   const target = resolved.path;
@@ -306,6 +339,11 @@ async function notesToFile(ctx: ToolContext, args: GetNotesArgs, range: Json | n
     try {
       // The page count is bounded by the note cap, so a server that never ends its pages cannot loop.
       for (let pages = 0; pages <= Math.ceil(MAX_FILE_NOTES / FILE_PAGE_LIMIT) + 1 && !complete; pages += 1) {
+        // The first page is always read. Before a next one: could it, at its whole timeout, and the write of the file
+        // after it, still end before the client gives up?
+        if (pages > 0 && ctx.now() - started + READ_TIMEOUT_MS + FILE_WRITE_ALLOWANCE_MS >= CLIENT_TIMEOUT_MS) {
+          return tooSlow(allNotes.length, first !== null && fin(first.totalCount) ? first.totalCount : null);
+        }
         const page = await session.call('content.getNotes', params(cursor), READ_TIMEOUT_MS);
         if (first === null) {
           first = page;
@@ -347,6 +385,9 @@ async function notesToFile(ctx: ToolContext, args: GetNotesArgs, range: Json | n
         }),
       };
     }
+    // The last page may have taken the rest of the time: the file is not written once the client has given up.
+    if (ctx.now() - started + FILE_WRITE_ALLOWANCE_MS >= CLIENT_TIMEOUT_MS)
+      return tooSlow(allNotes.length, allNotes.length);
     const merged: Json = { ...first, notes: allNotes, nextCursor: null, derived: [...derived] };
     const body = noteBody(args, range, geometry, merged);
     const text = `${serializeResult({ ...body, clip: args.clip, clock: args.clock })}\n`;

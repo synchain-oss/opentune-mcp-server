@@ -181,9 +181,12 @@ export async function getSettings(ctx: ToolContext, args: GetSettingsArgs): Prom
     }
 
     // Two things a reader of the processing section tends to take for a fault. Only enumerated values are compared.
+    // The fall back to the CPU is said only while the vocoder is loaded: before that, backend may be an old value.
     const processing = isObject(body.processing) ? body.processing : null;
     const processingNotes = [
-      processing !== null && gpuFirstOnCpu(processing.renderingPriority, processing.backend) ? GPU_FIRST_ON_CPU : null,
+      processing !== null && gpuFirstOnCpu(processing.renderingPriority, processing.backend, processing.vocoderReady)
+        ? GPU_FIRST_ON_CPU
+        : null,
       processing?.vocoderReady === false ? VOCODER_NOTE : null,
     ].filter((note): note is string => note !== null);
     const returned = SETTINGS_SECTIONS.filter((s) => wanted.has(s) && body[s] !== null && body[s] !== undefined);

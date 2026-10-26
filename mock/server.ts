@@ -444,7 +444,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     quitRequested = true;
     stopping = true;
     setImmediate(() => {
-      void stopMock();
+      // A stop that fails (the discovery file cannot be removed) must not become an unhandled rejection: the end is
+      // still marked (whenEnded), and stop() hands the same failure to whoever asks for it.
+      stopMock().catch(() => undefined);
     });
   };
 
@@ -765,28 +767,39 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   world.log(`control API listening on 127.0.0.1:${String(address.port)}; discovery file ${discoveryPath}`);
 
   let stopped: Promise<void> | undefined;
-  /** Section 3.6 rule 2, then the discovery file (section 5.4 rule 1); once, whoever asks first. */
+  /**
+   * Section 3.6 rule 2, then the discovery file (section 5.4 rule 1); once, whoever asks first. The mock has ended
+   * once it has stopped, whether or not the discovery file could be removed (a file that cannot be deleted, as on
+   * Windows with EPERM, makes rmSync throw): the clean-up after it runs and the end is marked in every case, and the
+   * failure is the rejection of the promise returned here.
+   */
   const stopMock = (): Promise<void> => {
     stopped ??= (async () => {
-      stopping = true;
-      for (const conn of connections) {
-        for (const pending of conn.inFlight.values()) {
-          pending.drop();
-          send(conn, errorLine(pending.id, err({ kind: 'SHUTTING_DOWN', detail: 'the server is stopping' })));
+      try {
+        stopping = true;
+        for (const conn of connections) {
+          for (const pending of conn.inFlight.values()) {
+            pending.drop();
+            send(conn, errorLine(pending.id, err({ kind: 'SHUTTING_DOWN', detail: 'the server is stopping' })));
+          }
+          conn.inFlight.clear();
         }
-        conn.inFlight.clear();
-      }
-      for (const conn of [...connections]) close(conn);
-      await new Promise<void>((resolve) => {
-        server.close(() => {
-          resolve();
+        for (const conn of [...connections]) close(conn);
+        await new Promise<void>((resolve) => {
+          server.close(() => {
+            resolve();
+          });
         });
-      });
-      fs.rmSync(discoveryPath, { force: true });
-      jobs.dispose();
-      files.dispose();
-      world.dispose();
-      markEnded();
+        try {
+          fs.rmSync(discoveryPath, { force: true });
+        } finally {
+          jobs.dispose();
+          files.dispose();
+          world.dispose();
+        }
+      } finally {
+        markEnded();
+      }
     })();
     return stopped;
   };
