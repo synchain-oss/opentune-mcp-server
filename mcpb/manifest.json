@@ -40,7 +40,7 @@
     },
     {
       "name": "opentune_get_notes",
-      "description": "OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (limit default 100, at most 200; fewer when the page would be large). Each note has its index, start and end seconds on the content clock (source audio) and, for a clip placement, on the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock says which clock from and to use; timeline needs a placement id. Read-only."
+      "description": "OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (default 100, at most 200, fewer when large). Each note has its index, start and end seconds on the content clock and, for a placement, the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock picks the clock of from and to; timeline needs a placement id. output_path saves all notes of the range to a new .json file (for the beat-grid skill) and returns a summary. OpenTune is not changed."
     },
     {
       "name": "opentune_get_job",

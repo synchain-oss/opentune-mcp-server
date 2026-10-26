@@ -8,6 +8,30 @@ versioned separately and has its own changelog.
 
 ## Unreleased
 
+### Added
+
+- `opentune_get_notes` takes `output_path`: it reads every page of the range itself and writes all notes to one new
+  `.json` file (never overwriting; a taken name gets ` (2)`, ` (3)` ...), and returns the path, the note count, the
+  clock and the `clip_revision`. If the clip changes during the read, the result is `REVISION_CONFLICT` and no file is
+  written. Because it can write a file, the tool is no longer annotated read-only. Without `output_path` nothing
+  changes.
+- `opentune_edit_timing` takes up to 64 operations in one call (was 8), as many as `moveHandles` of the specification.
+  A call of more than 8 operations returns compact steps (the undo id and the moves of each), and a call that has run
+  40 seconds stops between two operations and says how far it got, with the `clip_revision` to go on with.
+- The `beat-grid` skill fixes the timing of a whole song. `timing-plan` reads the file `opentune_get_notes` writes,
+  merges the touching fragments that automatic note splitting makes of one sung syllable (gap under 30 ms, pitch within
+  300 cents; a lone note under 60 ms gets no suggestion) and compares only the start of each chain with the grid, and
+  gives every batch of up to 64 operations in `calls`; the skill applies one batch, reads the notes again and plans
+  again. `align --vocal <wav> --backing <wav>` finds the offset between the vocal and the backing track by itself, and
+  the user is asked only when it is not confident. Every command takes `--home` (priority `--home`,
+  `OPENTUNE_BEATS_HOME`, `CLAUDE_PLUGIN_DATA`) and `--help`.
+
+### Security
+
+- The `beat-grid` skill no longer declares `allowed-tools`. That line let every shell command and file read or write
+  run without asking while the skill was loaded; now the user's own permission settings apply to each command of the
+  skill.
+
 ## [0.2.0] - 2026-10-26
 
 The second public version of OpenTune MCP Server (by Synchain), and wave B of the control interface: editing the
