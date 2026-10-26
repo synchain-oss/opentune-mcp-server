@@ -121,17 +121,17 @@ OpenTune analyses a recorded vocal, shows it as notes and a pitch curve, and re-
 - **Import and export:** open audio files and export a clip, a track or the full mix as WAV.
 - **Read the analysis:** notes, pitch curves, the detected key, analysis and render status, and a pitch summary per phrase that an agent can reason about. A key can also be estimated from a WAV of the backing track or the mix.
 - **Auto-tune and note edits:** run OpenTune's AUTO correction on chosen time ranges, set a note's target pitch, shift it by cents, snap it to the scale, change retune speed, vibrato and drift, and set a clip's key and pitch shift.
-- **Timing:** shift a section earlier or later, and move time handles. The `beat-grid` skill measures the tempo and beat grid of a backing track or the original mix and plans those shifts; its analyzer is downloaded only after the user agrees (about 85 to 90 MB with the default model).
+- **Timing:** shift a section earlier or later, and move time handles. The `beat-grid` skill measures the tempo and beat grid of a backing track or the original mix and plans those shifts for a whole song, a batch of up to 64 operations at a time; its analyzer is downloaded only after the user agrees (about 85 to 90 MB with the default model).
 - **Arrangement and tracks:** move, trim, fade and set the gain of clips on the timeline; split, merge, delete and copy clips; mute, solo and set the volume and colour of tracks; show hidden tracks, duplicate and delete tracks.
 - **Playback and window:** play, pause, stop and seek; set the tempo, time signature and loop; select a clip and close dialogs.
-- **Projects and settings:** save a project, save it under a new name, open another one; read and change OpenTune's global settings (tuning frequency, hybrid mode, editing scheme, audio device). OpenTune has no autosave, so saving is part of the workflow.
+- **Projects and settings:** save a project, save it under a new name, open another one; read and change OpenTune's global settings (tuning frequency, hybrid mode, editing scheme, audio device). OpenTune has no autosave, so saving is part of the workflow. When you are done, the agent can close OpenTune; unlike the window's close button it refuses to close over unsaved changes unless you agree to lose them.
 - **Undo and redo:** API changes go onto OpenTune's own undo history where OpenTune supports undo. When an action cannot be undone (some cannot, in OpenTune itself), the result says so and, where possible, includes a way to revert it.
 
 Every change returns a structured result: what changed (before and after, with units), side effects, warnings, whether it can be undone, and how to revert it when it cannot. The goal is not to judge whether a vocal "sounds right"; it is to make OpenTune's existing operations available to an agent and to report their effects clearly.
 
 ## Tools
 
-The server offers 27 tools; their parameters are in [docs/reference.md](docs/reference.md). A result that cannot be undone says so in its first sentence and, where there is a way back, gives the call that restores the old state.
+The server offers 28 tools; their parameters are in [docs/reference.md](docs/reference.md). A result that cannot be undone says so in its first sentence and, where there is a way back, gives the call that restores the old state.
 
 **Status and jobs**
 
@@ -139,6 +139,7 @@ The server offers 27 tools; their parameters are in [docs/reference.md](docs/ref
 | --- | --- | --- |
 | `opentune_get_status` | Reports whether OpenTune can be used, with a `nextStep`, and lists the running instances. Call it first. | Read-only. |
 | `opentune_launch` | Starts the configured OpenTune build with its control API, or says why it cannot. | A second instance needs `allow_second_instance`, only with your agreement. |
+| `opentune_quit` | Closes OpenTune like the window's close button, and waits until it has exited. | Marked destructive. Unlike the window it refuses to close over unsaved changes (`UNSAVED_CHANGES`): save first, or pass `discard_unsaved: true`, only with your agreement; the changes lost then cannot be recovered. Start OpenTune again with `opentune_launch`. |
 | `opentune_get_job` | Follows a long operation (import, export, analysis, project open or save). | Read-only. |
 | `opentune_cancel_job` | Asks OpenTune to stop a running job. Work the job already committed stays. | A job that cannot be cancelled keeps running; the error says so. |
 
@@ -147,7 +148,7 @@ The server offers 27 tools; their parameters are in [docs/reference.md](docs/ref
 | Tool | What it does | Undo and your agreement |
 | --- | --- | --- |
 | `opentune_get_project` | Tracks, clips, selection, transport, and the revisions that write tools need. | Read-only. |
-| `opentune_get_notes` | The notes of one clip, a page at a time. | Read-only. |
+| `opentune_get_notes` | The notes of one clip, a page at a time, or all of them saved to a new JSON file (`output_path`). | Does not change OpenTune; with `output_path` it writes one new file and never overwrites. |
 | `opentune_get_clip_details` | Duration, key, pitch shift, analysis state, time handles and AUTO modes of one clip. | Read-only. |
 | `opentune_get_settings` | OpenTune's global settings: processing, audio device, recent projects, import and export limits, log lines. | Read-only. |
 

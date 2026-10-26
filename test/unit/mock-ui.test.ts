@@ -126,6 +126,32 @@ describe('ui.setSelection', () => {
     expect((await ok('project.get')).selection).toMatchObject({ pianoRollContentId: ids['clip.contentId'] });
   });
 
+  it('loads the selected clip into the piano roll while the window keeps showing the arrangement view', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({
+      clips: [clip({ bind: 'a', trackId: 1 }), clip({ bind: 'b', trackId: 2, startTimelineSec: 10 })],
+    });
+    const selected = await ok('ui.setSelection', { placementId: ids['a.placementId'] });
+    // The view is not switched (no workspaceSwitched), but the piano roll holds the clip, as in a running window.
+    expect(selected.ui).toMatchObject({ workspace: 'arrangement', pianoRollContentId: ids['a.contentId'] });
+    expect(selected.sideEffects).toEqual({});
+    expect((await ok('project.get')).selection).toMatchObject({ pianoRollContentId: ids['a.contentId'] });
+
+    // A dry run selects nothing and loads nothing.
+    await ok('ui.setSelection', { placementId: ids['b.placementId'], dryRun: true });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement', pianoRollContentId: ids['a.contentId'] });
+
+    // Another clip takes its place; selecting that clip again changes nothing.
+    await ok('ui.setSelection', { placementId: ids['b.placementId'] });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement', pianoRollContentId: ids['b.contentId'] });
+    expect(await ok('ui.setSelection', { placementId: ids['b.placementId'] })).toMatchObject({
+      noOp: true,
+      changes: [],
+      sideEffects: {},
+    });
+  });
+
   it('queues no background work and warns about no experimental feature, whatever the preference says', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;

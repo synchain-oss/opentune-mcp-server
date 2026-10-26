@@ -20,6 +20,8 @@ export interface Fixture {
   readonly savingJob: string;
   /** A WAV file the mock may import. */
   readonly audioFile: string;
+  /** Ends the save job that runs for ever, so that nothing is unfinished when the instance is asked to quit. */
+  readonly endSavingJob: () => void;
 }
 
 export interface Step {
@@ -55,6 +57,12 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   await run('opentune_get_status', { instance_id: '0'.repeat(32) }, 'error');
   await run('opentune_get_project', { include_history: true });
   await run('opentune_get_notes', { clip: f.placement, clock: 'timeline', from: 2, to: 5, limit: 2 });
+  // The whole clip in one file next to the audio file; the second call finds the name taken and numbers it.
+  const notesFile = f.audioFile.replace(/\.wav$/, '-notes.json');
+  const written = await run('opentune_get_notes', { clip: f.placement, clock: 'content', output_path: notesFile });
+  if ((written.output as { path?: string } | undefined)?.path !== notesFile) throw new Error('notes file not written');
+  await run('opentune_get_notes', { clip: f.placement, clock: 'content', output_path: notesFile });
+  await run('opentune_get_notes', { clip: f.placement, clock: 'content', output_path: 'notes.json' }, 'error');
   await run('opentune_get_clip_details', { clip: f.contentId });
   await run('opentune_get_settings', { log_lines: 20 });
   await run('opentune_analyze_pitch', { clip: f.placement });
@@ -176,5 +184,11 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   await run('opentune_save_project_overwrite', { path: project, confirm: true, wait_seconds: 10 });
   await run('opentune_open_project', { path: next, wait_seconds: 10 });
   await run('opentune_open_project', { path: project.replace('.otproj', '-missing.otproj') }, 'error');
+  // Quitting ends the instance, so it is the very last step. The refusals come first: an instance that does not
+  // exist, and the save job that is still unfinished.
+  await run('opentune_quit', { instance_id: '0'.repeat(32) }, 'error');
+  await run('opentune_quit', {}, 'error');
+  f.endSavingJob();
+  await run('opentune_quit', {});
   return steps;
 }

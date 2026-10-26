@@ -7,6 +7,14 @@
 // learns the capabilities from a session.hello of its own and sets up preconditions with
 // preparatory calls.
 
+/** What a target found out about the end of an instance. */
+export interface EndReport {
+  /** What is wrong with it: a process that did not exit, one that exited with a status other than 0, a discovery file still there. Empty when the end was clean. */
+  readonly problems: readonly string[];
+  /** What the target could not observe, for example the exit status of a process it did not start. */
+  readonly notChecked: readonly string[];
+}
+
 export interface TargetInstance {
   /** The discovery file of the instance (PROTOCOL.md section 5.3). */
   readonly discovery: Readonly<Record<string, unknown>>;
@@ -26,6 +34,21 @@ export interface TargetInstance {
    * calls it before it asks for those values; a target whose values do not depend on state has none.
    */
   prepareRunnerValues?(): Promise<void>;
+  /**
+   * Called by the runner right before it sends the call that makes the instance end (the request of a
+   * vector with `endsSession`, or the last step that sends in such a scenario). From then on the target
+   * does not count an end of the instance as one that came too early, even when the vector fails at that
+   * step or afterwards before expectEnded() is called. Not called when an earlier step fails first: an
+   * instance that ends before the call was sent has ended on its own.
+   */
+  endRequested?(): void;
+  /**
+   * Called when a vector with `endsSession` is done and the runner has seen that the connections closed
+   * and the port accepts none. Waits up to `waitMs` for the instance to end by itself and reports what
+   * the target can observe of how it ended. It does not end the instance itself. A target without it
+   * checks nothing of this, and the runner says so in the outcome.
+   */
+  expectEnded?(waitMs: number): Promise<EndReport>;
   /** Ends the instance, or detaches from it. */
   close(): Promise<void>;
 }

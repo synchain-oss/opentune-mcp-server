@@ -19,6 +19,53 @@ versioned separately and has its own changelog.
   (`capability_missing`) and a next step that asks the user to click the view button in the OpenTune window. The mock,
   five contract vectors, the tool golden files, the tour of the real-machine run and the `tuning-workflow` skill follow.
   See `docs/contract-changes/20261026-ui-set-workspace.md`.
+- `opentune_quit` closes OpenTune, as the close button of its window does, and waits until the instance has exited. It
+  sends the new OTCP method `app.quit` of the specification `1.0.0-rc.7` (capability `app.quit`). The window quits
+  without asking, also over unsaved changes; the tool does not: it fails with `UNSAVED_CHANGES` and a next step (save
+  with `opentune_save_project`, or ask the user whether the changes may be discarded), and quits over them only with
+  `discard_unsaved: true`, which only the user may allow. It refuses with `BUSY` while a dialog is open or a job has not
+  finished (the new reason `job_in_progress`). The first sentence of the result says that OpenTune closed, or that it
+  closed without saving and the unsaved changes are lost, or that the exit was not confirmed in time (`exited` is
+  `false`), or that it could not be looked at (`exited` is `null`, with `exitCheckProblem`: the discovery directory
+  could not be read, which is not the same as a timeout); the project file comes back as data. A test build without `app.quit` (everything before this change, including the test build of
+  0.2.0) answers with `UNSUPPORTED` (`capability_missing`) and a next step that asks the user to save and close the
+  window. The mock, nine contract vectors (a vector can now end the instance: `endsSession`), the runner, the tool
+  golden files, the token canary and the `tuning-workflow` skill follow. See
+  `docs/contract-changes/20261026-app-quit.md`.
+- `opentune_get_notes` takes `output_path`: it reads every page of the range itself and writes all notes to one new
+  `.json` file (never overwriting; a taken name gets ` (2)`, ` (3)` ...), and returns the path, the note count, the
+  clock and the `clip_revision`. If the clip changes during the read, the result is `REVISION_CONFLICT` and no file is
+  written. Because it can write a file, the tool is no longer annotated read-only. Without `output_path` nothing
+  changes.
+- `opentune_edit_timing` takes up to 64 operations in one call (was 8), as many as `moveHandles` of the specification.
+  A call of more than 8 operations returns compact steps (the undo id and the moves of each), and a call stops between
+  two operations once a further write, at the longest it may take, plus the read after it would not end inside the 60
+  seconds a client waits by default, and says how far it got, with the `clip_revision` to go on with.
+- The `beat-grid` skill fixes the timing of a whole song. `timing-plan` reads the file `opentune_get_notes` writes,
+  merges the touching fragments that automatic note splitting makes of one sung syllable (gap under 30 ms, pitch within
+  300 cents; a lone note under 60 ms gets no suggestion) and compares only the start of each chain with the grid, and
+  gives every batch of up to 64 operations in `calls`; the skill applies one batch, reads the notes again and plans
+  again. `align --vocal <wav> --backing <wav>` finds the offset between the vocal and the backing track by itself, and
+  the user is asked only when it is not confident. Every command takes `--home` (priority `--home`,
+  `OPENTUNE_BEATS_HOME`, `CLAUDE_PLUGIN_DATA`) and `--help`. `analyze`, `timing-plan` and `align` also take
+  `--paths-file`, a JSON file with the paths: the skill puts the paths that tools returned in it, so that a file name
+  is never part of a shell command line.
+
+### Fixed
+
+- The `beat-grid` skill checks `status` before it plans an install. An analyzer that was already installed used to
+  be treated as missing when the manifest still said the release was not published: the install plan listed
+  Problems and told the agent not to retry, and the whole beat-grid workflow was given up. Now `install` (the plan
+  and `--yes`) reports "already installed" with the version, folder and models, exits 0 and downloads nothing when the
+  program and the models asked for are there; `status` leaves out the unpublished-release note for an installed
+  analyzer; `SKILL.md` skips the install section on `installed: true` and stops for an unpublished release only
+  when nothing is installed. An analyzer that is not installed is still refused as before.
+
+### Security
+
+- The `beat-grid` skill no longer declares `allowed-tools`. That line let every shell command and file read or write
+  run without asking while the skill was loaded; now the user's own permission settings apply to each command of the
+  skill.
 
 ### Changed
 

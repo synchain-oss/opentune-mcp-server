@@ -160,7 +160,10 @@ The undo history does not have the expected entry on top. Ask the user how to pr
 
 ### Error UNSAVED_CHANGES
 
-The request would discard unsaved changes. Ask the user whether to save or discard them.
+The request would discard unsaved changes. Ask the user whether to save or discard them. From `opentune_quit` the
+refusal is deliberate: the close button of the OpenTune window quits without asking, this tool does not. Save first with
+`opentune_save_project` (mode `save`, or `save_as` for a project that was never saved) and call `opentune_quit` again;
+only when the user explicitly agrees to lose the changes, call it with `discard_unsaved: true`.
 
 ### Error ALREADY_EXISTS
 
@@ -173,7 +176,8 @@ in OpenTune, then retry. With reason `modal_open` a modal dialog is open; the fi
 dialog, see [First launch dialog](#first-launch-dialog). `opentune_manage_ui` with op `dismiss_dialogs` closes
 dialogs like the Escape key; a dialog that commits its value when closed (the track-colour dialog) is closed only
 with `accept_commit: true`, which needs the user's agreement. Closing a confirmation box cancels the action it asked
-about, so ask the user before closing any dialog.
+about, so ask the user before closing any dialog. With reason `job_in_progress` (from `opentune_quit`) a job that has
+not finished, for example a settings change, would be ended by quitting: wait a few seconds and call again.
 
 ### Error TIMEOUT
 
@@ -192,7 +196,7 @@ read-only the export fails and the server does not choose another folder. Call `
 ### Error UNSUPPORTED
 
 OpenTune or this build does not offer the operation. With reason `capability_missing`, `detail` names the missing
-capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`. `opentune_manage_ui` with op `switch_view` needs the capability `ui.workspace`, which test builds before `1.0.0-rc.7` of the specification lack: switch the view in the OpenTune window (the arrangement view and piano roll buttons of the transport bar), or use a newer test build.
+capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`. `opentune_manage_ui` with op `switch_view` needs the capability `ui.workspace`, which test builds before `1.0.0-rc.7` of the specification lack: switch the view in the OpenTune window (the arrangement view and piano roll buttons of the transport bar), or use a newer test build. `opentune_quit` needs the capability `app.quit`, which test builds before `1.0.0-rc.7` of the specification lack: save the project with `opentune_save_project`, then ask the user to close the OpenTune window (the window closes without asking about unsaved changes).
 
 ### Error INTERNAL
 

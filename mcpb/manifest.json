@@ -40,7 +40,7 @@
     },
     {
       "name": "opentune_get_notes",
-      "description": "OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (limit default 100, at most 200; fewer when the page would be large). Each note has its index, start and end seconds on the content clock (source audio) and, for a clip placement, on the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock says which clock from and to use; timeline needs a placement id. Read-only."
+      "description": "OpenTune (audio vocal pitch editor): lists the notes of one clip in start-time order, a page at a time (default 100, at most 200, fewer when large). Each note has its index, start and end seconds on the content clock and, for a placement, the timeline clock, detected and target MIDI pitch, offset in cents, retune speed (0 natural to 1 mechanical), vibrato and voiced / corrected flags. clock picks the clock of from and to; timeline needs a placement id. output_path saves all notes of the range to a new .json file (for the beat-grid skill) and returns a summary. OpenTune is not changed."
     },
     {
       "name": "opentune_get_job",
@@ -53,6 +53,10 @@
     {
       "name": "opentune_launch",
       "description": "OpenTune (audio vocal pitch editor): starts the OpenTune build configured for this server (OPENTUNE_MCP_OPENTUNE_PATH) with its control API and waits up to 30 seconds until it is ready, then reports the state like opentune_get_status, with a nextStep. Starts nothing when OpenTune already runs (alreadyRunning), may run without the control API, or no API build is configured; the result says why. Repeated or concurrent calls share one start. allow_second_instance needs the user's explicit consent; each call with it starts one more instance once earlier starts are done. Never closes OpenTune."
+    },
+    {
+      "name": "opentune_quit",
+      "description": "OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES, so save first with opentune_save_project, or pass discard_unsaved: true only when the user explicitly agreed to lose the changes (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune again with opentune_launch."
     },
     {
       "name": "opentune_set_clip",

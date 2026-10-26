@@ -1,0 +1,27 @@
+{
+  "description": "Closed over unsaved changes with the consent of the user: the first sentence says they are lost.",
+  "tool": "opentune_quit",
+  "input": {
+    "discard_unsaved": true
+  },
+  "result": {
+    "summary": "OpenTune closed without saving; the unsaved changes are lost. The project had no file: it was never saved. To work again, start OpenTune with opentune_launch.",
+    "quitting": true,
+    "exited": true,
+    "discardedUnsavedChanges": true,
+    "projectPath": null,
+    "nullReasons": {
+      "projectPath": "no_project_path"
+    },
+    "exitDeadlineMs": 5000,
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      }
+    ]
+  }
+}

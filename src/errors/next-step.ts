@@ -174,6 +174,10 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'NOT_FOUND/job_not_found': agent('The job is unknown or expired (finished jobs are kept for 30 minutes).'),
   'NOT_READY/f0_failed': user('Pitch analysis of this clip failed, so it cannot be edited. Tell the user.'),
   'NOT_READY/f0_empty': user('OpenTune found no singing in this clip, so it cannot be edited. Tell the user.'),
+  'BUSY/job_in_progress': agent(
+    'A job in OpenTune has not finished (for example a settings change or a time-grid job), and quitting would end ' +
+      'it. Wait a few seconds and call again; if it does not clear, ask the user to look at the OpenTune window.',
+  ),
   'BUSY/request_limit': agent('Too many requests at once. Wait for the pending ones, then retry.'),
   'BUSY/job_limit': agent('Too many jobs are running. Wait for one to finish (opentune_get_job), then retry.'),
   'BUSY/session_limit': user(
