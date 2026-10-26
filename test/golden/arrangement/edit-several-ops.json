@@ -25,40 +25,56 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:1",
+      "description": "Edit clips",
+      "innerActions": [
+        "setClipGain",
+        "setFade",
+        "moveClip"
+      ],
+      "steps": 1
+    },
+    "lines": [
       {
-        "entity": "placement",
-        "ref": {
-          "placementId": "p:01234567:0:2"
+        "kind": "warning",
+        "code": "TRACK_AUTO_REVEALED",
+        "text": "A hidden track was made visible because it now holds a clip.",
+        "subject": {
+          "trackId": 4
         },
-        "label": "Clip 2 on Track 6",
-        "fields": {
-          "trackId": {
-            "before": 1,
-            "after": 5,
-            "unit": null
-          },
-          "gainDb": {
-            "before": 0,
-            "after": -6,
-            "unit": "db"
-          },
-          "gainLinear": {
-            "before": 1,
-            "after": 0.5011872336272722,
-            "unit": "linear"
-          },
-          "fadeInSec": {
-            "before": 0,
-            "after": 0.25,
-            "unit": "sec"
-          }
-        }
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "TRACK_AUTO_REVEALED",
+        "text": "A hidden track was made visible because it now holds a clip.",
+        "subject": {
+          "trackId": 5
+        },
+        "data": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "tracksRevealed",
+        "text": "Hidden tracks became visible.",
+        "details": {
+          "trackIds": [
+            4,
+            5
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
+        "undoId": "u:01234567:1",
+        "description": "Edit clips"
       }
     ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": {
         "before": "a1",
@@ -79,17 +95,6 @@
           "geometryHash": "h28"
         }
       ]
-    },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:1",
-      "description": "Edit clips",
-      "innerActions": [
-        "setClipGain",
-        "setFade",
-        "moveClip"
-      ],
-      "steps": 1
     },
     "dirty": {
       "before": false,
@@ -128,6 +133,40 @@
       }
     ],
     "job": null,
+    "changes": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:2"
+        },
+        "label": "Clip 2 on Track 6",
+        "fields": {
+          "trackId": {
+            "before": 1,
+            "after": 5,
+            "unit": null
+          },
+          "gainDb": {
+            "before": 0,
+            "after": -6,
+            "unit": "db"
+          },
+          "gainLinear": {
+            "before": 1,
+            "after": 0.5011872336272722,
+            "unit": "linear"
+          },
+          "fadeInSec": {
+            "before": 0,
+            "after": 0.25,
+            "unit": "sec"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "arrangement view",
@@ -188,45 +227,6 @@
       ],
       "omittedChangeCount": 0
     },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "TRACK_AUTO_REVEALED",
-        "text": "A hidden track was made visible because it now holds a clip.",
-        "subject": {
-          "trackId": 4
-        },
-        "data": null
-      },
-      {
-        "kind": "warning",
-        "code": "TRACK_AUTO_REVEALED",
-        "text": "A hidden track was made visible because it now holds a clip.",
-        "subject": {
-          "trackId": 5
-        },
-        "data": null
-      },
-      {
-        "kind": "sideEffect",
-        "name": "tracksRevealed",
-        "text": "Hidden tracks became visible.",
-        "details": {
-          "trackIds": [
-            4,
-            5
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
-        "undoId": "u:01234567:1",
-        "description": "Edit clips"
-      }
-    ],
     "arrangement_revision": "ar1.YTI5",
     "clip_ids": {
       "created": [],

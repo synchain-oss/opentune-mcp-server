@@ -11,108 +11,7 @@
     "applied": false,
     "noOp": false,
     "dryRun": true,
-    "changes": [
-      {
-        "entity": "selection",
-        "ref": {
-          "singleton": "selection"
-        },
-        "label": "Selection",
-        "fields": {
-          "selectedPlacementIds": {
-            "before": [],
-            "after": [
-              "p:01234567:0:1"
-            ],
-            "unit": null
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": null,
-    "dirty": {
-      "before": true,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "notesGenerated": {
-        "contentId": "c:01234567:0:1",
-        "noteCount": 11,
-        "revert": null
-      },
-      "uiScaleChanged": {
-        "before": {
-          "root": 0,
-          "scale": "major"
-        },
-        "after": {
-          "root": 7,
-          "scale": "major"
-        },
-        "revert": null
-      }
-    },
-    "warnings": [
-      {
-        "code": "SELECTION_GENERATED_NOTES",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      },
-      {
-        "code": "IRREVERSIBLE",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      }
-    ],
-    "job": null,
-    "uiEffects": [],
-    "changeTable": {
-      "rows": [
-        {
-          "kind": "changed",
-          "entity": "selection",
-          "label": "Selection",
-          "ref": {
-            "singleton": "selection"
-          },
-          "fields": [
-            {
-              "field": "selectedPlacementIds",
-              "before": [],
-              "after": [
-                "p:01234567:0:1"
-              ],
-              "unit": null
-            }
-          ]
-        }
-      ],
-      "omittedChangeCount": 0
-    },
     "lines": [
       {
         "kind": "warning",
@@ -160,6 +59,107 @@
         },
         "revert": null
       }
-    ]
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "notesGenerated": {
+        "contentId": "c:01234567:0:1",
+        "noteCount": 11,
+        "revert": null
+      },
+      "uiScaleChanged": {
+        "before": {
+          "root": 0,
+          "scale": "major"
+        },
+        "after": {
+          "root": 7,
+          "scale": "major"
+        },
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "SELECTION_GENERATED_NOTES",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "changes": [
+      {
+        "entity": "selection",
+        "ref": {
+          "singleton": "selection"
+        },
+        "label": "Selection",
+        "fields": {
+          "selectedPlacementIds": {
+            "before": [],
+            "after": [
+              "p:01234567:0:1"
+            ],
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "selection",
+          "label": "Selection",
+          "ref": {
+            "singleton": "selection"
+          },
+          "fields": [
+            {
+              "field": "selectedPlacementIds",
+              "before": [],
+              "after": [
+                "p:01234567:0:1"
+              ],
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
   }
 }

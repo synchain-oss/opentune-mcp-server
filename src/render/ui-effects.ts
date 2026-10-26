@@ -74,6 +74,8 @@ const SIDE_EFFECT_WHERE = table<Where & { effect: string }>({
   },
   uiScaleChanged: { ...ALWAYS('transport bar'), effect: 'scale changed' },
   workspaceSwitched: { ...ALWAYS('main window'), effect: 'workspace switched' },
+  // The change of the entity tempo that comes with it names the same effect, so the two are one entry.
+  tempoRounded: { ...ALWAYS('transport bar'), effect: 'changed tempo' },
   tracksRevealed: { ...ALWAYS('arrangement view'), effect: 'hidden tracks revealed' },
   dialogClosed: { ...ALWAYS('dialog'), effect: 'dialog closed' },
   dialogCommitted: { ...ALWAYS('dialog'), effect: 'dialog value committed' },

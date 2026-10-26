@@ -75,31 +75,6 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [],
-    "created": [],
-    "removed": [
-      {
-        "entity": "placement",
-        "ref": {
-          "placementId": "p:01234567:0:1"
-        },
-        "label": "clip at 2.000 s"
-      }
-    ],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": {
-        "before": "a1",
-        "after": "a2"
-      },
-      "trackState": null,
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "upstream_undo_defect",
@@ -114,6 +89,46 @@
         },
         "requiresConsent": true
       }
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "UPSTREAM_UNDO_DEFECT",
+        "text": "OpenTune cannot undo this change reliably: it frees objects its own undo entry needs.",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune cannot undo this reliably). No tool of this server can carry out this restore yet; the user can restore it by hand in the OpenTune window. It needs the user's explicit agreement.",
+        "revert": {
+          "method": "import.start",
+          "params": {
+            "items": [
+              {
+                "path": "C:\\Music\\take1.wav"
+              }
+            ]
+          },
+          "requiresConsent": true
+        },
+        "restore": null
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a1",
+        "after": "a2"
+      },
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
     },
     "dirty": {
       "before": false,
@@ -139,6 +154,18 @@
       }
     ],
     "job": null,
+    "changes": [],
+    "created": [],
+    "removed": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:1"
+        },
+        "label": "clip at 2.000 s"
+      }
+    ],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "arrangement view",
@@ -167,33 +194,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "UPSTREAM_UNDO_DEFECT",
-        "text": "OpenTune cannot undo this change reliably: it frees objects its own undo entry needs.",
-        "subject": {
-          "placementId": "p:01234567:0:1"
-        },
-        "data": null
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune cannot undo this reliably). No tool of this server can carry out this restore yet; the user can restore it by hand in the OpenTune window. It needs the user's explicit agreement.",
-        "revert": {
-          "method": "import.start",
-          "params": {
-            "items": [
-              {
-                "path": "C:\\Music\\take1.wav"
-              }
-            ]
-          },
-          "requiresConsent": true
-        },
-        "restore": null
-      }
-    ]
+    }
   }
 }

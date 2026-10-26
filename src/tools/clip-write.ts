@@ -42,7 +42,8 @@ export const INSTANCE_FIELD = z
   .optional()
   .describe('OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs.');
 
-const SCALES = [
+/** The scales of the protocol, in the words OpenTune and this server use for them. */
+export const SCALES = [
   'major',
   'minor',
   'chromatic',

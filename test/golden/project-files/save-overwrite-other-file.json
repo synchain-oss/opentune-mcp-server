@@ -11,25 +11,52 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "lines": [
       {
-        "entity": "project",
-        "ref": {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
           "singleton": "project"
         },
-        "label": "Project",
-        "fields": {
-          "path": {
-            "before": "<tmp-1>/fresh.otproj",
-            "after": "<tmp-2>/existing.otproj",
-            "unit": null
-          }
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "OVERWROTE_OTHER_PROJECT",
+        "text": "An existing project file was overwritten.",
+        "subject": {
+          "path": "<tmp-2>/existing.otproj"
+        },
+        "data": {
+          "path": "<tmp-2>/existing.otproj"
         }
+      },
+      {
+        "kind": "warning",
+        "code": "NOT_SAVED_IN_PROJECT",
+        "text": "The change is not saved in the project file.",
+        "subject": null,
+        "data": {
+          "items": [
+            "visibleTrackCount",
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
       }
     ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -39,11 +66,6 @@
       "arrangementRevision": "a1",
       "contents": [],
       "placements": []
-    },
-    "undo": {
-      "undoable": false,
-      "reason": "no_upstream_undo",
-      "revert": null
     },
     "dirty": {
       "before": false,
@@ -93,6 +115,25 @@
     },
     "path": "<tmp-2>/existing.otproj",
     "sizeBytes": "<size>",
+    "changes": [
+      {
+        "entity": "project",
+        "ref": {
+          "singleton": "project"
+        },
+        "label": "Project",
+        "fields": {
+          "path": {
+            "before": "<tmp-1>/fresh.otproj",
+            "after": "<tmp-2>/existing.otproj",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "window title",
@@ -123,47 +164,6 @@
       ],
       "omittedChangeCount": 0
     },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "IRREVERSIBLE",
-        "text": "This change can be neither undone nor reverted by any request of the protocol.",
-        "subject": {
-          "singleton": "project"
-        },
-        "data": null
-      },
-      {
-        "kind": "warning",
-        "code": "OVERWROTE_OTHER_PROJECT",
-        "text": "An existing project file was overwritten.",
-        "subject": {
-          "path": "<tmp-2>/existing.otproj"
-        },
-        "data": {
-          "path": "<tmp-2>/existing.otproj"
-        }
-      },
-      {
-        "kind": "warning",
-        "code": "NOT_SAVED_IN_PROJECT",
-        "text": "The change is not saved in the project file.",
-        "subject": null,
-        "data": {
-          "items": [
-            "visibleTrackCount",
-            "undoHistory",
-            "preferences"
-          ]
-        }
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
-        "revert": null,
-        "restore": null
-      }
-    ],
     "notSavedInProject": [
       "visibleTrackCount",
       "undoHistory",

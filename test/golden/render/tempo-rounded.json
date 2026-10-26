@@ -1,0 +1,306 @@
+{
+  "description": "A switch of the view during which the tempo field rounded the tempo from 120.27 to 120.3: nobody asked for it, so the first sentence says it with both values, and the revert line gives the call that sets the tempo back.",
+  "tool": "opentune_manage_ui",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "ui",
+        "ref": {
+          "singleton": "workspace"
+        },
+        "label": "Workspace",
+        "fields": {
+          "workspace": {
+            "before": "arrangement",
+            "after": "pianoRoll",
+            "unit": null
+          }
+        }
+      },
+      {
+        "entity": "tempo",
+        "ref": {
+          "singleton": "tempo"
+        },
+        "label": "Tempo",
+        "fields": {
+          "bpm": {
+            "before": 120.27,
+            "after": 120.3,
+            "unit": "bpm"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "not_persisted_state",
+      "revert": {
+        "method": "ui.setWorkspace",
+        "params": {
+          "workspace": "arrangement"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "workspaceSwitched": {
+        "from": "arrangement",
+        "to": "pianoRoll",
+        "revert": null
+      },
+      "tempoRounded": {
+        "fromBpm": 120.27,
+        "toBpm": 120.3,
+        "revert": {
+          "method": "transport.setTempo",
+          "params": {
+            "bpm": 120.27
+          }
+        }
+      }
+    },
+    "warnings": [],
+    "job": null
+  },
+  "rendered": {
+    "summary": "opentune_manage_ui: changed 1 ui, 1 tempo (unrequested: OpenTune changed the tempo from 120.27 to 120.3 bpm, because its tempo field rounds it to one decimal when the window switches view; not undoable: the state is not kept in the project; can be restored with opentune_manage_ui, see the revert line; side effects: the window switched between the arrangement and the piano roll).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "not_persisted_state",
+      "revert": {
+        "method": "ui.setWorkspace",
+        "params": {
+          "workspace": "arrangement"
+        }
+      }
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "workspaceSwitched",
+        "text": "The window switched between the arrangement and the piano roll.",
+        "details": {
+          "from": "arrangement",
+          "to": "pianoRoll",
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "tempoRounded",
+        "text": "The tempo field of the transport bar wrote the tempo it shows, rounded to one decimal, back to the project.",
+        "details": {
+          "fromBpm": 120.27,
+          "toBpm": 120.3,
+          "revert": {
+            "method": "transport.setTempo",
+            "params": {
+              "bpm": 120.27
+            }
+          }
+        },
+        "revert": {
+          "method": "transport.setTempo",
+          "params": {
+            "bpm": 120.27
+          }
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Restore: call opentune_transport with the arguments in restore, as they are. (reverts side effect tempoRounded)",
+        "revert": {
+          "method": "transport.setTempo",
+          "params": {
+            "bpm": 120.27
+          }
+        },
+        "restore": {
+          "tool": "opentune_transport",
+          "arguments": {
+            "bpm": 120.27
+          }
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (the state is not kept in the project). Restore: call opentune_manage_ui with the arguments in restore, as they are.",
+        "revert": {
+          "method": "ui.setWorkspace",
+          "params": {
+            "workspace": "arrangement"
+          }
+        },
+        "restore": {
+          "tool": "opentune_manage_ui",
+          "arguments": {
+            "op": "switch_view",
+            "view": "arrangement"
+          }
+        }
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "workspaceSwitched": {
+        "from": "arrangement",
+        "to": "pianoRoll",
+        "revert": null
+      },
+      "tempoRounded": {
+        "fromBpm": 120.27,
+        "toBpm": 120.3,
+        "revert": {
+          "method": "transport.setTempo",
+          "params": {
+            "bpm": 120.27
+          }
+        }
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "changes": [
+      {
+        "entity": "ui",
+        "ref": {
+          "singleton": "workspace"
+        },
+        "label": "Workspace",
+        "fields": {
+          "workspace": {
+            "before": "arrangement",
+            "after": "pianoRoll",
+            "unit": null
+          }
+        }
+      },
+      {
+        "entity": "tempo",
+        "ref": {
+          "singleton": "tempo"
+        },
+        "label": "Tempo",
+        "fields": {
+          "bpm": {
+            "before": 120.27,
+            "after": 120.3,
+            "unit": "bpm"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "main window",
+        "effect": "workspace switched",
+        "target": "project",
+        "visibleNow": true
+      },
+      {
+        "surface": "transport bar",
+        "effect": "changed tempo",
+        "target": "project",
+        "visibleNow": true
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "ui",
+          "label": "Workspace",
+          "ref": {
+            "singleton": "workspace"
+          },
+          "fields": [
+            {
+              "field": "workspace",
+              "before": "arrangement",
+              "after": "pianoRoll",
+              "unit": null
+            }
+          ]
+        },
+        {
+          "kind": "changed",
+          "entity": "tempo",
+          "label": "Tempo",
+          "ref": {
+            "singleton": "tempo"
+          },
+          "fields": [
+            {
+              "field": "bpm",
+              "before": 120.27,
+              "after": 120.3,
+              "unit": "bpm"
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
+  }
+}

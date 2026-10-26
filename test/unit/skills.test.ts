@@ -101,3 +101,15 @@ describe('skill folders', () => {
     }
   });
 });
+
+// allowed-tools pre-approves the listed tools (for example Bash, Read and Write) for as long as the skill is loaded, so
+// Claude Code stops asking the user before those run. No plugin skill may declare it. The name stays in ALLOWED_FIELDS
+// above because the skills zip tool (scripts/skills-zip.mjs) still recognises the field; this check is what forbids it.
+describe.each(SKILL_DIRS)('skill %s pre-approves no tools', (name) => {
+  it('declares no allowed-tools', () => {
+    expect(
+      readSkill(name).fields.has('allowed-tools'),
+      `${name}: allowed-tools lets Claude Code run Bash and read or write files without asking the user while this skill is loaded; remove the line`,
+    ).toBe(false);
+  });
+});

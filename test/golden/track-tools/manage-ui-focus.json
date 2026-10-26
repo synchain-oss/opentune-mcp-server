@@ -11,51 +11,6 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
-      {
-        "entity": "selection",
-        "ref": {
-          "singleton": "selection"
-        },
-        "label": "Selection",
-        "fields": {
-          "selectedPlacementIds": {
-            "before": [],
-            "after": [
-              "p:01234567:0:1"
-            ],
-            "unit": null
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "notes": {
-              "before": "n3",
-              "after": "n12"
-            },
-            "pitch": {
-              "before": "p4",
-              "after": "p13"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "not_persisted_state",
@@ -65,110 +20,6 @@
           "trackId": 0
         }
       }
-    },
-    "dirty": {
-      "before": true,
-      "after": true
-    },
-    "ui": {
-      "workspace": "pianoRoll",
-      "pianoRollContentId": "c:01234567:0:1",
-      "activeTrackId": 0,
-      "selectedPlacementIds": [
-        "p:01234567:0:1"
-      ],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "notesGenerated": {
-        "contentId": "c:01234567:0:1",
-        "noteCount": 11,
-        "revert": null
-      },
-      "uiScaleChanged": {
-        "before": {
-          "root": 0,
-          "scale": "major"
-        },
-        "after": {
-          "root": 7,
-          "scale": "major"
-        },
-        "revert": null
-      },
-      "workspaceSwitched": {
-        "from": "arrangement",
-        "to": "pianoRoll",
-        "revert": null
-      }
-    },
-    "warnings": [
-      {
-        "code": "SELECTION_GENERATED_NOTES",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      },
-      {
-        "code": "IRREVERSIBLE",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      }
-    ],
-    "job": null,
-    "uiEffects": [
-      {
-        "surface": "unknown",
-        "effect": "changed selection",
-        "target": "project",
-        "visibleNow": false,
-        "howToSee": "Look at the OpenTune window."
-      },
-      {
-        "surface": "piano roll",
-        "effect": "notes generated",
-        "target": "project",
-        "visibleNow": false,
-        "howToSee": "Open the clip in the piano roll."
-      },
-      {
-        "surface": "transport bar",
-        "effect": "scale changed",
-        "target": "project",
-        "visibleNow": true
-      },
-      {
-        "surface": "main window",
-        "effect": "workspace switched",
-        "target": "project",
-        "visibleNow": true
-      }
-    ],
-    "changeTable": {
-      "rows": [
-        {
-          "kind": "changed",
-          "entity": "selection",
-          "label": "Selection",
-          "ref": {
-            "singleton": "selection"
-          },
-          "fields": [
-            {
-              "field": "selectedPlacementIds",
-              "before": [],
-              "after": [
-                "p:01234567:0:1"
-              ],
-              "unit": null
-            }
-          ]
-        }
-      ],
-      "omittedChangeCount": 0
     },
     "lines": [
       {
@@ -251,6 +102,155 @@
         },
         "restore": null
       }
-    ]
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n3",
+              "after": "n12"
+            },
+            "pitch": {
+              "before": "p4",
+              "after": "p13"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "notesGenerated": {
+        "contentId": "c:01234567:0:1",
+        "noteCount": 11,
+        "revert": null
+      },
+      "uiScaleChanged": {
+        "before": {
+          "root": 0,
+          "scale": "major"
+        },
+        "after": {
+          "root": 7,
+          "scale": "major"
+        },
+        "revert": null
+      },
+      "workspaceSwitched": {
+        "from": "arrangement",
+        "to": "pianoRoll",
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "SELECTION_GENERATED_NOTES",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "changes": [
+      {
+        "entity": "selection",
+        "ref": {
+          "singleton": "selection"
+        },
+        "label": "Selection",
+        "fields": {
+          "selectedPlacementIds": {
+            "before": [],
+            "after": [
+              "p:01234567:0:1"
+            ],
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "unknown",
+        "effect": "changed selection",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Look at the OpenTune window."
+      },
+      {
+        "surface": "piano roll",
+        "effect": "notes generated",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      },
+      {
+        "surface": "transport bar",
+        "effect": "scale changed",
+        "target": "project",
+        "visibleNow": true
+      },
+      {
+        "surface": "main window",
+        "effect": "workspace switched",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "selection",
+          "label": "Selection",
+          "ref": {
+            "singleton": "selection"
+          },
+          "fields": [
+            {
+              "field": "selectedPlacementIds",
+              "before": [],
+              "after": [
+                "p:01234567:0:1"
+              ],
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
   }
 }

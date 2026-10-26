@@ -81,35 +81,6 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
-      {
-        "entity": "preference",
-        "ref": {
-          "preference": "vocoderWeight"
-        },
-        "label": "Vocoder weight",
-        "fields": {
-          "vocoderWeight": {
-            "before": "hifigan.onnx",
-            "after": "hifigan_coulin9.onnx",
-            "unit": null
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "ui_parity",
@@ -119,74 +90,6 @@
           "vocoderWeight": "hifigan.onnx"
         }
       }
-    },
-    "dirty": {
-      "before": false,
-      "after": false
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "reRenderQueued": {
-        "contentIds": [
-          "c:01234567:0:1"
-        ],
-        "revert": null
-      }
-    },
-    "warnings": [
-      {
-        "code": "GLOBAL_PREFERENCE",
-        "subject": null,
-        "data": {
-          "preferences": [
-            "vocoderWeight"
-          ]
-        }
-      }
-    ],
-    "job": null,
-    "uiEffects": [
-      {
-        "surface": "preferences",
-        "effect": "changed preference",
-        "target": "project",
-        "visibleNow": false,
-        "howToSee": "Open the preferences."
-      },
-      {
-        "surface": "background work",
-        "effect": "rendering queued again",
-        "target": "project",
-        "visibleNow": false,
-        "howToSee": "Playback and export use the new result once rendering is done."
-      }
-    ],
-    "changeTable": {
-      "rows": [
-        {
-          "kind": "changed",
-          "entity": "preference",
-          "label": "Vocoder weight",
-          "ref": {
-            "preference": "vocoderWeight"
-          },
-          "fields": [
-            {
-              "field": "vocoderWeight",
-              "before": "hifigan.onnx",
-              "after": "hifigan_coulin9.onnx",
-              "unit": null
-            }
-          ]
-        }
-      ],
-      "omittedChangeCount": 0
     },
     "lines": [
       {
@@ -230,6 +133,103 @@
           }
         }
       }
-    ]
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "GLOBAL_PREFERENCE",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "vocoderWeight"
+          ]
+        }
+      }
+    ],
+    "job": null,
+    "changes": [
+      {
+        "entity": "preference",
+        "ref": {
+          "preference": "vocoderWeight"
+        },
+        "label": "Vocoder weight",
+        "fields": {
+          "vocoderWeight": {
+            "before": "hifigan.onnx",
+            "after": "hifigan_coulin9.onnx",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "preferences",
+        "effect": "changed preference",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Open the preferences."
+      },
+      {
+        "surface": "background work",
+        "effect": "rendering queued again",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Playback and export use the new result once rendering is done."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "preference",
+          "label": "Vocoder weight",
+          "ref": {
+            "preference": "vocoderWeight"
+          },
+          "fields": [
+            {
+              "field": "vocoderWeight",
+              "before": "hifigan.onnx",
+              "after": "hifigan_coulin9.onnx",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
   }
 }

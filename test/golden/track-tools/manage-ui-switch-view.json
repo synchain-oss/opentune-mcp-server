@@ -10,35 +10,6 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
-      {
-        "entity": "ui",
-        "ref": {
-          "singleton": "workspace"
-        },
-        "label": "Workspace",
-        "fields": {
-          "workspace": {
-            "before": "pianoRoll",
-            "after": "arrangement",
-            "unit": null
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "not_persisted_state",
@@ -48,55 +19,6 @@
           "workspace": "pianoRoll"
         }
       }
-    },
-    "dirty": {
-      "before": false,
-      "after": false
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "workspaceSwitched": {
-        "from": "pianoRoll",
-        "to": "arrangement",
-        "revert": null
-      }
-    },
-    "warnings": [],
-    "job": null,
-    "uiEffects": [
-      {
-        "surface": "main window",
-        "effect": "workspace switched",
-        "target": "project",
-        "visibleNow": true
-      }
-    ],
-    "changeTable": {
-      "rows": [
-        {
-          "kind": "changed",
-          "entity": "ui",
-          "label": "Workspace",
-          "ref": {
-            "singleton": "workspace"
-          },
-          "fields": [
-            {
-              "field": "workspace",
-              "before": "pianoRoll",
-              "after": "arrangement",
-              "unit": null
-            }
-          ]
-        }
-      ],
-      "omittedChangeCount": 0
     },
     "lines": [
       {
@@ -127,6 +49,84 @@
           }
         }
       }
-    ]
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "workspaceSwitched": {
+        "from": "pianoRoll",
+        "to": "arrangement",
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "changes": [
+      {
+        "entity": "ui",
+        "ref": {
+          "singleton": "workspace"
+        },
+        "label": "Workspace",
+        "fields": {
+          "workspace": {
+            "before": "pianoRoll",
+            "after": "arrangement",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "main window",
+        "effect": "workspace switched",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "ui",
+          "label": "Workspace",
+          "ref": {
+            "singleton": "workspace"
+          },
+          "fields": [
+            {
+              "field": "workspace",
+              "before": "pianoRoll",
+              "after": "arrangement",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
   }
 }

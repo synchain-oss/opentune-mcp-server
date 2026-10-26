@@ -764,10 +764,95 @@
     "omittedChangeCount": 0
   },
   "rendered": {
-    "summary": "opentune_edit_notes: changed 30 notes (side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:2.",
+    "summary": "opentune_edit_notes: changed 30 notes (side effects: rendering of one or more contents was queued again). Only the first 20 entries of changes are listed. OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:2.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:2",
+      "description": "Edit notes",
+      "innerActions": [
+        "setNotes"
+      ],
+      "steps": 1
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:2.",
+        "undoId": "u:01234567:2",
+        "description": "Edit notes"
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n19",
+              "after": "n23"
+            },
+            "pitch": {
+              "before": "p20",
+              "after": "p24"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r25",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "omittedChangeCount": 10,
+    "omittedCount": {
+      "changes": 10
+    },
     "changes": [
       {
         "entity": "note",
@@ -1228,303 +1313,11 @@
             "unit": "cents"
           }
         }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 20,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#20 G#4 3.00-3.10s",
-        "fields": {
-          "targetMidi": {
-            "before": 68,
-            "after": 68.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 21,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#21 A4 3.15-3.25s",
-        "fields": {
-          "targetMidi": {
-            "before": 69,
-            "after": 69.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 22,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#22 A#4 3.30-3.40s",
-        "fields": {
-          "targetMidi": {
-            "before": 70,
-            "after": 70.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 23,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#23 B4 3.45-3.55s",
-        "fields": {
-          "targetMidi": {
-            "before": 71,
-            "after": 71.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 24,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#24 C4 3.60-3.70s",
-        "fields": {
-          "targetMidi": {
-            "before": 60,
-            "after": 60.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 25,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#25 C#4 3.75-3.85s",
-        "fields": {
-          "targetMidi": {
-            "before": 61,
-            "after": 61.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 26,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#26 D4 3.90-4.00s",
-        "fields": {
-          "targetMidi": {
-            "before": 62,
-            "after": 62.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 27,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#27 D#4 4.05-4.15s",
-        "fields": {
-          "targetMidi": {
-            "before": 63,
-            "after": 63.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 28,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#28 E4 4.20-4.30s",
-        "fields": {
-          "targetMidi": {
-            "before": 64,
-            "after": 64.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 29,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#29 F4 4.35-4.45s",
-        "fields": {
-          "targetMidi": {
-            "before": 65,
-            "after": 65.1,
-            "unit": "midi"
-          },
-          "offsetCents": {
-            "before": 0,
-            "after": 10,
-            "unit": "cents"
-          }
-        }
       }
     ],
     "created": [],
     "removed": [],
     "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "notes": {
-              "before": "n19",
-              "after": "n23"
-            },
-            "pitch": {
-              "before": "p20",
-              "after": "p24"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "revision": "r25",
-          "gridRevision": "g6",
-          "keyRevision": "k7"
-        }
-      ],
-      "placements": []
-    },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:2",
-      "description": "Edit notes",
-      "innerActions": [
-        "setNotes"
-      ],
-      "steps": 1
-    },
-    "dirty": {
-      "before": true,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "reRenderQueued": {
-        "contentIds": [
-          "c:01234567:0:1"
-        ],
-        "revert": null
-      }
-    },
-    "warnings": [],
-    "job": null,
-    "omittedChangeCount": 0,
     "uiEffects": [
       {
         "surface": "piano roll",
@@ -1802,289 +1595,9 @@
               "unit": "cents"
             }
           ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#10 A#4 1.50-1.60s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 10,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 70,
-              "after": 70.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#11 B4 1.65-1.75s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 11,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 71,
-              "after": 71.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#12 C4 1.80-1.90s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 12,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 60,
-              "after": 60.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#13 C#4 1.95-2.05s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 13,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 61,
-              "after": 61.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#14 D4 2.10-2.20s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 14,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 62,
-              "after": 62.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#15 D#4 2.25-2.35s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 15,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 63,
-              "after": 63.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#16 E4 2.40-2.50s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 16,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 64,
-              "after": 64.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#17 F4 2.55-2.65s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 17,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 65,
-              "after": 65.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#18 F#4 2.70-2.80s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 18,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 66,
-              "after": 66.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
-        },
-        {
-          "kind": "changed",
-          "entity": "note",
-          "label": "#19 G4 2.85-2.95s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 19,
-              "atRevision": "r25"
-            }
-          },
-          "fields": [
-            {
-              "field": "targetMidi",
-              "before": 67,
-              "after": 67.1,
-              "unit": "midi"
-            },
-            {
-              "field": "offsetCents",
-              "before": 0,
-              "after": 10,
-              "unit": "cents"
-            }
-          ]
         }
       ],
-      "omittedChangeCount": 10
-    },
-    "lines": [
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:2.",
-        "undoId": "u:01234567:2",
-        "description": "Edit notes"
-      }
-    ]
+      "omittedChangeCount": 20
+    }
   }
 }

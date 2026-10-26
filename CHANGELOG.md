@@ -32,9 +32,71 @@ versioned separately and has its own changelog.
   window. The mock, nine contract vectors (a vector can now end the instance: `endsSession`), the runner, the tool
   golden files, the token canary and the `tuning-workflow` skill follow. See
   `docs/contract-changes/20261026-app-quit.md`.
+- `opentune_get_notes` takes `output_path`: it reads every page of the range itself and writes all notes to one new
+  `.json` file (never overwriting; a taken name gets ` (2)`, ` (3)` ...), and returns the path, the note count, the
+  clock and the `clip_revision`. If the clip changes during the read, the result is `REVISION_CONFLICT` and no file is
+  written. Because it can write a file, the tool is no longer annotated read-only. Without `output_path` nothing
+  changes.
+- `opentune_edit_timing` takes up to 64 operations in one call (was 8), as many as `moveHandles` of the specification.
+  A call of more than 8 operations returns compact steps (the undo id and the moves of each), and a call stops between
+  two operations once a further write, at the longest it may take, plus the read after it would not end inside the 60
+  seconds a client waits by default, and says how far it got, with the `clip_revision` to go on with.
+- The `beat-grid` skill fixes the timing of a whole song. `timing-plan` reads the file `opentune_get_notes` writes,
+  merges the touching fragments that automatic note splitting makes of one sung syllable (gap under 30 ms, pitch within
+  300 cents; a lone note under 60 ms gets no suggestion) and compares only the start of each chain with the grid, and
+  gives every batch of up to 64 operations in `calls`; the skill applies one batch, reads the notes again and plans
+  again. `align --vocal <wav> --backing <wav>` finds the offset between the vocal and the backing track by itself, and
+  the user is asked only when it is not confident. Every command takes `--home` (priority `--home`,
+  `OPENTUNE_BEATS_HOME`, `CLAUDE_PLUGIN_DATA`) and `--help`. `analyze`, `timing-plan` and `align` also take
+  `--paths-file`, a JSON file with the paths: the skill puts the paths that tools returned in it, so that a file name
+  is never part of a shell command line.
+
+### Fixed
+
+- The `beat-grid` skill checks `status` before it plans an install. An analyzer that was already installed used to
+  be treated as missing when the manifest still said the release was not published: the install plan listed
+  Problems and told the agent not to retry, and the whole beat-grid workflow was given up. Now `install` (the plan
+  and `--yes`) reports "already installed" with the version, folder and models, exits 0 and downloads nothing when the
+  program and the models asked for are there; `status` leaves out the unpublished-release note for an installed
+  analyzer; `SKILL.md` skips the install section on `installed: true` and stops for an unpublished release only
+  when nothing is installed. An analyzer that is not installed is still refused as before.
+
+### Security
+
+- The `beat-grid` skill no longer declares `allowed-tools`. That line let every shell command and file read or write
+  run without asking while the skill was loaded; now the user's own permission settings apply to each command of the
+  skill.
+- The `lyrics-timeline` skill no longer declares `allowed-tools`. Until now, while that skill was loaded, any Bash
+  command and any file read or write ran without Claude Code asking the user.
 
 ### Changed
 
+- Results of the write tools that list many entries are cut so that a host does not reject them (contract change record
+  `docs/contract-changes/20261026-agent-feedback.md`). `changes`, `created`, `removed` and `idMap` list at most 20
+  entries each and count the rest in `omittedCount`; the change table is a preview of 10 rows; the list of time-grid
+  handles of `opentune_edit_timing` holds 100. For a write that is not a dry run, the undo information (the undo id, or
+  "not undoable" with the way to restore it) comes first in the result, in the text and in the structured content. A
+  regenerate of a whole song of 1,200 notes now gives a result of under 20,000 characters.
+- `opentune_get_status` and `opentune_launch` read the window of a ready instance once (`ui.getState`, capability
+  `ui.bridge`). When the first-run welcome page or another dialog is open, the result carries `blockedBy` (`kind` and a
+  hint), the summary says that writes are refused until it is closed, and the next step is `opentune_manage_ui` with
+  `dismiss_onboarding` (after the user has agreed: closing the welcome page marks it as seen and cannot be undone) or
+  `dismiss_dialogs`. An instance without `ui.bridge` has `blockedBy` `null` with the reason `capability_missing`. A vocoder that is not loaded yet is no longer worded as a problem: one
+  sentence says that it loads at the first render.
+- `opentune_get_settings` gives next to `options.renderingPriority` one note per value (`optionNotes`: what it means and
+  when it takes effect), and a summary sentence when the priority is `gpuFirst` but the CPU runs, with the log and
+  `opentune-mcp doctor` as the places to look. `opentune_set_settings` reads the backend once after a change of the
+  rendering priority (`rendering_backend`) and says "gpuFirst was requested, but OpenTune is now using the CPU", that the
+  vocoder is still reloading, or, when the vocoder was not ready before the change, that the backend is not known yet. The description of `rendering_priority` says what the values do.
+- `opentune_edit_notes` describes `delta_cents`, `retune_speed`, `pitch_drift_scale` (the usual meaning of "vibrato" in a
+  request), `vibrato_depth` and `vibrato_rate_hz` in the parameters.
+- `opentune_edit_arrangement` no longer says "ask the user first" for every split, merge and delete: a request that
+  names the clip or the time counts as the agreement and the step runs at once; the first sentence of the result says that
+  it cannot be undone and how to restore it. Only a target that is not clear, and a merge or delete the user did not ask
+  for, are asked about first. This matches the companion skill.
+- `opentune_export_audio` reads the file it wrote, in blocks, and reports `peakDbfs` and `clippedSampleCount`; a peak
+  above 0 dBFS adds a sentence to the summary. A read that fails only leaves the two members null, with the reason in
+  `nullReasons`.
 - The companion skills `tuning-workflow`, `check-results` and `lyrics-timeline` now treat a clear request from the user as the agreement for that step, ask a question only once and only about what the tools cannot find out, use only the files the user named, confirm that the render is current before a result is called ready to listen to, and compare before and after pitch figures only when they share the same target basis.
 - The `tuning-workflow` and `check-results` skills now tell the agent to check the earlier corrections after reopening a project before saying the content is all there, name the file that holds the version before a risky step, explain an open welcome or dialog window by name and close it only with the user's agreement, read a status again before reporting it as not ready, describe the rendering priority by the backend actually in use, ask before a `regenerate` that resets the notes, give one key confidence figure, mention clipping only when the export result reports it, and state only the range that was checked.
 
@@ -67,6 +129,11 @@ versioned separately and has its own changelog.
 
 ### Fixed
 
+- A whole-song regenerate gave a result of about 60,000 characters that a host rejected, which lost the undo id; see
+  Changed.
+- `opentune_estimate_key` names the scale of the key of a clip in a sentence only when it is one of the scales of the
+  protocol, else "another scale". `opentune_manage_ui` names a side effect whose details are not an object from the
+  fixed table instead of saying "no other side effects".
 - Result wording that disagreed with the facts of the same result (contract change record
   `docs/contract-changes/20261026-result-wording.md`):
   - A change of the tempo alone or of the time signature alone is now restorable with `opentune_transport`; the
@@ -89,6 +156,16 @@ versioned separately and has its own changelog.
     against the nearest semitone are not directly comparable with a later analysis of the clip with notes.
   - A result that queued a render says that playback can still sound the old way until `render.current` of
     `opentune_get_clip_details` is true, and that an export waits for it.
+- A switch of the view can change the tempo, and the results now say so (OTCP specification `1.0.0-rc.7`, contract
+  change record `docs/contract-changes/20261026-tempo-rounded.md`). The tempo field of the OpenTune transport bar shows
+  one decimal and, each time the window switches view (in both directions), writes that rounded value back and marks the
+  project as changed; so `opentune_manage_ui` with `switch_view`, or with `focus_clip` and `open_editor` that really
+  switches the view, turns a tempo of 120.27 into 120.3, as a click on the view button does. A tempo with one decimal or
+  none is left as it is. Until now the specification, the tool results and the mock said that a switch never changes
+  the project. The first sentence now says that OpenTune changed the tempo from 120.27 to 120.3, which nobody asked
+  for, and a revert line gives the `opentune_transport` call that sets it back (without `transport.v1` it says that no request can). The
+  mock, a contract vector that every target runs, the rendering and tool golden files follow. The mock also loads the
+  clip that an import with focus selects into the piano roll, as the window does.
 
 ## [0.2.0] - 2026-10-26
 

@@ -52,10 +52,8 @@
     "applied": false,
     "noOp": false,
     "dryRun": false,
-    "changes": [],
-    "created": [],
-    "removed": [],
-    "idMap": [],
+    "undo": null,
+    "lines": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -73,7 +71,6 @@
       ],
       "placements": []
     },
-    "undo": null,
     "dirty": {
       "before": true,
       "after": true
@@ -93,11 +90,14 @@
       "state": "queued"
     },
     "clamped": [],
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [],
     "changeTable": {
       "rows": [],
       "omittedChangeCount": 0
-    },
-    "lines": []
+    }
   }
 }

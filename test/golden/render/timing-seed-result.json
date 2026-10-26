@@ -111,6 +111,78 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": null
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "grid": {
+              "before": "g6",
+              "after": "g11"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r9",
+          "gridRevision": "g11",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "clamped": [],
     "changes": [],
     "created": [
       {
@@ -156,61 +228,6 @@
     ],
     "removed": [],
     "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "grid": {
-              "before": "g6",
-              "after": "g11"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "revision": "r9",
-          "gridRevision": "g11",
-          "keyRevision": "k7"
-        }
-      ],
-      "placements": []
-    },
-    "undo": {
-      "undoable": false,
-      "reason": "ui_parity",
-      "revert": null
-    },
-    "dirty": {
-      "before": false,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {},
-    "warnings": [
-      {
-        "code": "IRREVERSIBLE",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      }
-    ],
-    "job": null,
-    "clamped": [],
     "uiEffects": [
       {
         "surface": "piano roll",
@@ -276,23 +293,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "IRREVERSIBLE",
-        "text": "This change can be neither undone nor reverted by any request of the protocol.",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). No request of the protocol can restore the previous state.",
-        "revert": null,
-        "restore": null
-      }
-    ]
+    }
   }
 }

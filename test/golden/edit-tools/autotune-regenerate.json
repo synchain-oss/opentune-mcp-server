@@ -22,6 +22,107 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:3",
+      "description": "Auto tune",
+      "innerActions": [
+        "setNotes"
+      ],
+      "steps": 1
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
+        "undoId": "u:01234567:3",
+        "description": "Auto tune"
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n3",
+              "after": "n17"
+            },
+            "pitch": {
+              "before": "p4",
+              "after": "p18"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r19",
+          "gridRevision": "g6",
+          "keyRevision": "k16"
+        }
+      ],
+      "placements": []
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "mode": "regenerate",
+    "keyUsed": {
+      "root": 0,
+      "scale": "major"
+    },
+    "paramsUsed": {
+      "retuneSpeed": 0.2,
+      "vibratoDepth": 0,
+      "vibratoRateHz": 6,
+      "noteSplitCents": 100
+    },
+    "noteCount": {
+      "before": 3,
+      "after": 6
+    },
+    "omittedCount": {
+      "changes": 0,
+      "created": 0,
+      "removed": 0
+    },
     "changes": [],
     "created": [
       {
@@ -105,87 +206,6 @@
       }
     ],
     "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "notes": {
-              "before": "n3",
-              "after": "n17"
-            },
-            "pitch": {
-              "before": "p4",
-              "after": "p18"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "revision": "r19",
-          "gridRevision": "g6",
-          "keyRevision": "k16"
-        }
-      ],
-      "placements": []
-    },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:3",
-      "description": "Auto tune",
-      "innerActions": [
-        "setNotes"
-      ],
-      "steps": 1
-    },
-    "dirty": {
-      "before": true,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "reRenderQueued": {
-        "contentIds": [
-          "c:01234567:0:1"
-        ],
-        "revert": null
-      }
-    },
-    "warnings": [],
-    "job": null,
-    "mode": "regenerate",
-    "keyUsed": {
-      "root": 0,
-      "scale": "major"
-    },
-    "paramsUsed": {
-      "retuneSpeed": 0.2,
-      "vibratoDepth": 0,
-      "vibratoRateHz": 6,
-      "noteSplitCents": 100
-    },
-    "noteCount": {
-      "before": 3,
-      "after": 6
-    },
-    "omittedCount": {
-      "changes": 0,
-      "created": 0,
-      "removed": 0
-    },
     "uiEffects": [
       {
         "surface": "piano roll",
@@ -298,26 +318,6 @@
       ],
       "omittedChangeCount": 0
     },
-    "lines": [
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
-        "undoId": "u:01234567:3",
-        "description": "Auto tune"
-      }
-    ],
     "clip_revision": "cr1.WyJyMTkiLCJnNiIsImsxNiIsImgxMCJd"
   }
 }

@@ -10,10 +10,41 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [],
-    "created": [],
-    "removed": [],
-    "idMap": [],
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "NOT_SAVED_IN_PROJECT",
+        "text": "The change is not saved in the project file.",
+        "subject": null,
+        "data": {
+          "items": [
+            "visibleTrackCount",
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -23,11 +54,6 @@
       "arrangementRevision": "a1",
       "contents": [],
       "placements": []
-    },
-    "undo": {
-      "undoable": false,
-      "reason": "no_upstream_undo",
-      "revert": null
     },
     "dirty": {
       "before": false,
@@ -68,41 +94,15 @@
     },
     "path": "<tmp-1>/fresh.otproj",
     "sizeBytes": "<size>",
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [],
     "changeTable": {
       "rows": [],
       "omittedChangeCount": 0
     },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "IRREVERSIBLE",
-        "text": "This change can be neither undone nor reverted by any request of the protocol.",
-        "subject": {
-          "singleton": "project"
-        },
-        "data": null
-      },
-      {
-        "kind": "warning",
-        "code": "NOT_SAVED_IN_PROJECT",
-        "text": "The change is not saved in the project file.",
-        "subject": null,
-        "data": {
-          "items": [
-            "visibleTrackCount",
-            "undoHistory",
-            "preferences"
-          ]
-        }
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
-        "revert": null,
-        "restore": null
-      }
-    ],
     "notSavedInProject": [
       "visibleTrackCount",
       "undoHistory",

@@ -13,6 +13,8 @@
 // `other_nonce` (announces itself with another launch nonce), `no_nonce` (ignores the nonce and the
 // ready file options, like a build without them) or `exit` (exits at once). It ends itself after
 // OT_FAKE_LIFETIME_MS (default 20 s) so that no test can leave it running for long.
+// OT_FAKE_WINDOW (`onboarding` or `dialog`) adds the capability ui.bridge and makes ui.getState report the first-run
+// welcome page or a dialog, as a freshly started OpenTune does for a first-time user.
 
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
@@ -20,6 +22,7 @@ import net from 'node:net';
 import path from 'node:path';
 
 const mode = process.env.OT_FAKE_MODE ?? 'ready';
+const windowMode = process.env.OT_FAKE_WINDOW ?? null;
 const lifetime = Number(process.env.OT_FAKE_LIFETIME_MS ?? 20_000);
 setTimeout(() => process.exit(0), lifetime);
 
@@ -66,7 +69,14 @@ const server = net.createServer((socket) => {
           pid: process.pid,
           serverProof,
           appVersion: '0.0.0-fake',
-          capabilities: ['session.v1'],
+          capabilities: windowMode === null ? ['session.v1'] : ['session.v1', 'ui.bridge'],
+        });
+      } else if (request.method === 'ui.getState' && windowMode !== null) {
+        reply({
+          busy: { pointerDown: false, modalOpen: windowMode === 'dialog', importInProgress: false },
+          dialogs:
+            windowMode === 'dialog' ? [{ kind: 'confirm', title: 'Confirm', closeCommits: false, trackId: null }] : [],
+          onboarding: { shown: false, showing: windowMode === 'onboarding' },
         });
       } else if (request.method === 'session.info') {
         reply({

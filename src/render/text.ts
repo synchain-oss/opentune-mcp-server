@@ -81,10 +81,33 @@ export const SIDE_EFFECT_TEXT = table<string>({
   reRenderQueued: 'rendering of one or more contents was queued again',
   uiScaleChanged: 'the scale shown in the transport bar changed',
   workspaceSwitched: 'the window switched between the arrangement and the piano roll',
+  tempoRounded:
+    'the tempo field of the transport bar wrote the tempo it shows, rounded to one decimal, back to the project',
   tracksRevealed: 'hidden tracks became visible',
   dialogClosed: 'a dialog was closed',
   dialogCommitted: 'closing a dialog committed its value',
 });
+
+/** A tempo in bpm as the sentence writes it: a finite number in the range of a tempo, else null (never a string from OpenTune). */
+const bpmText = (value: unknown): string | null =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0 && value < 10_000 ? String(value) : null;
+
+/**
+ * What OpenTune did to the tempo when the window switched view (sideEffects.tempoRounded, PROTOCOL.md section 14.6),
+ * for the first sentence of a summary: its tempo field wrote the tempo it shows, rounded to one decimal, back to the
+ * project. Nobody asked for it. `effect` is the side effect as OpenTune sent it; the two tempi are checked numbers,
+ * and a value that is not one is left out of the sentence. `dryRun`: the result predicts it.
+ */
+export function tempoRoundedWords(effect: unknown, dryRun: boolean): string {
+  const e = typeof effect === 'object' && effect !== null ? (effect as Record<string, unknown>) : {};
+  const from = bpmText(e.fromBpm);
+  const to = bpmText(e.toBpm);
+  const tempo = from !== null && to !== null ? `the tempo from ${from} to ${to} bpm` : 'the tempo';
+  return (
+    `OpenTune ${dryRun ? 'would change' : 'changed'} ${tempo}, because its tempo field rounds it to one decimal ` +
+    'when the window switches view'
+  );
+}
 
 /** The views of the OpenTune window, as workspaceSwitched names them. */
 const VIEW_NAME = table<string>({ arrangement: 'the arrangement view', pianoRoll: 'the piano roll' });
