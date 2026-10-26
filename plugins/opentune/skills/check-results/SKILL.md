@@ -36,3 +36,5 @@ If the user named the file, checking it is the request; if not, ask which file, 
 ## Report
 
 Finish with one or two sentences: which notes or ranges changed, the deviation before and after (for example the median cents or the number of flagged notes), and what the user should listen to and confirm.
+
+State only the range you actually checked. If you checked 24 to 38 seconds, say that, not "between 15 and 38 seconds". When the user asked for few changes, give a number for the change after tuning, for example the average cents pulled back, so they can judge how much moved.
