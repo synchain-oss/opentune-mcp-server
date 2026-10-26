@@ -282,14 +282,6 @@
       "schema": "defined"
     },
     {
-      "method": "content.analyzeReference",
-      "layer": "L6",
-      "capability": "reference.v1",
-      "write": "no",
-      "since": "1.0",
-      "schema": "defined"
-    },
-    {
       "method": "project.save",
       "layer": "L8",
       "capability": "project.io",
