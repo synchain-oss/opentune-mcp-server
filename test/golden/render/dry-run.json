@@ -95,6 +95,40 @@
     "applied": false,
     "noOp": false,
     "dryRun": true,
+    "undo": null,
+    "lines": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r9",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "omittedChangeCount": 0,
     "changes": [
       {
         "entity": "note",
@@ -146,39 +180,6 @@
     "created": [],
     "removed": [],
     "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "revision": "r9",
-          "gridRevision": "g6",
-          "keyRevision": "k7"
-        }
-      ],
-      "placements": []
-    },
-    "undo": null,
-    "dirty": {
-      "before": false,
-      "after": false
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {},
-    "warnings": [],
-    "job": null,
-    "omittedChangeCount": 0,
     "uiEffects": [],
     "changeTable": {
       "rows": [
@@ -236,7 +237,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": []
+    }
   }
 }

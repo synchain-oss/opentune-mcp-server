@@ -11,40 +11,38 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "lines": [
       {
-        "entity": "placement",
-        "ref": {
-          "placementId": "p:01234567:0:3"
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "trackId": 1
         },
-        "label": "Clip 3 on Track 2",
-        "fields": {
-          "trackId": {
-            "before": 2,
-            "after": 1,
-            "unit": null
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [
-      {
-        "entity": "placement",
-        "ref": {
-          "placementId": "p:01234567:0:2"
-        },
-        "label": "Clip 2 on Track 2"
+        "data": null
       },
       {
-        "entity": "content",
-        "ref": {
-          "contentId": "c:01234567:0:2"
-        },
-        "label": "Content 2"
+        "kind": "warning",
+        "code": "UNDO_HISTORY_POSSIBLY_STALE",
+        "text": "Deleting a track made entries of the undo or redo history possibly stale; they may address tracks that have moved.",
+        "subject": null,
+        "data": {
+          "undo": 1,
+          "redo": 0
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
       }
     ],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": {
         "before": "a1",
@@ -96,11 +94,6 @@
         }
       ]
     },
-    "undo": {
-      "undoable": false,
-      "reason": "no_upstream_undo",
-      "revert": null
-    },
     "dirty": {
       "before": false,
       "after": true
@@ -149,6 +142,40 @@
       "undo": 1,
       "redo": 0
     },
+    "changes": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:3"
+        },
+        "label": "Clip 3 on Track 2",
+        "fields": {
+          "trackId": {
+            "before": 2,
+            "after": 1,
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:2"
+        },
+        "label": "Clip 2 on Track 2"
+      },
+      {
+        "entity": "content",
+        "ref": {
+          "contentId": "c:01234567:0:2"
+        },
+        "label": "Content 2"
+      }
+    ],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "arrangement view",
@@ -214,33 +241,6 @@
       ],
       "omittedChangeCount": 0
     },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "IRREVERSIBLE",
-        "text": "This change can be neither undone nor reverted by any request of the protocol.",
-        "subject": {
-          "trackId": 1
-        },
-        "data": null
-      },
-      {
-        "kind": "warning",
-        "code": "UNDO_HISTORY_POSSIBLY_STALE",
-        "text": "Deleting a track made entries of the undo or redo history possibly stale; they may address tracks that have moved.",
-        "subject": null,
-        "data": {
-          "undo": 1,
-          "redo": 0
-        }
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
-        "revert": null,
-        "restore": null
-      }
-    ],
     "arrangement_revision": "ar1.YTI5"
   }
 }

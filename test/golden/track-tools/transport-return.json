@@ -9,25 +9,19 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
+    "undo": {
+      "undoable": false,
+      "reason": "not_persisted_state",
+      "revert": null
+    },
+    "lines": [
       {
-        "entity": "transport",
-        "ref": {
-          "singleton": "transport"
-        },
-        "label": "Transport",
-        "fields": {
-          "playing": {
-            "before": true,
-            "after": false,
-            "unit": null
-          }
-        }
+        "kind": "revert",
+        "text": "Not undoable (the state is not kept in the project). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
       }
     ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -37,11 +31,6 @@
       "arrangementRevision": "a1",
       "contents": [],
       "placements": []
-    },
-    "undo": {
-      "undoable": false,
-      "reason": "not_persisted_state",
-      "revert": null
     },
     "dirty": {
       "before": true,
@@ -73,6 +62,25 @@
         "atMs": 1767225600000
       }
     },
+    "changes": [
+      {
+        "entity": "transport",
+        "ref": {
+          "singleton": "transport"
+        },
+        "label": "Transport",
+        "fields": {
+          "playing": {
+            "before": true,
+            "after": false,
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "transport bar",
@@ -101,14 +109,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "revert",
-        "text": "Not undoable (the state is not kept in the project). No request of the protocol can restore the previous state.",
-        "revert": null,
-        "restore": null
-      }
-    ]
+    }
   }
 }

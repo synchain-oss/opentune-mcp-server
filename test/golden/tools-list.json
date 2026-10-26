@@ -726,7 +726,8 @@
                   "delta_cents": {
                     "type": "number",
                     "minimum": -1200,
-                    "maximum": 1200
+                    "maximum": 1200,
+                    "description": "Cents to raise (+) or lower (-) the target pitch; 100 = a semitone."
                   }
                 },
                 "required": [
@@ -948,21 +949,25 @@
                     ]
                   },
                   "retune_speed": {
+                    "description": "How far the pitch is pulled to the target note: 0 keeps the natural movement, 1 sounds mechanical.",
                     "type": "number",
                     "minimum": 0,
                     "maximum": 1
                   },
                   "vibrato_depth": {
+                    "description": "Synthetic vibrato added on top, 100 = plus or minus a semitone; default 0.",
                     "type": "number",
                     "minimum": 0,
                     "maximum": 100
                   },
                   "vibrato_rate_hz": {
+                    "description": "Speed of the added vibrato, Hz.",
                     "type": "number",
                     "minimum": 3,
                     "maximum": 12
                   },
                   "pitch_drift_scale": {
+                    "description": "Scales the voice's own pitch wobble (the usual meaning of vibrato in a request): 1 keeps it, below 1 weakens it, 0 removes it.",
                     "type": "number",
                     "minimum": -2,
                     "maximum": 3
@@ -1728,7 +1733,7 @@
               "maxLength": 64
             },
             "rendering_priority": {
-              "description": "Inference backend rendering prefers. Applied by a job.",
+              "description": "gpuFirst tries the GPU, falling back to the CPU without notice; cpuFirst uses the CPU. Applied by a job: the vocoder reloads for seconds and nothing renders again. The result reads the backend in use.",
               "type": "string",
               "enum": [
                 "gpuFirst",
@@ -2101,7 +2106,7 @@
   {
     "name": "opentune_edit_arrangement",
     "title": "Edit OpenTune clips on the timeline",
-    "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy).",
+    "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): do one when the user named the clip or time, else ask first; delete needs confirm. dry_run previews (not copy).",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2335,7 +2340,7 @@
           "type": "boolean"
         },
         "confirm": {
-          "description": "delete only: true only after the user explicitly agreed.",
+          "description": "delete only: true when the user asked for the delete or agreed to it.",
           "type": "boolean"
         },
         "instance_id": {

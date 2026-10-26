@@ -556,10 +556,143 @@
     }
   },
   "rendered": {
-    "summary": "opentune_autotune_range: created 11 notes, removed 30 notes (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; cannot be restored by any request; side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Warnings: REPLACES_ALL_NOTES, IRREVERSIBLE.",
+    "summary": "opentune_autotune_range: created 11 notes, removed 30 notes (destructive; not undoable: OpenTune records no undo entry for this, as in its own interface; cannot be restored by any request; side effects: rendering of one or more contents was queued again). Only the first 20 entries of removed are listed. OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Warnings: REPLACES_ALL_NOTES, IRREVERSIBLE.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": null
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "REPLACES_ALL_NOTES",
+        "text": "All existing notes of the content were replaced.",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": {
+          "removedCount": 30,
+          "createdCount": 11
+        }
+      },
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n23",
+              "after": "n30"
+            },
+            "pitch": {
+              "before": "p24",
+              "after": "p31"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r32",
+          "gridRevision": "g6",
+          "keyRevision": "k29"
+        }
+      ],
+      "placements": []
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "REPLACES_ALL_NOTES",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": {
+          "removedCount": 30,
+          "createdCount": 11
+        }
+      },
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "mode": "notesOnly",
+    "keyUsed": null,
+    "paramsUsed": {
+      "retuneSpeed": 0.5,
+      "vibratoDepth": 0,
+      "vibratoRateHz": 6,
+      "noteSplitCents": 100
+    },
+    "noteCount": {
+      "before": 30,
+      "after": 11
+    },
+    "omittedCount": {
+      "changes": 0,
+      "created": 0,
+      "removed": 10
+    },
     "changes": [],
     "created": [
       {
@@ -904,211 +1037,9 @@
           }
         },
         "label": "#19 G4 2.85-2.95s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 20,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#20 G#4 3.00-3.10s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 21,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#21 A4 3.15-3.25s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 22,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#22 A#4 3.30-3.40s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 23,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#23 B4 3.45-3.55s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 24,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#24 C4 3.60-3.70s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 25,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#25 C#4 3.75-3.85s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 26,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#26 D4 3.90-4.00s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 27,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#27 D#4 4.05-4.15s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 28,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#28 E4 4.20-4.30s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 29,
-            "atRevision": "r25"
-          }
-        },
-        "label": "#29 F4 4.35-4.45s"
       }
     ],
     "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "notes": {
-              "before": "n23",
-              "after": "n30"
-            },
-            "pitch": {
-              "before": "p24",
-              "after": "p31"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "revision": "r32",
-          "gridRevision": "g6",
-          "keyRevision": "k29"
-        }
-      ],
-      "placements": []
-    },
-    "undo": {
-      "undoable": false,
-      "reason": "ui_parity",
-      "revert": null
-    },
-    "dirty": {
-      "before": true,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": 0,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "reRenderQueued": {
-        "contentIds": [
-          "c:01234567:0:1"
-        ],
-        "revert": null
-      }
-    },
-    "warnings": [
-      {
-        "code": "REPLACES_ALL_NOTES",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": {
-          "removedCount": 30,
-          "createdCount": 11
-        }
-      },
-      {
-        "code": "IRREVERSIBLE",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      }
-    ],
-    "job": null,
-    "mode": "notesOnly",
-    "keyUsed": null,
-    "paramsUsed": {
-      "retuneSpeed": 0.5,
-      "vibratoDepth": 0,
-      "vibratoRateHz": 6,
-      "noteSplitCents": 100
-    },
-    "noteCount": {
-      "before": 30,
-      "after": 11
-    },
-    "omittedCount": {
-      "changes": 0,
-      "created": 0,
-      "removed": 0
-    },
     "uiEffects": [
       {
         "surface": "piano roll",
@@ -1253,170 +1184,9 @@
               "atRevision": "r32"
             }
           }
-        },
-        {
-          "kind": "created",
-          "entity": "note",
-          "label": "#10 E4 5.60-5.96s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 10,
-              "atRevision": "r32"
-            }
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "note",
-          "label": "#0 C4 0.00-0.10s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 0,
-              "atRevision": "r25"
-            }
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "note",
-          "label": "#1 C#4 0.15-0.25s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 1,
-              "atRevision": "r25"
-            }
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "note",
-          "label": "#2 D4 0.30-0.40s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 2,
-              "atRevision": "r25"
-            }
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "note",
-          "label": "#3 D#4 0.45-0.55s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 3,
-              "atRevision": "r25"
-            }
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "note",
-          "label": "#4 E4 0.60-0.70s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 4,
-              "atRevision": "r25"
-            }
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "note",
-          "label": "#5 F4 0.75-0.85s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 5,
-              "atRevision": "r25"
-            }
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "note",
-          "label": "#6 F#4 0.90-1.00s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 6,
-              "atRevision": "r25"
-            }
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "note",
-          "label": "#7 G4 1.05-1.15s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 7,
-              "atRevision": "r25"
-            }
-          }
-        },
-        {
-          "kind": "removed",
-          "entity": "note",
-          "label": "#8 G#4 1.20-1.30s",
-          "ref": {
-            "contentId": "c:01234567:0:1",
-            "note": {
-              "index": 8,
-              "atRevision": "r25"
-            }
-          }
         }
       ],
-      "omittedChangeCount": 21
-    },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "REPLACES_ALL_NOTES",
-        "text": "All existing notes of the content were replaced.",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": {
-          "removedCount": 30,
-          "createdCount": 11
-        }
-      },
-      {
-        "kind": "warning",
-        "code": "IRREVERSIBLE",
-        "text": "This change can be neither undone nor reverted by any request of the protocol.",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      },
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). No request of the protocol can restore the previous state.",
-        "revert": null,
-        "restore": null
-      }
-    ]
+      "omittedChangeCount": 31
+    }
   }
 }

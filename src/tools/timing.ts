@@ -30,7 +30,7 @@ const TOOL = 'opentune_edit_timing';
 const CLIP_RE = /^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/;
 const JOB_ID_RE = /^j:[0-9a-f]{8}:[1-9][0-9]*$/;
 /** Most handles a result lists; the count of all of them is always given. */
-export const MAX_LISTED_HANDLES = 200;
+export const MAX_LISTED_HANDLES = 100;
 const WRITE_TIMEOUT_MS = 20_000;
 const READ_TIMEOUT_MS = 15_000;
 /** OTCP answers a job.get wait within waitMs + 1000 ms; this side allows a little more. */

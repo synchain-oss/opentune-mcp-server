@@ -91,30 +91,48 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
-      {
-        "entity": "key",
-        "ref": {
-          "contentId": "c:01234567:0:1"
-        },
-        "label": "Content 1",
-        "fields": {
-          "root": {
-            "before": 9,
-            "after": 0,
-            "unit": null
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "content.setKey",
+        "params": {
+          "contentId": "c:01234567:0:1",
+          "key": {
+            "root": 9,
+            "scale": "minor"
           },
-          "scale": {
-            "before": "minor",
-            "after": "major",
-            "unit": null
+          "expectedKeyRevision": "k29"
+        }
+      }
+    },
+    "lines": [
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_clip with the arguments in restore, adding expected_revision: the latest clip_revision you read for the clip.",
+        "revert": {
+          "method": "content.setKey",
+          "params": {
+            "contentId": "c:01234567:0:1",
+            "key": {
+              "root": 9,
+              "scale": "minor"
+            },
+            "expectedKeyRevision": "k29"
+          }
+        },
+        "restore": {
+          "tool": "opentune_set_clip",
+          "arguments": {
+            "clip": "c:01234567:0:1",
+            "key": {
+              "root": 9,
+              "scale": "minor"
+            }
           }
         }
       }
     ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -142,21 +160,6 @@
       ],
       "placements": []
     },
-    "undo": {
-      "undoable": false,
-      "reason": "ui_parity",
-      "revert": {
-        "method": "content.setKey",
-        "params": {
-          "contentId": "c:01234567:0:1",
-          "key": {
-            "root": 9,
-            "scale": "minor"
-          },
-          "expectedKeyRevision": "k29"
-        }
-      }
-    },
     "dirty": {
       "before": true,
       "after": true
@@ -171,6 +174,30 @@
     "sideEffects": {},
     "warnings": [],
     "job": null,
+    "changes": [
+      {
+        "entity": "key",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1",
+        "fields": {
+          "root": {
+            "before": 9,
+            "after": 0,
+            "unit": null
+          },
+          "scale": {
+            "before": "minor",
+            "after": "major",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "transport bar key selector",
@@ -206,33 +233,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_clip with the arguments in restore, adding expected_revision: the latest clip_revision you read for the clip.",
-        "revert": {
-          "method": "content.setKey",
-          "params": {
-            "contentId": "c:01234567:0:1",
-            "key": {
-              "root": 9,
-              "scale": "minor"
-            },
-            "expectedKeyRevision": "k29"
-          }
-        },
-        "restore": {
-          "tool": "opentune_set_clip",
-          "arguments": {
-            "clip": "c:01234567:0:1",
-            "key": {
-              "root": 9,
-              "scale": "minor"
-            }
-          }
-        }
-      }
-    ]
+    }
   }
 }

@@ -32,6 +32,7 @@ import {
   startAndWait,
 } from './follow-job.js';
 import { jobSentence } from './jobs.js';
+import { BACKEND_STILL_RELOADING, GPU_FIRST_REQUESTED_CPU_RUNS } from './processing-text.js';
 import {
   WRITE_RESULT_OUTPUT,
   defineTool,
@@ -97,7 +98,9 @@ const processingSchema = z.strictObject({
   rendering_priority: z
     .enum(['gpuFirst', 'cpuFirst'])
     .optional()
-    .describe('Inference backend rendering prefers. Applied by a job.'),
+    .describe(
+      'gpuFirst tries the GPU, falling back to the CPU without notice; cpuFirst uses the CPU. Applied by a job: the vocoder reloads for seconds and nothing renders again. The result reads the backend in use.',
+    ),
   f0_model: z.string().min(1).max(64).optional().describe('Pitch model, one of the options of opentune_get_settings.'),
 });
 
@@ -204,6 +207,68 @@ function renderContext(method: string, envelope: unknown, loaded: boolean): Rend
   if (method !== 'prefs.set' || !isObject(envelope) || !rendersAfterWeight(envelope)) return { tool: TOOL };
   const reRender: ReRenderState = loaded ? 'loaded' : 'afterLoad';
   return { tool: TOOL, reRender };
+}
+
+/** Whether a prefs.set result changed the rendering priority. */
+const changedPriority = (envelope: Json): boolean =>
+  asList(envelope.changes).some(
+    (change) => isObject(change) && isObject(change.ref) && change.ref.preference === 'renderingPriority',
+  );
+
+/**
+ * How long to wait for a vocoder that is still reloading before the backend in use is read: `maxPolls` reads of
+ * session.info, `pollMs` apart. Tests shorten it.
+ */
+export const backendWait = { pollMs: 250, maxPolls: 24 };
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+/**
+ * After a change of the rendering priority: the backend OpenTune uses now, read once the job has ended (session.info).
+ * OpenTune tries the GPU under gpuFirst and falls back to the CPU without a word, so the request does not say what
+ * runs. A vocoder that is still reloading is waited for within a limit, and said to be reloading when it still is.
+ * The sentence is composed of enumerated values only; the backend string of OpenTune stays a JSON value. A read that
+ * fails adds nothing to the sentence and is reported as null with its reason.
+ */
+async function withBackend(ctx: ToolContext, session: OtcpSession, body: Body, requested: unknown): Promise<Body> {
+  /** The processing section of session.info, or null when OpenTune could not be asked. */
+  const read = async (): Promise<Json | null> => {
+    try {
+      const info = await session.call('session.info', {}, INFO_TIMEOUT_MS);
+      return isObject(info.processing) ? info.processing : {};
+    } catch (error) {
+      if (!(error instanceof OtcpError)) throw error;
+      ctx.logger.warn('reading the backend after a change of the rendering priority failed');
+      return null;
+    }
+  };
+  let processing = await read();
+  for (let polls = 0; processing?.vocoderReconfiguring === true && polls < backendWait.maxPolls; polls += 1) {
+    await sleep(backendWait.pollMs);
+    processing = await read();
+  }
+  if (processing === null) {
+    return {
+      ...body,
+      rendering_backend: null,
+      nullReasons: { ...(isObject(body.nullReasons) ? body.nullReasons : {}), rendering_backend: 'unavailable' },
+    };
+  }
+  const reloading = processing.vocoderReconfiguring === true;
+  const backend = typeof processing.backend === 'string' ? processing.backend : null;
+  const sentence = reloading
+    ? BACKEND_STILL_RELOADING
+    : requested === 'gpuFirst' && backend === 'cpu'
+      ? GPU_FIRST_REQUESTED_CPU_RUNS
+      : null;
+  return {
+    ...body,
+    summary: sentence === null ? body.summary : `${body.summary} ${sentence}`,
+    rendering_backend: { requested: requested ?? null, backend, vocoder_reloading: reloading },
+  };
 }
 
 /** A summary without the tool prefix, for a sentence that composes several results. */
@@ -386,7 +451,11 @@ async function runSteps(
     }
     const outcome = writeOutcome(result, renderContext(step.method, result, readyBefore));
     if (!outcome.ok) return stop(outcome);
-    results.push({ method: step.method, label: step.label, body: outcome.body });
+    const body =
+      step.method === 'prefs.set' && changedPriority(result)
+        ? await withBackend(ctx, session, outcome.body, step.params.renderingPriority)
+        : outcome.body;
+    results.push({ method: step.method, label: step.label, body });
   }
   return combined(results);
 }

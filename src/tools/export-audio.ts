@@ -5,7 +5,8 @@
 // waits for the job for a while. There is no overwrite option: the call always asks OpenTune to
 // pick the next free name (ifExists rename), so an existing file is never replaced. Without a path
 // the file goes next to the source audio as <name>.opentune.wav. File names and paths come back
-// only as data inside the result, never in the summary.
+// only as data inside the result, never in the summary. After a finished export the file just written is read once,
+// in blocks, for its peak level: a mix above 0 dBFS is held by a 32-bit float file but clips when converted.
 
 import { z } from 'zod';
 
@@ -26,6 +27,7 @@ import {
   startAndWait,
 } from './follow-job.js';
 import { jobSentence } from './jobs.js';
+import { readWavPeak, type PeakFailure } from './wav-peak.js';
 import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
 
 const TOOL = 'opentune_export_audio';
@@ -152,8 +154,75 @@ export function defaultExportPath(
 
 const count = (n: number, noun: string) => `${String(n)} ${noun}${n === 1 ? '' : 's'}`;
 
+/** Highest N of the names `<stem> (N).wav` an export tries (spec: PROTOCOL.md section 19, ifExists rename). */
+const MAX_RENAME_INDEX = 999;
+
+/**
+ * Whether `written` is the file this export wrote: the path asked for, or in its folder one of the next free names
+ * `<stem> (2).wav` to `<stem> (999).wav`. OpenTune sends the path in the job result; nothing else is read.
+ */
+export function isFileOfThisExport(written: unknown, requested: string, system: PathSystem): written is string {
+  if (typeof written !== 'string' || pathProblem(written, system) !== undefined) return false;
+  if (comparable(written, system) === comparable(requested, system)) return true;
+  const asked = splitPath(requested, system);
+  const got = splitPath(written, system);
+  if (comparable(got.dir, system) !== comparable(asked.dir, system)) return false;
+  const name = written.slice(got.dir.length + got.sep.length);
+  const prefix = comparable(`${asked.stem} (`, system);
+  const suffix = '.wav';
+  const lower = comparable(name, system);
+  if (!lower.startsWith(prefix) || !lower.endsWith(`)${suffix}`)) return false;
+  const index = lower.slice(prefix.length, lower.length - suffix.length - 1);
+  return /^[1-9][0-9]{0,2}$/.test(index) && Number(index) >= 2 && Number(index) <= MAX_RENAME_INDEX;
+}
+
+/** What the read of the exported file adds to the result: the two members, the reasons for a null, the sentence. */
+interface PeakReport {
+  readonly members: Json;
+  readonly reasons: Json;
+  readonly sentence: string;
+}
+
+const NOT_THIS_EXPORT = 'not_the_exported_file';
+
+/**
+ * Reads the exported file for its peak. A file that cannot be read does not fail the export: both members are
+ * null and `nullReasons` says why. A peak above full scale gets one sentence in the summary.
+ */
+export async function peakReport(written: unknown, requested: string, system: PathSystem): Promise<PeakReport> {
+  const missing = (reason: PeakFailure | typeof NOT_THIS_EXPORT): PeakReport => ({
+    members: { peakDbfs: null, clippedSampleCount: null },
+    reasons: { peakDbfs: reason, clippedSampleCount: reason },
+    sentence: '',
+  });
+  if (!isFileOfThisExport(written, requested, system)) return missing(NOT_THIS_EXPORT);
+  const peak = await readWavPeak(written);
+  if (!peak.ok) return missing(peak.reason);
+  const members: Json = { peakDbfs: peak.peakDbfs, clippedSampleCount: peak.clippedSampleCount };
+  const reasons: Json = peak.nullReason === undefined ? {} : { peakDbfs: peak.nullReason };
+  if (peak.peak <= 1) return { members, reasons, sentence: '' };
+  const level =
+    peak.peakDbfs === null
+      ? 'a sample is not a finite number'
+      : `${peak.peakDbfs > 0 ? '+' : ''}${peak.peakDbfs.toFixed(2)} dBFS`;
+  return {
+    members,
+    reasons,
+    sentence:
+      ` The peak is above 0 dBFS (${level}; ${count(peak.clippedSampleCount, 'sample')} above full scale), so converting ` +
+      'the file to 16 bits or playing it elsewhere may clip: lower the volume of a track (opentune_set_tracks, op ' +
+      'volume) and export again.',
+  };
+}
+
 /** The one-sentence summary of a finished export, from the kind asked for and checked counts only. */
-function exportSummary(args: ExportAudioArgs, result: Json, requested: string, system: PathSystem): string {
+function exportSummary(
+  args: ExportAudioArgs,
+  result: Json,
+  requested: string,
+  system: PathSystem,
+  peakSentence: string,
+): string {
   const dry = asList(result.dryContents).length;
   const written = typeof result.path === 'string' ? result.path : null;
   const renamed = written !== null && comparable(written, system) !== comparable(requested, system);
@@ -165,7 +234,7 @@ function exportSummary(args: ExportAudioArgs, result: Json, requested: string, s
   const rename = renamed
     ? ' The name asked for was taken, so OpenTune used the next free name; nothing was overwritten.'
     : '';
-  return `${lead}${rename} The project itself was not changed.`;
+  return `${lead}${rename}${peakSentence} The project itself was not changed.`;
 }
 
 export async function exportAudio(ctx: ToolContext, args: ExportAudioArgs): Promise<Outcome> {
@@ -251,14 +320,18 @@ export async function exportAudio(ctx: ToolContext, args: ExportAudioArgs): Prom
     }
     // The start envelope changed nothing; it keeps the renderings (ui, side effects, warnings) in the result.
     const rendered = writeBody(started, { tool: TOOL });
+    const peak = await peakReport(result.path, target, system);
+    const reasons: Json = { ...(isObject(rendered.nullReasons) ? rendered.nullReasons : {}), ...peak.reasons };
     return {
       ok: true,
       body: {
         ...rendered,
-        summary: exportSummary(args, result, target, system),
+        summary: exportSummary(args, result, target, system, peak.sentence),
         job: jobRef(job),
         export: result,
         requestedPath: target,
+        ...peak.members,
+        ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}),
       },
     };
   });

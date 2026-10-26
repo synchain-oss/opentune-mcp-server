@@ -180,8 +180,8 @@ export function planRequest(args: EditArrangementArgs): Request | Outcome {
       alone.op === 'copy'
         ? 'copy cannot be undone while the other ops are one undo step, so they cannot share a call: make two ' +
             'calls, copy alone in one and the other ops in the other, with the arrangement_revision of the first result'
-        : `${alone.op} cannot be undone, so it goes in a call of its own: send it alone, after the user agreed, and ` +
-            'the other ops in another call, with the arrangement_revision of the first result',
+        : `${alone.op} cannot be undone, so it goes in a call of its own: send it alone and the other ops in another ` +
+            'call, with the arrangement_revision of the first result',
       'op_not_alone',
     );
   }
@@ -236,13 +236,12 @@ const reread = (message: string): NextStep => ({ actor: 'agent', tool: 'opentune
 
 /** Next steps of the errors whose right action differs from the kind's default, by `<kind>/<reason>`. */
 export const ERROR_STEPS = table<NextStep>({
-  'INVALID_ARGUMENT/confirm_required': {
-    actor: 'user',
-    message:
-      'Deleting clips cannot be undone or restored, and a content no other clip shows leaves the project with them. ' +
-      'Tell the user which clips would go (dry_run: true lists them); only after the user explicitly agrees, call ' +
-      'again with confirm: true.',
-  },
+  'INVALID_ARGUMENT/confirm_required': agent(
+    'Deleting clips cannot be undone or restored, and a content no other clip shows leaves the project with them. ' +
+      'If the user asked for this delete and named the clips, call again with confirm: true. Otherwise tell the user ' +
+      'which clips would go (dry_run: true lists them) and call again with confirm: true only after the user ' +
+      'explicitly agrees.',
+  ),
   'INVALID_ARGUMENT/split_out_of_range': agent(
     'The split position must lie strictly inside the clip on the timeline clock, and OpenTune moves it to the ' +
       'nearest analysis frame, which must not be an edge. Read the clip start and end with opentune_get_project and ' +
@@ -307,6 +306,21 @@ function reversibility(envelope: Json): 'final' | 'restorable' | null {
 }
 
 /**
+ * When a split, merge or delete may be sent. A request that names the clip or the time ("cut the clip at 12
+ * seconds") is the user's consent; asking first is for a target that is unclear and for a merge or delete the user
+ * did not ask for.
+ */
+const WHEN_TO_APPLY = 'only when the user asked for this step and named the clip or time, and ask first otherwise';
+
+/** What a result that carries the undo defect says about getting the state back, after the defect itself. */
+const wayBack = (how: 'final' | 'restorable' | null): string =>
+  how === 'restorable'
+    ? '; the revert line says how to put it back'
+    : how === 'final'
+      ? '; no request can restore it either'
+      : '';
+
+/**
  * Why a split, merge or delete cannot be undone, for the first sentence of its result. Every
  * structural edit that cannot be undone says so there, not only the ones OpenTune's undo defect
  * affects. It says "or restored by any request" only when the result gives no way back: an
@@ -317,7 +331,7 @@ export function structuralLead(kind: string, envelope: Json): string | null {
     const consent = kind === 'delete' ? ', and it needs confirm: true' : '';
     return (
       `applying this ${kind} cannot be undone (OpenTune cannot undo a clip split, merge or delete)${consent}, so ` +
-      'apply it only after the user explicitly agreed'
+      `apply it ${WHEN_TO_APPLY}`
     );
   }
   if (UPSTREAM_DEFECT(envelope)) {
@@ -327,8 +341,8 @@ export function structuralLead(kind: string, envelope: Json): string | null {
         : `undoing a ${kind} makes its audio vanish from the timeline`;
     return (
       `this ${kind} cannot be undone: OpenTune frees objects its own undo entry needs, so ${effect}; ` +
-      'opentune_undo refuses it, and the user should not undo it in the OpenTune window either. Ask the user before ' +
-      'every split, merge or delete'
+      'opentune_undo refuses it, and the user should not undo it in the OpenTune window either' +
+      wayBack(reversibility(envelope))
     );
   }
   const how = reversibility(envelope);
@@ -337,8 +351,8 @@ export function structuralLead(kind: string, envelope: Json): string | null {
   // A result with a revert recipe can be put back, so it must not claim that no request can: it says
   // that undo is not possible and points to the revert line.
   return how === 'final'
-    ? `this ${kind} cannot be undone or restored by any request${consent}, so apply it only after the user explicitly agreed`
-    : `this ${kind} cannot be undone, but the revert line says how to put it back${consent}, so apply it only after the user explicitly agreed`;
+    ? `this ${kind} cannot be undone or restored by any request${consent}, so do it ${WHEN_TO_APPLY}`
+    : `this ${kind} cannot be undone, but the revert line says how to put it back${consent}, so do it ${WHEN_TO_APPLY}`;
 }
 
 const capital = (text: string): string => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
@@ -409,8 +423,8 @@ export const editArrangementTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, ' +
     'fade run in order as one undo step. split, merge, delete and copy each go alone ' +
-    'in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs ' +
-    'confirm. dry_run previews (not copy).',
+    'in a call and cannot be undone (the first three by an OpenTune defect): do one when the user named the ' +
+    'clip or time, else ask first; delete needs confirm. dry_run previews (not copy).',
   inputSchema: z.strictObject({
     expected_revision: z
       .string()
@@ -419,7 +433,7 @@ export const editArrangementTool = defineTool({
       .describe('arrangement_revision from opentune_get_project or the last result.'),
     ops: z.array(OP).min(1).max(MAX_OPS).describe('Clip ids: placement ids (p:...).'),
     dry_run: z.boolean().optional().describe('Predict without applying.'),
-    confirm: z.boolean().optional().describe('delete only: true only after the user explicitly agreed.'),
+    confirm: z.boolean().optional().describe('delete only: true when the user asked for the delete or agreed to it.'),
     instance_id: INSTANCE_FIELD,
   }),
   outputSchema: WRITE_RESULT_OUTPUT,

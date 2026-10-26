@@ -59,7 +59,10 @@ function warningTail(envelope: Json): string {
   return warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
 }
 
-/** Side effects whose words are written out in focusSummary; any other one is named by the fixed table. */
+/**
+ * Side effects whose words are written out in focusSummary, when their details are an object; any other one, and
+ * one of these whose details are not an object, is named by the fixed table.
+ */
 const WORDED = new Set(['notesGenerated', 'uiScaleChanged', 'workspaceSwitched']);
 
 /**
@@ -86,7 +89,7 @@ export function focusSummary(envelope: Json, openEditor = false): string {
   const route = switched === null ? '' : `from ${viewName(switched.from)} to ${viewName(switched.to)}`;
   if (switched !== null && !openEditor) unasked.push(`the window ${dry ? 'switches' : 'switched'} ${route}`);
   for (const name of Object.keys(effects)) {
-    if (!WORDED.has(name)) {
+    if (!(WORDED.has(name) && isObject(effects[name]))) {
       unasked.push(SIDE_EFFECT_TEXT[name] ?? `side effect ${token(name, 'camel') ?? 'with an unrecognized name'}`);
     }
   }

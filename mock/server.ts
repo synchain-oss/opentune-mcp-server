@@ -193,6 +193,12 @@ export interface OtcpMock {
    * published at once and loads nothing. Off by default, the vocoder is ready from the start.
    */
   setVocoderLoadOnDemand(on: boolean): void;
+  /**
+   * Whether the GPU can create the inference session. Unset, the mock reports no backend (null, reason unavailable).
+   * Set, processing.backend is "directml" under gpuFirst with the GPU available, and "cpu" otherwise: under gpuFirst
+   * without a GPU it is the fall back that OpenTune makes without a word.
+   */
+  setGpuAvailable(on: boolean): void;
   /** OpenTune cannot load these pitch models: prefs.set of one of them (it must be among the options) fails with model_missing. */
   failF0Model(...models: readonly string[]): void;
   /**
@@ -356,12 +362,12 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       vocoderWeight: carries(world.prefs.vocoderWeight) ? world.prefs.vocoderWeight : null,
       f0Model: world.prefs.f0Model,
       renderingPriority: world.prefs.renderingPriority,
-      backend: null,
+      backend: world.backend,
       vocoderReady: world.vocoder.ready,
       vocoderReconfiguring: world.vocoder.reconfiguring,
       experimentalFeatures: world.prefs.experimentalFeatures,
       nullReasons: {
-        backend: 'unavailable',
+        ...(world.backend === null ? { backend: 'unavailable' } : {}),
         ...(carries(world.prefs.vocoderWeight) ? {} : { vocoderWeight: 'unavailable' }),
       },
     },
@@ -773,6 +779,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     setVocoderLoadOnDemand(on) {
       world.setVocoderLoadOnDemand(on);
+    },
+    setGpuAvailable(on) {
+      world.gpuAvailable = on;
     },
     failF0Model(...models) {
       for (const model of models) world.unloadableF0Models.add(model);

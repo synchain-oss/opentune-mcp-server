@@ -130,6 +130,10 @@ function setup(
 
 const launchFiles = (discovery: string) => readdirSync(launchDir(discovery)).sort();
 
+/** The status sentence of a started OpenTune whose vocoder has not loaded yet. */
+const READY_FRESH =
+  'OpenTune is running and ready. The vocoder loads when the first render needs it, so it not being loaded just after start is normal.';
+
 describe('opentune_launch', () => {
   it(
     'starts the configured build with the fixed command line and options and reports READY',
@@ -163,7 +167,12 @@ describe('opentune_launch', () => {
         nextStep: STATUS_TEXT.READY.step,
         instances: [{ pid, state: 'READY', protocol: '1.0' }],
       });
-      expect(b.summary).toBe(`Started OpenTune (pid ${String(pid)}). OpenTune is running and ready.`);
+      // The stand-in has not loaded its vocoder, as a started OpenTune has not: that is said as normal, not as a
+      // problem, and the field stays as OpenTune reports it.
+      expect(b.summary).toBe(`Started OpenTune (pid ${String(pid)}). ${READY_FRESH}`);
+      expect((b.instances as { info: { processing: { vocoderReady: boolean } } }[])[0]?.info.processing).toMatchObject({
+        vocoderReady: false,
+      });
       // The nonce on the command line is the one in the discovery file; the record and the ready file are gone.
       const nonce = call?.args[3]?.split('=')[1] ?? '';
       const announced = JSON.parse(readFileSync(path.join(discovery, `${String(pid)}.json`), 'utf8')) as {
@@ -175,7 +184,32 @@ describe('opentune_launch', () => {
       const again = body(await launch(ctx, {}));
       expect(calls).toHaveLength(1);
       expect(again).toMatchObject({ launched: false, alreadyRunning: true, state: 'READY' });
-      expect(again.summary).toBe('OpenTune is already running; nothing was started. OpenTune is running and ready.');
+      expect(again.summary).toBe(`OpenTune is already running; nothing was started. ${READY_FRESH}`);
+    },
+    TIMEOUT,
+  );
+
+  it(
+    'reports the first-run welcome page that blocks writes, and the call that closes it',
+    async () => {
+      const { ctx } = setup({ env: { OT_FAKE_WINDOW: 'onboarding' } });
+      const b = body(await launch(ctx, {}));
+      expect(b).toMatchObject({
+        launched: true,
+        state: 'READY',
+        blockedBy: { kind: 'onboarding' },
+        nextStep: { actor: 'agent', tool: 'opentune_manage_ui', args: { op: 'dismiss_onboarding' } },
+      });
+      expect(b.summary).toMatch(
+        /^Started OpenTune \(pid \d+\)\. OpenTune is running, but it is showing the first-run welcome page, so write operations are refused until it is closed\./,
+      );
+      // The tool does not close it by itself: that is the next call's job.
+      const dialog = setup({ env: { OT_FAKE_WINDOW: 'dialog' } });
+      const d = body(await launch(dialog.ctx, {}));
+      expect(d).toMatchObject({
+        blockedBy: { kind: 'dialog' },
+        nextStep: { args: { op: 'dismiss_dialogs' } },
+      });
     },
     TIMEOUT,
   );

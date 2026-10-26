@@ -62,20 +62,6 @@
     "applied": true,
     "noOp": true,
     "dryRun": false,
-    "changes": [],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "ui_parity",
@@ -85,6 +71,41 @@
           "expectedUndoId": "u:01234567:1"
         }
       }
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "UNDO_NO_EFFECT",
+        "text": "The undo or redo step changed nothing, but the step is used up and the project is marked as changed.",
+        "subject": null,
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_redo with the arguments in restore, as they are.",
+        "revert": {
+          "method": "edit.redo",
+          "params": {
+            "expectedUndoId": "u:01234567:1"
+          }
+        },
+        "restore": {
+          "tool": "opentune_redo",
+          "arguments": {
+            "undo_id": "u:01234567:1"
+          }
+        }
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
     },
     "dirty": {
       "before": false,
@@ -113,6 +134,10 @@
       "possiblyStale": false,
       "unsafe": false
     },
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "window title",
@@ -125,31 +150,6 @@
     "changeTable": {
       "rows": [],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "UNDO_NO_EFFECT",
-        "text": "The undo or redo step changed nothing, but the step is used up and the project is marked as changed.",
-        "subject": null,
-        "data": null
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_redo with the arguments in restore, as they are.",
-        "revert": {
-          "method": "edit.redo",
-          "params": {
-            "expectedUndoId": "u:01234567:1"
-          }
-        },
-        "restore": {
-          "tool": "opentune_redo",
-          "arguments": {
-            "undo_id": "u:01234567:1"
-          }
-        }
-      }
-    ]
+    }
   }
 }

@@ -7,6 +7,7 @@
 // revision, which a change of notes or keys leaves alone while a change of the clips conflicts.
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import type { OtcpSession } from '../../src/otcp/client.js';
@@ -23,6 +24,9 @@ import { getProject } from '../../src/tools/project.js';
 import { render, type Outcome } from '../../src/tools/registry.js';
 import { tempDir, testContext, type TestContext } from '../support/context.js';
 import { clip } from '../support/mock-client.js';
+
+/** When a split, merge or delete may be sent: on the user's request naming the clip or time, else after asking. */
+const WHEN = 'only when the user asked for this step and named the clip or time, and ask first otherwise';
 
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
@@ -111,7 +115,10 @@ describe('declaration', () => {
     expect(editArrangementTool.otcpMethods).toEqual(['arrangement.edit', 'arrangement.copy']);
     // The description is the prompt: the rules an agent must keep are in it.
     expect(editArrangementTool.description).toMatch(/cannot be undone/);
-    expect(editArrangementTool.description).toMatch(/ask the user first; delete needs confirm/);
+    // A request that names the clip or the time is consent; the unclear and the unrequested are asked about first.
+    expect(editArrangementTool.description).toMatch(
+      /do one when the user named the clip or time, else ask first; delete needs confirm/,
+    );
     expect(editArrangementTool.description).toMatch(/timeline clock, seconds/);
   });
 
@@ -251,8 +258,12 @@ describe('every op against the mock', () => {
     const refused = failure(await editNow(env, args));
     expect(refused).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'confirm_required', executed: false });
     expect(refused.nextStep).toEqual(ERROR_STEPS['INVALID_ARGUMENT/confirm_required']);
-    expect(refused.nextStep).toMatchObject({ actor: 'user' });
-    expect(refused.nextStep.message).toContain('only after the user explicitly agrees, call again with confirm: true');
+    // The user's own request for the delete is the consent, so the agent may call again; an unrequested one waits.
+    expect(refused.nextStep).toMatchObject({ actor: 'agent' });
+    expect(refused.nextStep.message).toContain(
+      'If the user asked for this delete and named the clips, call again with confirm: true',
+    );
+    expect(refused.nextStep.message).toContain('call again with confirm: true only after the user explicitly agrees');
     expect(env.mock.snapshot().placements).toHaveLength(2);
     // confirm false is no consent either.
     expect(failure(await editNow(env, { ...args, confirm: false }))).toMatchObject({ reason: 'confirm_required' });
@@ -261,7 +272,7 @@ describe('every op against the mock', () => {
     expect(firstSentence(deleted.summary)).toBe(
       'opentune_edit_arrangement: this delete cannot be undone: OpenTune frees objects its own undo entry needs, so ' +
         'undoing a delete does nothing; opentune_undo refuses it, and the user should not undo it in the OpenTune ' +
-        'window either',
+        'window either; no request can restore it either',
     );
     expect(deleted.undo).toEqual({ undoable: false, reason: 'upstream_undo_defect', revert: null });
     expect(codes(deleted)).toEqual(['UPSTREAM_UNDO_DEFECT', 'IRREVERSIBLE']);
@@ -419,7 +430,7 @@ describe('dry_run', () => {
     const predicted = body(await edit(env, { expected_revision: revision, ops, dry_run: true }));
     expect(firstSentence(predicted.summary)).toContain(
       'applying this delete cannot be undone (OpenTune cannot undo a clip split, merge or delete), and it needs ' +
-        'confirm: true, so apply it only after the user explicitly agreed',
+        `confirm: true, so apply it ${WHEN}`,
     );
     expect(env.mock.snapshot().placements).toHaveLength(2);
     const applied = body(await edit(env, { expected_revision: revision, ops, confirm: true }));
@@ -439,6 +450,40 @@ describe('dry_run', () => {
       'this split cannot be undone: OpenTune frees objects its own undo entry needs, so undoing a split makes its ' +
         'audio vanish from the timeline',
     );
+  });
+});
+
+describe('a split, merge or delete the user asked for', () => {
+  it('is done directly, and its first sentence names the undo defect and the way back', async () => {
+    const env = await setup();
+    const revision = await env.revision();
+    // No preview and no question first: the user named the clip and the time.
+    const split = body(
+      await edit(env, {
+        expected_revision: revision,
+        ops: [{ op: 'split', clip: id(env, 'b'), at_timeline_sec: 3.004 }],
+      }),
+    );
+    expect(split.applied).toBe(true);
+    const lead = firstSentence(split.summary);
+    expect(lead).toContain('this split cannot be undone: OpenTune frees objects its own undo entry needs');
+    expect(lead).toContain('opentune_undo refuses it');
+    // It says how to get the state back, and does not tell the agent to ask before every such step.
+    expect(split.summary).toContain('the revert line says how to put it back');
+    expect(split.summary).not.toContain('Ask the user before every');
+    expect(revertLine(split)?.text).toContain('Only after the user explicitly agrees to restore it');
+  });
+
+  it('says in the preview and in the tool description when to ask first', () => {
+    expect(structuralLead('merge', { dryRun: true })).toContain(`so apply it ${WHEN}`);
+    expect(structuralLead('delete', { dryRun: true })).toContain(`needs confirm: true, so apply it ${WHEN}`);
+    const text = editArrangementTool.description;
+    expect(text).toContain('do one when the user named the clip or time, else ask first');
+    expect(text).not.toContain('ask the user first;');
+    const properties = (
+      z.toJSONSchema(editArrangementTool.inputSchema) as { properties: Record<string, { description?: string }> }
+    ).properties;
+    expect(properties.confirm?.description).toContain('when the user asked for the delete');
   });
 });
 
@@ -651,7 +696,7 @@ describe('the first sentence of an irreversible structural edit', () => {
     for (const kind of ['split', 'merge', 'delete']) {
       const lead = structuralLead(kind, irreversible());
       expect(lead, kind).toContain(`this ${kind} cannot be undone or restored by any request`);
-      expect(lead, kind).toContain('only after the user explicitly agreed');
+      expect(lead, kind).toContain(WHEN);
     }
     expect(structuralLead('delete', irreversible())).toContain('removing clips needs confirm: true');
     // A change that is undoable, or that changed nothing, claims nothing.
@@ -664,6 +709,15 @@ describe('the first sentence of an irreversible structural edit', () => {
     expect(
       structuralLead('delete', { undo: { undoable: false, reason: 'upstream_undo_defect' }, warnings: [] }),
     ).toContain('OpenTune frees objects its own undo entry needs');
+    // ... and then names the way back: the revert line, or none at all.
+    const defect = { undoable: false, reason: 'upstream_undo_defect' };
+    const recipe = { method: 'arrangement.edit', params: { ops: [] } };
+    expect(structuralLead('split', { undo: { ...defect, revert: recipe }, warnings: [] })).toMatch(
+      /in the OpenTune window either; the revert line says how to put it back$/,
+    );
+    expect(structuralLead('delete', { undo: { ...defect, revert: null }, warnings: [] })).toMatch(
+      /in the OpenTune window either; no request can restore it either$/,
+    );
     expect(structuralLead('delete', { dryRun: true })).toContain('cannot be undone');
   });
 
@@ -679,7 +733,7 @@ describe('the first sentence of an irreversible structural edit', () => {
       const lead = structuralLead(kind, restorable);
       expect(lead, kind).toContain(`this ${kind} cannot be undone, but the revert line says how to put it back`);
       expect(lead, kind).not.toContain('restored by any request');
-      expect(lead, kind).toContain('only after the user explicitly agreed');
+      expect(lead, kind).toContain(WHEN);
       // Not undoable and no recipe, with or without the warning: no request can restore it.
       for (const result of [
         { dryRun: false, undo: { undoable: false, reason: 'no_upstream_undo', revert: null }, warnings: [] },

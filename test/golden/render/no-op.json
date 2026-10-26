@@ -51,10 +51,12 @@
     "applied": true,
     "noOp": true,
     "dryRun": false,
-    "changes": [],
-    "created": [],
-    "removed": [],
-    "idMap": [],
+    "undo": {
+      "undoable": false,
+      "reason": "no_op",
+      "revert": null
+    },
+    "lines": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -72,11 +74,6 @@
       ],
       "placements": []
     },
-    "undo": {
-      "undoable": false,
-      "reason": "no_op",
-      "revert": null
-    },
     "dirty": {
       "before": true,
       "after": true
@@ -91,11 +88,14 @@
     "sideEffects": {},
     "warnings": [],
     "job": null,
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [],
     "changeTable": {
       "rows": [],
       "omittedChangeCount": 0
-    },
-    "lines": []
+    }
   }
 }

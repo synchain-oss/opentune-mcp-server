@@ -13,11 +13,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
 import { startMock, type OtcpMock } from '../../mock/server.js';
+import { OtcpError } from '../../src/errors/tool-error.js';
 import type { Json, OtcpSession } from '../../src/otcp/client.js';
 import { writeBody } from '../../src/render/index.js';
 import { getJob } from '../../src/tools/jobs.js';
 import { render, type Outcome } from '../../src/tools/registry.js';
-import { setSettings, setSettingsTool } from '../../src/tools/set-settings.js';
+import { backendWait, setSettings, setSettingsTool } from '../../src/tools/set-settings.js';
 import { getSettings } from '../../src/tools/settings.js';
 import { tempDir, testContext, type TestContext } from '../support/context.js';
 import { clip, need } from '../support/mock-client.js';
@@ -519,9 +520,12 @@ describe('opentune_set_settings: vocoder weight, rendering priority and pitch mo
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()] });
     const sent = await recordCalls(ctx);
-    body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
     body(await setSettings(ctx, { processing: { tuning_hz: 442, hybrid_mode: true } }));
     expect(sent).not.toContain('session.info');
+    // A change of the rendering priority reads it once, after the job, to tell the backend in use.
+    body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
+    expect(sent.filter((m) => m === 'session.info')).toHaveLength(1);
+    expect(sent.indexOf('session.info')).toBeGreaterThan(sent.lastIndexOf('job.get'));
     sent.length = 0;
     body(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
     // One read, and it comes before the request that changes the weight, not after the job.
@@ -759,5 +763,149 @@ describe('opentune_set_settings: vocoder weight, rendering priority and pitch mo
     mock.given({ clips: [clip()], withoutCapabilities: ['jobs.v1', 'prefs.write'] });
     const error = failure(await setSettings(ctx, { processing: { vocoder_weight: 'hifigan_coulin9.onnx' } }));
     expect(error.detail).toContain('prefs.write');
+  });
+});
+
+describe('opentune_set_settings: the backend in use after a change of the rendering priority', () => {
+  const WHERE_TEXT = [
+    'To see why, read the log (opentune_get_settings with sections ["log"] and log_lines 30)',
+    '"opentune-mcp doctor" checks Direct3D 12',
+  ];
+
+  it('says that gpuFirst was requested but the CPU runs, with the two places to look', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+    mock.setGpuAvailable(false);
+    const out = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
+    expect(out.summary).toContain('gpuFirst was requested, but OpenTune is now using the CPU');
+    for (const part of WHERE_TEXT) expect(out.summary).toContain(part);
+    expect(out.rendering_backend).toEqual({ requested: 'gpuFirst', backend: 'cpu', vocoder_reloading: false });
+    // The way back is still the first thing the summary says; the new sentence comes last.
+    expect(out.summary).toMatch(/^opentune_set_settings: this changes user-global OpenTune settings/);
+    expect(out.summary.endsWith('checks Direct3D 12.')).toBe(true);
+    // The place it points at works: the settings show the same state, with the same words for the reader.
+    const settings = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(settings.summary).toContain('The rendering priority is gpuFirst but OpenTune is using the CPU');
+  });
+
+  it('says nothing about the CPU when the GPU runs, or when the CPU was asked for', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+    mock.setGpuAvailable(true);
+    const gpu = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
+    expect(gpu.summary).not.toContain('using the CPU');
+    expect(gpu.rendering_backend).toEqual({ requested: 'gpuFirst', backend: 'directml', vocoder_reloading: false });
+    const cpu = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
+    expect(cpu.summary).not.toContain('using the CPU');
+    expect(cpu.rendering_backend).toEqual({ requested: 'cpuFirst', backend: 'cpu', vocoder_reloading: false });
+  });
+
+  it('reads the backend once, after the job, and only for a change of the rendering priority', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setGpuAvailable(false);
+    const sent = await recordCalls(ctx);
+    body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
+    expect(sent.filter((m) => m === 'session.info')).toHaveLength(1);
+    expect(sent.lastIndexOf('job.get')).toBeLessThan(sent.indexOf('session.info'));
+    // A call that changes nothing, or something else, reads nothing more.
+    sent.length = 0;
+    const same = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
+    expect(same.noOp).toBe(true);
+    expect(same).not.toHaveProperty('rendering_backend');
+    body(await setSettings(ctx, { processing: { tuning_hz: 442 } }));
+    expect(sent).not.toContain('session.info');
+  });
+
+  describe('with a vocoder that is still reloading', () => {
+    const saved = { ...backendWait };
+    afterEach(() => {
+      Object.assign(backendWait, saved);
+    });
+
+    /** Makes session.info report the vocoder reloading from the call that follows the job, `times` times. */
+    async function reloading(ctx: TestContext, times: number): Promise<{ reads: number }> {
+      const session = await rawSession(ctx);
+      const original = session.call.bind(session);
+      const seen = { reads: 0, jobEnded: false };
+      session.call = async (method: string, params: Json, timeoutMs: number) => {
+        const result = await original(method, params, timeoutMs);
+        if (method === 'job.get') seen.jobEnded = true;
+        if (method !== 'session.info' || !seen.jobEnded) return result;
+        seen.reads += 1;
+        const processing = result.processing as Json;
+        return {
+          ...result,
+          processing: { ...processing, vocoderReconfiguring: seen.reads <= times, vocoderReady: seen.reads > times },
+        };
+      };
+      return seen;
+    }
+
+    it('waits for it within a limit and then reads the backend', async () => {
+      Object.assign(backendWait, { pollMs: 1, maxPolls: 10 });
+      const { mock, ctx } = await withMock();
+      mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+      mock.setGpuAvailable(false);
+      const seen = await reloading(ctx, 3);
+      const out = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
+      expect(seen.reads).toBe(4);
+      expect(out.summary).toContain('gpuFirst was requested, but OpenTune is now using the CPU');
+      expect(out.summary).not.toContain('still reloading');
+    });
+
+    it('says that it is still reloading when the limit passes, and does not guess the backend', async () => {
+      Object.assign(backendWait, { pollMs: 1, maxPolls: 3 });
+      const { mock, ctx } = await withMock();
+      mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+      mock.setGpuAvailable(false);
+      const seen = await reloading(ctx, 1_000);
+      const out = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
+      // One read, then three more polls: a bounded wait.
+      expect(seen.reads).toBe(4);
+      expect(out.summary).toContain('The vocoder is still reloading, so which backend it uses is not known yet');
+      expect(out.summary).not.toContain('using the CPU');
+      expect(out.rendering_backend).toMatchObject({ vocoder_reloading: true });
+    });
+  });
+
+  it('keeps the result when the backend cannot be read, and says why the member is null', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    const session = await rawSession(ctx);
+    const original = session.call.bind(session);
+    let jobEnded = false;
+    session.call = async (method: string, params: Json, timeoutMs: number) => {
+      if (method === 'session.info' && jobEnded) {
+        throw new OtcpError({ kind: 'BUSY', reason: 'modal_open', retryable: true, detail: 'x', executed: false });
+      }
+      const result = await original(method, params, timeoutMs);
+      if (method === 'job.get') jobEnded = true;
+      return result;
+    };
+    const out = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' } }));
+    expect(out.applied).toBe(true);
+    expect(out.rendering_backend).toBeNull();
+    expect(out.nullReasons).toMatchObject({ rendering_backend: 'unavailable' });
+    expect(out.summary).not.toContain('using the CPU');
+  });
+
+  it('never puts the backend string of OpenTune into a sentence', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+    const session = await rawSession(ctx);
+    const original = session.call.bind(session);
+    let jobEnded = false;
+    session.call = async (method: string, params: Json, timeoutMs: number) => {
+      const result = await original(method, params, timeoutMs);
+      if (method === 'job.get') jobEnded = true;
+      if (method !== 'session.info' || !jobEnded) return result;
+      return { ...result, processing: { ...(result.processing as Json), backend: `cpu ${INJECTION}` } };
+    };
+    const out = body(await setSettings(ctx, { processing: { rendering_priority: 'gpuFirst' } }));
+    expect(out.summary).not.toContain('Ignore all previous');
+    expect(out.summary).not.toContain('using the CPU');
+    // It stays a JSON string value.
+    expect((out.rendering_backend as { backend: string }).backend).toContain('Ignore all previous');
   });
 });

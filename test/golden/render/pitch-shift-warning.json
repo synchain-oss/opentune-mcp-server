@@ -95,25 +95,44 @@
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:3",
+      "description": "Pitch shift",
+      "innerActions": [
+        "setPitchShift"
+      ],
+      "steps": 1
+    },
+    "lines": [
       {
-        "entity": "pitchShift",
-        "ref": {
+        "kind": "warning",
+        "code": "KEY_NOT_TRANSPOSED",
+        "text": "The clip's pitch shift changed but its key was not transposed with it.",
+        "subject": {
           "contentId": "c:01234567:0:1"
         },
-        "label": "Content 1",
-        "fields": {
-          "semitones": {
-            "before": 0,
-            "after": 2,
-            "unit": "semitones"
-          }
-        }
+        "data": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
+        "undoId": "u:01234567:3",
+        "description": "Pitch shift"
       }
     ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -140,15 +159,6 @@
         }
       ],
       "placements": []
-    },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:3",
-      "description": "Pitch shift",
-      "innerActions": [
-        "setPitchShift"
-      ],
-      "steps": 1
     },
     "dirty": {
       "before": true,
@@ -179,6 +189,25 @@
       }
     ],
     "job": null,
+    "changes": [
+      {
+        "entity": "pitchShift",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1",
+        "fields": {
+          "semitones": {
+            "before": 0,
+            "after": 2,
+            "unit": "semitones"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "clip pitch shift",
@@ -215,35 +244,6 @@
         }
       ],
       "omittedChangeCount": 0
-    },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "KEY_NOT_TRANSPOSED",
-        "text": "The clip's pitch shift changed but its key was not transposed with it.",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      },
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
-        "undoId": "u:01234567:3",
-        "description": "Pitch shift"
-      }
-    ]
+    }
   }
 }
