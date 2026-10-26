@@ -98,8 +98,11 @@ ${HOME_HELP}
 
 ${HOME_HELP}
 `,
-  analyze: `beat-grid analyze <wav> [--model final|small] [--out <file>.json [--force]] [--summary]
-                        [--no-refine] [--min-segment-beats <n>] [--home <folder>]
+  analyze: `beat-grid analyze <wav> | --paths-file <paths.json> [--model final|small]
+                        [--out <file>.json [--force]] [--summary] [--no-refine]
+                        [--min-segment-beats <n>] [--home <folder>]
+    --paths-file: a JSON file {"input": "<wav>"} instead of the positional path. Use it for a path that
+    came from OpenTune or any tool result: it is read by the script and never put on a shell command line.
     Run the analyzer on a WAV file (an absolute path). Without --summary the analyzer's JSON is printed,
     or written to --out (a .json path that must not exist yet, unless --force) with one line on stdout;
     with --summary the beat list is left out (segments, tempi, confidence and warnings only).
@@ -109,8 +112,10 @@ ${HOME_HELP}
 ${HOME_HELP}
 `,
   'timing-plan': `beat-grid timing-plan --grid <grid.json> --notes <notes.json> --grid-offset-sec <s>
-                        [--threshold-ms 30] [--subdivision 1|2|4] [--merge-gap-ms 30]
-                        [--merge-cents 300] [--min-note-ms 60] [--home <folder>]
+                        [--paths-file <paths.json>] [--threshold-ms 30] [--subdivision 1|2|4]
+                        [--merge-gap-ms 30] [--merge-cents 300] [--min-note-ms 60] [--home <folder>]
+    --paths-file: a JSON file {"grid": "<grid.json>", "notes": "<notes.json>"} that replaces --grid and
+    --notes, for a path that came from a tool result (it never goes on a shell command line).
     Turn a grid and the notes of a vocal clip into opentune_edit_timing suggestions to review before any
     call. --notes is the file written by opentune_get_notes with output_path (the older saved pages of
     several results are read too). The singer's overall lead or lag (the median) is removed before the
@@ -122,7 +127,11 @@ ${HOME_HELP}
     calls; apply calls[0] only, then read the notes again and plan again.
     --home is accepted and ignored.
 `,
-  align: `beat-grid align --vocal <wav> --backing <wav> [--max-lag-sec 2] [--home <folder>]
+  align: `beat-grid align --vocal <wav> --backing <wav> | --paths-file <paths.json> [--max-lag-sec 2]
+                        [--home <folder>]
+    --paths-file: a JSON file {"vocal": "<wav>", "backing": "<wav>"} that replaces --vocal and --backing.
+    Use it for the sourcePath values OpenTune returns: they are read by the script and never put on a
+    shell command line, where $(...), backticks and $VAR would be expanded.
     Find how much later (positive) or earlier (negative) the events of the vocal file are than those of
     the backing file, from their onset envelopes (100 Hz frames, cross-correlated within +-max-lag-sec,
     default 2, at most 10). Prints lagSec, confidence (the peak over the next-best peak; 1.5 or more is
@@ -1632,11 +1641,20 @@ export function timingPlan({
       shortSkipped += 1;
       continue;
     }
-    // The span of the op stops where the next chain starts, so two ops never share a handle.
+    // The span of the op stops where the next chain starts, so two ops never share a handle. The next
+    // chain's start is kept as it is (limitContentSec) and rounded below, with the same rounding as the
+    // ranges: the end of this range rounds outwards and the start of the next one inwards, so rounding
+    // the two separately could let them overlap by 0.1 ms.
     const next = chains[index + 1];
-    const end =
-      next !== undefined && next.key === chain.key ? Math.max(chain.start, Math.min(chain.end, next.start)) : chain.end;
-    onsets.push({ chain, note: chain.notes[0], startContentSec: chain.start, endContentSec: end });
+    const limit = next !== undefined && next.key === chain.key ? Math.max(chain.start, next.start) : null;
+    const end = limit === null ? chain.end : Math.min(chain.end, limit);
+    onsets.push({
+      chain,
+      note: chain.notes[0],
+      startContentSec: chain.start,
+      endContentSec: end,
+      limitContentSec: limit,
+    });
   }
 
   const considered = [];
@@ -1722,7 +1740,14 @@ export function timingPlan({
     }
     // The range covers the whole chain (rounded outwards, so a handle at its edge stays inside).
     const start = floor4(onset.startContentSec);
-    const end = Math.max(ceil4(onset.endContentSec), round(start + 0.001, 4));
+    let end;
+    if (onset.limitContentSec === null) {
+      end = Math.max(ceil4(onset.endContentSec), round(start + 0.001, 4));
+    } else {
+      // Not past where the next chain's range starts (floor4 of its start), whatever the rounding.
+      end = Math.min(ceil4(onset.endContentSec), floor4(onset.limitContentSec));
+      if (end <= start) end = round(start + 0.0001, 4);
+    }
     const op = { op: 'shift', start_content_sec: start, end_content_sec: end, delta_ms: deltaMs };
     const beat = beats[point.beatIndex];
     // opentune_edit_timing has no dry_run: this plan is the preview. A suggestion carries only its
@@ -2228,11 +2253,13 @@ const COMMAND_OPTIONS = Object.freeze({
     summary: 'flag',
     'no-refine': 'flag',
     'min-segment-beats': 'value',
+    'paths-file': 'value',
     home: 'value',
   },
   'timing-plan': {
     grid: 'value',
     notes: 'value',
+    'paths-file': 'value',
     'grid-offset-sec': 'value',
     'threshold-ms': 'value',
     subdivision: 'value',
@@ -2242,8 +2269,22 @@ const COMMAND_OPTIONS = Object.freeze({
     summary: 'flag',
     home: 'value',
   },
-  align: { vocal: 'value', backing: 'value', 'max-lag-sec': 'value', home: 'value' },
+  align: { vocal: 'value', backing: 'value', 'max-lag-sec': 'value', 'paths-file': 'value', home: 'value' },
 });
+
+// The paths a command takes from a --paths-file, by the key they have in that file. A path that an
+// OpenTune result or a tool returned is a string to treat as data: it goes into this file (written
+// with a file tool) and never into a shell command line, where $(...), backticks and $VAR would expand.
+// One file can hold the paths of every command; a command uses its own keys and leaves the others.
+const PATHS_FILE_KEYS = Object.freeze({
+  analyze: ['input'],
+  'timing-plan': ['grid', 'notes'],
+  align: ['vocal', 'backing'],
+});
+const ALL_PATHS_FILE_KEYS = Object.freeze(Object.values(PATHS_FILE_KEYS).flat());
+
+/** The text without a byte order mark at its start. */
+const withoutBom = (text) => (text.charCodeAt(0) === 0xfeff ? text.slice(1) : text);
 
 /**
  * Reads one command line into `{ command, options, positionals }`; usage errors throw. A help request
@@ -2286,15 +2327,61 @@ export function parseArgs(argv) {
     if (value === undefined || (value === '' && name !== 'home')) throw usageError(`--${name} needs a value`, command);
     options[name] = value;
   }
-  const allowedPositionals = command === 'analyze' ? 1 : 0;
+  // analyze takes its WAV path as the one positional argument, or as `input` of a --paths-file.
+  const allowedPositionals = command === 'analyze' && options['paths-file'] === undefined ? 1 : 0;
   if (positionals.length !== allowedPositionals)
     throw usageError(
       command === 'analyze'
-        ? 'analyze takes exactly one WAV path'
+        ? 'analyze takes exactly one WAV path, or none with --paths-file (which holds it as "input")'
         : `${command} takes no positional arguments (found ${positionals.length})`,
       command,
     );
   return { command, options, positionals };
+}
+
+/**
+ * The paths of one command from its --paths-file: a JSON object of strings with the keys input (analyze), grid
+ * and notes (timing-plan), vocal and backing (align). The command takes its own keys and leaves the others,
+ * so one file can serve every command; a key that no command knows is refused (a typo would otherwise
+ * be ignored). Returns {} without --paths-file. A path comes from the command line or from the file, not both.
+ */
+function pathsFromFile(parsed, cwd) {
+  const file = parsed.options['paths-file'];
+  if (file === undefined) return {};
+  const keys = PATHS_FILE_KEYS[parsed.command];
+  let data;
+  try {
+    data = JSON.parse(withoutBom(fs.readFileSync(path.resolve(cwd, file), 'utf8')));
+  } catch (error) {
+    throw usageError(
+      `cannot read --paths-file ${file}: ${error instanceof Error ? error.message : String(error)}`,
+      parsed.command,
+    );
+  }
+  if (!isObject(data))
+    throw usageError(
+      `--paths-file must hold a JSON object with string values, keys ${keys.join(', ')}`,
+      parsed.command,
+    );
+  const paths = {};
+  for (const [key, value] of Object.entries(data)) {
+    if (!ALL_PATHS_FILE_KEYS.includes(key))
+      throw usageError(
+        `--paths-file has the key ${JSON.stringify(key)}, which no command takes (the keys are ${ALL_PATHS_FILE_KEYS.join(', ')})`,
+        parsed.command,
+      );
+    if (typeof value !== 'string' || value.trim() === '')
+      throw usageError(`--paths-file: ${key} must be a non-empty string`, parsed.command);
+    if (!keys.includes(key)) continue;
+    const given = key === 'input' ? parsed.positionals[0] : parsed.options[key];
+    if (given !== undefined)
+      throw usageError(
+        `${key} is given twice, on the command line and in --paths-file; give it in one place`,
+        parsed.command,
+      );
+    paths[key] = value;
+  }
+  return paths;
 }
 
 function parseNumberOption(options, name, { fallback = null, min = 0, max = Number.POSITIVE_INFINITY } = {}) {
@@ -2410,7 +2497,7 @@ export async function main(
         manifest: loadedManifest,
         home: dataHome(env, homeOption).home,
         target: detectTarget(platform, arch),
-        input: parsed.positionals[0],
+        input: parsed.positionals[0] ?? pathsFromFile(parsed, cwd).input,
         model,
         out: outFile,
         force: parsed.options.force === true,
@@ -2428,11 +2515,12 @@ export async function main(
       return result.exitCode;
     }
     if (parsed.command === 'timing-plan') {
-      const gridFile = parsed.options.grid;
-      const notesFile = parsed.options.notes;
+      const fromFile = pathsFromFile(parsed, cwd);
+      const gridFile = parsed.options.grid ?? fromFile.grid;
+      const notesFile = parsed.options.notes ?? fromFile.notes;
       const offset = parsed.options['grid-offset-sec'];
-      if (gridFile === undefined) throw usageError('timing-plan needs --grid <grid.json>');
-      if (notesFile === undefined) throw usageError('timing-plan needs --notes <notes.json>');
+      if (gridFile === undefined) throw usageError('timing-plan needs --grid <grid.json>', 'timing-plan');
+      if (notesFile === undefined) throw usageError('timing-plan needs --notes <notes.json>', 'timing-plan');
       if (offset === undefined) throw usageError('timing-plan needs --grid-offset-sec <s>');
       // The numbers are checked before any file is read, so a typo in an option is not masked by
       // an unreadable file.
@@ -2469,8 +2557,11 @@ export async function main(
       return EXIT.OK;
     }
     if (parsed.command === 'align') {
-      if (parsed.options.vocal === undefined) throw usageError('align needs --vocal <wav>', 'align');
-      if (parsed.options.backing === undefined) throw usageError('align needs --backing <wav>', 'align');
+      const fromFile = pathsFromFile(parsed, cwd);
+      const vocalFile = parsed.options.vocal ?? fromFile.vocal;
+      const backingFile = parsed.options.backing ?? fromFile.backing;
+      if (vocalFile === undefined) throw usageError('align needs --vocal <wav>', 'align');
+      if (backingFile === undefined) throw usageError('align needs --backing <wav>', 'align');
       const maxLagSec = parseNumberOption(parsed.options, 'max-lag-sec', {
         fallback: ALIGN_MAX_LAG_SEC,
         min: 0.01,
@@ -2479,8 +2570,8 @@ export async function main(
       writeJson(
         out,
         align({
-          vocal: path.resolve(cwd, parsed.options.vocal),
-          backing: path.resolve(cwd, parsed.options.backing),
+          vocal: path.resolve(cwd, vocalFile),
+          backing: path.resolve(cwd, backingFile),
           maxLagSec,
         }),
       );

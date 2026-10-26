@@ -279,6 +279,35 @@ describe('merging fragments into rhythm onsets', () => {
       expect(ranges[0]).toEqual([1.18, 1.3]);
     });
 
+    it('does not let two neighbouring ranges overlap after rounding, whatever the decimals of the next start', () => {
+      // The next chain starts at 1.30003 s: rounded outwards the end of the first range would be 1.3001, but the
+      // next range starts at 1.3.
+      const touching = planWithBeats([note(0, 1.18, 220, 60), note(1, 1.30003, 100, 70)], { thresholdMs: 10 });
+      const ops = touching.suggestions.map((s) => s.op);
+      expect(ops).toHaveLength(2);
+      expect(ops[0]).toMatchObject({ start_content_sec: 1.18, end_content_sec: 1.3 });
+      expect(ops[1]?.start_content_sec).toBe(1.3);
+      // A gap of 0.02 ms between two chains rounds to the same tenth of a millisecond, not past it.
+      const gap = planWithBeats([note(0, 1.18, 100.02, 60), note(1, 1.28004, 100, 70)], { thresholdMs: 10 });
+      expect(gap.suggestions[0]?.op?.end_content_sec).toBeLessThanOrEqual(
+        gap.suggestions[1]?.op?.start_content_sec ?? 0,
+      );
+      // Many neighbours, starts of five decimals: every range ends where the next one starts, or before.
+      const crowd: Json[] = [];
+      for (let k = 0; k < 40; k++)
+        crowd.push(note(k, 1.1 + k * 0.03713 + k * 0.00007, 25 + (k % 3) * 0.013, k % 2 === 0 ? 60 : 70));
+      const ranges = planWithBeats(crowd, { thresholdMs: 1, minNoteMs: 0 })
+        .suggestions.map((s) => s.op)
+        .filter((op): op is Op => op !== null)
+        .sort((a, b) => a.start_content_sec - b.start_content_sec);
+      expect(ranges.length).toBeGreaterThan(10);
+      for (const [index, op] of ranges.entries()) {
+        expect(op.end_content_sec).toBeGreaterThan(op.start_content_sec);
+        const next = ranges[index + 1];
+        if (next !== undefined) expect(op.end_content_sec).toBeLessThanOrEqual(next.start_content_sec);
+      }
+    });
+
     it('rounds the range outwards, so a handle at its edge stays inside', () => {
       const result = planWithBeats([note(0, 1.18003, 100.04, 60)]);
       expect(result.suggestions[0]?.op?.start_content_sec).toBe(1.18);

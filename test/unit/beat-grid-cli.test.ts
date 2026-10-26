@@ -13,6 +13,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { REPO } from '../support/plugin-tree.js';
+import { backingTrack, irregularHits, vocalTrack, wavFile } from '../support/synthetic-audio.js';
 import * as beatGridModule from '../../plugins/opentune/skills/beat-grid/scripts/beat-grid.mjs';
 
 type Json = Record<string, unknown>;
@@ -42,10 +43,15 @@ function tempDir(): string {
   return dir;
 }
 
-async function run(argv: string[], env: Record<string, string> = {}) {
+async function run(argv: string[], env: Record<string, string> = {}, extra: Json = {}) {
   let out = '';
   let err = '';
-  const code = await main(argv, { env, out: (text: string) => (out += text), err: (text: string) => (err += text) });
+  const code = await main(argv, {
+    env,
+    out: (text: string) => (out += text),
+    err: (text: string) => (err += text),
+    ...extra,
+  });
   let json: Json | null;
   try {
     json = JSON.parse(out) as Json;
@@ -163,10 +169,17 @@ describe('--home and the environment', () => {
   });
 
   it('uses --home for the install plan and refuses a real install without any folder', async () => {
-    const plan = await run(['install', '--model', 'final', '--home', folderA]);
+    // The plan names its folder only for a platform the analyzer is published for (Windows x64 and macOS), so the
+    // platform is fixed here; on Linux (the CI light job) the real one has no folder to name.
+    const plan = await run(['install', '--model', 'final', '--home', folderA], {}, { platform: 'win32', arch: 'x64' });
     expect(plan.code).toBe(EXIT.OK);
     expect(plan.out).toContain(path.resolve(folderA).replace(/\\/g, '/').split('/').pop() ?? '');
-    const refused = await run(['install', '--model', 'final', '--yes']);
+    // The reason the test used to fail on Linux: no release for that platform, so the plan has no folder.
+    const linux = await run(['install', '--model', 'final', '--home', folderA], {}, { platform: 'linux', arch: 'x64' });
+    expect(linux.code).toBe(EXIT.OK);
+    expect(linux.out).toContain('not supported here');
+    expect(linux.out).not.toContain('ot-beat-home-a');
+    const refused = await run(['install', '--model', 'final', '--yes'], {}, { platform: 'win32', arch: 'x64' });
     expect(refused.code).not.toBe(EXIT.OK);
     expect((refused.json?.error as Json).code).toBe('NO_HOME');
   });
@@ -230,6 +243,51 @@ describe('timing-plan on the command line', () => {
     '0',
     ...more,
   ];
+
+  it('takes the grid and notes paths from --paths-file, and refuses a path given in both places', async () => {
+    const f = files(song());
+    const pathsFile = path.join(tempDir(), 'beat-paths.json');
+    // One file can serve every command: the keys of the other commands are left alone.
+    fs.writeFileSync(pathsFile, JSON.stringify({ grid: f.grid, notes: f.notesFile, vocal: 'v.wav', input: 'i.wav' }));
+    const viaFile = await run(['timing-plan', '--paths-file', pathsFile, '--grid-offset-sec', '0']);
+    expect(viaFile.code).toBe(EXIT.OK);
+    expect(viaFile.json).toEqual((await run(args(f))).json);
+    // The grid from the command line and the notes from the file is fine too.
+    fs.writeFileSync(pathsFile, JSON.stringify({ notes: f.notesFile }));
+    const mixed = await run(['timing-plan', '--grid', f.grid, '--paths-file', pathsFile, '--grid-offset-sec', '0']);
+    expect(mixed.code).toBe(EXIT.OK);
+
+    const twice = await run([...args(f), '--paths-file', pathsFile]);
+    expect(twice.code).toBe(EXIT.USAGE);
+    expect(twice.err).toContain('given twice');
+    // Still needs both paths from somewhere.
+    const missing = await run(['timing-plan', '--paths-file', pathsFile, '--grid-offset-sec', '0']);
+    expect(missing.code).toBe(EXIT.USAGE);
+    expect(missing.err).toContain('--grid');
+  });
+
+  it('refuses a paths file that is unreadable, not an object, has an unknown key or a value that is not a string', async () => {
+    const f = files(song());
+    const dir = tempDir();
+    const write = (value: unknown) => {
+      const file = path.join(dir, `p-${String(Math.random()).slice(2)}.json`);
+      fs.writeFileSync(file, typeof value === 'string' ? value : JSON.stringify(value));
+      return file;
+    };
+    const cases: [string, string][] = [
+      [path.join(dir, 'missing.json'), 'cannot read --paths-file'],
+      [write('{not json'), 'cannot read --paths-file'],
+      [write(['a']), 'must hold a JSON object'],
+      [write({ grid: f.grid, notes: f.notesFile, notez: 'x' }), 'which no command takes'],
+      [write({ grid: 5, notes: f.notesFile }), 'must be a non-empty string'],
+      [write({ grid: '', notes: f.notesFile }), 'must be a non-empty string'],
+    ];
+    for (const [file, message] of cases) {
+      const result = await run(['timing-plan', '--paths-file', file, '--grid-offset-sec', '0']);
+      expect(result.code, message).toBe(EXIT.USAGE);
+      expect(result.err, message).toContain(message);
+    }
+  });
 
   it('reads the file written by opentune_get_notes as it is', async () => {
     const result = await run(args(files(song())));
@@ -369,7 +427,7 @@ describe('SKILL.md', () => {
   });
 
   it('checks the alignment with align and asks only when it is not confident', () => {
-    expect(text).toContain('beat-grid.mjs" align --vocal');
+    expect(text).toContain('beat-grid.mjs" align --paths-file');
     expect(text).toContain('confident: true');
     expect(text).toMatch(/confident: false/);
     expect(text).toContain('gridOffsetSec');
@@ -403,6 +461,49 @@ describe('SKILL.md', () => {
     expect(before).toMatch(/installed: true/);
     expect(before).toMatch(/Skip the rest of this section/);
     expect(before).toMatch(/do not run `install`/);
+  });
+
+  it('never puts a path that a tool returned inside a shell command', () => {
+    // sourcePath (OpenTune) and output.path (opentune_get_notes) are data: in a double-quoted command, $(...),
+    // backticks and $VAR in them would run or expand, so they go to the script in a --paths-file.
+    for (const command of commandLines()) {
+      const argv = argvOf(command);
+      const name = argv[0] ?? '';
+      expect(command, command).not.toMatch(/sourcePath|output\.path/);
+      // No double-quoted placeholder either: whatever fills it would be filled into a shell string.
+      expect(command, command).not.toMatch(/"<[^">]*>"/);
+      if (name === 'align') {
+        expect(argv, command).toContain('--paths-file');
+        expect(argv, command).not.toContain('--vocal');
+        expect(argv, command).not.toContain('--backing');
+      }
+      if (name === 'analyze') {
+        expect(argv, command).toContain('--paths-file');
+        expect(
+          argv.slice(1).filter((token) => !token.startsWith('--') && /\.wav$/i.test(token)),
+          command,
+        ).toEqual([]);
+      }
+      if (name === 'timing-plan') {
+        expect(argv, command).toContain('--paths-file');
+        expect(argv, command).not.toContain('--notes');
+      }
+    }
+    // The rule is stated once, with the reason and the way out for a path the user typed.
+    expect(text).toMatch(/Keep paths out of the command line/);
+    expect(text).toMatch(/file-writing tool/);
+    expect(text).toMatch(/in single quotes/);
+  });
+
+  it('gives the grid offset of step 2 as a placeholder, and says not to guess it', () => {
+    const plan = commandLines().find((command) => argvOf(command)[0] === 'timing-plan') ?? '';
+    const argv = argvOf(plan);
+    expect(argv[argv.indexOf('--grid-offset-sec') + 1]).toBe('<gridOffsetSec>');
+    expect(text).toContain('never guess it');
+  });
+
+  it('says to undo from the newest step when there are many', () => {
+    expect(text).toMatch(/undo from the\s+newest one/);
   });
 
   it('stops for an unpublished release only when nothing is installed', () => {
@@ -559,5 +660,86 @@ describe('an analyzer that is already installed', () => {
     // A missing data folder keeps the note too: there is no installation to use.
     const nowhere = await onWindows(['status']);
     expect((nowhere.json?.notes as string[]).join(' ')).toContain('not published yet');
+  });
+});
+
+describe('paths from --paths-file are used as they are', () => {
+  // File names with the characters a shell would run or expand. The files exist; the script has to open
+  // exactly these names, which it does only when no shell and no expansion is involved.
+  const HOSTILE = ['vocal $(echo hi) `id` ${HOME}.wav', 'backing $(echo hi) `id` ${HOME}.wav'] as const;
+
+  function hostileFiles(delay: number) {
+    const dir = tempDir();
+    const times = irregularHits(36);
+    const vocal = path.join(dir, HOSTILE[0]);
+    const backing = path.join(dir, HOSTILE[1]);
+    fs.writeFileSync(vocal, wavFile([vocalTrack(times, delay, 8000, 24)], { rate: 8000, bits: 16 }));
+    fs.writeFileSync(backing, wavFile([backingTrack(times, 8000, 24)], { rate: 8000, bits: 16 }));
+    const pathsFile = path.join(dir, 'beat-paths.json');
+    return { dir, vocal, backing, pathsFile };
+  }
+
+  it('align finds the offset of files whose names hold $(...), backticks and ${VAR}', async () => {
+    const f = hostileFiles(0.37);
+    fs.writeFileSync(f.pathsFile, JSON.stringify({ vocal: f.vocal, backing: f.backing }));
+    const result = await run(['align', '--paths-file', f.pathsFile]);
+    expect(result.code).toBe(EXIT.OK);
+    expect(Math.abs(Number(result.json?.lagSec) - 0.37)).toBeLessThanOrEqual(0.015);
+    // The same names on the command line are read the same way (no shell is involved in a test); the point of
+    // the file is the real shell of the skill, which the text rules in SKILL.md keep away from them.
+    const direct = await run(['align', '--vocal', f.vocal, '--backing', f.backing]);
+    expect(direct.json?.lagSec).toBe(result.json?.lagSec);
+    // A path in both places is refused, and so is a file without the second path.
+    expect((await run(['align', '--vocal', f.vocal, '--paths-file', f.pathsFile])).err).toContain('given twice');
+    fs.writeFileSync(f.pathsFile, JSON.stringify({ vocal: f.vocal }));
+    const half = await run(['align', '--paths-file', f.pathsFile]);
+    expect(half.code).toBe(EXIT.USAGE);
+    expect(half.err).toContain('align needs --backing');
+  });
+
+  it('analyze gives the analyzer exactly the path of the file, with no positional path', async () => {
+    const f = hostileFiles(0);
+    const manifest = (beatGridModule as unknown as { loadManifest: () => Json }).loadManifest();
+    const home = tempDir();
+    const installDir = path.join(home, 'bin', `opentune-beats-${String(manifest.version)}-win-x64`);
+    fs.mkdirSync(path.join(installDir, 'models'), { recursive: true });
+    fs.writeFileSync(path.join(installDir, 'opentune-beats.exe'), 'program');
+    fs.writeFileSync(f.pathsFile, JSON.stringify({ input: f.vocal }));
+
+    const calls: string[][] = [];
+    const analyze = (argv: string[]) =>
+      main(argv, {
+        env: {},
+        platform: 'win32',
+        arch: 'x64',
+        out: () => undefined,
+        err: () => undefined,
+        run: (_executable: string, args: string[]) => {
+          calls.push(args);
+          return { status: 0, stdout: '{}', stderr: '', error: null };
+        },
+      });
+    await analyze(['analyze', '--paths-file', f.pathsFile, '--model', 'final', '--home', home]);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.[0]).toBe('analyze');
+    expect(calls[0]?.[1]).toBe(path.resolve(f.vocal));
+
+    // The file has to name the input; a path on the command line as well is refused (parse error, nothing run).
+    fs.writeFileSync(f.pathsFile, JSON.stringify({ vocal: f.vocal }));
+    const noInput = await analyze(['analyze', '--paths-file', f.pathsFile, '--home', home]);
+    expect(noInput).toBe(EXIT.USAGE);
+    const both = await analyze(['analyze', f.vocal, '--paths-file', f.pathsFile, '--home', home]);
+    expect(both).toBe(EXIT.USAGE);
+    expect(calls).toHaveLength(1);
+  });
+
+  it('accepts --paths-file on analyze, align and timing-plan, and keeps one positional path otherwise', () => {
+    expect(parseArgs(['analyze', '--paths-file', 'p.json']).options).toEqual({ 'paths-file': 'p.json' });
+    expect(parseArgs(['align', '--paths-file', 'p.json']).options).toEqual({ 'paths-file': 'p.json' });
+    expect(parseArgs(['timing-plan', '--paths-file', 'p.json']).options).toEqual({ 'paths-file': 'p.json' });
+    expect(() => parseArgs(['analyze', 'a.wav', '--paths-file', 'p.json'])).toThrow(/exactly one WAV path/);
+    expect(() => parseArgs(['analyze'])).toThrow(/exactly one WAV path/);
+    expect(() => parseArgs(['status', '--paths-file', 'p.json'])).toThrow(/unknown option --paths-file/);
+    expect(() => parseArgs(['install', '--paths-file', 'p.json'])).toThrow(/unknown option --paths-file/);
   });
 });
