@@ -68,7 +68,9 @@ export interface ExeCleanupStats {
   verified: number;
   /** Ended by force; whether the instance cleans up after itself was not verified. */
   forced: number;
-  /** Had already ended by itself before the vector was over. */
+  /** Ended by itself as a vector that ends the instance (endsSession) asked, and cleaned up: discovery file removed. */
+  endedAsAsked: number;
+  /** Had already ended by itself before the vector was over, where the vector did not ask for that. */
   exitedEarly: number;
   /** Exited after a normal stop request but left its discovery file behind. */
   leftDiscoveryFile: number;
@@ -370,6 +372,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
   const stats: ExeCleanupStats = {
     verified: 0,
     forced: 0,
+    endedAsAsked: 0,
     exitedEarly: 0,
     leftDiscoveryFile: 0,
     notEnded: 0,
@@ -470,6 +473,8 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       let instancePid: number | undefined = undefined;
       let owned: Owned | undefined;
       let unconfirmed: string | undefined;
+      /** Whether the vector asked the instance to end by itself (expectEnded was called). */
+      let endAsked = false;
       /** The snapshot of the settings files of the data folder, taken before the start. */
       let settings: SettingsGuard | undefined;
 
@@ -682,6 +687,35 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
         async prepareRunnerValues() {
           runnerValues = await withRpc((rpc) => readRunnerValues(rpc, String(discovery.instanceId)));
         },
+        // The instance quits by itself (a vector with endsSession): its exit, when the target started the
+        // process; the removal of its discovery file. Never ends the instance (close() does that, if it is
+        // still there).
+        async expectEnded(waitMs) {
+          endAsked = true;
+          const found: string[] = [];
+          const notChecked: string[] = [];
+          const waitUntil = Date.now() + waitMs;
+          const remaining = () => Math.max(0, waitUntil - Date.now());
+          if (instancePid === child.pid) {
+            if (await within(exitEvent, remaining())) {
+              const status = exitState();
+              if (status?.code !== 0)
+                found.push(`the process exited by itself with ${exitText()}, expected exit code 0`);
+            } else {
+              found.push(`the process did not exit within ${String(waitMs)} ms after the instance was to end`);
+            }
+          } else {
+            // A launcher started the instance: the process is not the one this target started, so only that it
+            // is gone can be seen, not how it exited.
+            if (!(await gone(instancePid, remaining()))) {
+              found.push(`the process did not exit within ${String(waitMs)} ms after the instance was to end`);
+            }
+            notChecked.push('the exit status of the instance (started by a launcher, not by this target)');
+          }
+          if (existsSync(discoveryFile)) found.push('the instance left its discovery file behind');
+          if (found.length === 0) stats.endedAsAsked++;
+          return { problems: found.map(redacted), notChecked };
+        },
         // Never throws: the runner's result for the vector must survive. What goes wrong here is
         // left for takeProblems(), which makes the vector FAIL.
         async close() {
@@ -699,8 +733,11 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
               // Ended by force: the clean-up on exit was not verified.
               stats.forced++;
             } else if (ending.how === 'exited') {
-              stats.exitedEarly++;
-              found.push(`the instance ended by itself before the vector was over (${ending.detail})`);
+              // A vector that asked for the end has had its checks in expectEnded; it is no early end.
+              if (!endAsked) {
+                stats.exitedEarly++;
+                found.push(`the instance ended by itself before the vector was over (${ending.detail})`);
+              }
             } else {
               stats.notEnded++;
               found.push(ending.detail);

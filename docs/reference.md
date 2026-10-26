@@ -2,7 +2,7 @@
 
 # Tool reference
 
-OpenTune MCP Server (by Synchain) offers 27 tools. Every tool returns its result both as
+OpenTune MCP Server (by Synchain) offers 28 tools. Every tool returns its result both as
 `structuredContent` and as the same JSON in a text block. Errors have the shape
 `{kind, reason, detail, retryable, executed, nextStep, url}`; see [TROUBLESHOOTING.md](TROUBLESHOOTING.md).
 
@@ -100,6 +100,19 @@ OTCP capabilities: `session.v1`. OTCP methods: `session.hello`, `session.info`.
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
 | `allow_second_instance` | boolean | no | Start OpenTune even though an instance with the control API runs, or even though this server cannot list the running processes to rule out an OpenTune without the control API. Only when the user explicitly asked for a second instance, or confirmed that no OpenTune runs. Default false: start nothing then. |
+
+### `opentune_quit`
+
+**Quit OpenTune**: changes state, destructive, idempotent, closed world.
+
+OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES, so save first with opentune_save_project, or pass discard_unsaved: true only when the user explicitly agreed to lose the changes (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune again with opentune_launch.
+
+OTCP capabilities: `app.quit`. OTCP methods: `app.quit`.
+
+| Parameter | Type | Required | Description |
+| --- | --- | --- | --- |
+| `discard_unsaved` | boolean | no | true only when the user explicitly agreed to lose the unsaved changes. Default false. |
+| `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
 
 ### `opentune_set_clip`
 

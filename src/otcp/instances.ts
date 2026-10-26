@@ -133,6 +133,19 @@ export class Instances {
     }
   }
 
+  /** Closes and drops the cached session of one instance, for an instance that was told to quit. */
+  forget(instanceId: string): void {
+    const session = this.#sessions.get(instanceId);
+    if (session === undefined) return;
+    this.#sessions.delete(instanceId);
+    void session.then(
+      (s) => {
+        s.close();
+      },
+      () => undefined,
+    );
+  }
+
   close(): void {
     for (const session of this.#sessions.values())
       void session.then(

@@ -1,0 +1,19 @@
+{
+  "description": "A job has not finished: nothing is closed.",
+  "tool": "opentune_quit",
+  "input": {},
+  "result": {
+    "error": {
+      "kind": "BUSY",
+      "reason": "job_in_progress",
+      "detail": "a job has not finished, and quitting would end it",
+      "retryable": true,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "message": "A job in OpenTune has not finished (for example a settings change or a time-grid job), and quitting would end it. Wait a few seconds and call again; if it does not clear, ask the user to look at the OpenTune window."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-busy"
+    }
+  }
+}

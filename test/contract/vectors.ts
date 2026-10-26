@@ -25,6 +25,8 @@ export interface Vector {
   readonly paramsValid?: boolean;
   readonly response?: unknown;
   readonly connectionAfter?: 'open' | 'closed';
+  /** The last step makes the instance quit by itself (vectors/README.md, "Vectors that end the instance"). */
+  readonly endsSession?: boolean;
   readonly steps?: readonly Step[];
 }
 
