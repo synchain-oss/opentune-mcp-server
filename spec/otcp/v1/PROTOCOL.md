@@ -1,6 +1,6 @@
 # OpenTune Control Protocol (OTCP), version 1
 
-Status: `1.0.0-rc.6`, draft. This release candidate defines the transport, the session, discovery, the result-clarity conventions and every method of version 1, in layers L2 to L6 and L8 (section 22).
+Status: `1.0.0-rc.7`, draft. This release candidate defines the transport, the session, discovery, the result-clarity conventions and every method of version 1, in layers L2 to L6 and L8 (section 22).
 
 OTCP is a local control interface built into OpenTune Standalone. A client on the same computer, for example an MCP server, uses it to perform operations that a person can perform in the OpenTune window and to receive clear, structured results. OTCP is JSON-RPC 2.0 over TCP on the loopback address, one JSON message per line.
 
@@ -284,7 +284,7 @@ If an option value is invalid, the discovery directory fails its checks, the lis
 
 4. Each entry has `code`, `since` and `description`; registries are append-only within a major version (section 2.2). Every code a server sends MUST be registered for the protocol version of the session.
 5. Clients MUST accept codes they do not know (section 2.3).
-6. The capability report says which methods the instance implements; this rule says that some of those methods also need the editor window at run time. Some methods act through the OpenTune editor window, which OpenTune Standalone creates when it starts: the methods of `ui.bridge` (`ui.getState`, `ui.dismiss`, `ui.setSelection`), `track.add`, `track.duplicate`, `track.delete`, `project.save`, `project.saveAs`, `project.open` and `audio.set`. An instance reports their capabilities whether or not an editor exists. While no editor exists, for example in a window-less run of a test build, such a method fails with `UNSUPPORTED(no_editor_window)`, `executed` false, and changes nothing; where this check comes among the method's own checks is not part of the contract. The other methods work without an editor, among them `track.set`, the transport methods and `project.clearRecent`; values that only the editor holds are null in their results, with the reason `no_editor` (section 16), as `ui` of the write envelope is (section 14.6).
+6. The capability report says which methods the instance implements; this rule says that some of those methods also need the editor window at run time. Some methods act through the OpenTune editor window, which OpenTune Standalone creates when it starts: the methods of `ui.bridge` (`ui.getState`, `ui.dismiss`, `ui.setSelection`), `ui.setWorkspace`, `track.add`, `track.duplicate`, `track.delete`, `project.save`, `project.saveAs`, `project.open` and `audio.set`. An instance reports their capabilities whether or not an editor exists. While no editor exists, for example in a window-less run of a test build, such a method fails with `UNSUPPORTED(no_editor_window)`, `executed` false, and changes nothing; where this check comes among the method's own checks is not part of the contract. The other methods work without an editor, among them `track.set`, the transport methods and `project.clearRecent`; values that only the editor holds are null in their results, with the reason `no_editor` (section 16), as `ui` of the write envelope is (section 14.6).
 
 ## 8. Clocks and units
 
@@ -541,8 +541,8 @@ Exactly one of these holds for every write result; `common.schema.json#/$defs/wr
 
 Each entry is `{entity, ref, label, fields}`:
 
-- `entity` names the kind of entity: `note`, `placement`, `track`, `timeHandle`, `key`, `pitchShift`, `content`, `preference`, `tempo`, `transport`, `project`, `dialog`, `selection`, `audioDevice` (more MAY be added).
-- `ref` identifies it with handles (`common.schema.json#/$defs/entityRef`). An entity of which the instance has exactly one (`transport`, `tempo`, `project`, `selection`, `audioDevice`) is referenced as `{singleton: <entity>}`, for example `{"singleton": "tempo"}`.
+- `entity` names the kind of entity: `note`, `placement`, `track`, `timeHandle`, `key`, `pitchShift`, `content`, `preference`, `tempo`, `transport`, `project`, `dialog`, `selection`, `audioDevice`, `ui` (more MAY be added).
+- `ref` identifies it with handles (`common.schema.json#/$defs/entityRef`). An entity of which the instance has exactly one (`transport`, `tempo`, `project`, `selection`, `audioDevice`) is referenced as `{singleton: <entity>}`, for example `{"singleton": "tempo"}`. The entity `ui` is the one exception: it stands for state of the OpenTune window, and `ref` names the member group that changed, `{"singleton": "workspace"}` for the workspace the window shows (`ui.setWorkspace`).
 - `label` is a short display label generated from positions and values, or null. It never contains names taken from files or projects (section 20).
 - `fields` maps each changed member name to `{before, after, unit}`, where `unit` is the member's unit suffix in lower case (`sec`, `frame`, `midi`, `hz`, `cents`, `semitones`, `db`, `linear`, `ms`, `bytes`), `bpm` for tempo, or null for members without a unit (section 8.2).
 
@@ -591,12 +591,14 @@ The world revision vector consists of the components below. The server captures 
 | `referenceAnalysisQueued` | Reference alignment analysis was queued.                                                                |
 | `reRenderQueued`          | Rendering of one or more contents was queued.                                                           |
 | `uiScaleChanged`          | The scale shown in the transport bar changed.                                                           |
-| `workspaceSwitched`       | The window switched between the arrangement and the piano roll.                                         |
+| `workspaceSwitched`       | The window switched between the arrangement and the piano roll (`ui.setSelection`, `ui.setWorkspace`).  |
 | `tracksRevealed`          | Hidden tracks became visible.                                                                           |
 | `dialogClosed`            | A dialog was closed.                                                                                    |
 | `dialogCommitted`         | Closing a dialog committed its value.                                                                   |
 
 The members of each side-effect object besides `revert` are defined with the methods that produce it.
+
+The workspace the window shows changes in two ways. `ui.setSelection` with `openEditor` true opens a clip in the piano roll. `ui.setWorkspace` does what the two view buttons of the transport bar do: it switches to `arrangement` or to `pianoRoll`, so closing the piano roll is switching to `arrangement`. Both report the switch as `sideEffects.workspaceSwitched {from, to, revert: null}`; `ui.setWorkspace` also lists it in `changes` (entity `ui`, `ref` `{"singleton": "workspace"}`, member `workspace`), and its revert recipe switches back. The workspace is view state (section 15.2 rule 6): switching it never changes a content, a key, a note or a clip, never generates or queues anything and does not mark the project as changed, so `revisionDiff` is empty and `dirty` stays as it was. With no clip selected, the piano roll shows no clip, as in the window, and that is not an error.
 
 ### 14.7 Method-specific members
 
@@ -830,17 +832,19 @@ The scheme changes what some operations do. The protocol never hides these diffe
 
 ## 22. Layers and method index
 
-| Layer | Content                                                               | Capabilities                                                               |
-| ----- | --------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| L2    | Reads: session, project, contents, transport, preferences, log        | `session.v1`, `read.v1`                                                    |
-| L3    | Jobs, import, export, UI state and dialogs                            | `jobs.v1`, `import.v1`, `export.v1`, `ui.bridge`                           |
-| L4    | Key, AUTO, note edits, pitch shift, undo and redo                     | `edit.v1`, `history.v1`                                                    |
-| L5    | Timing: section shifts and time-grid handles                          | `timing.v1`                                                                |
-| L6    | Arrangement, tracks, transport control, selection, reference analysis | `transport.v1`, `arrangement.v1`, `tracks.v1`, `ui.bridge`, `reference.v1` |
-| L7    | Drawing-style note, curve, EQ and envelope edits                      | not defined in this version                                                |
-| L8    | Project save and open, preference changes, audio device               | `project.io`, `prefs.write`, `audio.device`                                |
+| Layer | Content                                                                          | Capabilities                                                                               |
+| ----- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| L2    | Reads: session, project, contents, transport, preferences, log                   | `session.v1`, `read.v1`                                                                    |
+| L3    | Jobs, import, export, UI state and dialogs                                       | `jobs.v1`, `import.v1`, `export.v1`, `ui.bridge`                                           |
+| L4    | Key, AUTO, note edits, pitch shift, undo and redo                                | `edit.v1`, `history.v1`                                                                    |
+| L5    | Timing: section shifts and time-grid handles                                     | `timing.v1`                                                                                |
+| L6    | Arrangement, tracks, transport control, selection, workspace, reference analysis | `transport.v1`, `arrangement.v1`, `tracks.v1`, `ui.bridge`, `ui.workspace`, `reference.v1` |
+| L7    | Drawing-style note, curve, EQ and envelope edits                                 | not defined in this version                                                                |
+| L8    | Project save and open, preference changes, audio device                          | `project.io`, `prefs.write`, `audio.device`                                                |
 
 `ui.onboardingClose` is an additional capability of `ui.dismiss`: without it, `ui.dismiss` can prevent the first-run overlay but not close one that is already showing.
+
+`ui.workspace` is the capability of `ui.setWorkspace` alone. An instance that does not report it can open the piano roll (`ui.setSelection` with `openEditor`) but has no request that switches back to the arrangement view; the end user does that with the view buttons of the transport bar.
 
 Every method of version 1 (also in `methods/index.json`). Write: `yes` changes state, `conditional` changes state only for some params or as a reported side effect, `no` never does. Schema: `defined` means `methods/<method>.schema.json` is normative; `pending` means the schema is added before the `1.0.0-rc.1` tag; `planned` means it is added in a later `1.0.0` release candidate. Until its schema is defined, a method has no normative shape: an implementation MAY provide it provisionally, following this document, for development against a release candidate, and MUST change it to match the schema once the schema is defined. Since `1.0.0-rc.2` every method in this table has a defined schema.
 
@@ -881,6 +885,7 @@ Every method of version 1 (also in `methods/index.json`). Write: `yes` changes s
 | `track.duplicate`          | L6    | `tracks.v1`      | yes         | 1.0   | defined | Duplicate a track.                                                                         |
 | `track.delete`             | L6    | `tracks.v1`      | yes         | 1.0   | defined | Delete a track (irreversible).                                                             |
 | `ui.setSelection`          | L6    | `ui.bridge`      | conditional | 1.0   | defined | Select or open a clip, with predicted side effects.                                        |
+| `ui.setWorkspace`          | L6    | `ui.workspace`   | conditional | 1.0   | defined | Switch the window between the arrangement view and the piano roll.                         |
 | `content.analyzeReference` | L6    | `reference.v1`   | no          | 1.0   | defined | Reference alignment analysis as a job.                                                     |
 | `project.save`             | L8    | `project.io`     | yes         | 1.0   | defined | Save the project as a job.                                                                 |
 | `project.saveAs`           | L8    | `project.io`     | yes         | 1.0   | defined | Save under a new path; replacing another project needs confirmation.                       |

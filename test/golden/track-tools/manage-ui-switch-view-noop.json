@@ -1,0 +1,53 @@
+{
+  "description": "The window already shows the piano roll: nothing changes.",
+  "tool": "opentune_manage_ui",
+  "input": {
+    "op": "switch_view",
+    "view": "piano_roll"
+  },
+  "result": {
+    "summary": "opentune_manage_ui: the window already shows the piano roll; nothing was changed.",
+    "applied": true,
+    "noOp": true,
+    "dryRun": false,
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "no_op",
+      "revert": null
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "uiEffects": [],
+    "changeTable": {
+      "rows": [],
+      "omittedChangeCount": 0
+    },
+    "lines": []
+  }
+}

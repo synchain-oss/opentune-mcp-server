@@ -1,0 +1,132 @@
+{
+  "description": "The piano roll with no clip selected: only the view changes, and the roll is empty.",
+  "tool": "opentune_manage_ui",
+  "input": {
+    "op": "switch_view",
+    "view": "piano_roll"
+  },
+  "result": {
+    "summary": "opentune_manage_ui: switched the window from the arrangement view to the piano roll, which changes the view only: no clip, note or setting changed and the project is not marked as changed; switch back with switch_view arrangement. No clip is selected, so the piano roll is empty; select one with focus_clip.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "ui",
+        "ref": {
+          "singleton": "workspace"
+        },
+        "label": "Workspace",
+        "fields": {
+          "workspace": {
+            "before": "arrangement",
+            "after": "pianoRoll",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "not_persisted_state",
+      "revert": {
+        "method": "ui.setWorkspace",
+        "params": {
+          "workspace": "arrangement"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "workspaceSwitched": {
+        "from": "arrangement",
+        "to": "pianoRoll",
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "uiEffects": [
+      {
+        "surface": "main window",
+        "effect": "workspace switched",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "ui",
+          "label": "Workspace",
+          "ref": {
+            "singleton": "workspace"
+          },
+          "fields": [
+            {
+              "field": "workspace",
+              "before": "arrangement",
+              "after": "pianoRoll",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "workspaceSwitched",
+        "text": "The window switched between the arrangement and the piano roll.",
+        "details": {
+          "from": "arrangement",
+          "to": "pianoRoll",
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (the state is not kept in the project). Restore: call opentune_manage_ui with the arguments in restore, as they are.",
+        "revert": {
+          "method": "ui.setWorkspace",
+          "params": {
+            "workspace": "arrangement"
+          }
+        },
+        "restore": {
+          "tool": "opentune_manage_ui",
+          "arguments": {
+            "op": "switch_view",
+            "view": "arrangement"
+          }
+        }
+      }
+    ]
+  }
+}

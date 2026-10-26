@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: MIT
 
 // The UI bridge of the mock (capability ui.bridge): ui.getState, ui.dismiss and ui.setSelection
-// (spec/otcp/v1/PROTOCOL.md sections 13.2, 14.6, 15.4 rule 4 and 21 rule 3). The window state it
+// (spec/otcp/v1/PROTOCOL.md sections 13.2, 14.6, 15.4 rule 4 and 21 rule 3), and ui.setWorkspace
+// (capability ui.workspace, section 14.6). The window state it
 // reads and changes lives in the model: the dialogs, the first-run overlay, the selection, the
 // workspace and the scale shown in the transport bar.
 
@@ -340,6 +341,59 @@ const setSelection: Handler = (context) => {
   });
 };
 
+// ui.setWorkspace ------------------------------------------------------------------------------------
+
+/**
+ * Switches the window between the arrangement view and the piano roll, as the two view buttons of the
+ * transport bar do. The workspace is view state: no content, clip or track changes, nothing is generated and
+ * the project is not marked as changed. Switching to the piano roll shows the selected clip, or nothing when
+ * no clip is selected. The piano roll keeps the content it showed while the arrangement view is shown, as the
+ * editor does, so switching back to the arrangement does not forget it.
+ */
+const setWorkspace: Handler = (context) => {
+  const { world, params } = context;
+  checkBusy(context, false);
+  const target = params.workspace === 'pianoRoll' ? 'pianoRoll' : 'arrangement';
+  const from = world.workspace;
+  const dirtyBefore = world.project.dirty;
+  if (from === target) {
+    return envelope(world, {
+      applied: true,
+      noOp: true,
+      diff: EMPTY_DIFF,
+      contents: [],
+      undo: noOpUndo,
+      dirtyBefore,
+    });
+  }
+  world.workspace = target;
+  if (target === 'pianoRoll') {
+    const shown = world.selectedPlacementIds[0];
+    world.pianoRollContent = shown === undefined ? null : world.placement(shown).content;
+  }
+  return envelope(world, {
+    applied: true,
+    noOp: false,
+    changes: [
+      {
+        entity: 'ui',
+        ref: { singleton: 'workspace' },
+        label: 'Workspace',
+        fields: { workspace: { before: from, after: target, unit: null } },
+      },
+    ],
+    diff: EMPTY_DIFF,
+    contents: [],
+    undo: {
+      undoable: false,
+      reason: 'not_persisted_state',
+      revert: { method: 'ui.setWorkspace', params: { workspace: from } },
+    },
+    dirtyBefore,
+    sideEffects: { workspaceSwitched: { from, to: target, revert: null } },
+  });
+};
+
 /** The window state shared by the other modules: the dialogs a `given` opens. */
 export function openDialogs(world: World, dialogs: readonly Pick<DialogRec, 'kind' | 'trackId' | 'colour'>[]): void {
   world.dialogs = dialogs.map(({ kind, trackId, colour }) => ({ kind, trackId, colour }));
@@ -349,4 +403,5 @@ export const uiHandlers: Readonly<Record<string, Handler>> = {
   'ui.getState': getState,
   'ui.dismiss': dismiss,
   'ui.setSelection': setSelection,
+  'ui.setWorkspace': setWorkspace,
 };

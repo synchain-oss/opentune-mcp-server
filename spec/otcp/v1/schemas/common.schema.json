@@ -364,7 +364,7 @@
         "jobId": { "$ref": "#/$defs/jobId" },
         "path": { "type": "string", "minLength": 1 },
         "singleton": {
-          "description": "Names an entity of which the instance has exactly one: transport, tempo, project, selection or audioDevice (PROTOCOL.md section 14.3).",
+          "description": "Names an entity of which the instance has exactly one: transport, tempo, project, selection or audioDevice, or the workspace member group of the entity ui (PROTOCOL.md section 14.3).",
           "$ref": "#/$defs/camelName"
         }
       }
