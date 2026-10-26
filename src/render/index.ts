@@ -21,6 +21,7 @@ import {
   token,
   undoReasonText,
   workspaceRevertText,
+  workspaceSwitchBackText,
   type ReRenderState,
 } from './text.js';
 import { uiEffects, type UiEffect } from './ui-effects.js';
@@ -39,6 +40,11 @@ export interface RenderContext {
    * side effect reRenderQueued reads (ReRenderState). Absent: the generic words.
    */
   readonly reRender?: ReRenderState;
+  /**
+   * Whether the instance reports the capability ui.workspace, so that opentune_manage_ui can switch the window
+   * back (op switch_view). It decides how the way back of a switch of the view reads; absent means it cannot.
+   */
+  readonly canSwitchView?: boolean;
 }
 
 /** One line below the summary. Everything but `text` is data from OpenTune, as it came. */
@@ -63,7 +69,11 @@ export type Line =
       readonly text: string;
       /** The recipe exactly as OpenTune sent it, or null when no request can restore the state. */
       readonly revert: unknown;
-      /** The tool call that carries out the recipe, or null when no tool of this server performs it. */
+      /**
+       * The tool call that carries out the recipe, or null when no tool of this server performs it. For the way
+       * back of a switch of the view (side effect workspaceSwitched) there is no recipe from OpenTune: revert is
+       * null and restore is the switch_view call this server derives from the view the window showed before.
+       */
       readonly restore: RestoreCall | null;
     };
 
@@ -92,8 +102,29 @@ function revertLine(revert: unknown, text: (sentence: string) => string): Line {
   return { kind: 'revert', text: text(revertText(plan)), revert, restore: restoreCall(plan) };
 }
 
-function sideEffectLines(envelope: Json, reRender?: ReRenderState): Line[] {
+/**
+ * The way back for a switch of the view (sideEffects.workspaceSwitched, whose own revert OpenTune sends as null):
+ * the switch_view call of opentune_manage_ui when the instance can switch the view, else the user's own click.
+ * `revert` stays null, as OpenTune sent it; the restore call is this server's.
+ */
+function workspaceBackLine(from: unknown, canSwitchView: boolean): Line {
+  const view = from === 'arrangement' || from === 'pianoRoll' ? from : null;
+  const plan =
+    canSwitchView && view !== null ? revertPlan({ method: 'ui.setWorkspace', params: { workspace: view } }) : null;
+  const restore = plan === null ? null : restoreCall(plan);
+  return {
+    kind: 'revert',
+    text: restore === null ? workspaceRevertText(from) : workspaceSwitchBackText(from),
+    revert: null,
+    restore,
+  };
+}
+
+function sideEffectLines(envelope: Json, reRender?: ReRenderState, canSwitchView = false): Line[] {
   const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
+  // A switch of the view that has its own recipe (ui.setWorkspace, in undo.revert) is given the way back there.
+  const undo = isObject(envelope.undo) ? envelope.undo : {};
+  const switchRecipe = isObject(undo.revert) && undo.revert.method === 'ui.setWorkspace';
   return Object.entries(effects).flatMap(([name, details]) => {
     const known =
       name === 'reRenderQueued' && reRender !== undefined ? RE_RENDER_TEXT[reRender] : SIDE_EFFECT_TEXT[name];
@@ -104,11 +135,10 @@ function sideEffectLines(envelope: Json, reRender?: ReRenderState): Line[] {
       { kind: 'sideEffect', name, text: `${text[0]?.toUpperCase() ?? ''}${text.slice(1)}.`, details, revert },
     ];
     if (revert !== null) lines.push(revertLine(revert, (s) => `${s} (reverts side effect ${label ?? 'above'})`));
-    else if (name === 'workspaceSwitched') {
-      // The protocol gives no recipe for the switch, but the user can take it back: say how, so the agent does
-      // not leave the user in a view they did not ask for without a word.
-      const from = isObject(details) ? details.from : undefined;
-      lines.push({ kind: 'revert', text: workspaceRevertText(from), revert: null, restore: null });
+    else if (name === 'workspaceSwitched' && !switchRecipe && envelope.dryRun !== true) {
+      // The protocol gives no recipe for the switch, but it can be taken back: say how, so the agent does not
+      // leave the user in a view they did not ask for without a word. A prediction switched nothing.
+      lines.push(workspaceBackLine(isObject(details) ? details.from : undefined, canSwitchView));
     }
     return lines;
   });
@@ -141,7 +171,11 @@ export function renderWrite(envelope: Json, ctx: RenderContext): Rendering {
     summary: summarize(envelope, ctx.tool, ctx.reRender === undefined ? {} : { reRender: ctx.reRender }),
     uiEffects: uiEffects(envelope),
     changeTable: changeTable(envelope),
-    lines: [...warningLines(envelope), ...sideEffectLines(envelope, ctx.reRender), ...undoLines(envelope)],
+    lines: [
+      ...warningLines(envelope),
+      ...sideEffectLines(envelope, ctx.reRender, ctx.canSwitchView === true),
+      ...undoLines(envelope),
+    ],
   };
 }
 

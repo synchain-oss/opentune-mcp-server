@@ -50,6 +50,15 @@ const natural = (value: unknown): number | null =>
   typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : null;
 const count = (n: number, noun: string) => `${String(n)} ${noun}${n === 1 ? '' : 's'}`;
 
+/**
+ * The warning codes of a result, as the last sentence of a summary this file writes itself. The generic summary
+ * of a write result names them; the summaries that replace it must not drop them, whichever branch they take.
+ */
+function warningTail(envelope: Json): string {
+  const warnings = warningCodes(envelope);
+  return warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
+}
+
 /** Side effects whose words are written out in focusSummary; any other one is named by the fixed table. */
 const WORDED = new Set(['notesGenerated', 'referenceAnalysisQueued', 'uiScaleChanged', 'workspaceSwitched']);
 
@@ -89,8 +98,7 @@ export function focusSummary(envelope: Json, openEditor = false): string {
     }
   }
   const asked = switched !== null && openEditor;
-  const warnings = warningCodes(envelope);
-  const tail = warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
+  const tail = warningTail(envelope);
   const none = Object.keys(effects).length === 0;
   if (dry) {
     const selecting = asked ? `selecting the clip and switching the window ${route}` : 'selecting the clip';
@@ -142,7 +150,7 @@ function viewOnly(envelope: Json): boolean {
 export function switchSummary(envelope: Json, view: (typeof VIEWS)[number], fallback: string): string {
   const asked = WORKSPACE[view];
   if (envelope.noOp === true) {
-    return `${TOOL}: the window already shows ${WORKSPACE_WORDS[asked]}; nothing was changed.`;
+    return `${TOOL}: the window already shows ${WORKSPACE_WORDS[asked]}; nothing was changed.${warningTail(envelope)}`;
   }
   if (!viewOnly(envelope)) return fallback;
   const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
@@ -255,9 +263,13 @@ export async function manageUi(ctx: ToolContext, args: ManageUiArgs): Promise<Ou
       const run = await runWrites(session, TOOL, [call]);
       if ('stopped' in run) return args.op === 'dismiss_onboarding' ? onboardingUnsupported(run.stopped) : run.stopped;
       const [result] = run.results as readonly [WriteResult];
-      const rendered = writeBody(result.envelope, { tool: TOOL });
-      if (args.op === 'focus_clip')
+      // The instance that reports ui.workspace can switch the window back with switch_view; the revert line of a
+      // switch the call made says so, and says otherwise when the instance cannot.
+      const canSwitchView = session.hello.capabilities.includes('ui.workspace');
+      const rendered = writeBody(result.envelope, { tool: TOOL, canSwitchView });
+      if (args.op === 'focus_clip') {
         return { ok: true, body: { ...rendered, summary: focusSummary(result.envelope, args.open_editor === true) } };
+      }
       if (view !== undefined) {
         return { ok: true, body: { ...rendered, summary: switchSummary(result.envelope, view, rendered.summary) } };
       }

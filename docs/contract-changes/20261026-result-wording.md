@@ -9,7 +9,9 @@ notes" for a result that created 962, "no side effects beyond the selection" nex
 This change corrects the wording and the numbers, adds one result member (`baseline` of `opentune_analyze_pitch`) and
 shortens the `opentune_analyze_pitch` and `opentune_estimate_key` descriptions to make room for what they now say. The
 OTCP specification (`spec/otcp/v1/`) and the MCP instructions are not changed; the tool calls are the same as before.
-No tool, argument or error kind is added or removed.
+No tool, argument or error kind is added or removed. Items 3 and 9 were added after the op `switch_view` of
+`opentune_manage_ui` was merged into the main line: the way back of a window switch is now that op, and the no-op
+summary of the op keeps the warnings as the one of `focus_clip` does.
 
 ## Files
 
@@ -21,7 +23,8 @@ No tool, argument or error kind is added or removed.
 | `test/golden/edit-tools/*.json`                                                        | The same sentence (`autotune-*`, `edit-notes-*`, `redo-step`, `undo-step`, `set-clip-*`).                                                                                                    |
 | `test/golden/arrangement/edit-several-ops.json`                                        | The first sentence names the hidden tracks it showed.                                                                                                                                        |
 | `test/golden/track-tools/set-tracks-duplicate.json`, `set-tracks-reveal-and-solo.json` | The first sentence names the hidden track a copy showed and the colour it changed from and to.                                                                                               |
-| `test/golden/track-tools/manage-ui-focus.json`                                         | The window switch is named in the first sentence, and a revert line says there is no tool for the way back.                                                                                  |
+| `test/golden/track-tools/manage-ui-focus.json`                                         | The window switch is named in the first sentence, and a revert line gives the `switch_view` call as the way back.                                                                            |
+| `test/golden/track-tools/manage-ui-focus-without-workspace.json`                       | New: the same call on a build without `ui.workspace`; the revert line says that no tool switches back and that the user can click the view button.                                           |
 | `test/golden/track-tools/manage-ui-dismiss-commit.json`                                | The first sentence names the track colour the dialog committed.                                                                                                                              |
 | `test/golden/project-files/*.json`                                                     | New: the save results (`save-as-new-file`, `save-current-file`, `save-overwrite-other-file`) with the media-copy sentence and `mediaFolder`.                                                 |
 | `scripts/update-catalog.mjs`                                                           | Also runs the golden test of the save results.                                                                                                                                               |
@@ -67,10 +70,18 @@ selection" while `sideEffects.workspaceSwitched` was present, and gave no way ba
 
 **Fix.** "No side effects" is said only when `sideEffects` is empty. Every side effect is named; the window switch is
 named with its views ("switched the window from the arrangement view to the piano roll, as open_editor asked", or
-listed as unasked when `open_editor` was not set). A revert line says that no tool of this server switches the window
-back yet and that the user can click the view buttons in the transport bar.
+listed as unasked when `open_editor` was not set). The way back is a revert line next to the side effect: on an
+instance that reports `ui.workspace` it says to use the op `switch_view` of `opentune_manage_ui` and carries the call
+in `restore` (`{op: "switch_view", view: <the view the window showed>}`); `revert` stays `null`, as OpenTune sends no
+recipe for the side effect. On an instance without `ui.workspace` the line says that no tool of this server switches
+the window back and that the user can click the view buttons in the transport bar, and `restore` is `null`. A result
+of `switch_view` itself carries its own recipe in `undo.revert`, so it gets no second line, and a dry run, which
+switched nothing, gets none either. A view name that this server does not know is not repeated: the line says "another
+view" and falls back to the click.
 
-**Client impact.** Wording only. When a tool that switches the view exists, the revert line will carry its call.
+**Client impact.** Wording, plus one revert line whose `restore` is now set for a `focus_clip` that opened the editor
+on an instance with `ui.workspace`. Clients that read `restore` need no change. The `RenderContext` of the renderer
+has a new optional member `canSwitchView`; it is set by `opentune_manage_ui` from the capabilities of the instance.
 
 ## 4. Duplicating a track: what it showed and recoloured was left out
 
@@ -144,6 +155,18 @@ a result that changed nothing and a job that has only started get no sentence. A
 has it once, at the end.
 
 **Client impact.** Wording only: one sentence is added to the summary of the results that queue a render.
+
+## 9. A view switch that changed nothing dropped the warnings
+
+**Problem.** The summary of `opentune_manage_ui` `switch_view` for a window that already showed the view ("nothing was
+changed") ended there, while the same sentence for `focus_clip` ("the clip was already selected; nothing was changed")
+appended the warnings of the result. A warning on a no-op was lost from the summary.
+
+**Fix.** Both sentences get their warning tail from one function, `Warnings: A, B.`; there is no tail when the result
+has no warning. This follows the review of the change that added `switch_view`.
+
+**Client impact.** Wording only, and only for a no-op result that carries a warning (the mock and the real build send
+none today), so no golden file changes.
 
 ## Compatibility
 

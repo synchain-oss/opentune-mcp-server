@@ -30,7 +30,9 @@ versioned separately and has its own changelog.
   - The summary of a result whose lists OpenTune cut at 200 entries (AUTO over a long clip, a large edit of notes)
     gives the real totals ("created 962 notes") and says which lists are shorter than the result.
   - `opentune_manage_ui` with `focus_clip` and `open_editor` names the switch of the window and no longer claims
-    "no side effects"; a revert line says there is no tool yet to switch the window back.
+    "no side effects"; a revert line gives the `switch_view` call to switch the window back (on a build without
+    `ui.workspace`, it says to click the view button). The summary of `switch_view` for a window that already showed
+    the view keeps the warnings of the result, as the one of `focus_clip` does.
   - Duplicating a track, and any result that shows a hidden track, names the revealed track and the colour change in
     the first sentence.
   - A first save to a new file says that a new project file was written, not that nothing can be restored; every save

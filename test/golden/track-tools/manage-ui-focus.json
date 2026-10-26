@@ -230,9 +230,15 @@
       },
       {
         "kind": "revert",
-        "text": "No tool of this server can switch the window back to the arrangement view yet; the user can click the view buttons in the transport bar (reverts side effect workspaceSwitched).",
+        "text": "Switch the window back to the arrangement view with the op switch_view of opentune_manage_ui: call it with the arguments in restore, as they are (reverts side effect workspaceSwitched).",
         "revert": null,
-        "restore": null
+        "restore": {
+          "tool": "opentune_manage_ui",
+          "arguments": {
+            "op": "switch_view",
+            "view": "arrangement"
+          }
+        }
       },
       {
         "kind": "revert",

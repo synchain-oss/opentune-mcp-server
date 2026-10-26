@@ -310,6 +310,19 @@ async function scenarios(): Promise<Record<string, Scenario>> {
       'opentune_manage_ui',
       { op: 'switch_view', view: 'arrangement' },
     );
+    // The piano roll can still be opened, and the way back is the user's click on the view button.
+    const { ctx: opening, ids } = await world({
+      clips: [clip({ bind: 'a', trackId: 0 })],
+      dirty: false,
+      withoutCapabilities: ['ui.workspace'],
+    });
+    await run(
+      opening,
+      'manage-ui-focus-without-workspace',
+      'Opening the clip on a build without ui.workspace: the way back is the user clicking the view button.',
+      'opentune_manage_ui',
+      { op: 'focus_clip', clip: ids['a.placementId'] ?? '', open_editor: true },
+    );
   }
   return out;
 }

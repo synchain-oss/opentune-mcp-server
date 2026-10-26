@@ -97,12 +97,21 @@ export function viewName(value: unknown): string {
 }
 
 /**
- * The way back for a switch of the view (sideEffects.workspaceSwitched, whose own revert is null): no tool of
- * this server switches the window yet, so the user does it with the view buttons of the transport bar.
+ * The way back for a switch of the view (sideEffects.workspaceSwitched, whose own revert is null) on an instance
+ * that does not report ui.workspace: no tool can switch the window there, so the user does it with the view
+ * buttons of the transport bar.
  */
 export const workspaceRevertText = (from: unknown): string =>
   `No tool of this server can switch the window back to ${viewName(from)} yet; the user can click the view buttons in ` +
   'the transport bar (reverts side effect workspaceSwitched).';
+
+/**
+ * The way back for a switch of the view on an instance that reports ui.workspace: opentune_manage_ui, op
+ * switch_view, with the arguments of the restore member of the same line.
+ */
+export const workspaceSwitchBackText = (from: unknown): string =>
+  `Switch the window back to ${viewName(from)} with the op switch_view of opentune_manage_ui: call it with the ` +
+  'arguments in restore, as they are (reverts side effect workspaceSwitched).';
 
 /**
  * What a change of the vocoder weight says about rendering again. OpenTune renders every content again once the
