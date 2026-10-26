@@ -213,11 +213,13 @@ const TEMPO_TOLERANCE = 1e-9;
 
 /**
  * What the tempo field of the transport bar does when the window switches view (section 14.6): it shows the tempo
- * with one decimal, and each switch moves the keyboard focus out of it, which makes it write the value it shows back
- * to the project. So every switch, in either direction, rounds a tempo that has more than one decimal; null when it
- * has at most one. A tempo that differs from its rounded value by no more than floating-point noise (120.30000000000001
- * shows as 120.3) is not rounded: the field writes back what it shows, which is the same number. The result describes
- * the rounding; `apply` carries it out, which a dry run does not.
+ * with one decimal, and a switch moves the keyboard focus out of it when it holds the focus, which makes it write the
+ * value it shows back to the project. The mock's window always holds the focus in the field, as a window in the
+ * foreground that has just started does (the vector precondition `keyboardFocus` `tempoField`), so every switch, in
+ * either direction, rounds a tempo that has more than one decimal; null when it has at most one. A tempo that
+ * differs from its rounded value by no more than floating-point noise (120.30000000000001 shows as 120.3) is not
+ * rounded: the field writes back what it shows, which is the same number. The result describes the rounding;
+ * `apply` carries it out, which a dry run does not.
  */
 function tempoRounding({ world, hasCapability }: MethodContext) {
   const from = world.transport.bpm;
@@ -372,12 +374,12 @@ const setSelection: Handler = (context) => {
 /**
  * Switches the window between the arrangement view and the piano roll, as the two view buttons of the
  * transport bar do. The workspace is view state: no content, clip or track changes and nothing is generated.
- * The one thing a switch does besides is the rounding of the tempo: each switch takes the keyboard focus out
- * of the tempo field, which rounds a tempo with more than one decimal and marks the project as changed
- * (tempoRounding). Without that rounding the project is not marked as changed. Switching to the piano roll shows
- * the clip that is selected at that moment, or nothing (`pianoRollContent` null) when no clip is selected, even
- * if the piano roll showed another clip before. Switching to the arrangement view leaves `pianoRollContent` as it
- * is, as the editor keeps the content it showed.
+ * The one thing a switch does besides is the rounding of the tempo: a switch takes the keyboard focus, which the
+ * mock's window holds in the tempo field, out of it, which rounds a tempo with more than one decimal and marks the
+ * project as changed (tempoRounding). Without that rounding the project is not marked as changed. Switching to the
+ * piano roll shows the clip that is selected at that moment, or nothing (`pianoRollContent` null) when no clip is
+ * selected, even if the piano roll showed another clip before. Switching to the arrangement view leaves
+ * `pianoRollContent` as it is, as the editor keeps the content it showed.
  */
 const setWorkspace: Handler = (context) => {
   const { world, params } = context;

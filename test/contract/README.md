@@ -61,8 +61,11 @@ checks by reading it back; a state that does not read back as asked is skipped, 
 | `given.visibleTrackCount` | `track.add` up to the number (or all slots); tracks cannot be hidden, so a number below what is shown is skipped. |
 | `given.history` | Only undo entries made through the API (`pitchShift`, `clipMove`) on a clip of `clips`; entries made in the UI, redo entries and entries made possibly stale by a track deletion are skipped. |
 
-Everything else (`audio`, `dialogs`, `onboarding`, `editingScheme`, `preferences`, `jobs`,
-`withoutCapabilities`, `projectFile`, `clipOnEveryTrack`) is skipped with the reason.
+Everything else (`audio`, `dialogs`, `onboarding`, `keyboardFocus`, `editingScheme`, `preferences`, `jobs`,
+`withoutCapabilities`, `projectFile`, `clipOnEveryTrack`) is skipped with the reason. `keyboardFocus`
+`tempoField` is skipped because whether the window of a started OpenTune is in the foreground, and where its
+keyboard focus is, belong to the machine and the window system, which the runner does not control; the vector
+`ui/set-workspace-tempo-rounded` that has it runs against the mock and in the fork's headless runner.
 
 Afterwards the process is asked to stop normally and the discovery file is checked to be gone.
 Windows has no normal stop request to send, so there the target ends the process and records that

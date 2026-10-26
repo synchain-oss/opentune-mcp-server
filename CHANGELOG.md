@@ -154,7 +154,7 @@ versioned separately and has its own changelog.
   none is left as it is. Until now the specification, the tool results and the mock said that a switch never changes
   the project. The first sentence now says that OpenTune changed the tempo from 120.27 to 120.3, which nobody asked
   for, and a revert line gives the `opentune_transport` call that sets it back (without `transport.v1` it says that no request can). The
-  mock, a contract vector that every target runs, the rendering and tool golden files follow. The mock also loads the
+  mock, a contract vector, the rendering and tool golden files follow. The mock also loads the
   clip that an import with focus selects into the piano roll, as the window does.
 - Follow-up to the rounded tempo (contract change record `docs/contract-changes/20261026-tempo-rounded.md`, section
   "Follow-up"): the summary of `opentune_manage_ui` with `focus_clip` names the tempo whenever the result lists the
@@ -225,6 +225,15 @@ versioned separately and has its own changelog.
     mock leaves no unhandled rejection.
   - The mock: `content.shiftTiming` takes the range as closed, so a handle exactly on the end moves as well as one
     exactly on the start, as the real OpenTune does. The mock used to leave out a handle on the end.
+- The rounding of the tempo at a switch of the view needs the keyboard focus in the tempo field (OTCP specification
+  `1.0.0-rc.7`, contract change record `docs/contract-changes/20261026-tempo-focus.md`). The text and the contract
+  vector said that every switch rounds a tempo with two decimals. A started OpenTune whose window is in the background
+  does not hold the focus in the field, so a switch there leaves the tempo as it is, and the vector failed on such a
+  run. The specification now says that the rounding happens only while the field holds the focus, as in a window in the
+  foreground that has just started, and that the result reports it only when it happened. The vector
+  `ui/set-workspace-tempo-rounded` states that as its precondition `keyboardFocus` `tempoField`, which a runner that
+  cannot establish it skips with the reason; the exe runner of this repository skips it that way. Tool results are
+  unchanged: they already report the rounding only when the instance sends it.
 
 ## [0.2.0] - 2026-10-26
 
