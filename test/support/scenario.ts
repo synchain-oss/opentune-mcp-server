@@ -159,6 +159,9 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   await run('opentune_manage_ui', { op: 'focus_clip', clip: f.placement, dry_run: true });
   await run('opentune_manage_ui', { op: 'focus_clip', clip: f.placement, open_editor: true });
   await run('opentune_manage_ui', { op: 'focus_clip' }, 'error');
+  // The piano roll is open now: close it, then ask for a view that does not exist.
+  await run('opentune_manage_ui', { op: 'switch_view', view: 'arrangement' });
+  await run('opentune_manage_ui', { op: 'switch_view', view: 'sideways' }, 'error');
   await run('opentune_manage_ui', { op: 'dismiss_dialogs' });
   await run('opentune_manage_ui', { op: 'dismiss_onboarding' });
   // Last: opening a project replaces the clips whose ids the steps above used.
