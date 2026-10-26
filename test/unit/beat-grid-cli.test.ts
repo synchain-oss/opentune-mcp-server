@@ -3,8 +3,8 @@
 
 // The command line of the beat-grid skill: per-command help, the data folder (--home before the
 // environment), the merge options and --summary of the timing plan, the notes file written by
-// opentune_get_notes, and SKILL.md itself (every command it shows carries --home and parses, no
-// allowed-tools, the thresholds it names are the ones the script uses). All data is synthetic.
+// opentune_get_notes, and SKILL.md itself (every command it shows carries --home and parses, the
+// thresholds it names are the ones the script uses). All data is synthetic.
 
 import fs from 'node:fs';
 import os from 'node:os';
@@ -350,7 +350,6 @@ describe('timing-plan on the command line', () => {
 describe('SKILL.md', () => {
   const skillFile = path.join(REPO, 'plugins', 'opentune', 'skills', 'beat-grid', 'SKILL.md');
   const text = fs.readFileSync(skillFile, 'utf8').replace(/\r\n/g, '\n');
-  const frontmatter = /^---\n([\s\S]*?)\n---\n/.exec(text)?.[1] ?? '';
   const HOME = '--home "${CLAUDE_PLUGIN_DATA}"';
 
   /** Each place where the script is called, up to the closing backtick or the end of the line. */
@@ -375,14 +374,8 @@ describe('SKILL.md', () => {
     return tokens;
   }
 
-  it('has no allowed-tools field, so the user is asked to approve the commands as usual', () => {
-    expect(frontmatter).not.toBe('');
-    expect(frontmatter).not.toMatch(/allowed-tools/i);
-    expect(text.slice(0, text.indexOf('\n---\n', 4))).not.toMatch(/allowed-tools/i);
-    // No other field that would approve a tool in advance either.
-    const keys = [...frontmatter.matchAll(/^([A-Za-z][\w-]*):/gm)].map((match) => match[1]);
-    expect(keys).toEqual(['name', 'description', 'license', 'compatibility', 'metadata']);
-  });
+  // That the skill declares no allowed-tools (so the user is asked to approve its commands as usual) is checked for
+  // every skill in skills.test.ts.
 
   it('gives --home on every command it shows', () => {
     const commands = commandLines();

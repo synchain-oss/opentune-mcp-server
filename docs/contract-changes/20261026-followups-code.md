@@ -136,6 +136,10 @@ range that ends on a handle.
 **Fix.** `start <= outputSec <= end`. A case puts a handle exactly on the end, one exactly on the start, and a range
 whose two ends are the same handle.
 
+The specification (`content.shiftTiming`, `1.0.0-rc.7`) says the same: the range is a closed interval. The record
+`20261026-shift-timing-closed-range.md` notes that the mock still selected the handles with a half-open range; that was
+true when it was written, and the mock is changed to the closed range here.
+
 **Client impact.** None: the mock is a test double; a client that only ran against the mock now sees what the real
 OpenTune does for a handle on the end.
 
