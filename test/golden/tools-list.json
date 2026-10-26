@@ -338,7 +338,7 @@
   {
     "name": "opentune_autotune_range",
     "title": "Auto-tune a range of an OpenTune clip",
-    "description": "OpenTune (audio vocal pitch editor): runs AUTO on a clip with an explicit mode. regenerate rebuilds notes in ranges from the sung pitch, snapped to scale; snapNotes moves existing note targets to scale; notesOnly replaces ALL notes, cannot be undone, needs replace_edited_notes true; reference aligns to the reference clip (needs reference.v1). Ranges: source-audio seconds, default whole clip, max 16, one undo step. Unset parameters use generator defaults, not window knobs. retune_speed 0..1: 0 keeps natural movement, 1 sounds mechanical.",
+    "description": "OpenTune (audio vocal pitch editor): runs AUTO on a clip with an explicit mode. regenerate rebuilds notes in ranges from the sung pitch, snapped to scale; snapNotes moves existing note targets to scale; notesOnly replaces ALL notes, cannot be undone, needs replace_edited_notes true. Ranges: source-audio seconds, default whole clip, max 16, one undo step. Unset parameters use generator defaults, not window knobs. retune_speed 0..1: 0 keeps natural movement, 1 sounds mechanical.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -359,8 +359,7 @@
           "enum": [
             "regenerate",
             "snapNotes",
-            "notesOnly",
-            "reference"
+            "notesOnly"
           ]
         },
         "ranges": {
@@ -1160,7 +1159,7 @@
   {
     "name": "opentune_analyze_pitch",
     "title": "Analyze OpenTune pitch",
-    "description": "OpenTune (audio vocal pitch editor): measures the pitch of a clip against its notes, in cents (positive = sharp). Plain fields are before the corrections (detected minus target); corrected* fields are after them (corrected minus target). Per note: median deviation, stability, onset, release; notes beyond threshold_cents (default 25) are flagged, before and after. Phrases split at silences over 0.4 s. detail summary (default): totals, worst notes, flagged note indexes (as in opentune_get_notes), clip_revision; phrases and notes are paged. from and to: seconds of the source audio. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): measures a clip's pitch against its notes, in cents (positive = sharp). Plain fields: detected minus target; corrected*: corrected minus target. Per note: median deviation, stability, onset, release; notes beyond threshold_cents (default 25) are flagged, before and after. Phrases split at silences over 0.4 s. detail summary (default): totals, worst notes, flagged note indexes (as in opentune_get_notes); phrases and notes are paged. from and to: source-audio seconds. baseline: stored_notes or nearest_semitone (no notes: not comparable later). Read-only.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1604,7 +1603,7 @@
   {
     "name": "opentune_get_clip_details",
     "title": "Get OpenTune clip details",
-    "description": "OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), the reference binding, and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): reads one clip besides its notes: duration, key, pitch shift (semitones and cents), pitch analysis state and last failure, whether the audible render is up to date, the time grid handles (seconds, content and output clock), and the AUTO modes (which one the AUTO button runs, which can be run). Returns clip_revision for expected_revision. sections limits the result; default all. Read-only.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1612,12 +1611,12 @@
         "clip": {
           "type": "string",
           "pattern": "^[pc]:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$",
-          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...). Render, reference and the AUTO mode are taken through the placement; a content id uses its first placement."
+          "description": "Clip placement id (p:...) from opentune_get_project, or a content id (c:...). Render and the AUTO mode are taken through the placement; a content id uses its first placement."
         },
         "sections": {
           "description": "Parts to return. Default: all of them.",
           "minItems": 1,
-          "maxItems": 7,
+          "maxItems": 6,
           "type": "array",
           "items": {
             "type": "string",
@@ -1627,7 +1626,6 @@
               "analysis",
               "render",
               "time_grid",
-              "reference",
               "auto_modes"
             ]
           }
@@ -1653,7 +1651,7 @@
   {
     "name": "opentune_get_settings",
     "title": "Get OpenTune settings",
-    "description": "OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, reference alignment mode, experimental features, language, onboarding shown, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, experimental features, language, onboarding shown, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1698,7 +1696,7 @@
   {
     "name": "opentune_set_settings",
     "title": "Set OpenTune settings",
-    "description": "OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, f0_model, reference_align_mode; values of vocoder_weight and f0_model: see options of opentune_get_settings. audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.",
+    "description": "OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, f0_model; values of vocoder_weight and f0_model: see options of opentune_get_settings. audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous values with the call that restores them.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -1726,7 +1724,7 @@
               "type": "boolean"
             },
             "experimental_features": {
-              "description": "Show or hide experimental features such as reference binding.",
+              "description": "Show or hide experimental features.",
               "type": "boolean"
             },
             "vocoder_weight": {
@@ -1748,14 +1746,6 @@
               "type": "string",
               "minLength": 1,
               "maxLength": 64
-            },
-            "reference_align_mode": {
-              "description": "Reference alignment mode of AUTO Ref, an experimental feature.",
-              "type": "string",
-              "enum": [
-                "standardAuto",
-                "game"
-              ]
             }
           },
           "additionalProperties": false
@@ -1850,7 +1840,7 @@
   {
     "name": "opentune_estimate_key",
     "title": "Estimate the key of a song",
-    "description": "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch (OpenTune's analysis) and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses), tonic_confidence, tuning offset in cents, local keys over time and keys per section (seconds; the mix and the clip's source audio start together). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only.",
+    "description": "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses) and tonic_confidence (both over estimated_over), tuning offset in cents, local keys (each with a confidence over its own segment) and keys per section (seconds on the clip; the mix starts with it). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only.",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2117,7 +2107,7 @@
   {
     "name": "opentune_edit_arrangement",
     "title": "Edit OpenTune clips on the timeline",
-    "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade, set_reference (experimental) run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy).",
+    "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): ask the user first; delete needs confirm. dry_run previews (not copy).",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -2297,27 +2287,6 @@
                 "required": [
                   "op",
                   "clips"
-                ],
-                "additionalProperties": false
-              },
-              {
-                "type": "object",
-                "properties": {
-                  "op": {
-                    "type": "string",
-                    "const": "set_reference"
-                  },
-                  "clip": {
-                    "type": "string"
-                  },
-                  "reference_clip": {
-                    "description": "An overlapping clip; leave out to unbind.",
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "op",
-                  "clip"
                 ],
                 "additionalProperties": false
               },
@@ -2822,7 +2791,7 @@
   {
     "name": "opentune_manage_ui",
     "title": "Manage OpenTune window state",
-    "description": "OpenTune (audio vocal pitch editor): op focus_clip selects a clip, optionally opening the piano roll; selecting can generate the clip notes (no undo entry, project marked changed), queue reference analysis and change the transport-bar scale, which dry_run predicts and a real result names first. switch_view shows view arrangement or piano_roll; arrangement closes the piano roll. dismiss_dialogs closes dialogs like Escape; one that commits its value needs accept_commit true, which only the user may allow. dismiss_onboarding marks first-run onboarding as shown (global, irreversible).",
+    "description": "OpenTune (audio vocal pitch editor): op focus_clip selects a clip, optionally opening the piano roll; selecting can generate the clip notes (no undo entry, project marked changed) and change the transport-bar scale, which dry_run predicts and a real result names first. switch_view shows view arrangement or piano_roll; arrangement closes the piano roll. dismiss_dialogs closes dialogs like Escape; one that commits its value needs accept_commit true, which only the user may allow. dismiss_onboarding marks first-run onboarding as shown (global, irreversible).",
     "inputSchema": {
       "type": "object",
       "$schema": "https://json-schema.org/draft/2020-12/schema",

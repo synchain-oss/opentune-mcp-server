@@ -38,7 +38,7 @@
           "changed": {
             "key": {
               "before": "k7",
-              "after": "k30"
+              "after": "k29"
             }
           }
         }
@@ -49,9 +49,9 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r26",
+          "revision": "r25",
           "gridRevision": "g6",
-          "keyRevision": "k30"
+          "keyRevision": "k29"
         }
       ],
       "placements": []
@@ -67,7 +67,7 @@
             "root": 9,
             "scale": "minor"
           },
-          "expectedKeyRevision": "k30"
+          "expectedKeyRevision": "k29"
         }
       }
     },
@@ -124,7 +124,7 @@
           "changed": {
             "key": {
               "before": "k7",
-              "after": "k30"
+              "after": "k29"
             }
           }
         }
@@ -135,9 +135,9 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r26",
+          "revision": "r25",
           "gridRevision": "g6",
-          "keyRevision": "k30"
+          "keyRevision": "k29"
         }
       ],
       "placements": []
@@ -153,7 +153,7 @@
             "root": 9,
             "scale": "minor"
           },
-          "expectedKeyRevision": "k30"
+          "expectedKeyRevision": "k29"
         }
       }
     },
@@ -219,7 +219,7 @@
               "root": 9,
               "scale": "minor"
             },
-            "expectedKeyRevision": "k30"
+            "expectedKeyRevision": "k29"
           }
         },
         "restore": {

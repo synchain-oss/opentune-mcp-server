@@ -202,7 +202,7 @@ async function fromMock(): Promise<Record<string, Scenario>> {
     envelope: schemeJob.result as Json,
   };
 
-  // The vocoder weight, the rendering priority, the pitch model and the reference alignment mode. A weight change
+  // The vocoder weight, the rendering priority and the pitch model. A weight change
   // renders every content again once it has loaded, and the wording follows what the vocoder reported.
   const vocoder = await sessions.open({ instanceId: INSTANCE });
   vocoder.mock.given({ clips: [clip()], preferences: { options: { f0Model: ['fcpe', 'rmvpe'] } } });
@@ -232,11 +232,11 @@ async function fromMock(): Promise<Record<string, Scenario>> {
     tool: 'opentune_set_settings',
     envelope: await jobResult({ renderingPriority: 'cpuFirst' }),
   };
-  out['settings-pitch-model-reference-align'] = {
+  out['settings-pitch-model'] = {
     description:
-      'A pitch model and a reference alignment mode set in one call, which finishes inside the call: the alignment mode is an experimental feature, and the revert recipe restores both.',
+      'A pitch model set in one call, which finishes inside the call: no job is followed, and the revert recipe restores the previous model.',
     tool: 'opentune_set_settings',
-    envelope: await vocoder.ok('prefs.set', { f0Model: 'rmvpe', referenceAlignMode: 'game' }),
+    envelope: await vocoder.ok('prefs.set', { f0Model: 'rmvpe' }),
   };
 
   const replaced = await ok('content.autoTune', {

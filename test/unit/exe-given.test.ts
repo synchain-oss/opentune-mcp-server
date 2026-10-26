@@ -89,7 +89,7 @@ describe('which preconditions the exe target can make', () => {
     [{ clips: [{ ...READY_CLIP, analysis: 'failed' }] }, 'failed'],
     [{ clips: [{ ...READY_CLIP, notes: [] }] }, EXACT_CONTENT],
     [{ clips: [{ ...READY_CLIP, key: { root: 9, scale: 'minor' } }] }, EXACT_CONTENT],
-    [{ clips: [{ ...READY_CLIP, referenceClip: 'other' }] }, EXACT_CONTENT],
+    [{ clips: [{ ...READY_CLIP, fadeInSec: 0.5 }] }, EXACT_CONTENT],
     [{ clips: [READY_CLIP], history: { undo: [{ origin: 'ui', action: 'clipMove', clip: 'clip' }], redo: [] } }, 'UI'],
     [
       {

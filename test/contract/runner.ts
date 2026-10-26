@@ -203,9 +203,9 @@ class Run {
     );
     // A terminal job's result is that of the method that started it. The run remembers which method
     // started each job and checks against that method's jobResult. A job it did not see start (the
-    // vector does not send the request) falls back to a job kind that more than one method starts
-    // (referenceAnalysis): the result must then be valid for at least one of them, and the problems
-    // reported are those of the closest fit.
+    // vector does not send the request) falls back to the methods that start its kind (x-otcp.startsJob;
+    // a kind may have more than one starter): the result must then be valid for at least one of them,
+    // and the problems reported are those of the closest fit.
     const job = isObject(message.result) ? message.result.job : undefined;
     if (isObject(job) && typeof job.jobId === 'string' && !this.#jobStartedBy.has(job.jobId)) {
       const starts = [...spec.jobStarters.values()].some((starters) => starters.includes(method));

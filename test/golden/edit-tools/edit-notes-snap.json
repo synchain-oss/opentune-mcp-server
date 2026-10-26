@@ -24,7 +24,7 @@
     "expected_revision": "<clip_revision of the clip>"
   },
   "result": {
-    "summary": "opentune_edit_notes: changed 1 note (side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:5.",
+    "summary": "opentune_edit_notes: changed 1 note (side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:5.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -35,7 +35,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 5,
-            "atRevision": "r28"
+            "atRevision": "r27"
           }
         },
         "label": "#5 A4 3.50-4.50s",
@@ -59,12 +59,12 @@
           "contentId": "c:01234567:0:1",
           "changed": {
             "notes": {
-              "before": "n22",
-              "after": "n26"
+              "before": "n21",
+              "after": "n25"
             },
             "pitch": {
-              "before": "p23",
-              "after": "p27"
+              "before": "p22",
+              "after": "p26"
             }
           }
         }
@@ -75,9 +75,9 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r28",
+          "revision": "r27",
           "gridRevision": "g6",
-          "keyRevision": "k17"
+          "keyRevision": "k16"
         }
       ],
       "placements": []
@@ -139,7 +139,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 5,
-              "atRevision": "r28"
+              "atRevision": "r27"
             }
           },
           "fields": [
@@ -174,6 +174,6 @@
         "description": "Edit notes"
       }
     ],
-    "clip_revision": "cr1.WyJyMjgiLCJnNiIsImsxNyIsImgxMSJd"
+    "clip_revision": "cr1.WyJyMjciLCJnNiIsImsxNiIsImgxMCJd"
   }
 }

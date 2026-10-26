@@ -359,19 +359,12 @@ const remove: Handler = (context) => {
     })),
     ...leavingContents(world, doomed),
   ];
-  const dangling = all
-    .filter((p) => p.trackId !== trackId && p.reference !== null && doomed.includes(p.reference))
-    .map((p) => ({ placementId: p.id, referencePlacementId: p.reference?.id ?? '' }));
   const changes: { entity: string; ref: unknown; label: string; fields: Record<string, unknown> }[] = [];
   for (const placement of all) {
     if (doomed.includes(placement)) continue;
     const fields: Record<string, unknown> = {};
     const from = placement.trackId;
     if (moves(from)) fields.trackId = { before: from, after: from - 1, unit: null };
-    const dropped = placement.reference !== null && doomed.includes(placement.reference);
-    if (dropped) {
-      fields.referencePlacementId = { before: placement.reference?.id ?? null, after: null, unit: null };
-    }
     if (Object.keys(fields).length > 0) {
       changes.push({
         entity: 'placement',
@@ -383,9 +376,6 @@ const remove: Handler = (context) => {
   }
   const moved = all.filter((p) => moves(p.trackId));
   for (const placement of doomed) world.removePlacement(placement);
-  for (const placement of all) {
-    if (placement.reference !== null && doomed.includes(placement.reference)) placement.reference = null;
-  }
   for (const placement of moved) {
     placement.trackId -= 1;
     world.touchGeometry(placement);
@@ -428,7 +418,7 @@ const remove: Handler = (context) => {
     undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
     dirtyBefore,
     warnings,
-    extra: { trackIdMap, danglingReferences: dangling, possiblyStaleEntries: stale },
+    extra: { trackIdMap, possiblyStaleEntries: stale },
   });
 };
 

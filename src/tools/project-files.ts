@@ -12,7 +12,7 @@ import { z } from 'zod';
 
 import { OtcpError, fromOtcpError, toolError, type NextStep } from '../errors/tool-error.js';
 import type { Json } from '../otcp/client.js';
-import { resolvePath } from '../paths/index.js';
+import { resolvePath, splitPath, systemOf } from '../paths/index.js';
 import { isObject } from '../render/changes.js';
 import { writeBody, writeOutcome } from '../render/index.js';
 import { revertPlan } from '../render/revert.js';
@@ -56,6 +56,41 @@ const NOT_STORED: Readonly<Record<string, string>> = Object.freeze({
 });
 
 const consentStep = (message: string): NextStep => ({ actor: 'user', message });
+
+/**
+ * What OpenTune does at every save, whatever its result says: it first copies the audio the project uses into the
+ * folder Project_Media next to the project file (files copied before and unchanged are skipped). The sentence is
+ * fixed and is not built from anything the result holds.
+ */
+const MEDIA_COPY =
+  'OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.';
+const MEDIA_FOLDER = 'Project_Media';
+
+/**
+ * The media folder of a project file this server was told the path of (save_as and overwrite, whose path it checked
+ * itself); null for a save to the project's current file, whose path only OpenTune knows.
+ */
+function mediaFolderOf(file: string | null, platform: NodeJS.Platform): string | null {
+  if (file === null) return null;
+  const { dir, sep } = splitPath(file, systemOf(platform));
+  return `${dir}${sep}${MEDIA_FOLDER}`;
+}
+
+/**
+ * The members of a save result that give the media folder: `mediaFolder`, and when it is null, its reason. The write
+ * envelope may carry nullReasons of its own (for members of the envelope that are null); they stay, and the reason of
+ * the member this server adds is put next to them, so that no null member of the result loses its reason.
+ */
+export function mediaFolderMembers(rendered: Json, media: string | null): Json {
+  if (media !== null) return { mediaFolder: media };
+  return {
+    mediaFolder: null,
+    nullReasons: {
+      ...(isObject(rendered.nullReasons) ? rendered.nullReasons : {}),
+      mediaFolder: 'project_path_not_given',
+    },
+  };
+}
 
 /** The error for a save that would replace another project file, with the way forward. */
 function refuseOverwrite(detail: string): Outcome {
@@ -115,6 +150,17 @@ function notStored(result: Json): { names: string[]; phrases: string[] } {
     }
   }
   return { names, phrases };
+}
+
+/** Whether the result lists the project's path as changed (entity project, member path, before and after differ). */
+function projectPathChanged(result: Json): boolean {
+  return (Array.isArray(result.changes) ? (result.changes as unknown[]) : []).some((item) => {
+    if (!isObject(item) || item.entity !== 'project' || !isObject(item.fields) || !isObject(item.fields.path)) {
+      return false;
+    }
+    const { before, after } = item.fields.path;
+    return typeof after === 'string' && after !== before;
+  });
 }
 
 /** The sentence about the unsaved-changes flag after a save, from the checked `dirty` member. */
@@ -203,22 +249,34 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
       } satisfies Outcome;
     }
     const overwrote = warningCodes(result).includes('OVERWROTE_OTHER_PROJECT');
+    // A save_as that moved the project's file to a path, and replaced nothing, wrote a new file. The result says
+    // so by the change of the project's path; without that change nothing proves it, and the sentence stays neutral.
+    const wroteNew = save.method === 'project.saveAs' && !overwrote && projectPathChanged(result);
     const first = overwrote
       ? "OVERWROTE another existing project file at the user's request (path in path); the old file cannot be restored."
       : save.method === 'project.save'
         ? 'saved the project to its file (path in path); the previous content of the file was replaced and cannot be restored.'
-        : "saved the project to the file given (path in path); from now on it is the project's file.";
+        : wroteNew
+          ? "wrote a new project file (path in path); no existing file was replaced, and from now on it is the project's file."
+          : "saved the project to the file given (path in path); from now on it is the project's file.";
     const stored = notStored(result);
     const missing = stored.phrases.length === 0 ? '' : ` Not stored in the project file: ${stored.phrases.join(', ')}.`;
     const dirty = dirtySentence(result);
     const rendered = writeBody(result, { tool: save.tool });
+    // The first save to a place says at once that the audio is copied there; a save to the project's own file
+    // says it after the facts of the save.
+    const toNewPlace = save.method === 'project.saveAs';
+    const media = mediaFolderOf(save.requested, ctx.platform);
     return {
       ok: true,
       body: {
         ...rendered,
-        summary: `${save.tool}: ${first}${dirty === '' ? '' : ` ${dirty}`}${missing}`,
+        summary:
+          `${save.tool}: ${first}${toNewPlace ? ` ${MEDIA_COPY}` : ''}${dirty === '' ? '' : ` ${dirty}`}${missing}` +
+          (toNewPlace ? '' : ` ${MEDIA_COPY}`),
         job: jobRef(job),
         notSavedInProject: stored.names,
+        ...mediaFolderMembers(rendered, media),
         ...extra,
       },
     } satisfies Outcome;
@@ -287,7 +345,6 @@ export function openedSentences(result: Json): string[] {
   const restored = isObject(result.restored) ? natural(result.restored.placementCount) : 0;
   const discarded = previous.discarded === true;
   const plan = revertPlan(isObject(result.undo) ? result.undo.revert : null);
-  const bindings = natural(skipped.referenceBindingCount);
   const undoText =
     plan.kind === 'tool'
       ? 'which cannot be undone with opentune_undo, but opening the previous project again restores it (see the restore line).'
@@ -303,9 +360,6 @@ export function openedSentences(result: Json): string[] {
     parts.push(
       `${count(media, 'media file')} could not be found or read (listed in skipped.media), so ${count(clips, 'clip')} ${clips === 1 ? 'was' : 'were'} not restored.`,
     );
-  }
-  if (bindings > 0) {
-    parts.push(`${count(bindings, 'reference binding')} could not be restored.`);
   }
   return parts;
 }

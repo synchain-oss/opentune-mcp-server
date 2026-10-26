@@ -38,8 +38,8 @@
     "idMap": [],
     "revisionDiff": {
       "arrangement": {
-        "before": "a50",
-        "after": "a51"
+        "before": "a45",
+        "after": "a46"
       },
       "trackState": null,
       "contents": [
@@ -69,17 +69,13 @@
             "pitchShift": {
               "before": "s8",
               "after": null
-            },
-            "reference": {
-              "before": "f9",
-              "after": null
             }
           }
         }
       ]
     },
     "tokens": {
-      "arrangementRevision": "a51",
+      "arrangementRevision": "a46",
       "contents": [],
       "placements": []
     },
@@ -179,7 +175,7 @@
         "restore": null
       }
     ],
-    "arrangement_revision": "ar1.YTUx",
+    "arrangement_revision": "ar1.YTQ2",
     "clip_ids": {
       "created": [],
       "removed": [

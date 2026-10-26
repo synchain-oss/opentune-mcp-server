@@ -17,8 +17,6 @@ export const TRACK_SLOTS = 8;
 export const INITIAL_VISIBLE_TRACKS = 4;
 /** Time the mock needs to render a content again after an edit. */
 export const RENDER_SETTLE_MS = 30;
-/** Time the mock needs to compute the reference alignment data of a content. */
-export const ALIGNMENT_SETTLE_MS = 30;
 /**
  * How the mock reconfigures its vocoder after a new weight or rendering priority, and how long a prefsApply job waits
  * for it (60 s, the default of the real implementation); test hooks change them.
@@ -33,7 +31,7 @@ export const DEFAULT_OPTIONS = {
 export const DEFAULT_NOTE_PARAMS = { retuneSpeed: 0.5, vibratoDepth: 0, vibratoRateHz: 6, pitchDriftScale: 1 } as const;
 
 export type Analysis = 'ready' | 'running' | 'failed' | 'unvoiced';
-export type Component = 'notes' | 'pitch' | 'content' | 'grid' | 'key' | 'pitchShift' | 'reference';
+export type Component = 'notes' | 'pitch' | 'content' | 'grid' | 'key' | 'pitchShift';
 
 export interface NoteRec {
   startContentSec: number;
@@ -80,7 +78,6 @@ export interface ContentRec {
   /** Changes with the notes, pitch and content components. */
   revision: string;
   render: { published: string; desired: string };
-  alignmentReady: boolean;
   /** OpenTune generated notes for this content at some point (import, AUTO, selection in the openDyne scheme). */
   notesGenerated: boolean;
   handleSeq: number;
@@ -98,7 +95,6 @@ export interface PlacementRec {
   gainLinear: number;
   fadeInSec: number;
   fadeOutSec: number;
-  reference: PlacementRec | null;
   geometryHash: string;
 }
 
@@ -200,8 +196,6 @@ export interface Patch {
   placements?: {
     serial: number;
     state: Partial<PlacementState>;
-    /** The serial of the clip it is bound to as reference, or null for none; left out: unchanged. */
-    reference?: number | null;
   }[];
 }
 
@@ -334,7 +328,6 @@ export class World {
     vocoderWeight: DEFAULT_OPTIONS.vocoderWeight[0] as string,
     renderingPriority: 'gpuFirst',
     f0Model: DEFAULT_OPTIONS.f0Model[0] as string,
-    referenceAlignMode: 'standardAuto',
     /** What the installation offers (prefs.get, processing.options): the weight files and the pitch models. */
     options: {
       vocoderWeight: [...DEFAULT_OPTIONS.vocoderWeight],
@@ -350,10 +343,6 @@ export class World {
   undoStack: HistoryEntry[] = [];
   redoStack: HistoryEntry[] = [];
   readonly logLines: string[] = [];
-  /** The reference analysis job of each placement (by placementId), so that a repeated call joins it. */
-  readonly referenceJobs = new Map<string, string>();
-  /** How a reference analysis that has to compute alignment data ends, or null when it completes. */
-  referenceFault: 'stalled' | 'timeout' | 'failed' | null = null;
   /** No OpenTune editor window exists, as in a window-less run: the methods that act through it refuse (PROTOCOL.md section 7 rule 6). */
   noEditor = false;
   readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
@@ -443,11 +432,9 @@ export class World {
         grid: this.mint('g'),
         key: this.mint('k'),
         pitchShift: this.mint('s'),
-        reference: this.mint('f'),
       },
       revision: this.mint('r'),
       render: { published: '', desired: '' },
-      alignmentReady: false,
       notesGenerated: false,
       handleSeq: 0,
     };
@@ -458,7 +445,7 @@ export class World {
 
   addPlacement(
     init: Pick<PlacementRec, 'trackId' | 'content' | 'name' | 'startTimelineSec' | 'durationSec'> &
-      Partial<Pick<PlacementRec, 'clipInContentSec' | 'gainLinear' | 'fadeInSec' | 'fadeOutSec' | 'reference'>>,
+      Partial<Pick<PlacementRec, 'clipInContentSec' | 'gainLinear' | 'fadeInSec' | 'fadeOutSec'>>,
   ): PlacementRec {
     const serial = ++this.#placementSeq;
     const placement: PlacementRec = {
@@ -468,7 +455,6 @@ export class World {
       gainLinear: 1,
       fadeInSec: 0,
       fadeOutSec: 0,
-      reference: null,
       ...init,
       geometryHash: this.mint('h'),
     };
@@ -523,7 +509,7 @@ export class World {
     this.arrangement = this.mint('a');
   }
 
-  /** A change of a placement that its geometryHash does not cover (gain, fades, reference). */
+  /** A change of a placement that its geometryHash does not cover (gain, fades). */
   touchArrangement(): void {
     this.arrangement = this.mint('a');
   }
@@ -636,19 +622,6 @@ export class World {
       work();
     });
     this.#timers.add(timer);
-  }
-
-  /**
-   * Queues the reference alignment analysis of a content; its data is there ALIGNMENT_SETTLE_MS later.
-   * Under a reference fault OpenTune's analysis never completes, so no data arrives.
-   */
-  queueAlignment(content: ContentRec): void {
-    this.after(ALIGNMENT_SETTLE_MS, () => {
-      if (this.contents.get(content.objectId) !== content || content.alignmentReady) return;
-      if (this.referenceFault !== null) return;
-      content.alignmentReady = true;
-      this.touch(content, 'reference');
-    });
   }
 
   /**
@@ -883,7 +856,6 @@ export class World {
         gainLinear: p.gainLinear,
         fadeInSec: p.fadeInSec,
         fadeOutSec: p.fadeOutSec,
-        reference: p.reference?.id ?? null,
       })),
       tracks: this.tracks.map(({ visible, muted, solo, volumeLinear, colour }) => ({
         visible,

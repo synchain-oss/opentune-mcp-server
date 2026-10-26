@@ -12,7 +12,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 0,
-            "atRevision": "r14"
+            "atRevision": "r13"
           }
         },
         "label": "#0 C4 0.00-0.10s",
@@ -35,7 +35,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 1,
-            "atRevision": "r14"
+            "atRevision": "r13"
           }
         },
         "label": "#1 C#4 0.15-0.25s",
@@ -65,11 +65,11 @@
           "changed": {
             "notes": {
               "before": "n3",
-              "after": "n12"
+              "after": "n11"
             },
             "pitch": {
               "before": "p4",
-              "after": "p13"
+              "after": "p12"
             }
           }
         }
@@ -80,7 +80,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r14",
+          "revision": "r13",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }
@@ -120,7 +120,7 @@
     "omittedChangeCount": 0
   },
   "rendered": {
-    "summary": "opentune_edit_notes: changed 2 notes (side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:1.",
+    "summary": "opentune_edit_notes: changed 2 notes (side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:1.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -131,7 +131,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 0,
-            "atRevision": "r14"
+            "atRevision": "r13"
           }
         },
         "label": "#0 C4 0.00-0.10s",
@@ -154,7 +154,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 1,
-            "atRevision": "r14"
+            "atRevision": "r13"
           }
         },
         "label": "#1 C#4 0.15-0.25s",
@@ -184,11 +184,11 @@
           "changed": {
             "notes": {
               "before": "n3",
-              "after": "n12"
+              "after": "n11"
             },
             "pitch": {
               "before": "p4",
-              "after": "p13"
+              "after": "p12"
             }
           }
         }
@@ -199,7 +199,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r14",
+          "revision": "r13",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }
@@ -270,7 +270,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 0,
-              "atRevision": "r14"
+              "atRevision": "r13"
             }
           },
           "fields": [
@@ -296,7 +296,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 1,
-              "atRevision": "r14"
+              "atRevision": "r13"
             }
           },
           "fields": [

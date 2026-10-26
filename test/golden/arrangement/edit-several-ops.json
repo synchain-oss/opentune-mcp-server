@@ -21,7 +21,7 @@
     "expected_revision": "<arrangement_revision>"
   },
   "result": {
-    "summary": "opentune_edit_arrangement: changed 1 placement (side effects: hidden tracks became visible). Undo it as one step with undoId u:01234567:1. Warnings: TRACK_AUTO_REVEALED, TRACK_AUTO_REVEALED.",
+    "summary": "opentune_edit_arrangement: changed 1 placement (revealed the hidden tracks 4, 5). Undo it as one step with undoId u:01234567:1. Warnings: TRACK_AUTO_REVEALED, TRACK_AUTO_REVEALED.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -62,21 +62,21 @@
     "revisionDiff": {
       "arrangement": {
         "before": "a1",
-        "after": "a32"
+        "after": "a29"
       },
       "trackState": {
         "before": "t2",
-        "after": "t30"
+        "after": "t27"
       },
       "contents": []
     },
     "tokens": {
-      "arrangementRevision": "a32",
+      "arrangementRevision": "a29",
       "contents": [],
       "placements": [
         {
           "placementId": "p:01234567:0:2",
-          "geometryHash": "h31"
+          "geometryHash": "h28"
         }
       ]
     },
@@ -227,7 +227,7 @@
         "description": "Edit clips"
       }
     ],
-    "arrangement_revision": "ar1.YTMy",
+    "arrangement_revision": "ar1.YTI5",
     "clip_ids": {
       "created": [],
       "removed": []

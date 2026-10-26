@@ -14,8 +14,8 @@
         "label": "Content 1",
         "fields": {
           "revision": {
-            "before": "r14",
-            "after": "r18",
+            "before": "r13",
+            "after": "r17",
             "unit": null
           }
         }
@@ -32,12 +32,12 @@
           "contentId": "c:01234567:0:1",
           "changed": {
             "notes": {
-              "before": "n12",
-              "after": "n16"
+              "before": "n11",
+              "after": "n15"
             },
             "pitch": {
-              "before": "p13",
-              "after": "p17"
+              "before": "p12",
+              "after": "p16"
             }
           }
         }
@@ -48,7 +48,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r18",
+          "revision": "r17",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }
@@ -95,7 +95,7 @@
     }
   },
   "rendered": {
-    "summary": "opentune_undo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_redo, see the revert line; side effects: rendering of one or more contents was queued again).",
+    "summary": "opentune_undo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_redo, see the revert line; side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -108,8 +108,8 @@
         "label": "Content 1",
         "fields": {
           "revision": {
-            "before": "r14",
-            "after": "r18",
+            "before": "r13",
+            "after": "r17",
             "unit": null
           }
         }
@@ -126,12 +126,12 @@
           "contentId": "c:01234567:0:1",
           "changed": {
             "notes": {
-              "before": "n12",
-              "after": "n16"
+              "before": "n11",
+              "after": "n15"
             },
             "pitch": {
-              "before": "p13",
-              "after": "p17"
+              "before": "p12",
+              "after": "p16"
             }
           }
         }
@@ -142,7 +142,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r18",
+          "revision": "r17",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }
@@ -215,8 +215,8 @@
           "fields": [
             {
               "field": "revision",
-              "before": "r14",
-              "after": "r18",
+              "before": "r13",
+              "after": "r17",
               "unit": null
             }
           ]

@@ -248,7 +248,7 @@ export class ProjectService {
     const missing: string[] = [];
     const contentOf = new Map<number, ReturnType<World['addContent']>>();
     const voicedOf = new Map<number, boolean>();
-    const restored: { placement: PlacementRec; index: number }[] = [];
+    const restored: PlacementRec[] = [];
     const skippedClips: number[] = [];
     project.clips.forEach((clip, index) => {
       const source = project.contents[clip.contentIndex];
@@ -285,17 +285,8 @@ export class ProjectService {
         fadeInSec: clip.fadeInSec,
         fadeOutSec: clip.fadeOutSec,
       });
-      restored.push({ placement, index });
+      restored.push(placement);
     });
-    // Reference bindings between clips that were both restored.
-    let droppedBindings = 0;
-    for (const { placement, index } of restored) {
-      const wanted = project.clips[index]?.referenceClipIndex ?? null;
-      if (wanted === null) continue;
-      const other = restored.find((r) => r.index === wanted);
-      if (other === undefined) droppedBindings++;
-      else placement.reference = other.placement;
-    }
     for (const content of contentOf.values()) {
       const voiced = voicedOf.get(content.objectId) === true;
       world.after(IMPORT_ANALYSIS_MS, () => {
@@ -309,7 +300,7 @@ export class ProjectService {
     this.#remember(file);
 
     const created = [
-      ...restored.map(({ placement: p }) => ({
+      ...restored.map((p) => ({
         entity: 'placement',
         ref: { placementId: p.id },
         label: clipLabel(p.serial, p.trackId),
@@ -342,7 +333,7 @@ export class ProjectService {
       removed: removedListed,
       diff: { ...diff, contents: diff.contents.filter((c) => listedContents.has(c.contentId)) },
       contents: [...contentOf.values()].slice(0, LISTED_MAX),
-      placements: restored.map((r) => r.placement).slice(0, LISTED_MAX),
+      placements: restored.slice(0, LISTED_MAX),
       undo: { undoable: false, reason: 'no_upstream_undo', revert },
       dirtyBefore,
       warnings,
@@ -368,7 +359,6 @@ export class ProjectService {
         skipped: {
           media: missing.map((p) => ({ path: p, reason: 'missing' })),
           placementCount: skippedClips.length,
-          referenceBindingCount: droppedBindings,
         },
         historyCleared,
         omittedCount: {

@@ -33,7 +33,7 @@
           "changed": {
             "pitchShift": {
               "before": "s8",
-              "after": "p28"
+              "after": "p27"
             }
           }
         }
@@ -44,7 +44,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r26",
+          "revision": "r25",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }
@@ -91,7 +91,7 @@
     "job": null
   },
   "rendered": {
-    "summary": "opentune_set_clip: changed 1 pitchShift (side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:3. Warnings: KEY_NOT_TRANSPOSED.",
+    "summary": "opentune_set_clip: changed 1 pitchShift (side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:3. Warnings: KEY_NOT_TRANSPOSED.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -123,7 +123,7 @@
           "changed": {
             "pitchShift": {
               "before": "s8",
-              "after": "p28"
+              "after": "p27"
             }
           }
         }
@@ -134,7 +134,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r26",
+          "revision": "r25",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }

@@ -182,7 +182,6 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
         gainLinear: p.gainLinear,
         fadeInSec: p.fadeInSec,
         fadeOutSec: p.fadeOutSec,
-        referencePlacementId: p.reference?.id ?? null,
         sourcePath: p.content.sourcePath,
         geometryHash: p.geometryHash,
         ...(p.content.sourcePath === null ? { nullReasons: { sourcePath: 'unavailable' } } : {}),
@@ -313,15 +312,13 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
     };
   },
 
-  'content.getDetails': ({ world, params, hasCapability }) => {
+  'content.getDetails': ({ world, params }) => {
     const { content, placement } = target(world, params);
     const shown = world.placementsOf(content);
     const via = placement ?? shown[0];
     if (via === undefined) throw refuse('NOT_FOUND', 'unknown_handle', 'no placement shows this content');
-    const referenceBound = via.reference !== null && hasCapability('reference.v1');
     const ready = content.analysis === 'ready';
     const available = ready ? ['regenerate', 'notesOnly', ...(content.notes.length > 0 ? ['snapNotes'] : [])] : [];
-    if (ready && referenceBound) available.push('reference');
     return {
       ...readMeta(world, [content]),
       ...(content.key === null ? { nullReasons: { key: 'not_analyzed' } } : {}),
@@ -351,13 +348,9 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
         })),
         minHandleSpacingSec: MIN_HANDLE_SPACING_SEC,
       },
-      reference: {
-        referencePlacementId: via.reference?.id ?? null,
-        alignmentReady: content.alignmentReady,
-      },
       autoModes: {
         editingScheme: world.editingScheme,
-        uiButtonRuns: referenceBound ? 'reference' : world.editingScheme === 'openDyne' ? 'snapNotes' : 'regenerate',
+        uiButtonRuns: world.editingScheme === 'openDyne' ? 'snapNotes' : 'regenerate',
         available,
       },
     };
@@ -381,7 +374,6 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
       f0Model: world.prefs.f0Model,
       renderingPriority: world.prefs.renderingPriority,
       experimentalFeatures: world.prefs.experimentalFeatures,
-      referenceAlignMode: world.prefs.referenceAlignMode,
       ...(carries(world.prefs.vocoderWeight) ? {} : { nullReasons: { vocoderWeight: 'unavailable' } }),
       // The values prefs.set accepts; session.info does not report them. The state of the vocoder is not part of
       // prefs.get either (session.info reports it).
@@ -389,7 +381,6 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
         vocoderWeight: world.prefs.options.vocoderWeight.filter(carries).slice(0, OPTION_LIST_MAX),
         f0Model: world.prefs.options.f0Model.filter(carries).slice(0, OPTION_LIST_MAX),
         renderingPriority: ['gpuFirst', 'cpuFirst'],
-        referenceAlignMode: ['standardAuto', 'game'],
       },
     },
     onboardingShown: world.prefs.onboardingShown,

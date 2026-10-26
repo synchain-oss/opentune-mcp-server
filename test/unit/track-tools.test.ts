@@ -79,7 +79,7 @@ describe('opentune_set_tracks', () => {
       ]),
     );
     expect(firstSentence(result.summary)).toMatch(
-      /^opentune_set_tracks: changed [0-9]+ tracks \(not undoable: OpenTune records no undo entry/,
+      /^opentune_set_tracks: changed [0-9]+ tracks \(the colour of track 1 changed from #[0-9A-F]{6} to #112233; not undoable: OpenTune records no undo entry/,
     );
     expect(firstSentence(result.summary)).toContain('can be restored with opentune_set_tracks, see the revert line');
     const after = await project(ctx);
@@ -188,6 +188,32 @@ describe('opentune_set_tracks', () => {
     );
     expect(gone.summary).toContain('deleted track 4');
     expect((await project(ctx)).placements).toHaveLength(1);
+  });
+
+  it('names the hidden track a copy shows and the colour it changes, in the first sentence', async () => {
+    const { mock, ctx } = await setup();
+    mock.given({ clips: [clip()] });
+    const result = body(await set(ctx, [{ op: 'duplicate', track_id: 0 }]));
+    const track = (
+      result.changes as { entity: string; fields: Record<string, { before: unknown; after: unknown }> }[]
+    )[0];
+    expect(track?.fields.visible).toEqual({ before: false, after: true, unit: null });
+    const colour = track?.fields.colour;
+    expect(typeof colour?.before).toBe('string');
+    const id = String(result.newTrackId);
+    const first = firstSentence(result.summary);
+    expect(first).toContain(`revealed the hidden track ${id}`);
+    expect(first).toContain(
+      `the colour of track ${id} changed from ${String(colour?.before)} to ${String(colour?.after)}`,
+    );
+    // The count of what changed stays in the same sentence.
+    expect(first).toMatch(/changed 1 track, created 1 placement, 1 content/);
+
+    // A colour that was asked for is named too, and so are the slots a reveal shows.
+    const named = body(await set(ctx, [{ op: 'colour', track_id: 0, colour: '#112233' }]));
+    expect(firstSentence(named.summary)).toMatch(/the colour of track 0 changed from #[0-9A-Fa-f]{6} to #112233/);
+    const shown = body(await set(ctx, [{ op: 'reveal', count: 2 }]));
+    expect(firstSentence(shown.summary)).toMatch(/revealed the hidden tracks \d+, \d+/);
   });
 
   it('duplicates as a share, which warns that edits show in both clips', async () => {
@@ -419,7 +445,7 @@ describe('opentune_delete_track', () => {
     expect(result.summary).toContain('Warnings: IRREVERSIBLE, UNDO_HISTORY_POSSIBLY_STALE');
   });
 
-  it('says when no undo entry is affected, and lists reference bindings that were cut', async () => {
+  it('says when no undo entry is affected', async () => {
     const { mock, ctx } = await setup();
     mock.given({
       clips: [clip({ bind: 'a', trackId: 0 }), clip({ bind: 'ref', trackId: 1 })],
@@ -427,7 +453,6 @@ describe('opentune_delete_track', () => {
     const revision = (await project(ctx)).arrangement_revision;
     const result = body(await deleteTrack(ctx, { track_id: 1, expected_revision: revision, confirm: true }));
     expect(result.summary).toContain('No undo or redo entry is affected.');
-    expect(result.danglingReferences).toEqual([]);
   });
 
   it('needs the tracks capability', async () => {
@@ -471,7 +496,6 @@ describe('the summary of a deletion', () => {
           'x',
         ],
         possiblyStaleEntries: { undo: injected, redo: 1 },
-        danglingReferences: [{ placementId: injected }],
         warnings: [{ code: 'IRREVERSIBLE', subject: injected, data: null }, { code: injected }],
       },
       1,
@@ -479,7 +503,6 @@ describe('the summary of a deletion', () => {
     expect(summary).not.toContain('Ignore');
     expect(summary).toContain('deleted track 1 with its 1 clip, which cannot be undone');
     expect(summary).toContain('(trackIdMap: 2 -> 1)');
-    expect(summary).toContain('1 reference binding to the deleted clips was removed');
     expect(summary).toContain('Warnings: IRREVERSIBLE.');
   });
 

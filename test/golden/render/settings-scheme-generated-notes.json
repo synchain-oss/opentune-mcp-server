@@ -33,11 +33,11 @@
           "changed": {
             "notes": {
               "before": "n3",
-              "after": "n12"
+              "after": "n11"
             },
             "pitch": {
               "before": "p4",
-              "after": "p13"
+              "after": "p12"
             }
           }
         }
@@ -48,7 +48,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r14",
+          "revision": "r13",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }
@@ -145,11 +145,11 @@
           "changed": {
             "notes": {
               "before": "n3",
-              "after": "n12"
+              "after": "n11"
             },
             "pitch": {
               "before": "p4",
-              "after": "p13"
+              "after": "p12"
             }
           }
         }
@@ -160,7 +160,7 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r14",
+          "revision": "r13",
           "gridRevision": "g6",
           "keyRevision": "k7"
         }

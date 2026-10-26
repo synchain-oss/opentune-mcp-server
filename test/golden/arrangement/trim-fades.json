@@ -12,7 +12,7 @@
     "expected_revision": "<arrangement_revision>"
   },
   "result": {
-    "summary": "opentune_edit_arrangement: changed 1 placement. Undo it as one step with undoId u:01234567:3. Warnings: FADES_RECLAMPED. The undo step also puts back the clip fades as they were before the trim (OpenTune's own does not).",
+    "summary": "opentune_edit_arrangement: changed 1 placement. Undo it as one step with undoId u:01234567:2. Warnings: FADES_RECLAMPED. The undo step also puts back the clip fades as they were before the trim (OpenTune's own does not).",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -47,25 +47,25 @@
     "idMap": [],
     "revisionDiff": {
       "arrangement": {
-        "before": "a33",
-        "after": "a35"
+        "before": "a29",
+        "after": "a31"
       },
       "trackState": null,
       "contents": []
     },
     "tokens": {
-      "arrangementRevision": "a35",
+      "arrangementRevision": "a31",
       "contents": [],
       "placements": [
         {
           "placementId": "p:01234567:0:1",
-          "geometryHash": "h34"
+          "geometryHash": "h30"
         }
       ]
     },
     "undo": {
       "undoable": true,
-      "undoId": "u:01234567:3",
+      "undoId": "u:01234567:2",
       "description": "Trim clip",
       "innerActions": [
         "setFade",
@@ -160,12 +160,12 @@
       },
       {
         "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
-        "undoId": "u:01234567:3",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:2.",
+        "undoId": "u:01234567:2",
         "description": "Trim clip"
       }
     ],
-    "arrangement_revision": "ar1.YTM1",
+    "arrangement_revision": "ar1.YTMx",
     "clip_ids": {
       "created": [],
       "removed": []

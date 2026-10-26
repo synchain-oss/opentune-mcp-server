@@ -97,6 +97,6 @@ describe('the retryability table of the reasons', () => {
       expect(retryable(kind, reason), key).toBe(expected);
     }
     expect(retryable('NOT_READY')).toBe(true);
-    expect(retryable('NOT_READY', 'reference_analysis_stalled', true)).toBe(true);
+    expect(retryable('NOT_READY', 'grid_not_seeded', true)).toBe(true);
   });
 });

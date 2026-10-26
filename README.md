@@ -148,7 +148,7 @@ The server offers 27 tools; their parameters are in [docs/reference.md](docs/ref
 | --- | --- | --- |
 | `opentune_get_project` | Tracks, clips, selection, transport, and the revisions that write tools need. | Read-only. |
 | `opentune_get_notes` | The notes of one clip, a page at a time, or all of them saved to a new JSON file (`output_path`). | Does not change OpenTune; with `output_path` it writes one new file and never overwrites. |
-| `opentune_get_clip_details` | Duration, key, pitch shift, analysis state, time handles, reference binding and AUTO modes of one clip. | Read-only. |
+| `opentune_get_clip_details` | Duration, key, pitch shift, analysis state, time handles and AUTO modes of one clip. | Read-only. |
 | `opentune_get_settings` | OpenTune's global settings: processing, audio device, recent projects, import and export limits, log lines. | Read-only. |
 
 **Analyse**
@@ -179,7 +179,7 @@ The server offers 27 tools; their parameters are in [docs/reference.md](docs/ref
 
 | Tool | What it does | Undo and your agreement |
 | --- | --- | --- |
-| `opentune_edit_arrangement` | Clips on the timeline: move, trim, gain, fade, set a reference (experimental), split, merge, delete, copy. `dry_run` previews. | Marked destructive. Split, merge, delete and copy cannot be undone, so the agent asks you first; delete needs `confirm: true`. |
+| `opentune_edit_arrangement` | Clips on the timeline: move, trim, gain, fade, split, merge, delete, copy. `dry_run` previews. | Marked destructive. Split, merge, delete and copy cannot be undone, so the agent asks you first; delete needs `confirm: true`. |
 | `opentune_set_tracks` | Mute, solo, volume and colour of tracks; show hidden tracks; duplicate a track. | Mute, solo, volume and colour have no undo entry in OpenTune; the result gives the call that restores the old values. |
 | `opentune_delete_track` | Deletes a track and its clips. | Marked destructive. Cannot be undone, and the later track ids move down by one. Needs `confirm: true`, only after you agreed to delete that track. |
 
@@ -197,7 +197,7 @@ The server offers 27 tools; their parameters are in [docs/reference.md](docs/ref
 | `opentune_save_project` | Saves the project, or saves it as a new `.otproj` file. | Does not replace a different existing file. |
 | `opentune_save_project_overwrite` | Saves the project over a different, existing `.otproj` file. | Marked destructive. The old file is lost. Needs `confirm: true`, only after you agreed to replace that file. |
 | `opentune_open_project` | Opens a `.otproj` file and replaces the current project. | Marked destructive. Never saves: with unsaved changes it fails (`UNSAVED_CHANGES`) unless `discard_unsaved: true`, only with your agreement. Clears the undo history. |
-| `opentune_set_settings` | Changes OpenTune's global settings (A4 tuning, hybrid mode, editing scheme, experimental features, vocoder weight, rendering priority, pitch model, reference alignment mode, audio device) or empties the recent-projects list. | Marked destructive. The settings belong to the OpenTune installation, not to the project, and have no undo entry; the result gives the previous values and the call that restores them. The recent-projects list cannot be refilled. |
+| `opentune_set_settings` | Changes OpenTune's global settings (A4 tuning, hybrid mode, editing scheme, experimental features, vocoder weight, rendering priority, pitch model, audio device) or empties the recent-projects list. | Marked destructive. The settings belong to the OpenTune installation, not to the project, and have no undo entry; the result gives the previous values and the call that restores them. The recent-projects list cannot be refilled. |
 
 ### Your agreement
 
@@ -225,7 +225,6 @@ OpenTune Standalone with the control API  (synchain-oss/OpenTune, AGPL-3.0)
 - **Hybrid mode and small corrections.** OpenTune's preference "Hybrid Mode: Small corrections use DSP, large corrections use vocoder" is on by default. The part of a correction below 75 cents is applied by DSP pitch shifting instead of the vocoder, which is OpenTune's own design, and on real voices such a small correction can be barely audible. To make small corrections count, switch that preference off in OpenTune, or ask the agent to do it with `opentune_set_settings` (`processing.hybrid_mode`); it is a global setting of OpenTune, not of the project, so it stays off until someone switches it on again. See [Hybrid mode](docs/TROUBLESHOOTING.md#hybrid-mode).
 - **Some edits cannot be undone.** Importing audio, changing the key of a clip and a time-grid `seed` cannot be undone. Splitting, merging and deleting clips cannot be undone because of a defect in OpenTune (it frees objects that its own undo entry needs); copying clips and deleting a track cannot be undone either. Mute, solo, volume, colour, tempo, time signature and the global settings have no undo entry in OpenTune. The result says so in its first sentence, the agent asks you before the destructive ones, and where there is a way back the result gives the call that restores the old state.
 - **No autosave.** OpenTune does not save by itself, and the undo history is not stored in the project file. Unsaved work is lost when OpenTune closes or crashes: ask the agent to save after each finished step.
-- **One reference analysis per session.** OpenTune completes only one reference analysis per session (a defect in OpenTune itself). After that, `opentune_autotune_range` in mode `reference` ends with `NOT_READY` until OpenTune is restarted; save the project first. See [NOT_READY](docs/TROUBLESHOOTING.md#error-not_ready).
 - **`RUNNING_WITHOUT_API` was only checked by hand.** The state of an official OpenTune that runs without the control API was verified manually, not by an automated test.
 - **Read-only source folder.** An export without `path` goes next to the source file. When that folder is read-only the export fails with an error; it does not pick another folder. Give a writable `path`.
 - **First launch needs a person.** The welcome dialog has to be answered once ([First launch](#first-launch)).

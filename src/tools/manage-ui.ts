@@ -3,8 +3,8 @@
 
 // opentune_manage_ui: select a clip in the arrangement view, close dialogs, and mark the first-run
 // onboarding as shown (capability ui.bridge). Selecting a clip can do more than select it: it can
-// make OpenTune generate the clip's notes (no undo entry), queue reference analysis and change the
-// scale shown in the transport bar. dry_run predicts these effects, and the result of a real call
+// make OpenTune generate the clip's notes (no undo entry) and change the scale shown in the transport
+// bar. dry_run predicts these effects, and the result of a real call
 // names them in its first sentence. Closing a dialog can commit the value the dialog shows (the
 // track-colour dialog commits its colour), so it is refused unless the user agreed.
 //
@@ -21,6 +21,7 @@ import type { Json } from '../otcp/client.js';
 import { isObject } from '../render/changes.js';
 import { writeBody } from '../render/index.js';
 import { warningCodes } from '../render/summary.js';
+import { SIDE_EFFECT_TEXT, token, viewName } from '../render/text.js';
 import { INSTANCE_FIELD, invalid } from './clip-write.js';
 import { runWrites, type WriteCall, type WriteResult } from './multi-write.js';
 import { WRITE_RESULT_OUTPUT, defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
@@ -50,10 +51,24 @@ const natural = (value: unknown): number | null =>
 const count = (n: number, noun: string) => `${String(n)} ${noun}${n === 1 ? '' : 's'}`;
 
 /**
- * The summary of a clip selection. The side effects nobody asked for come first: they are the
- * reason to look at the result. Counts are checked integers; names from OpenTune are never used.
+ * The warning codes of a result, as the last sentence of a summary this file writes itself. The generic summary
+ * of a write result names them; the summaries that replace it must not drop them, whichever branch they take.
  */
-export function focusSummary(envelope: Json): string {
+function warningTail(envelope: Json): string {
+  const warnings = warningCodes(envelope);
+  return warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
+}
+
+/** Side effects whose words are written out in focusSummary; any other one is named by the fixed table. */
+const WORDED = new Set(['notesGenerated', 'uiScaleChanged', 'workspaceSwitched']);
+
+/**
+ * The summary of a clip selection. The side effects nobody asked for come first: they are the
+ * reason to look at the result. Whether there are side effects is read from sideEffects and from
+ * nothing else, and each one is named, also the switch of the view that open_editor asked for.
+ * Counts are checked integers; names from OpenTune are never used.
+ */
+export function focusSummary(envelope: Json, openEditor = false): string {
   const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
   const dry = envelope.dryRun === true;
   const unasked: string[] = [];
@@ -64,28 +79,34 @@ export function focusSummary(envelope: Json): string {
         'no undo entry, and the project is marked as changed',
     );
   }
-  if (isObject(effects.referenceAnalysisQueued)) {
-    const ids = effects.referenceAnalysisQueued.contentIds;
-    unasked.push(
-      `reference alignment analysis ${dry ? 'is' : 'was'} queued for ` +
-        (Array.isArray(ids) ? count(ids.length, 'content') : 'contents'),
-    );
-  }
   if (isObject(effects.uiScaleChanged)) unasked.push('the scale shown in the transport bar changes with the clip key');
-  const opened = isObject(effects.workspaceSwitched) ? ' and opens it in the piano roll' : '';
-  const warnings = warningCodes(envelope);
-  const tail = warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
+  // The switch of the view is what open_editor asks for: it is said as part of the selection, not as a surprise.
+  // Without open_editor it is a side effect nobody asked for.
+  const switched = isObject(effects.workspaceSwitched) ? effects.workspaceSwitched : null;
+  const route = switched === null ? '' : `from ${viewName(switched.from)} to ${viewName(switched.to)}`;
+  if (switched !== null && !openEditor) unasked.push(`the window ${dry ? 'switches' : 'switched'} ${route}`);
+  for (const name of Object.keys(effects)) {
+    if (!WORDED.has(name)) {
+      unasked.push(SIDE_EFFECT_TEXT[name] ?? `side effect ${token(name, 'camel') ?? 'with an unrecognized name'}`);
+    }
+  }
+  const asked = switched !== null && openEditor;
+  const tail = warningTail(envelope);
+  const none = Object.keys(effects).length === 0;
   if (dry) {
-    const would =
-      unasked.length === 0
-        ? 'no side effects beyond the selection'
+    const selecting = asked ? `selecting the clip and switching the window ${route}` : 'selecting the clip';
+    const would = none
+      ? 'no side effects beyond the selection'
+      : unasked.length === 0
+        ? 'no other side effects'
         : `these side effects nobody asked for: ${unasked.join('; ')}`;
-    return `${TOOL}: dry run, nothing was selected; selecting the clip${opened} would have ${would}.${tail}`;
+    return `${TOOL}: dry run, nothing was selected; ${selecting} would have ${would}.${tail}`;
   }
   if (envelope.noOp === true) return `${TOOL}: the clip was already selected; nothing was changed.${tail}`;
-  const done = opened === '' ? 'selected the clip' : 'selected the clip and opened it in the piano roll';
+  const done = asked ? `selected the clip and switched the window ${route}, as open_editor asked` : 'selected the clip';
+  if (none) return `${TOOL}: ${done}, with no side effects beyond the selection.${tail}`;
   return unasked.length === 0
-    ? `${TOOL}: ${done}, with no side effects beyond the selection.${tail}`
+    ? `${TOOL}: ${done}, with no other side effects.${tail}`
     : `${TOOL}: ${done}, and ALSO, which nobody asked for: ${unasked.join('; ')}.${tail}`;
 }
 
@@ -122,7 +143,7 @@ function viewOnly(envelope: Json): boolean {
 export function switchSummary(envelope: Json, view: (typeof VIEWS)[number], fallback: string): string {
   const asked = WORKSPACE[view];
   if (envelope.noOp === true) {
-    return `${TOOL}: the window already shows ${WORKSPACE_WORDS[asked]}; nothing was changed.`;
+    return `${TOOL}: the window already shows ${WORKSPACE_WORDS[asked]}; nothing was changed.${warningTail(envelope)}`;
   }
   if (!viewOnly(envelope)) return fallback;
   const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
@@ -235,8 +256,13 @@ export async function manageUi(ctx: ToolContext, args: ManageUiArgs): Promise<Ou
       const run = await runWrites(session, TOOL, [call]);
       if ('stopped' in run) return args.op === 'dismiss_onboarding' ? onboardingUnsupported(run.stopped) : run.stopped;
       const [result] = run.results as readonly [WriteResult];
-      const rendered = writeBody(result.envelope, { tool: TOOL });
-      if (args.op === 'focus_clip') return { ok: true, body: { ...rendered, summary: focusSummary(result.envelope) } };
+      // The instance that reports ui.workspace can switch the window back with switch_view; the revert line of a
+      // switch the call made says so, and says otherwise when the instance cannot.
+      const canSwitchView = session.hello.capabilities.includes('ui.workspace');
+      const rendered = writeBody(result.envelope, { tool: TOOL, canSwitchView });
+      if (args.op === 'focus_clip') {
+        return { ok: true, body: { ...rendered, summary: focusSummary(result.envelope, args.open_editor === true) } };
+      }
       if (view !== undefined) {
         return { ok: true, body: { ...rendered, summary: switchSummary(result.envelope, view, rendered.summary) } };
       }
@@ -250,7 +276,7 @@ export const manageUiTool = defineTool({
   title: 'Manage OpenTune window state',
   description:
     'OpenTune (audio vocal pitch editor): op focus_clip selects a clip, optionally opening the piano roll; ' +
-    'selecting can generate the clip notes (no undo entry, project marked changed), queue reference analysis and ' +
+    'selecting can generate the clip notes (no undo entry, project marked changed) and ' +
     'change the transport-bar scale, which dry_run predicts and a real result names first. switch_view shows view ' +
     'arrangement or piano_roll; arrangement closes the piano roll. dismiss_dialogs closes dialogs like Escape; ' +
     'one that commits its value needs accept_commit true, which only the user may allow. dismiss_onboarding marks ' +

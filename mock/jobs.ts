@@ -18,13 +18,7 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 const TERMINAL: ReadonlySet<JobState> = new Set(['succeeded', 'failed', 'cancelled']);
 
 /** Kinds whose jobs can be cancelled when they start (the table of section 12.3). */
-const CANCELLABLE_KINDS: ReadonlySet<string> = new Set([
-  'import',
-  'export',
-  'referenceAnalysis',
-  'timeGridSeed',
-  'projectOpen',
-]);
+const CANCELLABLE_KINDS: ReadonlySet<string> = new Set(['import', 'export', 'timeGridSeed', 'projectOpen']);
 
 export interface JobProgress {
   readonly fraction: number | null;

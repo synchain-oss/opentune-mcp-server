@@ -51,6 +51,62 @@ versioned separately and has its own changelog.
   run without asking while the skill was loaded; now the user's own permission settings apply to each command of the
   skill.
 
+### Changed
+
+- The companion skills `tuning-workflow`, `check-results` and `lyrics-timeline` now treat a clear request from the user as the agreement for that step, ask a question only once and only about what the tools cannot find out, use only the files the user named, confirm that the render is current before a result is called ready to listen to, and compare before and after pitch figures only when they share the same target basis.
+
+### Removed
+
+- The reference alignment. OpenTune's upstream project retired the experimental reference track and its AUTO Ref
+  button, and the control interface no longer reads, writes or reports it (OTCP specification `1.0.0-rc.7`). The
+  tools lose what belonged to it:
+  - `opentune_autotune_range`: the mode `reference` (published in 0.1.0). The input schema takes `regenerate`,
+    `snapNotes` and `notesOnly` only, so a call with `mode: "reference"` is refused before anything is sent. The tool
+    no longer needs the capability `reference.v1`, and `content.autoTune` no longer hands work to a job.
+  - `opentune_edit_arrangement`: the op `set_reference` with its `reference_clip`, and the error step for
+    `reference_ineligible`.
+  - `opentune_set_settings` and `opentune_get_settings`: `reference_align_mode` (the reference alignment mode of the
+    processing preferences, and its entry in `options`). The experimental features switch (`experimental_features`)
+    stays. `opentune_get_settings` leaves the mode out also when an instance of the specification `1.0.0-rc.6` still
+    reports it.
+  - `opentune_get_clip_details`: the section `reference` (it is no longer a value of `sections`) and the notice about
+    a reference binding that is left over. The window of a test build from before OpenTune's upstream project removed
+    the feature still runs the reference alignment from its AUTO button once a reference track is bound there, so the
+    summary says when the button would run a mode that this server cannot run (`autoModes.uiButtonRuns` is
+    `reference`, which is not in `autoModes.available`); the server never runs it. See `docs/COMPATIBILITY.md`.
+  - The sentences of the results of `opentune_delete_track`, `opentune_open_project` and `opentune_manage_ui` about
+    reference bindings that were removed or not restored and about a queued reference analysis, the job kind
+    `referenceAnalysis` of the job tools, and the next steps of the reasons `reference_analysis_stalled`,
+    `reference_analysis_timeout` and `reference_analysis_failed`.
+  - The mock, the contract vectors, the tests, the end-to-end tour and the troubleshooting text of the reference
+    analysis. The registries of the specification keep the capability `reference.v1`, the reasons and the warning that were
+    sent, marked as retired from `1.0.0-rc.7` on; see `docs/contract-changes/20261026-retire-reference.md`.
+
+### Fixed
+
+- Result wording that disagreed with the facts of the same result (contract change record
+  `docs/contract-changes/20261026-result-wording.md`):
+  - A change of the tempo alone or of the time signature alone is now restorable with `opentune_transport`; the
+    result no longer says that no tool can restore it. A new test walks every revert recipe of the specification
+    vectors and fails when one that a tool can carry out maps to no tool call.
+  - The summary of a result whose lists OpenTune cut at 200 entries (AUTO over a long clip, a large edit of notes)
+    gives the real totals ("created 962 notes") and says which lists are shorter than the result.
+  - `opentune_manage_ui` with `focus_clip` and `open_editor` names the switch of the window and no longer claims
+    "no side effects"; a revert line gives the `switch_view` call to switch the window back (on a build without
+    `ui.workspace`, it says to click the view button). The summary of `switch_view` for a window that already showed
+    the view keeps the warnings of the result, as the one of `focus_clip` does.
+  - Duplicating a track, and any result that shows a hidden track, names the revealed track and the colour change in
+    the first sentence.
+  - A first save to a new file says that a new project file was written, not that nothing can be restored; every save
+    result says that OpenTune copies the audio the project uses into the `Project_Media` folder next to the project
+    file, and the body gives that folder (`mediaFolder`).
+  - `opentune_estimate_key` says which key to trust when the key of the clip has other notes than the estimate, states
+    which range its two confidences cover, and ends `local_keys` and `estimated_over` at the end of the clip.
+  - `opentune_analyze_pitch` reports `baseline` (`stored_notes` or `nearest_semitone`) and says that deviations
+    against the nearest semitone are not directly comparable with a later analysis of the clip with notes.
+  - A result that queued a render says that playback can still sound the old way until `render.current` of
+    `opentune_get_clip_details` is true, and that an export waits for it.
+
 ## [0.2.0] - 2026-10-26
 
 The second public version of OpenTune MCP Server (by Synchain), and wave B of the control interface: editing the
