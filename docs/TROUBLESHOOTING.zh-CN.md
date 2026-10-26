@@ -169,6 +169,8 @@ OpenTune 或本服务里发生了意外错误。本服务不认识的错误 kind
 
 OpenTune 没有及时回答。请求可能仍在运行;重试修改之前先重新读取状态。
 
+原因为 `read_too_slow` 时(来自带 `output_path` 的 `opentune_get_notes`),是本服务自己停止了分页读取:下一页可能在客户端放弃之后才结束(调用开始后 40 秒)。OpenTune 里没有任何改动,也没有写文件;请缩小范围(`from`、`to`)分成几个文件读取,或等 OpenTune 不忙时再调用。
+
 ### Error CONFIG_INVALID
 
 服务的配置无效,例如 `OPENTUNE_MCP_DISCOVERY_DIR` 或 `OPENTUNE_DATA_DIR` 不是绝对路径,或发现目录无法读取(`reason` 为 `discovery_dir`;`opentune_launch` 在无法于其中创建 `launching` 文件夹时也会报告它)。`reason` 为 `launch_failed` 时,`OPENTUNE_MCP_OPENTUNE_PATH` 里的可执行文件通过了检查,但系统无法启动它;`detail` 给出系统的错误码。请运行 `opentune-mcp doctor`。
@@ -228,9 +230,9 @@ OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次�
 
 ## Rendering backend and vocoder
 
-`opentune_get_settings`(`processing` 小节)会显示渲染优先级和 OpenTune 当前使用的后端(`processing.backend`)。`gpuFirst` 下,OpenTune 每次加载声码器都会先尝试 GPU,失败时悄悄退回 CPU,所以 GPU 并不保证可用。优先级是 `gpuFirst` 而后端是 `cpu` 时,摘要会指出这一点。想知道原因,请读日志:用 `opentune_get_settings`,`sections` 为 `["log"]`、`log_lines` 为 30,可以看到与后端有关的日志行。Windows 上还可以运行 `opentune-mcp doctor`:它检查测试构建在 `opentune-control.json` 里列出的 Direct3D 12 运行库(见 [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied))。改了渲染优先级之后,`opentune_set_settings` 会在作业结束后读一次后端,放进 `rendering_backend`;等了一小会儿声码器仍在重新加载时,会如实说明,而不是猜测。如果改动时声码器还没就绪(刚启动、还没渲染过),OpenTune 可能在声码器重新加载完成之前就结束了作业,这时读到 `cpu` 并不能证明发生了回退:`rendering_backend.confirmed` 为 `false`,要等下一次加载后才能确定后端,请在渲染过一次之后再读 `opentune_get_settings`。
+`opentune_get_settings`(`processing` 小节)会显示渲染优先级和 OpenTune 当前使用的后端(`processing.backend`)。`gpuFirst` 下,OpenTune 每次加载声码器都会先尝试 GPU,失败时悄悄退回 CPU,所以 GPU 并不保证可用。优先级是 `gpuFirst`、后端是 `cpu` 且声码器已加载(`processing.vocoderReady` 为 true)时,摘要会指出这一点;声码器没加载时,`backend` 可能还是旧值,所以不据此下结论。想知道原因,请读日志:用 `opentune_get_settings`,`sections` 为 `["log"]`、`log_lines` 为 30,可以看到与后端有关的日志行。Windows 上还可以运行 `opentune-mcp doctor`:它检查测试构建在 `opentune-control.json` 里列出的 Direct3D 12 运行库(见 [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied))。改了渲染优先级之后,`opentune_set_settings` 会在作业结束后读一次后端,放进 `rendering_backend`;等了一小会儿声码器仍在重新加载时,会如实说明,而不是猜测。如果改动时声码器还没就绪(刚启动、还没渲染过),OpenTune 可能在声码器重新加载完成之前就结束了作业,这时读到 `cpu` 并不能证明发生了回退:`rendering_backend.confirmed` 为 `false`,要等下一次加载后才能确定后端,请在渲染过一次之后再读 `opentune_get_settings`。
 
-刚启动 OpenTune 时 `vocoderReady: false` 是正常的,不是故障:声码器在第一次渲染需要它时才加载,无需处理。
+刚启动 OpenTune 时 `vocoderReady: false` 是预期之中的:声码器在第一次渲染需要它时才加载,`opentune_get_status`、`opentune_launch` 与 `opentune_get_settings` 的摘要都会这么说。摘要不说它「正常」,因为 `session.info` 与 `prefs.get` 里没有哪个成员能分辨「还没加载」与「加载失败」或「卡住」。如果渲染过一次(需要渲染的编辑、导出)之后它仍是 false,请告诉用户,并读日志找原因(`opentune_get_settings`,`sections` 为 `["log"]`)。声码器权重或渲染优先级的修改,在 OpenTune 加载不了新权重或后端时,会以 [MODEL_UNAVAILABLE](#error-model_unavailable)(`vocoder_load_failed`)失败。
 
 ## Hybrid mode
 

@@ -5,11 +5,13 @@
 // gives for each kind of unfinished job, and the way it ends: the answer first, then the connections
 // close, the port refuses, the discovery file goes, and a request behind it gets SHUTTING_DOWN.
 
-import { existsSync } from 'node:fs';
+import fs, { existsSync } from 'node:fs';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { startMock } from '../../mock/server.js';
 import { RunnerConnection } from '../contract/connection.js';
+import { tempDir } from '../support/context.js';
 import { Sessions, type Response, type TestSession } from '../support/mock-client.js';
 
 const sessions = new Sessions();
@@ -211,5 +213,69 @@ describe('endJob', () => {
     expect(session.mock.endJob(ids.job ?? '')).toBe(false);
     expect(session.mock.endJob('j:00000000:99')).toBe(false);
     expect(await session.ok('app.quit')).toMatchObject({ quitting: true });
+  });
+});
+
+describe('the end of the mock when the discovery file cannot be removed', () => {
+  const cleanup: (() => unknown)[] = [];
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    for (const fn of cleanup.splice(0).reverse()) await fn();
+  });
+
+  /** A mock whose rmSync fails for its discovery file only (as a file that Windows will not delete: EPERM). */
+  async function stubborn() {
+    const t = tempDir();
+    cleanup.push(t.remove);
+    const mock = await startMock({ discoveryDir: t.dir });
+    const removed = fs.rmSync.bind(fs);
+    const failure = Object.assign(new Error('operation not permitted'), { code: 'EPERM' });
+    vi.spyOn(fs, 'rmSync').mockImplementation((target, options) => {
+      if (target === mock.discoveryPath) throw failure;
+      removed(target, options);
+    });
+    return { mock, failure };
+  }
+
+  it('still ends: whenEnded resolves, the clean-up after the file runs, and stop() reports the failure', async () => {
+    const { mock, failure } = await stubborn();
+    const ids = mock.given({ files: [{ bind: 'file', kind: 'existing', extension: '.otproj' }] });
+    expect(existsSync(ids.file ?? '')).toBe(true);
+    let ended = false;
+    void mock.whenEnded().then(() => {
+      ended = true;
+    });
+    await expect(mock.stop()).rejects.toBe(failure);
+    // Without the end being marked this never resolves and the test runs into its time limit.
+    await mock.whenEnded();
+    expect(ended).toBe(true);
+    // The files of the mock were cleaned up although the discovery file was not removed.
+    expect(existsSync(ids.file ?? '')).toBe(false);
+    expect(mock.openConnections).toBe(0);
+    // Once, whoever asks: the second stop() is the same failure, not a second attempt.
+    await expect(mock.stop()).rejects.toBe(failure);
+  });
+
+  it('ends after app.quit too, and leaves no unhandled rejection behind', async () => {
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      unhandled.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    cleanup.push(() => process.off('unhandledRejection', onUnhandled));
+
+    const { mock, failure } = await stubborn();
+    const { conn, write, read } = await pipelined({ mock } as TestSession);
+    cleanup.push(() => {
+      conn.destroy();
+    });
+    write({ jsonrpc: '2.0', id: 1, method: 'app.quit', params: {} });
+    expect(await read()).toMatchObject({ id: 1, result: { quitting: true } });
+    await mock.whenEnded();
+    // The rejection of a promise that nobody handles is reported in a later turn: let it come.
+    await new Promise<void>((resolve) => setTimeout(resolve, 50));
+    expect(unhandled).toEqual([]);
+    // The failure is not lost: whoever asks for the stop gets it.
+    await expect(mock.stop()).rejects.toBe(failure);
   });
 });

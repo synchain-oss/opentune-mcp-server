@@ -16,7 +16,6 @@ import { render, type Outcome } from '../../src/tools/registry.js';
 import {
   CALL_BUDGET_MS,
   CLIENT_TIMEOUT_MS,
-  MAX_LISTED_HANDLES,
   editTiming,
   editTimingTool,
   type EditTimingArgs,
@@ -92,11 +91,11 @@ function clockPerRequest(ctx: TestContext, cost: number | null) {
 const HANDLES = 400;
 const SPACING = 0.5;
 
-/** A clip with 400 handles, one every half second from second 1. */
-async function longSeeded() {
+/** A clip with 400 handles (or `handles`), one every half second from second 1. */
+async function longSeeded(handles = HANDLES) {
   const { mock, ctx } = await withMock();
-  const grid = Array.from({ length: HANDLES }, (_, i) => ({ bind: `h${String(i)}`, contentSec: 1 + i * SPACING }));
-  const ids = mock.given({ dirty: false, clips: [clip({ durationSec: HANDLES * SPACING + 20, timeGrid: grid })] });
+  const grid = Array.from({ length: handles }, (_, i) => ({ bind: `h${String(i)}`, contentSec: 1 + i * SPACING }));
+  const ids = mock.given({ dirty: false, clips: [clip({ durationSec: handles * SPACING + 20, timeGrid: grid })] });
   const revision = encodeClipRevision({
     content: need(ids, 'clip.revision'),
     grid: need(ids, 'clip.gridRevision'),
@@ -113,6 +112,15 @@ const phrases = (count: number, delta_ms = 10, from = 0) =>
     start_content_sec: 0.9 + (from + i) * 3,
     end_content_sec: 3.9 + (from + i) * 3,
     delta_ms,
+  }));
+
+/** `count` shifts of one twelve-second phrase each: 24 handles, more than the MAX_LISTED changes a result lists. */
+const wide = (count: number) =>
+  Array.from({ length: count }, (_, i) => ({
+    op: 'shift' as const,
+    start_content_sec: 0.9 + i * 12,
+    end_content_sec: 12.9 + i * 12,
+    delta_ms: 10,
   }));
 
 const sizes = (outcome: Outcome) => {
@@ -215,32 +223,102 @@ describe('opentune_edit_timing: up to 64 operations in one call', () => {
     expect(sizes(outcome).structured).toBeLessThanOrEqual(20_000);
   });
 
-  it('keeps up to eight operations in the full format', async () => {
-    const { ctx, revision, placement } = await longSeeded();
-    const out = body(await call(ctx, { clip: placement, expected_revision: revision, ops: phrases(8) }));
+  /** `count` shifts that each move one handle of a short grid (one handle every half second from second 1). */
+  const single = (count: number) =>
+    Array.from({ length: count }, (_, i) => ({
+      op: 'shift' as const,
+      start_content_sec: 0.9 + i * SPACING,
+      end_content_sec: 1.4 + i * SPACING,
+      delta_ms: 10,
+    }));
+
+  it('keeps up to eight operations in the full format when that fits the output budget', async () => {
+    const { ctx, revision, placement } = await longSeeded(12);
+    const outcome = await call(ctx, { clip: placement, expected_revision: revision, ops: single(8) });
+    const out = body(outcome);
     expect(out.steps_format).toBeUndefined();
     expect(out.moves_total).toBeUndefined();
     const steps = out.steps as { summary: string; changes: unknown[] }[];
     expect(steps).toHaveLength(8);
     expect(steps[0]?.summary).toMatch(/^opentune_edit_timing: changed /);
     expect(steps[0]?.changes.length).toBeGreaterThan(0);
-    // A full-format result lists MAX_LISTED_HANDLES handles (100 since the write results of a long edit were cut to
-    // stay inside the host's limit; the 200 this test once had named the old value), and counts all of them.
-    expect((out.time_grid_handles as unknown[]).length).toBe(MAX_LISTED_HANDLES);
-    expect(out.time_grid_handle_count).toBe(HANDLES);
-    expect(out.time_grid_handles_truncated).toBe(true);
+    // The handles of the grid are all listed, and the full format is within the budget.
+    expect((out.time_grid_handles as unknown[]).length).toBe(12);
+    expect(out.time_grid_handle_count).toBe(12);
+    expect(out.time_grid_handles_truncated).toBeUndefined();
     expect(out.summary).toContain('newest first: ');
+    expect(sizes(outcome).text).toBeLessThanOrEqual(20_000);
+    expect(sizes(outcome).structured).toBeLessThanOrEqual(20_000);
+  });
+
+  it('lists eight operations compactly when the full format would be over the output budget, with the count of every operation', async () => {
+    // Eight operations of 24 handles each on a grid of 400: in the full format every step carries the write result of
+    // its request, about 40,000 characters in all, twice the budget.
+    const { ctx, revision, placement } = await longSeeded();
+    const answers: { changes: unknown[] }[] = [];
+    // eslint-disable-next-line @typescript-eslint/unbound-method
+    const original = OtcpSession.prototype.call;
+    vi.spyOn(OtcpSession.prototype, 'call').mockImplementation(async function (
+      this: OtcpSession,
+      method,
+      params,
+      timeout,
+    ) {
+      const result = await original.call(this, method, params, timeout);
+      if (method === 'content.shiftTiming') answers.push(result as { changes: unknown[] });
+      return result;
+    });
+    const outcome = await call(ctx, { clip: placement, expected_revision: revision, ops: wide(8) });
+    const out = body(outcome);
+    // The count of operations did not make it compact (eight is the most of the full format); the size did.
+    expect(answers).toHaveLength(8);
+    expect(out.steps_format).toContain('compact');
+    const steps = out.steps as Compact[];
+    expect(steps).toHaveLength(8);
+    expect(steps.map((step) => step.operation)).toEqual([1, 2, 3, 4, 5, 6, 7, 8]);
+    // The count of every operation is given, and is the truth about the edit.
+    expect(steps.map((step) => step.moved)).toEqual(answers.map((a) => a.changes.length));
+    expect(steps.every((step) => step.op === 'shift' && step.clamped === 0 && typeof step.undo_id === 'string')).toBe(
+      true,
+    );
+    expect(out.moves_total).toBe(answers.reduce((total, a) => total + a.changes.length, 0));
+    expect(out.summary).toContain('applied 8 operations in order, each as its own undo step');
+    expect(out.summary).toContain('undoing all takes 8 steps, newest operation first');
+    // Fewer handles of the grid are listed than in the full format, and all of them are counted.
+    expect((out.time_grid_handles as unknown[]).length).toBe(40);
+    expect(out.time_grid_handle_count).toBe(HANDLES);
+    expect(sizes(outcome).text).toBeLessThanOrEqual(20_000);
+    expect(sizes(outcome).structured).toBeLessThanOrEqual(20_000);
+  });
+
+  it('decides by size and not by the count: even three operations are compact when the full format does not fit', async () => {
+    const { ctx, revision, placement } = await longSeeded();
+    const everything = Array.from({ length: 3 }, (_, i) => ({
+      op: 'shift' as const,
+      start_output_sec: 0,
+      end_output_sec: 1000,
+      delta_ms: i + 1,
+    }));
+    const outcome = await call(ctx, { clip: placement, expected_revision: revision, ops: everything });
+    const out = body(outcome);
+    expect(out.steps_format).toContain('compact');
+    expect((out.steps as Compact[]).map((step) => step.moved)).toEqual([HANDLES, HANDLES, HANDLES]);
+    expect(out.moves_total).toBe(3 * HANDLES);
+    expect(sizes(outcome).text).toBeLessThanOrEqual(20_000);
+    // A single operation keeps its own full result.
+    const one = body(
+      await call(ctx, {
+        clip: placement,
+        expected_revision: out.clip_revision as string,
+        ops: [{ op: 'shift', start_output_sec: 0, end_output_sec: 1000, delta_ms: 5 }],
+      }),
+    );
+    expect(one.steps).toBeUndefined();
+    expect((one.changes as unknown[]).length).toBeGreaterThan(0);
   });
 
   it('keeps counting every move when the result lists only some of its changes', async () => {
     // A phrase of 12 seconds holds 24 handles, more than the MAX_LISTED changes a rendered write result lists.
-    const wide = (count: number) =>
-      Array.from({ length: count }, (_, i) => ({
-        op: 'shift' as const,
-        start_content_sec: 0.9 + i * 12,
-        end_content_sec: 12.9 + i * 12,
-        delta_ms: 10,
-      }));
     const { ctx, revision, placement } = await longSeeded();
     // What OpenTune answers to each request, whole: the truth the counts are compared with.
     const answers: { changes: unknown[] }[] = [];
@@ -267,15 +345,18 @@ describe('opentune_edit_timing: up to 64 operations in one call', () => {
     expect(out.moves_total).toBe(moved.reduce((total, n) => total + n, 0));
     expect(steps.reduce((total, s) => total + s.moves.length + (s.moves_omitted ?? 0), 0)).toBe(out.moves_total);
 
-    // Eight operations: the full format lists MAX_LISTED changes of each step and says how many it left out.
+    // Two operations on a grid of 48 handles: the full format fits the budget, lists MAX_LISTED changes of each step
+    // and says how many it left out.
+    const short = await longSeeded(48);
+    const before = answers.length;
     const full = body(
-      await call(ctx, { clip: placement, expected_revision: out.clip_revision as string, ops: wide(8) }),
+      await call(short.ctx, { clip: short.placement, expected_revision: short.revision, ops: wide(2) }),
     );
     const fullSteps = full.steps as { changes: unknown[]; omittedCount: { changes: number } }[];
-    expect(fullSteps).toHaveLength(8);
+    expect(fullSteps).toHaveLength(2);
     for (const [index, step] of fullSteps.entries()) {
       expect(step.changes).toHaveLength(MAX_LISTED);
-      expect(step.changes.length + step.omittedCount.changes).toBe(answers[9 + index]?.changes.length);
+      expect(step.changes.length + step.omittedCount.changes).toBe(answers[before + index]?.changes.length);
     }
   });
 
@@ -382,6 +463,26 @@ describe('opentune_edit_timing: up to 64 operations in one call', () => {
     expect(typeof latest).toBe('string');
     // That revision is current: the rest can go on with it.
     body(await call(ctx, { clip: placement, expected_revision: latest ?? '', ops: phrases(1, 5, 40) }));
+    expect(sizes(outcome).text).toBeLessThanOrEqual(20_000);
+  });
+
+  it('reports the completed operations compactly when their full format would not fit the budget, whatever their count', async () => {
+    const { ctx, revision, placement } = await longSeeded();
+    const outcome = await call(ctx, {
+      clip: placement,
+      expected_revision: revision,
+      ops: [...wide(5), { op: 'move', moves: [{ handle_id: 'th:9:9', output_sec: 5 }] }],
+    });
+    const error = failure(outcome);
+    expect(error).toMatchObject({ kind: 'NOT_FOUND', reason: 'unknown_handle', executed: true });
+    expect(error.detail).toContain('operation 6 failed after 5 applied');
+    const completed = (outcome as { context?: { completed?: (Compact & { clip_revision?: string })[] } }).context
+      ?.completed;
+    // Six operations are within the count of the full format; five full steps of 24 handles are not within the budget.
+    expect(completed).toHaveLength(5);
+    expect(completed?.map((c) => c.moved)).toEqual([24, 24, 24, 24, 24]);
+    expect(completed?.every((c) => c.op === 'shift' && typeof c.undo_id === 'string')).toBe(true);
+    expect(typeof completed?.at(-1)?.clip_revision).toBe('string');
     expect(sizes(outcome).text).toBeLessThanOrEqual(20_000);
   });
 });

@@ -63,9 +63,10 @@ function warningTail(envelope: Json): string {
 }
 
 /**
- * Side effects whose words are written out in focusSummary, when their details are an object; any other one, and
- * one of these whose details are not an object, is named by the fixed table. The exception is tempoRounded: whether
- * it is worded is decided by its key, whatever its details are, so the fixed table must not name it a second time.
+ * Side effects whose words are written out in focusSummary. Whether one is worded is decided by its key, whatever its
+ * value is: an instance that sends null or a string for it still reports the effect, and the sentence leaves out what
+ * the value would have said (the note count, the two views, the tempi) instead of dropping the effect or naming it a
+ * second time from the fixed table. Any other side effect is named by the fixed table.
  */
 const WORDED = new Set(['notesGenerated', 'uiScaleChanged', 'workspaceSwitched', 'tempoRounded']);
 
@@ -81,19 +82,26 @@ export function focusSummary(envelope: Json, openEditor = false): string {
   const unasked: string[] = [];
   // A real call marks the project as changed; a dry run changes nothing, so it says what would be marked.
   const marked = `the project ${dry ? 'would be' : 'is'} marked as changed`;
-  if (isObject(effects.notesGenerated)) {
-    const n = natural(effects.notesGenerated.noteCount);
+  if (Object.hasOwn(effects, 'notesGenerated')) {
+    // The count is a checked integer of an object; without one (a value that is not an object) the sentence has none.
+    const n = isObject(effects.notesGenerated) ? natural(effects.notesGenerated.noteCount) : null;
     unasked.push(
       `OpenTune ${dry ? 'generates' : 'generated'} ${n === null ? 'notes' : count(n, 'note')} for the clip, with ` +
         `no undo entry, and ${marked}`,
     );
   }
-  if (isObject(effects.uiScaleChanged)) unasked.push('the scale shown in the transport bar changes with the clip key');
+  if (Object.hasOwn(effects, 'uiScaleChanged')) {
+    unasked.push('the scale shown in the transport bar changes with the clip key');
+  }
   // The switch of the view is what open_editor asks for: it is said as part of the selection, not as a surprise.
-  // Without open_editor it is a side effect nobody asked for.
-  const switched = isObject(effects.workspaceSwitched) ? effects.workspaceSwitched : null;
-  const route = switched === null ? '' : `from ${viewName(switched.from)} to ${viewName(switched.to)}`;
-  if (switched !== null && !openEditor) unasked.push(`the window ${dry ? 'switches' : 'switched'} ${route}`);
+  // Without open_editor it is a side effect nobody asked for. A value that is not an object names no views.
+  const switched = Object.hasOwn(effects, 'workspaceSwitched');
+  const route = !switched
+    ? ''
+    : isObject(effects.workspaceSwitched)
+      ? `from ${viewName(effects.workspaceSwitched.from)} to ${viewName(effects.workspaceSwitched.to)}`
+      : 'to a view the result does not name';
+  if (switched && !openEditor) unasked.push(`the window ${dry ? 'switches' : 'switched'} ${route}`);
   // The window moved the keyboard focus away from the tempo field when it switched, and the field rounded the tempo.
   // Whether the effect is there is decided by its key, as in the generic summary: an instance that sends a value that
   // is not an object (null) still reports it, and tempoRoundedWords leaves the unchecked numbers out of the sentence.
@@ -101,13 +109,11 @@ export function focusSummary(envelope: Json, openEditor = false): string {
     unasked.push(`${tempoRoundedWords(effects.tempoRounded, dry)}, and ${marked}`);
   }
   for (const name of Object.keys(effects)) {
-    // tempoRounded is worded above by its key; the others are worded above only when their details are an object.
-    const worded = name === 'tempoRounded' || (WORDED.has(name) && isObject(effects[name]));
-    if (!worded) {
+    if (!WORDED.has(name)) {
       unasked.push(SIDE_EFFECT_TEXT[name] ?? `side effect ${token(name, 'camel') ?? 'with an unrecognized name'}`);
     }
   }
-  const asked = switched !== null && openEditor;
+  const asked = switched && openEditor;
   const tail = warningTail(envelope);
   const none = Object.keys(effects).length === 0;
   if (dry) {

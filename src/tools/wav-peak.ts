@@ -17,9 +17,9 @@ export type PeakFailure = 'unreadable' | 'not_a_wav' | 'unsupported_format' | 't
 export type WavPeak =
   | {
       readonly ok: true;
-      /** Largest absolute sample value, 1.0 being full scale. */
+      /** Largest absolute sample value, 1.0 being full scale; a NaN sample is not compared, so it never raises this. */
       readonly peak: number;
-      /** 20 * log10(peak) in dBFS, to two decimals; null for a silent file or a sample that is not a finite number. */
+      /** 20 * log10(peak) in dBFS, to two decimals; null for a silent file or one with a sample that is not finite. */
       readonly peakDbfs: number | null;
       /** Samples with an absolute value above 1.0. */
       readonly clippedSampleCount: number;
@@ -152,6 +152,9 @@ export async function readWavPeak(file: string, ops: FileOps = realOps): Promise
     const view = new DataView(raw);
     let peak = 0;
     let clipped = 0;
+    // Samples that are NaN or infinite. NaN is neither above the peak nor above full scale, so only this count
+    // tells that a file holds one: without it a file of NaN reads as silent, and a file with some NaN gets a finite peak.
+    let nonFinite = 0;
     let at = found.start;
     let left = found.length - (found.length % width);
     while (left > 0) {
@@ -162,18 +165,20 @@ export async function readWavPeak(file: string, ops: FileOps = realOps): Promise
       if (usable === 0) break;
       for (let offset = 0; offset < usable; offset += width) {
         const value = Math.abs(read(view, offset));
-        // NaN is neither above full scale nor above the peak.
         if (value > peak) peak = value;
         if (value > 1) clipped += 1;
+        if (!Number.isFinite(value)) nonFinite += 1;
       }
       at += usable;
       left -= usable;
     }
 
-    if (peak === 0) return { ok: true, peak, peakDbfs: null, clippedSampleCount: clipped, nullReason: 'silent' };
-    if (!Number.isFinite(peak)) {
+    // A sample that is not a finite number makes the level unknown, whatever the other samples are: this comes before
+    // silent, because a file of NaN has a peak of 0 here.
+    if (nonFinite > 0) {
       return { ok: true, peak, peakDbfs: null, clippedSampleCount: clipped, nullReason: 'not_finite' };
     }
+    if (peak === 0) return { ok: true, peak, peakDbfs: null, clippedSampleCount: clipped, nullReason: 'silent' };
     return {
       ok: true,
       peak,

@@ -471,14 +471,17 @@ describe('opentune_get_status', () => {
   });
 
   describe('a vocoder that is not loaded yet', () => {
-    it('is not reported as a problem right after start, and the field stays as OpenTune reports it', async () => {
+    it('is not called normal or a fault right after start, and the field stays as OpenTune reports it', async () => {
       const { mock: m, ctx } = await withMock();
       m.setVocoderLoadOnDemand(true);
       const b = body(await getStatus(ctx, undefined));
       expect(b.state).toBe('READY');
       expect(b.summary).toBe(
-        `${STATUS_TEXT.READY.summary} The vocoder loads when the first render needs it, so it not being loaded just after start is normal.`,
+        `${STATUS_TEXT.READY.summary} The vocoder is not loaded yet; it loads when the first render needs it. If it is ` +
+          'still not loaded after a render, tell the user.',
       );
+      // A load that failed reads the same in session.info, so the sentence may not claim that all is well.
+      expect(b.summary).not.toContain('normal');
       expect(b.nextStep).toEqual(STATUS_TEXT.READY.step);
       const [instance] = b.instances as { info: { processing: { vocoderReady: boolean } } }[];
       expect(instance?.info.processing.vocoderReady).toBe(false);

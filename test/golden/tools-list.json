@@ -1579,7 +1579,7 @@
               }
             ]
           },
-          "description": "Operations in order, up to 64, each its own undo step; more than 8 give a compact result. seed must be alone."
+          "description": "Operations in order, up to 64, each its own undo step; more than 8, or a result too long, give a compact result. seed must be alone."
         },
         "wait_seconds": {
           "description": "Seed only (refused with shift or move). How long seed waits for its job, 0 to 30. Default 10; then the job id is returned.",

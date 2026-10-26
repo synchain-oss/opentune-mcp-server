@@ -51,37 +51,6 @@ versioned separately and has its own changelog.
   `--paths-file`, a JSON file with the paths: the skill puts the paths that tools returned in it, so that a file name
   is never part of a shell command line.
 
-### Fixed
-
-- The `beat-grid` skill checks `status` before it plans an install. An analyzer that was already installed used to
-  be treated as missing when the manifest still said the release was not published: the install plan listed
-  Problems and told the agent not to retry, and the whole beat-grid workflow was given up. Now `install` (the plan
-  and `--yes`) reports "already installed" with the version, folder and models, exits 0 and downloads nothing when the
-  program and the models asked for are there; `status` leaves out the unpublished-release note for an installed
-  analyzer; `SKILL.md` skips the install section on `installed: true` and stops for an unpublished release only
-  when nothing is installed. An analyzer that is not installed is still refused as before.
-- Text and specification follow-ups of the review of the skill and wording changes (contract change record
-  `docs/contract-changes/20261026-shift-timing-closed-range.md`):
-  - The OTCP specification (`1.0.0-rc.7`) says that the `range` of `content.shiftTiming` is a closed interval: a handle
-    exactly at either end moves, so two ranges that share an end point move the handle there twice. It also says in the
-    `focus` description of `import.start` that the focused clip is loaded into the piano roll without switching the
-    view. Both state what the OpenTune build already does; nothing changes on the wire.
-  - The timing plan of the `beat-grid` skill no longer lets neighbouring ranges meet: a range ends at least 0.1 ms
-    before the next one starts. An onset that has no room left for a range (the next chain starts less than about 0.2 ms
-    after it) gets no op of its own and the warning `RANGE_TOO_NARROW`, which names the note and the shift that was not
-    planned, instead of a range that reaches into the next one. The warning also says what happens to a handle at that
-    onset: it can still lie inside the next chain's range (the two starts are in the same 0.1 ms) and then moves with
-    that chain, by that chain's shift (`movedWithNextChainMs`, which is `null` when no range covers it).
-  - `SKILL.md` of `beat-grid` says that `grid` stays out of the paths file when `--grid` is on the command line (both
-    is refused as "given twice").
-  - `SKILL.md` of `tuning-workflow` tells the first-run welcome page from other dialogs by `blockedBy.kind`
-    (`onboarding` or `dialog`) instead of the English of `hint`; says that a peak above 0 dBFS and samples at full scale
-    without a measured peak (`peakDbfs` null, `clippedSampleCount` above 0) are reported differently; and, when a
-    reopened project lacks corrections, no longer saves over the original file: the agent tells the user what is
-    missing, suggests `save_as` to a new file, and overwrites the original only if the user agrees.
-  - The skill tests: the check that no skill declares `allowed-tools` also sees a quoted key, and every identifier a
-    skill names in backticks as a result field (`peakDbfs`, `blockedBy`) must exist in the code.
-
 ### Security
 
 - The `beat-grid` skill no longer declares `allowed-tools`. That line let every shell command and file read or write
@@ -103,7 +72,7 @@ versioned separately and has its own changelog.
   hint), the summary says that writes are refused until it is closed, and the next step is `opentune_manage_ui` with
   `dismiss_onboarding` (after the user has agreed: closing the welcome page marks it as seen and cannot be undone) or
   `dismiss_dialogs`. An instance without `ui.bridge` has `blockedBy` `null` with the reason `capability_missing`. A vocoder that is not loaded yet is no longer worded as a problem: one
-  sentence says that it loads at the first render.
+  sentence says that it loads at the first render (reworded since: see Fixed).
 - `opentune_get_settings` gives next to `options.renderingPriority` one note per value (`optionNotes`: what it means and
   when it takes effect), and a summary sentence when the priority is `gpuFirst` but the CPU runs, with the log and
   `opentune-mcp doctor` as the places to look. `opentune_set_settings` reads the backend once after a change of the
@@ -153,8 +122,8 @@ versioned separately and has its own changelog.
 - A whole-song regenerate gave a result of about 60,000 characters that a host rejected, which lost the undo id; see
   Changed.
 - `opentune_estimate_key` names the scale of the key of a clip in a sentence only when it is one of the scales of the
-  protocol, else "another scale". `opentune_manage_ui` names a side effect whose details are not an object from the
-  fixed table instead of saying "no other side effects".
+  protocol, else "another scale". `opentune_manage_ui` does not say "no other side effects" for a side effect whose
+  details are not an object; see the entries on the worded side effects below.
 - Result wording that disagreed with the facts of the same result (contract change record
   `docs/contract-changes/20261026-result-wording.md`):
   - A change of the tempo alone or of the time signature alone is now restorable with `opentune_transport`; the
@@ -195,6 +164,67 @@ versioned separately and has its own changelog.
   rule 2) now says what the window does when an import focuses the imported clip: the clip is loaded into the piano
   roll, `ui.pianoRollContentId` is its content and `selectedPlacementIds` its placement, and the view is not switched.
   The mock does not count floating-point noise (a tempo of 120.30000000000001) as a rounding.
+- The `beat-grid` skill checks `status` before it plans an install. An analyzer that was already installed used to
+  be treated as missing when the manifest still said the release was not published: the install plan listed
+  Problems and told the agent not to retry, and the whole beat-grid workflow was given up. Now `install` (the plan
+  and `--yes`) reports "already installed" with the version, folder and models, exits 0 and downloads nothing when the
+  program and the models asked for are there; `status` leaves out the unpublished-release note for an installed
+  analyzer; `SKILL.md` skips the install section on `installed: true` and stops for an unpublished release only
+  when nothing is installed. An analyzer that is not installed is still refused as before.
+- Text and specification follow-ups of the review of the skill and wording changes (contract change record
+  `docs/contract-changes/20261026-shift-timing-closed-range.md`):
+  - The OTCP specification (`1.0.0-rc.7`) says that the `range` of `content.shiftTiming` is a closed interval: a handle
+    exactly at either end moves, so two ranges that share an end point move the handle there twice. It also says in the
+    `focus` description of `import.start` that the focused clip is loaded into the piano roll without switching the
+    view. Both state what the OpenTune build already does; nothing changes on the wire.
+  - The timing plan of the `beat-grid` skill no longer lets neighbouring ranges meet: a range ends at least 0.1 ms
+    before the next one starts. An onset that has no room left for a range (the next chain starts less than about 0.2 ms
+    after it) gets no op of its own and the warning `RANGE_TOO_NARROW`, which names the note and the shift that was not
+    planned, instead of a range that reaches into the next one. The warning also says what happens to a handle at that
+    onset: it can still lie inside the next chain's range (the two starts are in the same 0.1 ms) and then moves with
+    that chain, by that chain's shift (`movedWithNextChainMs`, which is `null` when no range covers it).
+  - `SKILL.md` of `beat-grid` says that `grid` stays out of the paths file when `--grid` is on the command line (both
+    is refused as "given twice").
+  - `SKILL.md` of `tuning-workflow` tells the first-run welcome page from other dialogs by `blockedBy.kind`
+    (`onboarding` or `dialog`) instead of the English of `hint`; says that a peak above 0 dBFS and samples at full scale
+    without a measured peak (`peakDbfs` null, `clippedSampleCount` above 0) are reported differently; and, when a
+    reopened project lacks corrections, no longer saves over the original file: the agent tells the user what is
+    missing, suggests `save_as` to a new file, and overwrites the original only if the user agrees.
+  - The skill tests: the check that no skill declares `allowed-tools` also sees a quoted key, and every identifier a
+    skill names in backticks as a result field (`peakDbfs`, `blockedBy`) must exist in the code.
+
+- Follow-ups to the settings, export, timing and notes tools and to the mock (contract change record
+  `docs/contract-changes/20261026-followups-code.md`):
+  - `opentune_get_settings` says "gpuFirst but OpenTune is using the CPU" only while the vocoder is loaded
+    (`processing.vocoderReady` true). A vocoder that is not loaded can still report the backend from before, so no fall
+    back is concluded from it; this is the rule `opentune_set_settings` already followed after a change.
+  - The sentence about a vocoder that is not loaded (`opentune_get_settings`, `opentune_get_status`,
+    `opentune_launch`) no longer calls it normal. `session.info` and `prefs.get` have no member that tells "not
+    loaded yet" from "could not load" or "stuck", so the sentence says that the vocoder loads when the first render needs
+    it, and that the user is to be told if it is still not loaded after a render.
+  - `opentune_set_settings`: when `session.info` cannot be read before a change of the vocoder weight or the rendering
+    priority, `rendering_backend.unconfirmed_reason` is `ready_state_unavailable` and the summary says that the state could
+    not be read. It was `vocoder_not_ready_before_change`, which claimed a state that was not known.
+  - `opentune_export_audio`: a file with a sample that is NaN or infinite reports `peakDbfs` null with the reason
+    `not_finite`. A file of NaN used to be reported as `silent`, and a file with some NaN got a level that did not
+    describe it.
+  - `opentune_manage_ui` with `focus_clip` words `notesGenerated`, `uiScaleChanged` and `workspaceSwitched` by their key,
+    as it already did for `tempoRounded`, whatever their value is. A value that is null or a string gets the sentence of
+    its side effect without what the value would have said (the note count, the two views), instead of the one line
+    of the fixed table that left out "no undo entry" and "the project is marked as changed".
+  - `opentune_edit_timing`: the full format of up to 8 operations is kept only while the result fits the output budget
+    of 20,000 characters; otherwise the compact format is used, which still gives the counts of every operation. A
+    result of 8 operations that moved many handles was about 40,000 characters. The completed steps of an error are
+    treated the same way, and the description of `ops` says it.
+  - `opentune_get_notes` with `output_path` stops reading pages when the next one could end after a client has given
+    up (40 seconds into the call, with room for a page at its timeout and for the file) and fails with
+    `REQUEST_TIMEOUT` (`read_too_slow`) and a next step (a narrower range). No file is written then; a file written after
+    the client gave up was one nobody knew about, and the retry wrote a second one named " (2)".
+  - The mock: a stop that cannot remove the discovery file (for example `EPERM` on Windows) still ends it:
+    `whenEnded()` resolves and the clean-up runs; `stop()` rejects with the failure, and an `app.quit` that stops the
+    mock leaves no unhandled rejection.
+  - The mock: `content.shiftTiming` takes the range as closed, so a handle exactly on the end moves as well as one
+    exactly on the start, as the real OpenTune does. The mock used to leave out a handle on the end.
 
 ## [0.2.0] - 2026-10-26
 
