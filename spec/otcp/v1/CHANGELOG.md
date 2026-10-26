@@ -2,7 +2,7 @@
 
 All notable changes to the OTCP specification are recorded here. Versions follow `MAJOR.MINOR.PATCH` (README.md, "Versions"); each released version is tagged `spec-v<version>`.
 
-## [1.0.0-rc.6] - unreleased
+## [1.0.0-rc.6] - 2026-10-25
 
 Sixth release candidate of protocol major 1, proposed as the text of 1.0.0. It lets `prefs.set` change the four preferences of OpenTune's preferences window that it could not reach yet (the vocoder weight, the rendering priority, the pitch model and the reference alignment mode), lets `prefs.get` list the values it accepts, and adds the vectors that were missing for settings that exist in the specification since rc.1. The wire version stays `1.0`; no method, capability, error kind or warning code is added or renamed, and three reasons are appended. Members added between release candidates before 1.0.0 get no capability of their own (PROTOCOL.md section 2.2 rule 1 applies from the first minor version after 1.0.0); the capability of `prefs.set` stays `prefs.write`. Every member added is optional, so a client of rc.5 keeps working, and a server of rc.5 answers a call that names a new member with `INVALID_ARGUMENT(invalid_params)`.
 
