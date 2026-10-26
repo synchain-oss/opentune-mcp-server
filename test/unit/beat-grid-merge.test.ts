@@ -31,7 +31,16 @@ interface Plan {
   counts: { flagged: number; calls: number; remainingSuggestions: number };
   suggestions: Suggestion[];
   calls: { ops: Op[] }[];
-  warnings: { code: string; detail: string }[];
+  warnings: {
+    code: string;
+    detail: string;
+    // Only the warning RANGE_TOO_NARROW has these.
+    noteIndex?: number | null;
+    startContentSec?: number;
+    deltaMs?: number;
+    nextChainStartContentSec?: number;
+    movedWithNextChainMs?: number | null;
+  }[];
 }
 interface Chain {
   notes: Json[];
@@ -95,6 +104,14 @@ const plan = (notes: Json[], options: Json = {}): Plan =>
 /** Three notes exactly on the beat, so that the singer's overall lead or lag (the median) is 0. */
 const onBeats = (): Json[] => [note(100, 2, 100, 60), note(101, 3, 100, 60), note(102, 4, 100, 60)];
 const planWithBeats = (notes: Json[], options: Json = {}): Plan => plan([...notes, ...onBeats()], options);
+
+// The two shared parts of the text of the warning RANGE_TOO_NARROW (an onset that got no range of its own).
+const narrowWho = (noteIndex: number, startSec: number): string =>
+  `the onset at ${String(startSec)} s of the content (note index ${String(noteIndex)})`;
+const narrowWhy = (nextStartSec: number): string =>
+  `the next chain starts at ${String(nextStartSec)} s, so a range for this chain would end at or before its own ` +
+  'start. Ranges are closed intervals and must not share an end point (a handle there would move twice), so a range ' +
+  'ends at least 0.1 ms before the next one starts';
 
 describe('merging fragments into rhythm onsets', () => {
   /**
@@ -272,27 +289,153 @@ describe('merging fragments into rhythm onsets', () => {
       expect(result.merge).toEqual({ voicedNotes: 6, chains: 4, mergedAway: 2, onsets: 4, shortNotesSkipped: 0 });
     });
 
-    it('does not let the range of one op reach into the next chain', () => {
-      // The first chain ends at 1.4 s, but the next one (a pitch jump while touching) starts at 1.3 s.
+    it('ends the range of one op 0.1 ms before the next chain starts, because a range is a closed interval', () => {
+      // The first chain ends at 1.4 s, but the next one (a pitch jump while touching) starts at 1.3 s. A handle at
+      // 1.3 s lies in both ranges if they meet there, and would be moved twice.
       const result = plan([note(0, 1.18, 220, 60), note(1, 1.3, 100, 70)], { thresholdMs: 10 });
       const ranges = result.suggestions.map((s) => [s.op?.start_content_sec, s.op?.end_content_sec]);
-      expect(ranges[0]).toEqual([1.18, 1.3]);
+      expect(ranges).toEqual([
+        [1.18, 1.2999],
+        [1.3, 1.4],
+      ]);
+    });
+
+    it('plans two chains that follow each other end to end, so that no handle lies in two ranges', () => {
+      // Two chains, the first ends at 1.3 s where the second starts (a pitch jump splits them).
+      const result = planWithBeats([note(0, 1.18, 120, 60), note(1, 1.3, 100, 70)], { thresholdMs: 10 });
+      const ops = result.suggestions.map((s) => s.op);
+      expect(ops).toEqual([
+        { op: 'shift', start_content_sec: 1.18, end_content_sec: 1.2999, delta_ms: -180 },
+        { op: 'shift', start_content_sec: 1.3, end_content_sec: 1.4, delta_ms: 200 },
+      ]);
+      expect(result.warnings.map((w) => w.code)).not.toContain('RANGE_TOO_NARROW');
+      // A gap of 0.2 ms still leaves a range of 0.1 ms.
+      const narrow = planWithBeats([note(0, 1.18, 100, 60), note(1, 1.1802, 100, 70)], { thresholdMs: 10 });
+      expect(narrow.suggestions.map((s) => s.op)).toEqual([
+        { op: 'shift', start_content_sec: 1.18, end_content_sec: 1.1801, delta_ms: -180 },
+        { op: 'shift', start_content_sec: 1.1802, end_content_sec: 1.2802, delta_ms: -180 },
+      ]);
+      expect(narrow.warnings.map((w) => w.code)).not.toContain('RANGE_TOO_NARROW');
+    });
+
+    it('skips an onset whose next chain starts within 0.1 ms, and says which onset and why', () => {
+      // The two chains start 0.05 ms apart: the first has no room for a range of its own.
+      const result = planWithBeats([note(0, 1.18, 100, 60, { index: 7 }), note(1, 1.18005, 100, 70, { index: 8 })], {
+        thresholdMs: 10,
+      });
+      expect(result.suggestions).toHaveLength(1);
+      expect(result.suggestions[0]).toMatchObject({ noteIndex: 8, deltaMs: -180 });
+      expect(result.suggestions[0]?.op).toEqual({
+        op: 'shift',
+        start_content_sec: 1.18,
+        end_content_sec: 1.2801,
+        delta_ms: -180,
+      });
+      expect(result.counts.flagged).toBe(1);
+      const skipped = result.warnings.filter((w) => w.code === 'RANGE_TOO_NARROW');
+      expect(skipped).toHaveLength(1);
+      // Both starts are in the same 0.1 ms, so the range of the next chain starts at 1.18, where this onset is:
+      // a handle there is inside that range and moves with it, here by the same -180 ms.
+      expect(skipped[0]).toEqual({
+        code: 'RANGE_TOO_NARROW',
+        detail: `${narrowWho(7, 1.18)} got no shift of its own (-180 ms): ${narrowWhy(1.18005)}. A handle at this onset lies inside the range 1.18 to 1.2801 s of a following chain, so it moves with that chain, by the same -180 ms this chain would have had; check it after the batch`,
+        noteIndex: 7,
+        startContentSec: 1.18,
+        deltaMs: -180,
+        nextChainStartContentSec: 1.18005,
+        movedWithNextChainMs: -180,
+      });
+      // Not a dropped suggestion without a trace: the call carries one op, and the warning accounts for the other.
+      expect(result.calls[0]?.ops).toHaveLength(1);
+      // A gap of exactly 0.1 ms leaves a range that is empty, and is skipped the same way; here the next range
+      // starts at 1.1801, after the onset at 1.18, so nothing moves a handle there.
+      const empty = planWithBeats([note(0, 1.18, 100, 60, { index: 7 }), note(1, 1.1801, 100, 70, { index: 8 })], {
+        thresholdMs: 10,
+      });
+      expect(empty.suggestions.map((s) => s.noteIndex)).toEqual([8]);
+      expect(empty.suggestions[0]?.op?.start_content_sec).toBe(1.1801);
+      expect(empty.warnings.find((w) => w.code === 'RANGE_TOO_NARROW')).toMatchObject({
+        noteIndex: 7,
+        movedWithNextChainMs: null,
+      });
+      // The range of a chain never falls back to the start plus 0.1 ms: that would reach past the next range.
+      for (const { op } of result.suggestions) {
+        expect(op?.end_content_sec).toBeGreaterThan(op?.start_content_sec ?? Infinity);
+      }
+    });
+
+    // Two chains on either side of the midpoint between two grid points (every 0.25 s with --subdivision 2) have
+    // the same deviation with opposite signs, so their shifts are -125 and +125 ms.
+    describe('the warning says what happens to a handle at the skipped onset', () => {
+      const tight = (aStart: number, bStart: number, options: Json = {}) =>
+        planWithBeats([note(0, aStart, 100, 60, { index: 7 }), note(1, bStart, 100, 70, { index: 8 })], {
+          thresholdMs: 10,
+          subdivision: 2,
+          ...options,
+        });
+
+      it('says that the handle moves with the next chain, by that chain’s shift, when it lies in its range', () => {
+        // The grid is 0.05 ms later than the timeline, so the midpoint 1.12505 lies between the two starts, which are
+        // in the same 0.1 ms: the next range starts at 1.125, before the onset at 1.12504.
+        const result = tight(1.12504, 1.12506, { gridOffsetSec: 0.00005 });
+        expect(result.suggestions).toHaveLength(1);
+        expect(result.suggestions[0]).toMatchObject({ noteIndex: 8, deltaMs: 125 });
+        const op = result.suggestions[0]?.op;
+        expect(op).toEqual({ op: 'shift', start_content_sec: 1.125, end_content_sec: 1.2251, delta_ms: 125 });
+        const [warning, ...others] = result.warnings.filter((w) => w.code === 'RANGE_TOO_NARROW');
+        expect(others).toEqual([]);
+        expect(warning).toEqual({
+          code: 'RANGE_TOO_NARROW',
+          detail: `${narrowWho(7, 1.12504)} got no shift of its own (-125 ms): ${narrowWhy(1.12506)}. A handle at this onset lies inside the range 1.125 to 1.2251 s of a following chain, so it moves with that chain, by 125 ms, and not by this chain's -125 ms; check it after the batch`,
+          noteIndex: 7,
+          startContentSec: 1.12504,
+          deltaMs: -125,
+          nextChainStartContentSec: 1.12506,
+          movedWithNextChainMs: 125,
+        });
+        // The text and the members agree with the range that is planned.
+        expect(warning?.detail).toContain(`${String(op?.start_content_sec)} to ${String(op?.end_content_sec)} s`);
+        expect(warning?.movedWithNextChainMs).toBe(op?.delta_ms);
+        expect(warning?.startContentSec).toBeGreaterThanOrEqual(op?.start_content_sec ?? Infinity);
+        expect(warning?.startContentSec).toBeLessThanOrEqual(op?.end_content_sec ?? -Infinity);
+      });
+
+      it('says that nothing moves the handle when the next range starts after the onset', () => {
+        // The onset is at 1.12498, in the bucket of 1.1249, and the next range starts at 1.125.
+        const result = tight(1.12498, 1.12503);
+        expect(result.suggestions).toHaveLength(1);
+        expect(result.suggestions[0]).toMatchObject({ noteIndex: 8, deltaMs: 125 });
+        const op = result.suggestions[0]?.op;
+        expect(op).toEqual({ op: 'shift', start_content_sec: 1.125, end_content_sec: 1.2251, delta_ms: 125 });
+        const [warning, ...others] = result.warnings.filter((w) => w.code === 'RANGE_TOO_NARROW');
+        expect(others).toEqual([]);
+        expect(warning).toEqual({
+          code: 'RANGE_TOO_NARROW',
+          detail: `${narrowWho(7, 1.12498)} got no shift of its own (-125 ms): ${narrowWhy(1.12503)}. No range of the plan covers a handle at this onset, so none is moved; fix its timing by hand if it matters`,
+          noteIndex: 7,
+          startContentSec: 1.12498,
+          deltaMs: -125,
+          nextChainStartContentSec: 1.12503,
+          movedWithNextChainMs: null,
+        });
+        // The text and the members agree with the range that is planned: the onset is before it.
+        expect(warning?.startContentSec).toBeLessThan(op?.start_content_sec ?? -Infinity);
+        expect(warning?.detail).not.toContain('lies inside');
+      });
     });
 
     it('does not let two neighbouring ranges overlap after rounding, whatever the decimals of the next start', () => {
       // The next chain starts at 1.30003 s: rounded outwards the end of the first range would be 1.3001, but the
-      // next range starts at 1.3.
+      // next range starts at 1.3 and the first must stop 0.1 ms before it.
       const touching = planWithBeats([note(0, 1.18, 220, 60), note(1, 1.30003, 100, 70)], { thresholdMs: 10 });
       const ops = touching.suggestions.map((s) => s.op);
       expect(ops).toHaveLength(2);
-      expect(ops[0]).toMatchObject({ start_content_sec: 1.18, end_content_sec: 1.3 });
+      expect(ops[0]).toMatchObject({ start_content_sec: 1.18, end_content_sec: 1.2999 });
       expect(ops[1]?.start_content_sec).toBe(1.3);
       // A gap of 0.02 ms between two chains rounds to the same tenth of a millisecond, not past it.
       const gap = planWithBeats([note(0, 1.18, 100.02, 60), note(1, 1.28004, 100, 70)], { thresholdMs: 10 });
-      expect(gap.suggestions[0]?.op?.end_content_sec).toBeLessThanOrEqual(
-        gap.suggestions[1]?.op?.start_content_sec ?? 0,
-      );
-      // Many neighbours, starts of five decimals: every range ends where the next one starts, or before.
+      expect(gap.suggestions[0]?.op?.end_content_sec).toBeLessThan(gap.suggestions[1]?.op?.start_content_sec ?? 0);
+      // Many neighbours, starts of five decimals: every range ends before the next one starts.
       const crowd: Json[] = [];
       for (let k = 0; k < 40; k++)
         crowd.push(note(k, 1.1 + k * 0.03713 + k * 0.00007, 25 + (k % 3) * 0.013, k % 2 === 0 ? 60 : 70));
@@ -304,7 +447,8 @@ describe('merging fragments into rhythm onsets', () => {
       for (const [index, op] of ranges.entries()) {
         expect(op.end_content_sec).toBeGreaterThan(op.start_content_sec);
         const next = ranges[index + 1];
-        if (next !== undefined) expect(op.end_content_sec).toBeLessThanOrEqual(next.start_content_sec);
+        // A range is a closed interval, so a range that ends where the next starts would move that handle twice.
+        if (next !== undefined) expect(op.end_content_sec).toBeLessThan(next.start_content_sec);
       }
     });
 

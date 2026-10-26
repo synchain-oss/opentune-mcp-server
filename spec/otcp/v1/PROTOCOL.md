@@ -877,7 +877,7 @@ Every method of version 1 (also in `methods/index.json`). Write: `yes` changes s
 | `edit.getHistory`          | L4    | `history.v1`     | no          | 1.0   | defined | Top entries of the undo and redo history.                                                  |
 | `edit.undo`                | L4    | `history.v1`     | yes         | 1.0   | defined | Undo the expected entry (section 15.3).                                                    |
 | `edit.redo`                | L4    | `history.v1`     | yes         | 1.0   | defined | Redo the expected entry (section 15.3).                                                    |
-| `content.shiftTiming`      | L5    | `timing.v1`      | yes         | 1.0   | defined | Shift a section earlier or later.                                                          |
+| `content.shiftTiming`      | L5    | `timing.v1`      | yes         | 1.0   | defined | Shift a section earlier or later; the range is closed (handles on both ends move), so adjacent ranges must not share an end point. |
 | `content.editTimeGrid`     | L5    | `timing.v1`      | yes         | 1.0   | defined | Seed time-grid anchors (job) and move handles.                                             |
 | `transport.control`        | L6    | `transport.v1`   | yes         | 1.0   | defined | Play, pause, stop, seek.                                                                   |
 | `transport.setTempo`       | L6    | `transport.v1`   | yes         | 1.0   | defined | Tempo and time signature.                                                                  |
