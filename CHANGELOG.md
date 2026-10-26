@@ -76,6 +76,11 @@ versioned separately and has its own changelog.
   - A result that queued a render says that playback can still sound the old way until `render.current` of
     `opentune_get_clip_details` is true, and that an export waits for it.
 
+### Security
+
+- The `lyrics-timeline` skill no longer declares `allowed-tools`. Until now, while that skill was loaded, any Bash
+  command and any file read or write ran without Claude Code asking the user.
+
 ## [0.2.0] - 2026-10-26
 
 The second public version of OpenTune MCP Server (by Synchain), and wave B of the control interface: editing the
