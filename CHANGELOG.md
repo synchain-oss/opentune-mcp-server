@@ -66,6 +66,8 @@ versioned separately and has its own changelog.
 - The `beat-grid` skill no longer declares `allowed-tools`. That line let every shell command and file read or write
   run without asking while the skill was loaded; now the user's own permission settings apply to each command of the
   skill.
+- The `lyrics-timeline` skill no longer declares `allowed-tools`. Until now, while that skill was loaded, any Bash
+  command and any file read or write ran without Claude Code asking the user.
 
 ### Changed
 
@@ -122,11 +124,6 @@ versioned separately and has its own changelog.
     against the nearest semitone are not directly comparable with a later analysis of the clip with notes.
   - A result that queued a render says that playback can still sound the old way until `render.current` of
     `opentune_get_clip_details` is true, and that an export waits for it.
-
-### Security
-
-- The `lyrics-timeline` skill no longer declares `allowed-tools`. Until now, while that skill was loaded, any Bash
-  command and any file read or write ran without Claude Code asking the user.
 
 ## [0.2.0] - 2026-10-26
 

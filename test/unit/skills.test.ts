@@ -102,13 +102,11 @@ describe('skill folders', () => {
   });
 });
 
-// allowed-tools pre-approves the listed tools (here Bash, Read and Write) for as long as the skill is loaded, so Claude
-// Code stops asking the user before those run. Skills in this list must not declare it. beat-grid still declares it;
-// it joins this list when its own PR lands, and after both have landed the list covers every skill.
-const NO_ALLOWED_TOOLS = ['lyrics-timeline'];
-
-describe('skills that must not pre-approve tools', () => {
-  it.each(NO_ALLOWED_TOOLS)('%s declares no allowed-tools', (name) => {
+// allowed-tools pre-approves the listed tools (for example Bash, Read and Write) for as long as the skill is loaded, so
+// Claude Code stops asking the user before those run. No plugin skill may declare it. The name stays in ALLOWED_FIELDS
+// above because the skills zip tool (scripts/skills-zip.mjs) still recognises the field; this check is what forbids it.
+describe.each(SKILL_DIRS)('skill %s pre-approves no tools', (name) => {
+  it('declares no allowed-tools', () => {
     expect(
       readSkill(name).fields.has('allowed-tools'),
       `${name}: allowed-tools lets Claude Code run Bash and read or write files without asking the user while this skill is loaded; remove the line`,
