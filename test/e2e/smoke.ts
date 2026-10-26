@@ -512,16 +512,11 @@ export async function runSmoke(config: SmokeConfig, hooks: SmokeHooks = {}): Pro
         else keyNote = ` (the instance reports the scale ${scale}, which AUTO does not take: chromatic used)`;
       }
       try {
-        let result: unknown = await session.call(
+        const result: unknown = await session.call(
           'content.autoTune',
           { contentId, mode: 'regenerate', key: keyInput, expectedRevision: revisionOf(details, contentId) },
           120_000,
         );
-        // The work may be handed to a job; the job's result then carries the counts.
-        const handed = member(result, 'job', 'the AUTO result');
-        if (isObject(handed)) {
-          result = await waitJob(session, text(handed, 'jobId', 'the AUTO job'), 'AUTO', timeoutMs);
-        }
         if (member(result, 'applied', 'the AUTO result') !== true)
           throw new Error('AUTO changed nothing (applied false)');
         const counts = member(result, 'noteCount', 'the AUTO result');

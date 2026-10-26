@@ -59,7 +59,7 @@
           "changed": {
             "grid": {
               "before": "g6",
-              "after": "g12"
+              "after": "g11"
             }
           }
         }
@@ -70,8 +70,8 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r10",
-          "gridRevision": "g12",
+          "revision": "r9",
+          "gridRevision": "g11",
           "keyRevision": "k7"
         }
       ],
@@ -165,7 +165,7 @@
           "changed": {
             "grid": {
               "before": "g6",
-              "after": "g12"
+              "after": "g11"
             }
           }
         }
@@ -176,8 +176,8 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r10",
-          "gridRevision": "g12",
+          "revision": "r9",
+          "gridRevision": "g11",
           "keyRevision": "k7"
         }
       ],

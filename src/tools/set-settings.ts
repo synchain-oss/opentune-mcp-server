@@ -54,7 +54,6 @@ const PROCESSING_FIELDS = [
   ['vocoder_weight', 'vocoderWeight'],
   ['rendering_priority', 'renderingPriority'],
   ['f0_model', 'f0Model'],
-  ['reference_align_mode', 'referenceAlignMode'],
 ] as const;
 
 /** The processing fields whose change OpenTune applies asynchronously: prefs.set hands the call to a prefsApply job. */
@@ -86,10 +85,7 @@ const processingSchema = z.strictObject({
     .boolean()
     .optional()
     .describe('Hybrid mode: small corrections render as a pitch shift of the audio instead of the vocoder.'),
-  experimental_features: z
-    .boolean()
-    .optional()
-    .describe('Show or hide experimental features such as reference binding.'),
+  experimental_features: z.boolean().optional().describe('Show or hide experimental features.'),
   vocoder_weight: z
     .string()
     .min(1)
@@ -103,10 +99,6 @@ const processingSchema = z.strictObject({
     .optional()
     .describe('Inference backend rendering prefers. Applied by a job.'),
   f0_model: z.string().min(1).max(64).optional().describe('Pitch model, one of the options of opentune_get_settings.'),
-  reference_align_mode: z
-    .enum(['standardAuto', 'game'])
-    .optional()
-    .describe('Reference alignment mode of AUTO Ref, an experimental feature.'),
 });
 
 const audioDeviceSchema = z.strictObject({
@@ -442,7 +434,7 @@ export const setSettingsTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): changes global settings of the installation, not of the project. ' +
     'processing: tuning_hz, editing_scheme, hybrid_mode, experimental_features, vocoder_weight, rendering_priority, ' +
-    'f0_model, reference_align_mode; values of vocoder_weight and f0_model: see options of opentune_get_settings. ' +
+    'f0_model; values of vocoder_weight and f0_model: see options of opentune_get_settings. ' +
     'audio_device: device, sample rate, buffer, channels, each one the instance offers. clear_recent: true ' +
     'empties the recent-project list. No undo entry; the result warns GLOBAL_PREFERENCE and gives the previous ' +
     'values with the call that restores them.',

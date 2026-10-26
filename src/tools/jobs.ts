@@ -28,7 +28,6 @@ const WAIT_MARGIN_MS = 4000;
 export const CANCEL_EFFECT: Readonly<Record<string, string>> = {
   import: 'Items imported before the cancellation stay; job.result lists them with how to revert each.',
   export: 'The temporary file is deleted; the target path is not touched.',
-  referenceAnalysis: 'The analysis is discarded.',
   timeGridSeed: 'No anchors are written.',
   projectOpen: 'The current project is untouched.',
 };

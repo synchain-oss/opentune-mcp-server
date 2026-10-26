@@ -12,12 +12,7 @@ import { otcpSpec } from '../support/otcp-spec.js';
 describe('coverage of the content methods', () => {
   it('has a tool for every content.* method, and a reason for the others', () => {
     const exposed = new Set(TOOLS.flatMap((t) => t.otcpMethods));
-    const NOT_EXPOSED: Readonly<Record<string, string>> = {
-      'content.analyzeReference':
-        'opentune_autotune_range in reference mode starts the analysis itself: content.autoTune in mode reference ' +
-        'starts a referenceAnalysis job too (PROTOCOL.md, section 12.1) and waits for the alignment data of both ' +
-        'clips (section 12.6), so no tool needs to start the analysis on its own.',
-    };
+    const NOT_EXPOSED: Readonly<Record<string, string>> = {};
     const methods = [...otcpSpec().methods.keys()].filter((m) => m.startsWith('content.'));
     expect(methods.length).toBeGreaterThan(0);
     for (const method of methods) expect(exposed.has(method) || method in NOT_EXPOSED, method).toBe(true);

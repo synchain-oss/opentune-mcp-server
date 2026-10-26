@@ -41,7 +41,7 @@ export interface SecRange {
 export interface AutotuneArgs {
   readonly clip: string;
   readonly expected_revision: string;
-  readonly mode: 'regenerate' | 'snapNotes' | 'notesOnly' | 'reference';
+  readonly mode: 'regenerate' | 'snapNotes' | 'notesOnly';
   readonly ranges?: readonly SecRange[] | undefined;
   readonly exclude?: readonly SecRange[] | undefined;
   readonly scale?: 'clip' | KeyArg | undefined;
@@ -101,18 +101,6 @@ function modeProblem(args: AutotuneArgs): string | null {
           ' (it covers the whole clip)',
         ) ?? has('scale', args.scale !== undefined, ' (it generates notes from the detected pitch)')
       );
-    case 'reference':
-      return (
-        has(
-          'ranges, exclude, scale, the parameters and dry_run',
-          args.ranges !== undefined ||
-            args.exclude !== undefined ||
-            args.scale !== undefined ||
-            hasParams ||
-            args.dry_run !== undefined,
-          ' (it aligns the whole clip to its reference)',
-        ) ?? (args.clip.startsWith('p:') ? null : 'mode reference needs a clip placement id (p:...), not a content id')
-      );
   }
 }
 
@@ -159,66 +147,46 @@ export async function autotune(ctx: Parameters<typeof withInstance>[0], args: Au
   if (isOutcome(tokens)) return tokens;
 
   return withInstance(ctx, { instanceId: args.instance_id }, ['edit.v1', 'read.v1'], async (session) => {
-    if (args.mode === 'reference' && !session.hello.capabilities.includes('reference.v1')) {
-      return {
-        ok: false,
-        error: toolError('UNSUPPORTED', {
-          reason: 'capability_missing',
-          detail: 'mode reference needs the capability reference.v1, which this OpenTune build does not report',
-          nextStep: {
-            actor: 'user',
-            message:
-              'This OpenTune build cannot align a clip to its reference. Tell the user; the other modes ' +
-              '(regenerate, snapNotes) still work, or the user can update OpenTune.',
-          },
-        }),
-      };
-    }
     const target = await resolveContent(session, args.clip);
     if (isOutcome(target)) return target;
 
     const params: Json = { contentId: target.contentId, mode: args.mode };
     const depends: Aspect[] = ['content'];
-    if (args.mode === 'reference') {
-      params.placementId = target.placementId;
-    } else {
-      if (args.dry_run === true) params.dryRun = true;
-      if (args.mode !== 'notesOnly') {
-        if (args.scale === 'clip') {
-          params.key = 'clipKey';
-          depends.push('key');
-        } else if (args.scale !== undefined) {
-          params.key = { root: args.scale.root, scale: args.scale.scale };
-        }
-        if (args.ranges !== undefined || args.exclude !== undefined) {
-          let base: SecRange[] = args.ranges === undefined ? [] : [...args.ranges];
-          if (args.ranges === undefined) {
-            const details = await session.call('content.getDetails', { contentId: target.contentId }, READ_TIMEOUT_MS);
-            if (typeof details.durationSec !== 'number') {
-              return invalid('the length of the clip is not known, so exclude cannot be applied; give ranges');
-            }
-            base = [{ from_sec: 0, to_sec: details.durationSec }];
-          }
-          const ranges = args.exclude === undefined ? base : subtractRanges(base, args.exclude);
-          if (ranges.length === 0)
-            return invalid('exclude covers all of the requested ranges: nothing is left to tune');
-          if (ranges.length > MAX_RANGES) {
-            return invalid(
-              `the ranges left after exclude are ${String(ranges.length)}, more than the ${String(MAX_RANGES)} one call can take; ` +
-                'tune in several calls or exclude less',
-            );
-          }
-          params.ranges = ranges.map((r) => ({ startContentSec: r.from_sec, endContentSec: r.to_sec }));
-        }
+    if (args.dry_run === true) params.dryRun = true;
+    if (args.mode !== 'notesOnly') {
+      if (args.scale === 'clip') {
+        params.key = 'clipKey';
+        depends.push('key');
+      } else if (args.scale !== undefined) {
+        params.key = { root: args.scale.root, scale: args.scale.scale };
       }
-      if (args.mode === 'regenerate' || args.mode === 'notesOnly') {
-        const given: Json = {};
-        if (args.retune_speed !== undefined) given.retuneSpeed = args.retune_speed;
-        if (args.vibrato_depth !== undefined) given.vibratoDepth = args.vibrato_depth;
-        if (args.vibrato_rate_hz !== undefined) given.vibratoRateHz = args.vibrato_rate_hz;
-        if (args.note_split_cents !== undefined) given.noteSplitCents = args.note_split_cents;
-        if (Object.keys(given).length > 0) params.params = given;
+      if (args.ranges !== undefined || args.exclude !== undefined) {
+        let base: SecRange[] = args.ranges === undefined ? [] : [...args.ranges];
+        if (args.ranges === undefined) {
+          const details = await session.call('content.getDetails', { contentId: target.contentId }, READ_TIMEOUT_MS);
+          if (typeof details.durationSec !== 'number') {
+            return invalid('the length of the clip is not known, so exclude cannot be applied; give ranges');
+          }
+          base = [{ from_sec: 0, to_sec: details.durationSec }];
+        }
+        const ranges = args.exclude === undefined ? base : subtractRanges(base, args.exclude);
+        if (ranges.length === 0) return invalid('exclude covers all of the requested ranges: nothing is left to tune');
+        if (ranges.length > MAX_RANGES) {
+          return invalid(
+            `the ranges left after exclude are ${String(ranges.length)}, more than the ${String(MAX_RANGES)} one call can take; ` +
+              'tune in several calls or exclude less',
+          );
+        }
+        params.ranges = ranges.map((r) => ({ startContentSec: r.from_sec, endContentSec: r.to_sec }));
       }
+    }
+    if (args.mode === 'regenerate' || args.mode === 'notesOnly') {
+      const given: Json = {};
+      if (args.retune_speed !== undefined) given.retuneSpeed = args.retune_speed;
+      if (args.vibrato_depth !== undefined) given.vibratoDepth = args.vibrato_depth;
+      if (args.vibrato_rate_hz !== undefined) given.vibratoRateHz = args.vibrato_rate_hz;
+      if (args.note_split_cents !== undefined) given.noteSplitCents = args.note_split_cents;
+      if (Object.keys(given).length > 0) params.params = given;
     }
     Object.assign(params, expectedParams('content.autoTune', tokens, depends));
 
@@ -241,13 +209,13 @@ export const autotuneTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): runs AUTO on a clip with an explicit mode. regenerate rebuilds notes in ' +
     'ranges from the sung pitch, snapped to scale; snapNotes moves existing note targets to scale; notesOnly ' +
-    'replaces ALL notes, cannot be undone, needs replace_edited_notes true; reference aligns to the reference clip ' +
-    '(needs reference.v1). Ranges: source-audio seconds, default whole clip, max 16, one undo step. Unset ' +
-    'parameters use generator defaults, not window knobs. retune_speed 0..1: 0 keeps natural movement, 1 sounds mechanical.',
+    'replaces ALL notes, cannot be undone, needs replace_edited_notes true. Ranges: source-audio seconds, default ' +
+    'whole clip, max 16, one undo step. Unset parameters use generator defaults, not window knobs. retune_speed ' +
+    '0..1: 0 keeps natural movement, 1 sounds mechanical.',
   inputSchema: z.strictObject({
     clip: CLIP_FIELD,
     expected_revision: REVISION_FIELD,
-    mode: z.enum(['regenerate', 'snapNotes', 'notesOnly', 'reference']),
+    mode: z.enum(['regenerate', 'snapNotes', 'notesOnly']),
     ranges: z.array(RANGE).min(1).max(MAX_RANGES).optional().describe('Source-audio seconds. Default: whole clip.'),
     exclude: z.array(RANGE).min(1).max(MAX_RANGES).optional().describe('Source-audio seconds left untouched.'),
     scale: z

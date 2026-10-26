@@ -184,11 +184,6 @@ export function deleteSummary(envelope: Json, trackId: number): string {
         : ` The undo history is affected: ${count(stale.undo, 'undo entry', 'undo entries')} and ${count(stale.redo, 'redo entry', 'redo entries')} ` +
           'may address tracks that moved (warning UNDO_HISTORY_POSSIBLY_STALE); do not rely on opentune_undo or ' +
           'opentune_redo for them without reading the history again.';
-  const dangling = Array.isArray(envelope.danglingReferences) ? envelope.danglingReferences.length : 0;
-  const danglingText =
-    dangling === 0
-      ? ''
-      : ` ${count(dangling, 'reference binding')} to the deleted clips ${dangling === 1 ? 'was' : 'were'} removed.`;
   const warnings = warningCodes(envelope);
   const tail = warnings.length === 0 ? '' : ` Warnings: ${warnings.join(', ')}.`;
   const movedText =
@@ -197,7 +192,7 @@ export function deleteSummary(envelope: Json, trackId: number): string {
       : `every later track moved down by one position, so old track ids are wrong now (trackIdMap: ${moved.join(', ')})`;
   return (
     `${DELETE}: deleted track ${String(trackId)} with its ${count(removed, 'clip')}, which cannot be undone or ` +
-    `restored by any request; ${movedText}.${staleText}${danglingText}${tail}`
+    `restored by any request; ${movedText}.${staleText}${tail}`
   );
 }
 

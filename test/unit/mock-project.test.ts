@@ -37,7 +37,7 @@ async function finished(session: TestSession, started: Record<string, unknown>):
 const shape = (session: TestSession) => {
   const { placements, contents, tracks } = session.mock.snapshot();
   return {
-    placements: placements.map((p) => ({ ...p, id: '', reference: null })),
+    placements: placements.map((p) => ({ ...p, id: '' })),
     contents: contents.map((c) => ({ ...c, id: '' })),
     tracks,
   };
@@ -235,7 +235,6 @@ describe('project.open', () => {
       'a note with a field of the wrong type',
       (f: Damaged) => Object.assign(f.contents[0] ?? {}, { notes: [{ startContentSec: 'x' }] }),
     ],
-    ['a reference index without clip', (f: Damaged) => Object.assign(f.clips[0] ?? {}, { referenceClipIndex: 3 })],
   ])('keeps the project when the file is damaged inside: %s', async (_name, damage) => {
     const session = await sessions.open();
     const { mock, ok } = session;

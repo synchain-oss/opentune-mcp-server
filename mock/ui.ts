@@ -237,15 +237,6 @@ const setSelection: Handler = (context) => {
   // What selecting makes OpenTune do beyond the selection (section 21 rule 3).
   const generating =
     content !== undefined && world.editingScheme === 'openDyne' && needsGeneratedNotes(content) ? content : undefined;
-  const referenceClip = placement?.reference ?? null;
-  // Only the contents that have no alignment data yet are queued, and one that both clips show once.
-  const queued =
-    placement !== undefined &&
-    referenceClip !== null &&
-    world.prefs.experimentalFeatures &&
-    world.editingScheme !== 'openDyne'
-      ? [...new Set([placement.content, referenceClip.content])].filter((c) => !c.alignmentReady)
-      : [];
   const shownKey = content === undefined ? null : keyShown(content);
   const scaleChanged =
     shownKey !== null && (shownKey.root !== world.uiScale.root || shownKey.scale !== world.uiScale.scale);
@@ -264,15 +255,10 @@ const setSelection: Handler = (context) => {
         };
   const sideEffects: Record<string, unknown> = {};
   const warnings: unknown[] = [];
-  const subject = placement === undefined ? null : { placementId: placement.id };
   const effect = (count: number) => {
     sideEffects.notesGenerated = { contentId: content?.id ?? '', noteCount: count, revert: null };
     const notes = { contentId: content?.id ?? '' };
     warnings.push(warning('SELECTION_GENERATED_NOTES', notes), warning('IRREVERSIBLE', notes));
-  };
-  const queuedEffect = () => {
-    sideEffects.referenceAnalysisQueued = { contentIds: queued.map((c) => c.id), revert: null };
-    warnings.push(warning('REFERENCE_ANALYSIS_QUEUED', subject));
   };
   const scaleEffect = () => {
     if (shownKey === null) return;
@@ -290,7 +276,6 @@ const setSelection: Handler = (context) => {
 
   if (dryRun) {
     if (generating !== undefined) effect(predictedNoteCount(generating));
-    if (queued.length > 0) queuedEffect();
     if (scaleChanged) scaleEffect();
     if (switches) workspaceEffect();
     return envelope(world, {
@@ -312,14 +297,6 @@ const setSelection: Handler = (context) => {
   world.selectedPlacementIds = targetSelection;
   world.activeTrackId = targetTrack;
   if (generating !== undefined) effect(generateNotes(world, generating));
-  if (queued.length > 0) {
-    queuedEffect();
-    for (const c of queued) {
-      // Queueing already changes the reference component; the data arrives when the analysis settles.
-      world.touch(c, 'reference');
-      world.queueAlignment(c);
-    }
-  }
   if (scaleChanged) scaleEffect();
   if (shownKey !== null) world.uiScale = { root: shownKey.root, scale: shownKey.scale };
   if (switches) workspaceEffect();

@@ -30,7 +30,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 0,
-            "atRevision": "r20"
+            "atRevision": "r19"
           }
         },
         "label": "#0 E4 0.00-0.70s"
@@ -41,7 +41,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 1,
-            "atRevision": "r20"
+            "atRevision": "r19"
           }
         },
         "label": "#1 G4 0.80-1.15s"
@@ -52,7 +52,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 2,
-            "atRevision": "r20"
+            "atRevision": "r19"
           }
         },
         "label": "#2 A4 1.18-1.50s"
@@ -63,7 +63,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 3,
-            "atRevision": "r20"
+            "atRevision": "r19"
           }
         },
         "label": "#3 A4 1.60-2.30s"
@@ -74,7 +74,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 4,
-            "atRevision": "r20"
+            "atRevision": "r19"
           }
         },
         "label": "#4 G4 2.40-2.76s"
@@ -87,7 +87,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 0,
-            "atRevision": "r10"
+            "atRevision": "r9"
           }
         },
         "label": "#0 E4 0.50-1.50s"
@@ -98,7 +98,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 1,
-            "atRevision": "r10"
+            "atRevision": "r9"
           }
         },
         "label": "#1 A4 2.00-3.00s"
@@ -114,11 +114,11 @@
           "changed": {
             "notes": {
               "before": "n3",
-              "after": "n18"
+              "after": "n17"
             },
             "pitch": {
               "before": "p4",
-              "after": "p19"
+              "after": "p18"
             }
           }
         }
@@ -129,9 +129,9 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r20",
+          "revision": "r19",
           "gridRevision": "g6",
-          "keyRevision": "k17"
+          "keyRevision": "k16"
         }
       ],
       "placements": []
@@ -219,7 +219,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 0,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -231,7 +231,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 1,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -243,7 +243,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 2,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -255,7 +255,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 3,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -267,7 +267,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 4,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -279,7 +279,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 0,
-              "atRevision": "r10"
+              "atRevision": "r9"
             }
           }
         },
@@ -291,7 +291,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 1,
-              "atRevision": "r10"
+              "atRevision": "r9"
             }
           }
         }
@@ -318,6 +318,6 @@
         "description": "Auto tune"
       }
     ],
-    "clip_revision": "cr1.WyJyMjAiLCJnNiIsImsxNyIsImgxMSJd"
+    "clip_revision": "cr1.WyJyMTkiLCJnNiIsImsxNiIsImgxMCJd"
   }
 }

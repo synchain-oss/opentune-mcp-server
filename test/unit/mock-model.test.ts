@@ -39,7 +39,7 @@ describe('tokens (section 10)', () => {
     const revision = content.revision;
 
     // A key, grid or pitch-shift change does not change revision (rule 2) ...
-    for (const component of ['key', 'grid', 'pitchShift', 'reference'] as const) {
+    for (const component of ['key', 'grid', 'pitchShift'] as const) {
       const before = content.comp[component];
       world.touch(content, component);
       expect(content.comp[component]).not.toBe(before);
@@ -446,8 +446,8 @@ describe('given and the test interface', () => {
     const { mock, ok } = await sessions.open();
     const ids = mock.given({
       clips: [
-        clip({ timeGrid: [{ bind: 'h1', contentSec: 1 }], referenceClip: 'ref' }),
-        clip({ bind: 'ref', trackId: 1, analysis: 'unvoiced', notes: [] }),
+        clip({ timeGrid: [{ bind: 'h1', contentSec: 1 }] }),
+        clip({ bind: 'quiet', trackId: 1, analysis: 'unvoiced', notes: [] }),
       ],
     });
     expect(
@@ -455,12 +455,11 @@ describe('given and the test interface', () => {
         .subarray(0, 4)
         .toString('ascii'),
     ).toBe('RIFF');
-    const silent = readFileSync(ids['ref.sourcePath'] ?? '').subarray(44);
+    const silent = readFileSync(ids['quiet.sourcePath'] ?? '').subarray(44);
     expect(silent.every((byte) => byte === 0)).toBe(true);
     const details = await ok('content.getDetails', { contentId: ids['clip.contentId'] });
     expect(details).toMatchObject({
       timeGrid: { seeded: true, identity: true, handles: [{ handleId: ids.h1 }] },
-      reference: { referencePlacementId: ids['ref.placementId'] },
     });
     expect(ids['clip.revision']).toBe((details.asOf as { contents: { revision: string }[] }).contents[0]?.revision);
     expect(Object.keys(ids)).toEqual(
@@ -471,7 +470,6 @@ describe('given and the test interface', () => {
   it('rejects preconditions it cannot establish', async () => {
     const { mock } = await sessions.open();
     expect(() => mock.given({ modalFlavour: 1 })).toThrow(UnsupportedPrecondition);
-    expect(() => mock.given({ clips: [clip({ referenceClip: 'nowhere' })] })).toThrow(/nowhere/);
     expect(() =>
       mock.given({
         clips: [clip()],

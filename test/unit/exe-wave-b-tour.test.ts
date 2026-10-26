@@ -10,16 +10,13 @@
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { realClock, type Clock } from '../../mock/clock.js';
-import { REFERENCE_WAIT_LIMIT_MS as MOCK_REFERENCE_WAIT_LIMIT_MS } from '../../mock/reference.js';
+import type { Clock } from '../../mock/clock.js';
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { OtcpSession, type Json } from '../../src/otcp/client.js';
 import type { McpProcess, RealInstance, RealInstanceOptions, ToolOutcome } from '../e2e/real-support.js';
 import type { SmokeConfig } from '../e2e/smoke.js';
 import {
-  REFERENCE_WAIT_LIMIT_MS,
   chooseAudioSwitch,
-  isKnownStalledDefect,
   isSafeDeviceType,
   otherOf,
   otherWeight,
@@ -178,16 +175,15 @@ describe('the wave-B tour against a correct fake', () => {
       'prefs.set=PASS',
       'audio.get and audio.set=PASS',
       'arrangement.edit: move, trim, gain and fade=PASS',
-      'arrangement.copy and arrangement.edit op setReference=PASS',
-      'content.analyzeReference and content.autoTune in mode reference=PASS',
+      'arrangement.copy=PASS',
       'the wave-B MCP tools=PASS',
       'arrangement.edit: split, the merge that takes it back, and delete=PASS',
       'shutdown=PASS',
     ]);
     expect(report).toMatchObject({ scenario: 'wave-b-tour', result: 'PASS', skipped: [] });
-    expect(report.counts).toEqual({ PASS: 17, FAIL: 0, SKIP: 0, 'FLAKY-SKIP': 0 });
+    expect(report.counts).toEqual({ PASS: 16, FAIL: 0, SKIP: 0, 'FLAKY-SKIP': 0 });
     expect(report.instance).toMatchObject({ protocol: '1.0', appVersion: '0.0.0-mock' });
-    expect(report.capabilities).toContain('reference.v1');
+    expect(report.capabilities).not.toContain('reference.v1');
 
     // The latency of every call of the tour is in the report.
     const methods = new Set(report.calls.map((call) => call.method));
@@ -207,8 +203,6 @@ describe('the wave-B tour against a correct fake', () => {
       'prefs.set',
       'audio.get',
       'audio.set',
-      'content.analyzeReference',
-      'content.autoTune',
       'arrangement.edit',
       'arrangement.copy',
     ]) {
@@ -232,7 +226,6 @@ describe('the wave-B tour against a correct fake', () => {
     for (const probe of probes) expect(probe.note).toContain('REVISION_CONFLICT');
     expect(report.calls.filter((call) => call.kind === 'revert' && call.outcome === 'ok').length).toBeGreaterThan(0);
     expect(report.tools.map((tool) => tool.tool).sort()).toEqual([
-      'opentune_autotune_range',
       'opentune_delete_track',
       'opentune_edit_arrangement',
       'opentune_manage_ui',
@@ -242,19 +235,8 @@ describe('the wave-B tour against a correct fake', () => {
       'opentune_transport',
     ]);
     expect(report.tools.every((tool) => tool.outcome === 'ok')).toBe(true);
-    expect(report.facts.preferencesTouched).toEqual([
-      'tuningHz',
-      'renderingPriority',
-      'referenceAlignMode',
-      'vocoderWeight',
-    ]);
-    for (const name of [
-      'renderingPriority',
-      'referenceAlignMode',
-      'f0Model',
-      'vocoderWeight',
-      'vocoderWeightRefused',
-    ]) {
+    expect(report.facts.preferencesTouched).toEqual(['tuningHz', 'renderingPriority', 'vocoderWeight']);
+    for (const name of ['renderingPriority', 'f0Model', 'vocoderWeight', 'vocoderWeightRefused']) {
       expect(report.facts[`prefs.${name}`], name).toBe('PASS');
     }
     expect(report.facts.audioSwitched).toEqual([
@@ -502,38 +484,6 @@ describe('the checks behind the findings of the real runs turn red on a defectiv
     expect(step?.result).toBe('FAIL');
     expect(step?.note).toContain('applied unchanged');
   }, 120_000);
-
-  it('a reference analysis job that ends without alignment data fails the analysis step', async () => {
-    const { hooks } = fixture({
-      prepare: withAudio,
-      reply: (method, result) => {
-        if (method !== 'job.get' || !isObject(result.job) || !isObject(result.job.result)) return undefined;
-        if (!('alignmentReady' in result.job.result)) return undefined;
-        result.job.result.alignmentReady = false;
-        return result;
-      },
-    });
-    const report = await runWaveBTour(config, hooks);
-    const step = stepResult(report, 'content.analyzeReference and content.autoTune');
-    expect(step?.result).toBe('FAIL');
-    expect(step?.note).toContain('alignment');
-  }, 120_000);
-
-  it('a reference analysis job that names another binding fails the analysis step', async () => {
-    const { hooks } = fixture({
-      prepare: withAudio,
-      reply: (method, result) => {
-        if (method !== 'job.get' || !isObject(result.job) || !isObject(result.job.result)) return undefined;
-        if (!('alignmentReady' in result.job.result)) return undefined;
-        result.job.result.referencePlacementId = 'p:0:0:0';
-        return result;
-      },
-    });
-    const report = await runWaveBTour(config, hooks);
-    const step = stepResult(report, 'content.analyzeReference and content.autoTune');
-    expect(step?.result).toBe('FAIL');
-    expect(step?.note).toContain('another binding');
-  }, 120_000);
 });
 
 describe('a revert recipe refused for its token', () => {
@@ -541,249 +491,6 @@ describe('a revert recipe refused for its token', () => {
     expect(refusalIsDefect('a1', 'a1')).toBe(true);
     expect(refusalIsDefect('a2', 'a1')).toBe(false);
     expect(refusalIsDefect('a2', undefined)).toBe(false);
-  });
-});
-
-describe('the reference analysis of the locked OpenTune', () => {
-  const STEP = 'content.analyzeReference and content.autoTune';
-  const TOOLS_STEP = 'the wave-B MCP tools';
-  const DEFECT_NOTE = 'known upstream defect';
-
-  /** Shortens the 30 s wait limit of the mock's reference job, so that a timeout does not make the test slow. */
-  const quick: Clock = {
-    now: () => realClock.now(),
-    // Only the wait limit of the reference job is shortened; every other timer (the idle timeout of the
-    // mock, for one) keeps its length.
-    setTimer: (ms, callback) =>
-      realClock.setTimer(
-        ms >= MOCK_REFERENCE_WAIT_LIMIT_MS - 1_000 && ms <= MOCK_REFERENCE_WAIT_LIMIT_MS ? 50 : ms,
-        callback,
-      ),
-  };
-
-  type Where = 'analysis' | 'step' | 'tool' | 'both';
-
-  /**
-   * The first analysis completes, as it does in OpenTune; later the alignment data has to be computed
-   * again and the mock's analysis ends as `fault` says. `where` picks the autoTune of the OTCP step
-   * (the fault ends with the history read that follows it, so the steps after it run as usual), the
-   * one of the MCP tool `opentune_autotune_range` (armed at the second history read, which is the one
-   * before that tool), or both (the fault stays). `analysis` arms it at content.analyzeReference, so that
-   * the analysis job and the autoTune that follows it both meet the fault.
-   */
-  const faultAt = (
-    fault: 'stalled' | 'timeout' | 'failed',
-    where: Where,
-    options: { clock?: Clock; undoGrows?: boolean } = {},
-  ) => {
-    let mock: OtcpMock | undefined;
-    let armed = false;
-    let tuned = false;
-    let histories = 0;
-    let replies = 0;
-    const arm = () => {
-      armed = true;
-      mock?.setReferenceFault(fault);
-      mock?.forgetAlignment();
-    };
-    return fixture({
-      prepare: (m) => {
-        withAudio(m);
-        mock = m;
-      },
-      ...(options.clock === undefined ? {} : { clock: options.clock }),
-      before: (method, params) => {
-        if (method === 'content.analyzeReference' && where === 'analysis') arm();
-        else if (method === 'content.autoTune' && params.mode === 'reference' && where !== 'tool') {
-          if (where === 'analysis') tuned = true;
-          else arm();
-        } else if (method === 'edit.getHistory') {
-          histories += 1;
-          if (where === 'tool' && histories === 2) arm();
-          else if ((where === 'step' && armed) || (where === 'analysis' && tuned)) {
-            armed = false;
-            mock?.setReferenceFault(null);
-          }
-        }
-      },
-      // The third history read is the one that follows the tool's job: one more undo step there is a change.
-      reply: (method, result) => {
-        if (method !== 'edit.getHistory' || options.undoGrows !== true) return undefined;
-        replies += 1;
-        if (replies !== 3 || !isObject(result.history)) return undefined;
-        result.history.undoCount = Number(result.history.undoCount) + 1;
-        return result;
-      },
-    });
-  };
-
-  const tool = (report: WaveBTourReport) => report.tools.find((entry) => entry.tool === 'opentune_autotune_range');
-
-  it('passes a stalled autoTune that ended at once and changed nothing, and lists the defect', async () => {
-    const { hooks } = faultAt('stalled', 'step');
-    const report = await runWaveBTour(config, hooks);
-    const step = stepResult(report, STEP);
-    expect(step?.result).toBe('PASS');
-    expect(step?.note).toContain(DEFECT_NOTE);
-    expect(step?.note).toContain('reported as NOT_READY(reference_analysis_stalled); nothing changed');
-    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
-    expect(tool(report)?.note).not.toContain(DEFECT_NOTE);
-    expect(stepNames(report).filter((entry) => !entry.includes('=PASS'))).toEqual([]);
-    expect(report.result).toBe('PASS');
-  }, 120_000);
-
-  it('passes a stalled analysis that ended at once and changed nothing, and lists the defect', async () => {
-    const { hooks } = faultAt('stalled', 'analysis');
-    const report = await runWaveBTour(config, hooks);
-    const step = stepResult(report, STEP);
-    expect(step?.result).toBe('PASS');
-    expect(step?.note).toContain(DEFECT_NOTE);
-    expect(step?.note).toContain('by content.analyzeReference and by content.autoTune');
-    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
-    expect(
-      report.calls.some((call) => call.method === 'job.get' && call.note.includes('reference_analysis_stalled')),
-    ).toBe(true);
-    expect(stepNames(report).filter((entry) => !entry.includes('=PASS'))).toEqual([]);
-  }, 120_000);
-
-  /** The analysis stalls, then the fault ends before the autoTune, which therefore succeeds. */
-  const stalledThenTuned = (damage?: SessionDefect) => {
-    let mock: OtcpMock | undefined;
-    return fixture({
-      prepare: (m) => {
-        withAudio(m);
-        mock = m;
-      },
-      before: (method, params) => {
-        if (method === 'content.analyzeReference') {
-          mock?.setReferenceFault('stalled');
-          mock?.forgetAlignment();
-        } else if (method === 'content.autoTune' && params.mode === 'reference') {
-          mock?.setReferenceFault(null);
-        }
-      },
-      ...(damage === undefined ? {} : { reply: damage }),
-    });
-  };
-
-  it('passes a stalled analysis followed by a successful autoTune, with the defect in the note and the list', async () => {
-    const { hooks } = stalledThenTuned();
-    const report = await runWaveBTour(config, hooks);
-    const step = stepResult(report, STEP);
-    expect(step?.result).toBe('PASS');
-    expect(step?.note).toContain(DEFECT_NOTE);
-    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
-    expect(report.result).toBe('PASS');
-  }, 120_000);
-
-  it('does not list the defect when the same step fails the undo check', async () => {
-    // The result of the autoTune job is the only job result that carries an undo descriptor.
-    const { hooks } = stalledThenTuned((method, result) => {
-      const job = result.job;
-      if (method !== 'job.get' || !isObject(job) || !isObject(job.result) || !isObject(job.result.undo))
-        return undefined;
-      job.result.undo.undoable = false;
-      return result;
-    });
-    const report = await runWaveBTour(config, hooks);
-    const step = stepResult(report, STEP);
-    expect(step?.result).toBe('FAIL');
-    expect(step?.note).toContain('/undo');
-    expect(report.facts.knownUpstreamDefects).toBeUndefined();
-  }, 120_000);
-
-  it.each(['timeout', 'failed'] as const)(
-    'fails an analysis that ended with the %s reason, which is not the known defect',
-    async (fault) => {
-      const { hooks } = faultAt(fault, 'analysis', { clock: quick });
-      const report = await runWaveBTour(config, hooks);
-      const step = stepResult(report, STEP);
-      expect(step?.result).toBe('FAIL');
-      expect(step?.note).toContain(`reference_analysis_${fault}`);
-      expect(report.facts.knownUpstreamDefects).toBeUndefined();
-    },
-    120_000,
-  );
-
-  it('fails an autoTune that ended with reference_analysis_timeout', async () => {
-    const { hooks } = faultAt('timeout', 'step', { clock: quick });
-    const report = await runWaveBTour(config, hooks);
-    const step = stepResult(report, STEP);
-    expect(step?.result).toBe('FAIL');
-    expect(step?.note).toContain('reference_analysis_timeout');
-    expect(report.facts.knownUpstreamDefects).toBeUndefined();
-  }, 120_000);
-
-  it('fails an autoTune that ended with reference_analysis_failed', async () => {
-    const { hooks } = faultAt('failed', 'step');
-    const report = await runWaveBTour(config, hooks);
-    const step = stepResult(report, STEP);
-    expect(step?.result).toBe('FAIL');
-    expect(step?.note).toContain('reference_analysis_failed');
-    expect(report.facts.knownUpstreamDefects).toBeUndefined();
-  }, 120_000);
-
-  it('passes opentune_autotune_range when its job ended with the stalled error and changed nothing', async () => {
-    const { hooks } = faultAt('stalled', 'tool');
-    const report = await runWaveBTour(config, hooks);
-    expect(stepResult(report, STEP)?.note).not.toContain(DEFECT_NOTE);
-    expect(stepResult(report, TOOLS_STEP)?.result).toBe('PASS');
-    expect(tool(report)).toMatchObject({ outcome: 'ok' });
-    expect(tool(report)?.note).toContain(DEFECT_NOTE);
-    expect(tool(report)?.note).toContain('NOT_READY(reference_analysis_stalled); nothing changed');
-    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
-    expect(report.tools.every((entry) => entry.outcome === 'ok')).toBe(true);
-    expect(report.result).toBe('PASS');
-  }, 120_000);
-
-  it('lists the defect once when both the OTCP step and the tool met it', async () => {
-    const { hooks } = faultAt('stalled', 'both');
-    const report = await runWaveBTour(config, hooks);
-    expect(stepResult(report, STEP)?.note).toContain(DEFECT_NOTE);
-    expect(tool(report)?.note).toContain(DEFECT_NOTE);
-    expect(report.facts.knownUpstreamDefects).toEqual(['reference_analysis_stalled']);
-    expect(stepNames(report).filter((entry) => !entry.includes('=PASS'))).toEqual([]);
-  }, 120_000);
-
-  it('fails opentune_autotune_range when the stalled job left an undo step behind', async () => {
-    const { hooks } = faultAt('stalled', 'tool', { undoGrows: true });
-    const report = await runWaveBTour(config, hooks);
-    expect(stepResult(report, TOOLS_STEP)?.result).toBe('FAIL');
-    expect(tool(report)).toMatchObject({ outcome: 'error' });
-    expect(tool(report)?.note).toContain('the undo stack went from');
-    expect(report.facts.knownUpstreamDefects).toBeUndefined();
-  }, 120_000);
-
-  it.each(['timeout', 'failed'] as const)(
-    'fails opentune_autotune_range when its job ended with the %s reason',
-    async (fault) => {
-      const { hooks } = faultAt(fault, 'tool', { clock: quick });
-      const report = await runWaveBTour(config, hooks);
-      expect(stepResult(report, TOOLS_STEP)?.result).toBe('FAIL');
-      expect(tool(report)).toMatchObject({ outcome: 'error' });
-      expect(tool(report)?.note).toContain(`reference_analysis_${fault}`);
-      expect(report.facts.knownUpstreamDefects).toBeUndefined();
-    },
-    120_000,
-  );
-
-  it('counts only NOT_READY(reference_analysis_stalled) that came before the wait limit', () => {
-    const stalled = {
-      kind: 'NOT_READY',
-      reason: 'reference_analysis_stalled',
-      retryable: false,
-      detail: 'x',
-      executed: false,
-    };
-    expect(isKnownStalledDefect(stalled, 120)).toBe(true);
-    expect(isKnownStalledDefect(stalled, REFERENCE_WAIT_LIMIT_MS)).toBe(false);
-    expect(isKnownStalledDefect({ ...stalled, reason: 'reference_analysis_timeout' }, 120)).toBe(false);
-    expect(isKnownStalledDefect({ ...stalled, kind: 'ANALYSIS_FAILED' }, 120)).toBe(false);
-    expect(isKnownStalledDefect(undefined, 120)).toBe(false);
-  });
-
-  it('uses the wait limit of the mock as the limit before which the stalled error must come', () => {
-    expect(REFERENCE_WAIT_LIMIT_MS).toBe(MOCK_REFERENCE_WAIT_LIMIT_MS);
   });
 });
 
@@ -1949,7 +1656,7 @@ describe('the first-run overlay in the dismiss step of the tour', () => {
 
 describe('the preference step of the tour', () => {
   const STEP = 'prefs.set';
-  const MEMBERS = ['vocoderWeight', 'renderingPriority', 'f0Model', 'referenceAlignMode'] as const;
+  const MEMBERS = ['vocoderWeight', 'renderingPriority', 'f0Model'] as const;
   const membersOf = (processing: Json | undefined): Json =>
     Object.fromEntries(MEMBERS.map((name) => [name, processing?.[name]]));
 
@@ -1986,15 +1693,12 @@ describe('the preference step of the tour', () => {
     expect(stepResult(report, STEP)?.result).toBe('PASS');
     const note = stepResult(report, STEP)?.note ?? '';
     expect(note).toContain('renderingPriority "gpuFirst" -> "cpuFirst" and back (backend null -> null)');
-    expect(note).toContain('referenceAlignMode "standardAuto" -> "game" and back');
     expect(note).toContain('f0Model set to the one in use is a no-op');
     expect(note).toContain('vocoderWeight "hifigan.onnx" -> "hifigan_coulin9.onnx" and back');
     expect(note).toContain('refused with option_unavailable, nothing changed');
     expect(rc6Sent(seen.sent)).toEqual([
       { renderingPriority: 'cpuFirst' },
       { renderingPriority: 'gpuFirst' },
-      { referenceAlignMode: 'game' },
-      { referenceAlignMode: 'standardAuto' },
       { f0Model: 'fcpe' },
       { vocoderWeight: 'hifigan_coulin9.onnx' },
       { vocoderWeight: 'hifigan.onnx' },
@@ -2020,12 +1724,10 @@ describe('the preference step of the tour', () => {
     expect(report.facts['prefs.vocoderWeight']).toBe(`SKIP: ${reason}`);
     expect(report.skipped).toEqual([`prefs.set vocoderWeight (${reason})`]);
     expect(report.facts['prefs.vocoderWeightRefused']).toBe('PASS');
-    expect(report.facts.preferencesTouched).toEqual(['tuningHz', 'renderingPriority', 'referenceAlignMode']);
+    expect(report.facts.preferencesTouched).toEqual(['tuningHz', 'renderingPriority']);
     expect(rc6Sent(seen.sent).map((params) => Object.keys(params)[0])).toEqual([
       'renderingPriority',
       'renderingPriority',
-      'referenceAlignMode',
-      'referenceAlignMode',
       'f0Model',
       'vocoderWeight',
     ]);
@@ -2042,32 +1744,27 @@ describe('the preference step of the tour', () => {
     const report = await runWaveBTour(config, hooks);
     expect(stepResult(report, STEP)?.result).toBe('PASS');
     expect(rc6Sent(seen.sent)).toEqual([]);
-    for (const name of [
-      'renderingPriority',
-      'referenceAlignMode',
-      'f0Model',
-      'vocoderWeight',
-      'vocoderWeightRefused',
-    ]) {
+    for (const name of ['renderingPriority', 'f0Model', 'vocoderWeight', 'vocoderWeightRefused']) {
       expect(report.facts[`prefs.${name}`], name).toMatch(/^SKIP: prefs\.get reports no processing\.options/);
     }
-    expect(report.skipped).toHaveLength(5);
+    expect(report.skipped).toHaveLength(4);
     expect(report.facts.preferencesTouched).toEqual(['tuningHz']);
   }, 120_000);
 
   it('fails the step when the revert recipe does not put a member back, sends the start values, and goes on', async () => {
     const seen = watch((method, result) => {
-      if (method !== 'prefs.set') return undefined;
-      const change = Array.isArray(result.changes) ? result.changes.find(isObject) : undefined;
-      if (change === undefined || !isObject(change.ref) || change.ref.preference !== 'referenceAlignMode') {
+      if (method !== 'job.get' || !isObject(result.job) || !isObject(result.job.result)) return undefined;
+      const envelope = result.job.result;
+      const change = Array.isArray(envelope.changes) ? envelope.changes.find(isObject) : undefined;
+      if (change === undefined || !isObject(change.ref) || change.ref.preference !== 'renderingPriority') {
         return undefined;
       }
-      const undo = isObject(result.undo) ? result.undo : undefined;
+      const undo = isObject(envelope.undo) ? envelope.undo : undefined;
       const revert = undo === undefined ? undefined : undo.revert;
       const fields = isObject(change.fields) ? change.fields : {};
-      const field = isObject(fields.referenceAlignMode) ? fields.referenceAlignMode : {};
+      const field = isObject(fields.renderingPriority) ? fields.renderingPriority : {};
       // The recipe sets the value that was just set, so sending it changes nothing.
-      if (isObject(revert) && isObject(revert.params)) revert.params.referenceAlignMode = field.after;
+      if (isObject(revert) && isObject(revert.params)) revert.params.renderingPriority = field.after;
       return result;
     });
     const { hooks } = fixture({ prepare: twoWeights, ...seen.options });
@@ -2075,14 +1772,14 @@ describe('the preference step of the tour', () => {
     const step = stepResult(report, STEP);
     expect(step?.result).toBe('FAIL');
     expect(step?.note).toContain(
-      'prefs.set (referenceAlignMode): the read-back state after prefs.set (the revert recipe) differs from before the write',
+      'prefs.set (renderingPriority): the read-back state after prefs.set (the revert recipe) differs from before the write',
     );
-    expect(report.facts['prefs.referenceAlignMode']).toBe('FAIL');
+    expect(report.facts['prefs.renderingPriority']).toBe('FAIL');
     // The values of the start were sent once more, and that worked: the other members and the later steps ran.
-    expect(rc6Sent(seen.sent).filter((params) => 'referenceAlignMode' in params)).toEqual([
-      { referenceAlignMode: 'game' },
-      { referenceAlignMode: 'game' },
-      { referenceAlignMode: 'standardAuto' },
+    expect(rc6Sent(seen.sent).filter((params) => 'renderingPriority' in params)).toEqual([
+      { renderingPriority: 'cpuFirst' },
+      { renderingPriority: 'cpuFirst' },
+      { renderingPriority: 'gpuFirst' },
     ]);
     expect(report.facts['prefs.vocoderWeight']).toBe('PASS');
     expect(report.facts['prefs.vocoderWeightRefused']).toBe('PASS');
@@ -2091,9 +1788,9 @@ describe('the preference step of the tour', () => {
   }, 120_000);
 
   it('stops the tour when the start values cannot be sent back either', async () => {
-    // Every attempt to set the mode to standardAuto (the revert and the start values) sets game instead.
+    // Every attempt to set the priority to gpuFirst (the revert and the start values) sets cpuFirst instead.
     const seen = watch(undefined, (method, params) => {
-      if (method === 'prefs.set' && params.referenceAlignMode === 'standardAuto') params.referenceAlignMode = 'game';
+      if (method === 'prefs.set' && params.renderingPriority === 'gpuFirst') params.renderingPriority = 'cpuFirst';
     });
     const { hooks } = fixture({ prepare: twoWeights, ...seen.options });
     const report = await runWaveBTour(config, hooks);
@@ -2187,20 +1884,20 @@ describe('the preference step of the tour', () => {
     expect(report.facts['prefs.f0Model']).toBe('FAIL');
   }, 120_000);
 
-  it('fails a mode that prefs.get does not show after the write', async () => {
+  it('fails a priority that prefs.get does not show after the write', async () => {
     const { hooks } = fixture({
       prepare: twoWeights,
       reply: (method, result) => {
         if (method !== 'prefs.get' || !isObject(result.processing)) return undefined;
-        if (result.processing.referenceAlignMode !== 'game') return undefined;
-        result.processing.referenceAlignMode = 'standardAuto';
+        if (result.processing.renderingPriority !== 'cpuFirst') return undefined;
+        result.processing.renderingPriority = 'gpuFirst';
         return result;
       },
     });
     const report = await runWaveBTour(config, hooks);
     expect(stepResult(report, STEP)?.result).toBe('FAIL');
-    expect(stepResult(report, STEP)?.note).toContain('prefs.get says "standardAuto" after the write, not "game"');
-    expect(report.facts['prefs.referenceAlignMode']).toBe('FAIL');
+    expect(stepResult(report, STEP)?.note).toContain('prefs.get says "gpuFirst" after the write, not "cpuFirst"');
+    expect(report.facts['prefs.renderingPriority']).toBe('FAIL');
   }, 120_000);
 
   it('fails a weight change that reports no render of the contents, and a priority change that reports one', async () => {
@@ -2280,8 +1977,6 @@ describe('the preference step of the tour', () => {
       expect(rc6Sent(seen.sent).map((params) => Object.keys(params)[0])).toEqual([
         'renderingPriority',
         'renderingPriority',
-        'referenceAlignMode',
-        'referenceAlignMode',
         'f0Model',
         'vocoderWeight',
         'vocoderWeight',
@@ -2335,7 +2030,7 @@ describe('the preference step of the tour', () => {
       expect(afterUndo).toEqual(beforeEdit);
       expect(rc6Sent(seen.sent).filter((params) => 'renderingPriority' in params)).toEqual([]);
       expect(rc6Sent(seen.sent).filter((params) => params.vocoderWeight === 'hifigan_coulin9.onnx')).toEqual([]);
-      expect(report.facts['prefs.referenceAlignMode']).toBe('PASS');
+      expect(report.facts['prefs.f0Model']).toBe('PASS');
       expect(report.facts['prefs.vocoderWeightRefused']).toBe('PASS');
     }, 120_000);
 

@@ -25,8 +25,7 @@ type Name =
   | 'experimentalFeatures'
   | 'vocoderWeight'
   | 'renderingPriority'
-  | 'f0Model'
-  | 'referenceAlignMode';
+  | 'f0Model';
 
 interface Setting {
   readonly name: Name;
@@ -34,7 +33,7 @@ interface Setting {
   readonly unit: string | null;
 }
 
-/** In the order `changes`, GLOBAL_PREFERENCE and the revert recipe list them in (the four first, the four new ones after). */
+/** In the order `changes`, GLOBAL_PREFERENCE and the revert recipe list them in (the four first, the three new ones after). */
 const SETTINGS: readonly Setting[] = [
   { name: 'tuningHz', label: 'Tuning frequency', unit: 'hz' },
   { name: 'editingScheme', label: 'Editing scheme', unit: null },
@@ -43,7 +42,6 @@ const SETTINGS: readonly Setting[] = [
   { name: 'vocoderWeight', label: 'Vocoder weight', unit: null },
   { name: 'renderingPriority', label: 'Rendering priority', unit: null },
   { name: 'f0Model', label: 'Pitch model', unit: null },
-  { name: 'referenceAlignMode', label: 'Reference alignment mode', unit: null },
 ];
 
 /** The members that make OpenTune apply the change asynchronously, so that the call hands them to a job. */
@@ -145,8 +143,6 @@ function commit(context: MethodContext, planned: readonly Planned[]): Record<str
     warning('GLOBAL_PREFERENCE', null, { preferences: planned.map(({ setting }) => setting.name) }),
   ];
   if (has('tuningHz')) warnings.push(warning('NOT_RETROACTIVE', { preference: 'tuningHz' }));
-  // The reference alignment mode only affects AUTO Ref, an experimental feature.
-  if (has('referenceAlignMode')) warnings.push(warning('EXPERIMENTAL_FEATURE', { preference: 'referenceAlignMode' }));
   const sideEffects: Record<string, unknown> = {};
   const touched = [];
   // Hybrid mode renders every content again at once. A new vocoder weight does so once the vocoder has loaded it

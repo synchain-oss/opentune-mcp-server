@@ -3,8 +3,8 @@
 
 // opentune_manage_ui: select a clip in the arrangement view, close dialogs, and mark the first-run
 // onboarding as shown (capability ui.bridge). Selecting a clip can do more than select it: it can
-// make OpenTune generate the clip's notes (no undo entry), queue reference analysis and change the
-// scale shown in the transport bar. dry_run predicts these effects, and the result of a real call
+// make OpenTune generate the clip's notes (no undo entry) and change the scale shown in the transport
+// bar. dry_run predicts these effects, and the result of a real call
 // names them in its first sentence. Closing a dialog can commit the value the dialog shows (the
 // track-colour dialog commits its colour), so it is refused unless the user agreed.
 //
@@ -62,13 +62,6 @@ export function focusSummary(envelope: Json): string {
     unasked.push(
       `OpenTune ${dry ? 'generates' : 'generated'} ${n === null ? 'notes' : count(n, 'note')} for the clip, with ` +
         'no undo entry, and the project is marked as changed',
-    );
-  }
-  if (isObject(effects.referenceAnalysisQueued)) {
-    const ids = effects.referenceAnalysisQueued.contentIds;
-    unasked.push(
-      `reference alignment analysis ${dry ? 'is' : 'was'} queued for ` +
-        (Array.isArray(ids) ? count(ids.length, 'content') : 'contents'),
     );
   }
   if (isObject(effects.uiScaleChanged)) unasked.push('the scale shown in the transport bar changes with the clip key');
@@ -250,7 +243,7 @@ export const manageUiTool = defineTool({
   title: 'Manage OpenTune window state',
   description:
     'OpenTune (audio vocal pitch editor): op focus_clip selects a clip, optionally opening the piano roll; ' +
-    'selecting can generate the clip notes (no undo entry, project marked changed), queue reference analysis and ' +
+    'selecting can generate the clip notes (no undo entry, project marked changed) and ' +
     'change the transport-bar scale, which dry_run predicts and a real result names first. switch_view shows view ' +
     'arrangement or piano_roll; arrangement closes the piano roll. dismiss_dialogs closes dialogs like Escape; ' +
     'one that commits its value needs accept_commit true, which only the user may allow. dismiss_onboarding marks ' +

@@ -48,42 +48,38 @@
     "revisionDiff": {
       "arrangement": {
         "before": "a1",
-        "after": "a32"
+        "after": "a29"
       },
       "trackState": {
         "before": "t2",
-        "after": "t33"
+        "after": "t30"
       },
       "contents": [
         {
           "contentId": "c:01234567:0:2",
           "changed": {
             "notes": {
-              "before": "n12",
+              "before": "n11",
               "after": null
             },
             "pitch": {
-              "before": "p13",
+              "before": "p12",
               "after": null
             },
             "content": {
-              "before": "c14",
+              "before": "c13",
               "after": null
             },
             "grid": {
-              "before": "g15",
+              "before": "g14",
               "after": null
             },
             "key": {
-              "before": "k16",
+              "before": "k15",
               "after": null
             },
             "pitchShift": {
-              "before": "s17",
-              "after": null
-            },
-            "reference": {
-              "before": "f18",
+              "before": "s16",
               "after": null
             }
           }
@@ -91,12 +87,12 @@
       ]
     },
     "tokens": {
-      "arrangementRevision": "a32",
+      "arrangementRevision": "a29",
       "contents": [],
       "placements": [
         {
           "placementId": "p:01234567:0:3",
-          "geometryHash": "h30"
+          "geometryHash": "h27"
         }
       ]
     },
@@ -149,7 +145,6 @@
         "after": 2
       }
     ],
-    "danglingReferences": [],
     "possiblyStaleEntries": {
       "undo": 1,
       "redo": 0
@@ -246,6 +241,6 @@
         "restore": null
       }
     ],
-    "arrangement_revision": "ar1.YTMy"
+    "arrangement_revision": "ar1.YTI5"
   }
 }
