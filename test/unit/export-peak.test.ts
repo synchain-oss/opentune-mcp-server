@@ -145,6 +145,39 @@ describe('readWavPeak', () => {
     });
   });
 
+  it('says not_finite for a file of NaN, a file with some NaN, and a file with an infinite sample, never silent or a finite level', async () => {
+    // Only NaN: no sample is above the peak or full scale, which used to read as a silent file.
+    expect(await readWavPeak(file(wav(floats([NaN, NaN, NaN, NaN]), { bits: 32 })))).toEqual({
+      ok: true,
+      peak: 0,
+      peakDbfs: null,
+      clippedSampleCount: 0,
+      nullReason: 'not_finite',
+    });
+    // Some NaN: the finite samples used to give a level that does not describe the file.
+    expect(await readWavPeak(file(wav(floats([0.5, NaN, 0.25, 0.125]), { bits: 32 })))).toEqual({
+      ok: true,
+      peak: 0.5,
+      peakDbfs: null,
+      clippedSampleCount: 0,
+      nullReason: 'not_finite',
+    });
+    // An infinite sample, positive, and the same in a 64-bit file.
+    const inf = await readWavPeak(file(wav(floats([0.25, Infinity]), { bits: 32 })));
+    expect(inf).toMatchObject({ ok: true, peakDbfs: null, clippedSampleCount: 1, nullReason: 'not_finite' });
+    const inf64 = await readWavPeak(file(wav(floats([0.25, Infinity, 0.5, 0.5], 64), { bits: 64 })));
+    expect(inf64).toMatchObject({ ok: true, peakDbfs: null, nullReason: 'not_finite' });
+    // A NaN far into a file of several blocks is found too.
+    const many = Math.ceil((READ_BLOCK_BYTES * 2.5) / 4);
+    const values = new Array<number>(many).fill(0.25);
+    values[many - 3] = NaN;
+    expect(await readWavPeak(file(wav(floats(values), { bits: 32 })))).toMatchObject({
+      peak: 0.25,
+      peakDbfs: null,
+      nullReason: 'not_finite',
+    });
+  });
+
   it('says silent for a file with no signal and not_finite for a sample that is not a number', async () => {
     expect(await readWavPeak(file(wav(floats([0, 0, -0]), { bits: 32 })))).toEqual({
       ok: true,
@@ -393,6 +426,16 @@ describe('opentune_export_audio and the peak of the file it wrote', () => {
     });
     const out = body(await exportClip(broken.ctx, broken.placementId));
     expect(out.nullReasons).toEqual({ peakDbfs: 'not_a_wav', clippedSampleCount: 'not_a_wav' });
+  });
+
+  it('reports not_finite, not silent, for an exported file whose samples are all NaN', async () => {
+    const { ctx, placementId } = await setup();
+    await afterTheJob(ctx, ({ path: written }) => {
+      fs.writeFileSync(written, wav(floats([NaN, NaN, NaN, NaN]), { bits: 32 }));
+    });
+    const out = body(await exportClip(ctx, placementId));
+    expect(out).toMatchObject({ peakDbfs: null, clippedSampleCount: 0 });
+    expect(out.nullReasons).toEqual({ peakDbfs: 'not_finite' });
   });
 
   it('reads only the path this export wrote: a path elsewhere in the job result is not opened', async () => {
