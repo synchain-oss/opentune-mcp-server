@@ -357,6 +357,10 @@ export class World {
   /** No OpenTune editor window exists, as in a window-less run: the methods that act through it refuse (PROTOCOL.md section 7 rule 6). */
   noEditor = false;
   readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
+  /** Test interface: the vocoder loads at the first render (setVocoderLoadOnDemand). */
+  vocoderLoadOnDemand = false;
+  /** The contents whose render finished while the vocoder was not ready (on demand): published once it is. */
+  readonly #rendersWaiting = new Set<ContentRec>();
   /** The fault the vocoder runs into (setVocoderFault). */
   #vocoderFault: 'stuck' | 'loadFails' | null = null;
   /** Under the fault `loadFails`: the only weight and rendering priority the vocoder can still load. */
@@ -578,13 +582,38 @@ export class World {
     return cleared;
   }
 
-  /** Queues rendering of a content again; it settles RENDER_SETTLE_MS later (section 14.6). */
+  /**
+   * Queues rendering of a content again; it settles RENDER_SETTLE_MS later (section 14.6). With `vocoderLoadOnDemand`
+   * the first render makes OpenTune load the vocoder, as it does when a render first needs it, and no render is
+   * published before the vocoder is ready.
+   */
   queueRender(content: ContentRec): void {
     const desired = this.mint('d');
     content.render.desired = desired;
+    if (this.vocoderLoadOnDemand && this.vocoderLoadFailed) this.reconfigureVocoder(false);
     this.after(RENDER_SETTLE_MS, () => {
-      content.render.published = content.render.desired;
+      if (this.vocoderLoadOnDemand && !this.vocoder.ready) this.#rendersWaiting.add(content);
+      else content.render.published = content.render.desired;
     });
+  }
+
+  /**
+   * Test interface: OpenTune loads its vocoder only when the first render needs it (an edit that has to be rendered),
+   * not at start. Switched on, an idle vocoder reports not ready until then; the default is a vocoder that is ready from
+   * the start. Switched off, an idle vocoder is ready again and the renders that waited for it are published.
+   */
+  setVocoderLoadOnDemand(on: boolean): void {
+    this.vocoderLoadOnDemand = on;
+    const { vocoder } = this;
+    if (vocoder.reconfiguring || vocoder.commandPending) return;
+    vocoder.ready = !on;
+    if (!on) this.#publishWaitingRenders();
+  }
+
+  /** The renders that waited for the vocoder are published. */
+  #publishWaitingRenders(): void {
+    for (const content of this.#rendersWaiting) content.render.published = content.render.desired;
+    this.#rendersWaiting.clear();
   }
 
   /** Runs `work` on the "main thread" `ms` later; a timer still pending when the world is disposed never runs. */
@@ -652,6 +681,7 @@ export class World {
     this.vocoder.ready = loads;
     this.vocoder.reconfiguring = false;
     this.vocoder.commandPending = false;
+    if (loads) this.#publishWaitingRenders();
     if (loads && renders) for (const content of this.contents.values()) this.queueRender(content);
   }
 

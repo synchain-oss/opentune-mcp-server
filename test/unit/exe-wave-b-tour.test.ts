@@ -97,6 +97,10 @@ interface FixtureOptions {
   readonly playMs?: number;
   /** How long the first step waits for the first-run overlay (default: not at all). */
   readonly onboardingWaitMs?: number;
+  /** How long the preference step waits for a vocoder that is not ready (default: the step's own 30 s). */
+  readonly vocoderSettleMs?: number;
+  /** How long the preference step waits for the vocoder to load after the edit that makes OpenTune load it (default: 60 s). */
+  readonly vocoderLoadMs?: number;
 }
 
 /** A hook set whose instance and MCP server are the mock and the in-process tools. */
@@ -132,6 +136,8 @@ function fixture(options: FixtureOptions = {}): {
     mcp: (env) => fakeMcp(env, contexts, options.tool),
     playMs: options.playMs ?? 0,
     onboardingWaitMs: options.onboardingWaitMs ?? 0,
+    ...(options.vocoderSettleMs === undefined ? {} : { vocoderSettleMs: options.vocoderSettleMs }),
+    ...(options.vocoderLoadMs === undefined ? {} : { vocoderLoadMs: options.vocoderLoadMs }),
   };
   cleanup.push(async () => {
     for (const ctx of contexts) ctx.instances.close();
@@ -2113,6 +2119,153 @@ describe('the preference step of the tour', () => {
     expect(report.facts['prefs.renderingPriority']).toBe('FAIL');
     expect(report.facts['prefs.vocoderWeight']).toBe('FAIL');
   }, 120_000);
+
+  describe('with a vocoder that OpenTune loads at the first render', () => {
+    const onDemand = (mock: OtcpMock): void => {
+      twoWeights(mock);
+      mock.setVocoderLoadOnDemand(true);
+    };
+    /** The edit that loads the vocoder and its undo, as the report lists them for the step. */
+    const loadCalls = (report: WaveBTourReport): string[] =>
+      report.calls
+        .filter((call) => call.step === STEP && ['content.editNotes', 'edit.undo'].includes(call.method))
+        .map((call) => `${call.method}/${call.kind}/${call.outcome}`);
+    const SKIP_REASON = 'the vocoder was not ready within 0.3 s, so the job would not wait for it';
+
+    it('loads it with one small edit that it takes back, then switches the priority and the weight', async () => {
+      const edits: Json[] = [];
+      let beforeEdit: unknown;
+      let afterUndo: unknown;
+      const notesNow = (): unknown => structuredClone(mocks[0]?.snapshot().contents.map((content) => content.notes));
+      const seen = watch(undefined, (method, params) => {
+        if (method === 'content.editNotes') {
+          edits.push(structuredClone(params));
+          beforeEdit = notesNow();
+        }
+        if (method === 'prefs.set' && 'renderingPriority' in params) afterUndo ??= notesNow();
+      });
+      const { hooks, mocks } = fixture({ prepare: onDemand, ...seen.options });
+      const report = await runWaveBTour(config, hooks);
+      expect(stepResult(report, STEP)?.result).toBe('PASS');
+      // The vocoder was not ready at first; the step says that one render loaded it.
+      expect(seen.infos[0]).toMatchObject({ vocoderReady: false, vocoderReconfiguring: false });
+      expect(stepResult(report, STEP)?.note).toContain(
+        'the vocoder was loaded by one render first: OpenTune loads it on the first render',
+      );
+      // One edit of one note and its undo, listed in the report; the notes are as they were before the edit.
+      expect(loadCalls(report)).toEqual(['content.editNotes/write/ok', 'edit.undo/undo/ok']);
+      expect(edits).toHaveLength(1);
+      expect(edits[0]).toMatchObject({ ops: [{ op: 'shiftCents', select: { indices: [expect.any(Number)] } }] });
+      expect(afterUndo).toBeDefined();
+      expect(afterUndo).toEqual(beforeEdit);
+      // Both changes that a job applies ran after it, and the one edit served both.
+      expect(report.facts['prefs.renderingPriority']).toBe('PASS');
+      expect(report.facts['prefs.vocoderWeight']).toBe('PASS');
+      expect(rc6Sent(seen.sent).map((params) => Object.keys(params)[0])).toEqual([
+        'renderingPriority',
+        'renderingPriority',
+        'referenceAlignMode',
+        'referenceAlignMode',
+        'f0Model',
+        'vocoderWeight',
+        'vocoderWeight',
+        'vocoderWeight',
+      ]);
+      expect(seen.infos.at(-1)).toMatchObject({ vocoderReady: true, vocoderReconfiguring: false });
+      expect(report.skipped).toEqual([]);
+      expect(report.result).toBe('PASS');
+    }, 120_000);
+
+    it('makes no edit when the vocoder is ready', async () => {
+      const seen = watch();
+      const { hooks } = fixture({ prepare: twoWeights, ...seen.options });
+      const report = await runWaveBTour(config, hooks);
+      expect(stepResult(report, STEP)?.result).toBe('PASS');
+      expect(loadCalls(report)).toEqual([]);
+      expect(stepResult(report, STEP)?.note).not.toContain('loaded by one render');
+      expect(report.facts['prefs.renderingPriority']).toBe('PASS');
+    }, 120_000);
+
+    it('skips the priority and the weight with the old reason when the vocoder is not ready after the edit, and takes the edit back', async () => {
+      let beforeEdit: unknown;
+      let afterUndo: unknown;
+      const notesNow = (): unknown => structuredClone(mocks[0]?.snapshot().contents.map((content) => content.notes));
+      const seen = watch(undefined, (method) => {
+        if (method === 'content.editNotes') beforeEdit = notesNow();
+        if (method === 'edit.undo' && beforeEdit !== undefined && afterUndo === undefined) afterUndo = 'pending';
+        if (method === 'prefs.set' && afterUndo === 'pending') afterUndo = notesNow();
+      });
+      const { hooks, mocks } = fixture({
+        prepare: (mock) => {
+          onDemand(mock);
+          // The load never ends.
+          mock.setVocoderFault('stuck');
+        },
+        vocoderLoadMs: 300,
+        vocoderSettleMs: 300,
+        ...seen.options,
+      });
+      const report = await runWaveBTour(config, hooks);
+      expect(stepResult(report, STEP)?.result).toBe('PASS');
+      expect(report.facts['prefs.renderingPriority']).toBe(`SKIP: ${SKIP_REASON}`);
+      expect(report.facts['prefs.vocoderWeight']).toBe(`SKIP: ${SKIP_REASON}`);
+      expect(report.skipped).toEqual([
+        `prefs.set renderingPriority (${SKIP_REASON})`,
+        `prefs.set vocoderWeight (${SKIP_REASON})`,
+      ]);
+      expect(stepResult(report, STEP)?.note).toContain('but it was not ready after the render');
+      // Tried once, however many changes were skipped, and taken back.
+      expect(loadCalls(report)).toEqual(['content.editNotes/write/ok', 'edit.undo/undo/ok']);
+      expect(afterUndo).toEqual(beforeEdit);
+      expect(rc6Sent(seen.sent).filter((params) => 'renderingPriority' in params)).toEqual([]);
+      expect(rc6Sent(seen.sent).filter((params) => params.vocoderWeight === 'hifigan_coulin9.onnx')).toEqual([]);
+      expect(report.facts['prefs.referenceAlignMode']).toBe('PASS');
+      expect(report.facts['prefs.vocoderWeightRefused']).toBe('PASS');
+    }, 120_000);
+
+    it('fails the step and stops the tour when the edit cannot be taken back', async () => {
+      let edited = false;
+      let corrupted = false;
+      const seen = watch(undefined, (method, params) => {
+        if (method === 'content.editNotes') edited = true;
+        else if (method === 'edit.undo' && edited && !corrupted) {
+          corrupted = true;
+          params.expectedUndoId = 'not-the-undo-id';
+        }
+      });
+      const { hooks } = fixture({ prepare: onDemand, ...seen.options });
+      const report = await runWaveBTour(config, hooks);
+      const step = stepResult(report, STEP);
+      expect(step?.result).toBe('FAIL');
+      expect(step?.note).toContain(
+        'content.editNotes (a small edit to load the vocoder): taking the write back failed',
+      );
+      // Nothing of rc.6 was sent, and the tour stopped before the later steps.
+      expect(rc6Sent(seen.sent)).toEqual([]);
+      expect(stepResult(report, 'audio.get and audio.set')?.result).toBe('SKIP');
+      expect(stepResult(report, 'audio.get and audio.set')?.note).toContain('could not be taken back');
+      expect(report.counts.FAIL).toBe(1);
+    }, 120_000);
+
+    it('fails the step, without an undo, when the edit is refused, and skips the changes with the old reason', async () => {
+      const seen = watch(undefined, (method, params) => {
+        if (method === 'content.editNotes') params.expectedRevision = 'a-revision-that-is-not-current';
+      });
+      const { hooks } = fixture({ prepare: onDemand, vocoderSettleMs: 300, ...seen.options });
+      const report = await runWaveBTour(config, hooks);
+      const step = stepResult(report, STEP);
+      expect(step?.result).toBe('FAIL');
+      expect(step?.note).toContain(
+        'content.editNotes (a small edit to load the vocoder): content.editNotes failed with',
+      );
+      expect(loadCalls(report)).toEqual(['content.editNotes/write/error']);
+      expect(report.facts['prefs.renderingPriority']).toBe(`SKIP: ${SKIP_REASON}`);
+      expect(report.facts['prefs.vocoderWeight']).toBe(`SKIP: ${SKIP_REASON}`);
+      expect(rc6Sent(seen.sent).filter((params) => 'renderingPriority' in params)).toEqual([]);
+      // The later steps ran.
+      expect(stepResult(report, 'the wave-B MCP tools')?.result).toBe('PASS');
+    }, 120_000);
+  });
 
   it('picks the other value of a pair, the other weight, and a weight that is not offered', () => {
     expect(otherOf('gpuFirst', ['gpuFirst', 'cpuFirst'])).toBe('cpuFirst');

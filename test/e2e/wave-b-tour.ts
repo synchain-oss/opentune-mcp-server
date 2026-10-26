@@ -569,6 +569,11 @@ export interface WriteSpec {
   readonly followJob?: boolean;
   /** 'none' keeps the change (a later step takes it back); the default takes it back at once. */
   readonly restore?: 'auto' | 'none';
+  /**
+   * Runs after the result has been checked and before the change is taken back: a wait for what the change sets
+   * going. A failure of it is a problem of the write, and the change is taken back all the same.
+   */
+  readonly beforeRestore?: () => Promise<void>;
 }
 
 export interface WriteRun {
@@ -907,6 +912,13 @@ class Tour {
     let unrestored = false;
     let restoredBy: string | null = null;
     if (spec.restore !== 'none' && envelope.applied === true) {
+      try {
+        await spec.beforeRestore?.();
+      } catch (error) {
+        problems.push(
+          `the wait before taking the write back failed: ${clean(error instanceof Error ? error.message : String(error))}`,
+        );
+      }
       this.reads.clear();
       try {
         restoredBy = await this.restore(spec.step, envelope);
@@ -1038,6 +1050,16 @@ export interface WaveBTourHooks {
    * starts the overlay by itself.
    */
   readonly onboardingWaitMs?: number;
+  /**
+   * How long the preference step waits for a vocoder that is not ready before it skips the change of the rendering
+   * priority or the weight (default 30 s). Tests set a short time for a vocoder that never becomes ready.
+   */
+  readonly vocoderSettleMs?: number;
+  /**
+   * How long the preference step waits for the vocoder to load after the one edit that makes OpenTune load it
+   * (default 60 s). Tests set a short time for a vocoder that never loads.
+   */
+  readonly vocoderLoadMs?: number;
 }
 
 /** How long the transport plays before pause in the real tour, and between the pause-related calls after it. */
@@ -1141,6 +1163,16 @@ export function unofferedWeight(offered: readonly string[]): string {
 /** How long the preference step waits for the vocoder to be ready before it changes a weight or priority, in ms. */
 const VOCODER_SETTLE_MS = 30_000;
 const VOCODER_POLL_MS = 250;
+/**
+ * How long the preference step waits for the vocoder to load after the one small edit that makes OpenTune load it, in
+ * ms: OpenTune loads the vocoder when a render first needs it, and the load can take a while on a cold machine.
+ */
+const VOCODER_LOAD_MS = 60_000;
+/** The small correction, in cents, that the preference step makes and takes back so that a render loads the vocoder. */
+const VOCODER_LOAD_SHIFT_CENTS = 10;
+
+/** A wait in ms as the seconds a reason names. */
+const secondsText = (ms: number): string => `${String(ms / 1000)} s`;
 
 // ---------------------------------------------------------------------------------------------
 // the tour
@@ -2024,7 +2056,9 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
   /**
    * The preferences prefs.set takes since 1.0.0-rc.6. Each one is switched once, read back (prefs.get and
    * session.info) and put back by the revert recipe of the result; a change that a job applies (the vocoder weight and
-   * the rendering priority) is followed until the job has ended and the vocoder is ready again. A value that is not
+   * the rendering priority) is followed until the job has ended and the vocoder is ready again; as OpenTune loads the
+   * vocoder only when a render first needs it, a vocoder that is not ready is first loaded by one small edit of the
+   * imported clip, which is taken back at once (loadVocoderByRender). A value that is not
    * among the options is sent once and must be refused with nothing changed. Whatever goes wrong, the values read at
    * the start are sent once more; when that does not put them back either, the scenario stops. An instance that
    * reports no processing.options does not implement the members: they are skipped with that reason, and nothing is sent.
@@ -2065,13 +2099,108 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     const infoNow = async (): Promise<Json> =>
       objectMember(await t.call('read', 'session.info', {}), 'processing', 'session.info');
     const vocoderReady = (info: Json): boolean => info.vocoderReady === true && info.vocoderReconfiguring !== true;
+    const settleMs = hooks.vocoderSettleMs ?? VOCODER_SETTLE_MS;
+    const loadMs = hooks.vocoderLoadMs ?? VOCODER_LOAD_MS;
     const settleVocoder = async (): Promise<boolean> => {
-      const until = Date.now() + VOCODER_SETTLE_MS;
+      const until = Date.now() + settleMs;
       for (;;) {
         if (vocoderReady(await infoNow())) return true;
         if (Date.now() >= until) return false;
         await sleep(VOCODER_POLL_MS);
       }
+    };
+
+    /** What content.getDetails says about the audible render of the clip's content now. */
+    const renderNow = async (): Promise<{ current: boolean; published: unknown }> => {
+      const render = objectMember(
+        await t.call('read', 'content.getDetails', { contentId }),
+        'render',
+        'content.getDetails',
+      );
+      return { current: render.current === true, published: render.publishedRevision };
+    };
+
+    /**
+     * Waits until the render of the edit has caught up (the render is current at a revision other than the one
+     * published before the edit) or the vocoder is ready, for at most `loadMs`. A render that is current at the
+     * revision published before the edit has not started yet: OpenTune posts it a moment after the call.
+     */
+    const waitForRender = async (publishedBefore: unknown): Promise<void> => {
+      const until = Date.now() + loadMs;
+      for (;;) {
+        if (vocoderReady(await infoNow())) return;
+        const render = await renderNow();
+        if (render.current && render.published !== publishedBefore) return;
+        if (Date.now() >= until) return;
+        await sleep(VOCODER_POLL_MS);
+      }
+    };
+
+    /** The vocoder was tried to be loaded by an edit: that is done once, whatever came of it. */
+    let vocoderLoadTried = false;
+
+    /**
+     * OpenTune loads the vocoder when the first render needs it, and the tour makes no edit that has to be rendered
+     * before this step, so session.info reports the vocoder as not ready and a change of the rendering priority or the
+     * weight would not wait for it. As a user does, this makes one small edit to the imported clip (one note shifted by
+     * VOCODER_LOAD_SHIFT_CENTS), waits for the render to catch up or the vocoder to be ready, and takes the edit back
+     * with its undoId, comparing the notes with those before the edit. Nothing is done where the vocoder is ready or is
+     * loading already. A refused edit is a problem of the step; an edit that cannot be taken back stops the scenario.
+     */
+    const loadVocoderByRender = async (): Promise<void> => {
+      if (vocoderLoadTried) return;
+      const info = await infoNow();
+      if (vocoderReady(info) || info.vocoderReconfiguring === true) return;
+      vocoderLoadTried = true;
+      const label = 'content.editNotes (a small edit to load the vocoder)';
+      t.reads.clear();
+      const listing = await t.reads.notes(contentId);
+      const note = listing.notes.find((candidate) => candidate.voiced === true) ?? listing.notes[0];
+      if (note === undefined) return;
+      const index = num(note, 'index', 'a note');
+      const publishedBefore = (await renderNow()).published;
+      const afterRender = { ready: false };
+      const run = await t.write({
+        step: 'prefs.set',
+        method: 'content.editNotes',
+        params: {
+          contentId,
+          expectedRevision: listing.revision,
+          ops: [{ op: 'shiftCents', select: { indices: [index] }, deltaCents: VOCODER_LOAD_SHIFT_CENTS }],
+        },
+        snapshot: [`notes:${contentId}`],
+        expect: { applied: true, noOp: false, undoable: true },
+        beforeRestore: async () => {
+          await waitForRender(publishedBefore);
+          afterRender.ready = vocoderReady(await infoNow());
+        },
+      });
+      problems.push(...run.problems.map((problem) => `${label}: ${problem}`));
+      if (run.unrestored) {
+        stopReason = `${label} could not be taken back`;
+        throw new Unrestored(problems.slice(-MAX_LISTED).join('; '));
+      }
+      if (run.failure !== undefined) return;
+      // The undo changed the notes again: the revision is not the one right after the edit, and two reads agree on it.
+      const editedRevision = listOf(objectMember(run.envelope, 'tokens', 'the result').contents).find(
+        (entry) => entry.contentId === contentId,
+      )?.revision;
+      const revisionNow = (await t.reads.notes(contentId)).revision;
+      const asOf = objectMember(await t.reads.project(), 'asOf', 'project.get');
+      const listed = listOf(member(asOf, 'contents', 'asOf')).find((entry) => entry.contentId === contentId);
+      if (revisionNow === editedRevision) {
+        problems.push(`${label}: after the undo, the revision of the content is still the one right after the edit`);
+      }
+      if (listed?.revision !== revisionNow) {
+        problems.push(
+          `${label}: after the undo, content.getNotes and project.get give the content different revisions`,
+        );
+      }
+      notes.push(
+        afterRender.ready
+          ? `the vocoder was loaded by one render first: OpenTune loads it on the first render (one note shifted by ${String(VOCODER_LOAD_SHIFT_CENTS)} cents and taken back with edit.undo)`
+          : `one note was shifted by ${String(VOCODER_LOAD_SHIFT_CENTS)} cents and taken back with edit.undo to have the vocoder loaded by a render, but it was not ready after the render`,
+      );
     };
 
     /** Sends the values read at the start once more (those that differ now); true when the read-back equals them. */
@@ -2121,9 +2250,11 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     }): Promise<void> => {
       const label = `prefs.set (${trip.name})`;
       const start = await processingNow();
-      // A change that a job applies waits for the vocoder only when the vocoder is ready before the call.
+      // A change that a job applies waits for the vocoder only when the vocoder is ready before the call, and
+      // OpenTune loads the vocoder when a render first needs it.
+      if (trip.job) await loadVocoderByRender();
       if (trip.job && !(await settleVocoder())) {
-        skip(trip.name, 'the vocoder was not ready within 30 s, so the job would not wait for it');
+        skip(trip.name, `the vocoder was not ready within ${secondsText(settleMs)}, so the job would not wait for it`);
         return;
       }
       const before = problems.length;

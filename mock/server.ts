@@ -189,6 +189,13 @@ export interface OtcpMock {
    * reconfiguration finish.
    */
   setVocoderFault(fault: 'stuck' | 'loadFails' | null): void;
+  /**
+   * OpenTune loads its vocoder at the first render, not at start (it posts the load when a render first needs it):
+   * until an edit has to be rendered, session.info reports the vocoder as not ready, and a change of the rendering
+   * priority or the weight then does not wait for it. The first render starts the load, and no render is published
+   * before the vocoder has loaded. Off by default, the vocoder is ready from the start.
+   */
+  setVocoderLoadOnDemand(on: boolean): void;
   /** OpenTune cannot load these pitch models: prefs.set of one of them (it must be among the options) fails with model_missing. */
   failF0Model(...models: readonly string[]): void;
   /**
@@ -774,6 +781,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     },
     setVocoderFault(fault) {
       world.setVocoderFault(fault);
+    },
+    setVocoderLoadOnDemand(on) {
+      world.setVocoderLoadOnDemand(on);
     },
     failF0Model(...models) {
       for (const model of models) world.unloadableF0Models.add(model);
