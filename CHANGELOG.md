@@ -20,6 +20,10 @@ versioned separately and has its own changelog.
   five contract vectors, the tool golden files, the tour of the real-machine run and the `tuning-workflow` skill follow.
   See `docs/contract-changes/20261026-ui-set-workspace.md`.
 
+### Changed
+
+- The companion skills `tuning-workflow`, `check-results` and `lyrics-timeline` now treat a clear request from the user as the agreement for that step, ask a question only once and only about what the tools cannot find out, use only the files the user named, confirm that the render is current before a result is called ready to listen to, and compare before and after pitch figures only when they share the same target basis.
+
 ### Removed
 
 - The reference alignment. OpenTune's upstream project retired the experimental reference track and its AUTO Ref
