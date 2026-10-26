@@ -16,7 +16,9 @@ import type { Json, OtcpSession } from '../otcp/client.js';
 import { clipRevisionFrom, decodeClipRevision, expectedParams, type ClipTokens } from '../otcp/tokens.js';
 import { writeOutcome } from '../render/index.js';
 import { SIDE_EFFECT_TEXT } from '../render/text.js';
-import { trustedToken } from '../sanitize/untrusted.js';
+import { serializeResult, trustedToken } from '../sanitize/untrusted.js';
+import { CLIENT_TIMEOUT_MS } from './client-timeout.js';
+import { OUTPUT_BUDGET } from './notes.js';
 import {
   WRITE_RESULT_OUTPUT,
   defineTool,
@@ -42,17 +44,18 @@ export const MAX_WAIT_SECONDS = 30;
  * bound is a result-size and time bound; a move names at most 64 handles, the limit of moveHandles.
  */
 export const MAX_OPS = 64;
-/** Up to this many operations a result lists every step in full; more are listed compactly. */
+/**
+ * Up to this many operations a result lists every step in full; more are listed compactly. A result of fewer
+ * operations is compact as well when the full format does not fit the output budget (OUTPUT_BUDGET characters): the
+ * decision is by size, not by the count alone, because each full step carries the write result of its request.
+ */
 export const FULL_STEPS_MAX = 8;
 /** Characters of handle moves a compact result lists; the rest is counted (steps[].moves_omitted). */
 export const MAX_MOVE_CHARS = 6000;
 /** Handles a compact result lists; the count of all of them is always given. */
 export const COMPACT_LISTED_HANDLES = 40;
-/**
- * How long a client waits for a result before it gives up: 60 seconds is the usual default, and a result that
- * arrives later is lost together with the clip_revision it carries.
- */
-export const CLIENT_TIMEOUT_MS = 60_000;
+/** The time a client waits for a result, shared with opentune_get_notes (output_path); the tests read it here. */
+export { CLIENT_TIMEOUT_MS };
 /**
  * The time since the start of the call (the lookup of the clip included) up to which a next operation may
  * be sent. The worst case after sending it: the request takes its whole WRITE_TIMEOUT_MS (20 s), and the
@@ -282,6 +285,17 @@ async function handlesOf(session: OtcpSession, contentId: string, cap = MAX_LIST
   }
 }
 
+/** The fields of `handleFields` with at most `cap` handles listed; the count of all of them is kept. */
+function recapHandles(fields: Json, cap: number): Json {
+  const listed = fields.time_grid_handles;
+  if (!Array.isArray(listed) || listed.length <= cap) return fields;
+  return { ...fields, time_grid_handles: listed.slice(0, cap), time_grid_handles_truncated: true };
+}
+
+/** The size of a result as the client receives it, which the output budget limits. */
+const sizeOf = (outcome: Outcome): number =>
+  serializeResult(outcome.ok ? outcome.body : { error: outcome.error, ...outcome.context }).length;
+
 /** The handle fields of an answer: the list, or null with the reason the list could not be read. */
 function handleFields(read: HandleRead, when: string): Json {
   return 'listed' in read
@@ -402,9 +416,9 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
     if (typeof resolved !== 'string') return resolved;
     const contentId = resolved;
     const steps: Step[] = [];
-    // Many operations get compact steps, so the result stays readable and inside the 20,000 character budget.
+    // Many operations get compact steps, so the result stays readable and inside the 20,000 character budget. A
+    // result of few operations whose full format does not fit the budget gets them too (decided below, by size).
     const compact = calls.length > FULL_STEPS_MAX;
-    const handleCap = compact ? COMPACT_LISTED_HANDLES : MAX_LISTED_HANDLES;
     let current = tokens;
     let last: Json = {};
     try {
@@ -440,14 +454,16 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
         const next = contentTokens(result, contentId)?.gridRevision;
         if (typeof next === 'string') current = { ...current, grid: next };
         else if (steps.length < calls.length) {
-          return {
+          const noRevision = (asCompact: boolean): Outcome => ({
             ok: false,
             error: toolError('INTERNAL', {
               detail: 'OpenTune returned no grid revision, so the next operation cannot be sent safely',
               executed: true,
             }),
-            context: { completed: completedOf(steps, calls, compact) },
-          };
+            context: { completed: completedOf(steps, calls, asCompact) },
+          });
+          const full = compact ? null : noRevision(false);
+          return full !== null && sizeOf(full) <= OUTPUT_BUDGET ? full : noRevision(true);
         }
       }
     } catch (error) {
@@ -456,15 +472,18 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
       const gridChanged = error.data.kind === 'REVISION_CONFLICT' && error.data.reason === 'grid_changed';
       // The grid moved under this call: the handles it reports now are the ones the next try needs.
       const currentHandles: Json = gridChanged
-        ? handleFields(await handlesOf(session, contentId, handleCap), 'the read of the time grid failed')
+        ? handleFields(await handlesOf(session, contentId, MAX_LISTED_HANDLES), 'the read of the time grid failed')
         : {};
-      if (steps.length === 0) return { ok: false, error: failure, ...(gridChanged ? { context: currentHandles } : {}) };
+      if (steps.length === 0) {
+        const cap = compact ? COMPACT_LISTED_HANDLES : MAX_LISTED_HANDLES;
+        return { ok: false, error: failure, ...(gridChanged ? { context: recapHandles(currentHandles, cap) } : {}) };
+      }
       const applied = steps.length;
       // Earlier operations of this call took effect; the error says which one failed.
       const retry = gridChanged
         ? `retry only the operations from number ${String(applied + 1)} on.`
         : `retry only the operations from number ${String(applied + 1)} on, with the clip_revision of the last item of completed.`;
-      return {
+      const failed = (asCompact: boolean): Outcome => ({
         ok: false,
         error: {
           ...failure,
@@ -475,8 +494,14 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
             message: `${failure.nextStep.message} Operations 1 to ${String(applied)} are applied: ${retry}`,
           },
         },
-        context: { ...currentHandles, completed: completedOf(steps, calls, compact) },
-      };
+        context: {
+          ...(asCompact ? recapHandles(currentHandles, COMPACT_LISTED_HANDLES) : currentHandles),
+          completed: completedOf(steps, calls, asCompact),
+        },
+      });
+      // The completed steps in full, unless the count or the size of that does not allow it.
+      const full = compact ? null : failed(false);
+      return full !== null && sizeOf(full) <= OUTPUT_BUDGET ? full : failed(true);
     }
     const [only] = steps;
     if (calls.length === 1 && steps.length === 1 && only !== undefined) {
@@ -484,14 +509,17 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
     }
     const clipRevision = revisionAfter(last, contentId, tokens);
     const stopped = steps.length < calls.length;
-    const listed = compact ? compactSteps(steps, calls) : null;
-    return withHandles(
-      session,
-      contentId,
-      {
+    // The handles are read once, at the larger cap; the compact format lists fewer of them.
+    const handles = handleFields(
+      await handlesOf(session, contentId, MAX_LISTED_HANDLES),
+      'the read after the write failed',
+    );
+    const assembled = (asCompact: boolean): Outcome => {
+      const listed = asCompact ? compactSteps(steps, calls) : null;
+      return {
         ok: true,
         body: {
-          summary: multiSummary(steps, { total: calls.length, stopped, compact }),
+          summary: multiSummary(steps, { total: calls.length, stopped, compact: asCompact }),
           steps: listed === null ? steps.map((s) => s.body) : listed.steps,
           ...(listed === null
             ? {}
@@ -515,10 +543,14 @@ export async function editTiming(ctx: ToolContext, args: EditTimingArgs): Promis
               }
             : {}),
           clip_revision: clipRevision,
+          ...(asCompact ? recapHandles(handles, COMPACT_LISTED_HANDLES) : handles),
         },
-      },
-      handleCap,
-    );
+      };
+    };
+    // The full format first, when the count allows it; when that is larger than the output budget the result is
+    // compact, which still gives the counts of every operation.
+    const full = compact ? null : assembled(false);
+    return full !== null && sizeOf(full) <= OUTPUT_BUDGET ? full : assembled(true);
   });
 }
 
@@ -679,7 +711,7 @@ export const editTimingTool = defineTool({
       .min(1)
       .max(MAX_OPS)
       .describe(
-        'Operations in order, up to 64, each its own undo step; more than 8 give a compact result. seed must be alone.',
+        'Operations in order, up to 64, each its own undo step; more than 8, or a result too long, give a compact result. seed must be alone.',
       ),
     wait_seconds: z
       .number()
