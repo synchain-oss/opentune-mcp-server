@@ -271,6 +271,42 @@ function sameScaleSet(clipKey: ClipKey, key: KeyRef): boolean | null {
   return a.length === b.length && a.every((p) => b.includes(p));
 }
 
+/** "G major" for the two scales the estimate names; "dorian on root 2" for any other scale of the protocol. */
+function clipKeyName(clipKey: ClipKey): string {
+  return clipKey.scale === 'major' || clipKey.scale === 'minor'
+    ? keyName({ root: clipKey.root, scale: clipKey.scale })
+    : `${clipKey.scale} on root ${String(clipKey.root)}`;
+}
+
+/**
+ * The sentence for a clip whose key has other notes than the estimate, in plain words and with a verdict on
+ * which of the two to trust. A key a person set stands. A key OpenTune found on its own gives way to a sure
+ * estimate that also hears the mix; against a vocals-only estimate (the same kind of evidence as OpenTune's)
+ * or an unsure one, neither is clearly better and the user decides. Only the two origins this server knows
+ * (`manual`, `automatic`) are said as such; a missing origin or one it does not know (the protocol lets it grow)
+ * is said as "of unknown origin", and the sentence then never claims that the key was found automatically.
+ */
+function clipKeyText(clipKey: ClipKey, estimateSure: boolean, hearsMix: boolean): string {
+  const source =
+    clipKey.origin === 'manual'
+      ? 'set by the user'
+      : clipKey.origin === 'automatic'
+        ? 'found automatically'
+        : 'of unknown origin';
+  const head = `The clip's key in OpenTune (${clipKeyName(clipKey)}, ${source}) has other notes than this estimate`;
+  if (clipKey.origin === 'manual')
+    return `${head}: the user's choice is the more trustworthy, so keep it unless the user wants another.`;
+  if (clipKey.origin === 'automatic' && estimateSure && hearsMix) {
+    return `${head}: the estimate is the more trustworthy, because it also hears the mix; offer it to the user before setting it.`;
+  }
+  const why = !estimateSure
+    ? 'the estimate is uncertain'
+    : !hearsMix
+      ? 'the estimate rests on the vocals alone'
+      : 'it is not known whether the user set that key or OpenTune found it, and a key the user set stands';
+  return `${head}, and neither is clearly the more trustworthy (${why}): ask the user which one is right.`;
+}
+
 interface Evidence {
   readonly mix: AudioFeatures | null;
   readonly vocals: Vocals | null;
@@ -417,7 +453,9 @@ function buildBody(
           reliability: mix.tuning.reliability,
         };
   const evidence: Evidence = { mix, vocals, vocalOffsetCents: vocalTuning?.offsetCents ?? 0 };
-  const durationSec = wav?.durationSec ?? vocals?.durationSec ?? null;
+  // The timeline of the result is the clip's when a clip is given (its notes and the sections are on it),
+  // else the mix's; a mix of another length is read from its start, so its end does not move the result.
+  const durationSec = vocals?.durationSec ?? wav?.durationSec ?? null;
   const wholeSong = estimateKey(sourcesIn(evidence));
   let segments = wholeSong === null || durationSec === null ? null : localKeys(evidence, durationSec);
   if (segments !== null && segments.length > MAX_LOCAL_KEYS) {
@@ -549,7 +587,7 @@ function buildBody(
 
   if (wav !== null && vocals?.durationSec != null && Math.abs(wav.durationSec - vocals.durationSec) > 2) {
     warnings.push(
-      `the mix lasts ${String(round(wav.durationSec, 1))} s and the clip's source audio ${String(round(vocals.durationSec, 1))} s: both are taken to start together, and times follow the mix`,
+      `the mix lasts ${String(round(wav.durationSec, 1))} s and the clip's source audio ${String(round(vocals.durationSec, 1))} s: both are taken to start together, and times follow the clip`,
     );
   }
 
@@ -610,8 +648,10 @@ function buildBody(
   }
 
   const used = (['mix', 'bass', 'vocals'] as const).filter((n) => estimate.weights[n] > 0);
+  // Both confidences of the top level are those of estimated_over: the main part across a key change, else the whole range.
+  const range = over === null ? '' : `${String(Math.round(over.start_sec))} to ${String(Math.round(over.end_sec))} s`;
   const lead =
-    `Estimated key${main === null || over === null ? '' : ` of the main part (${String(Math.round(over.start_sec))} to ${String(Math.round(over.end_sec))} s)`}: ` +
+    `Estimated key${over === null ? '' : main === null ? ` over ${range}` : ` of the main part (${range})`}: ` +
     `${keyName(keyOf(top))} (scale set confidence ${String(round(estimate.scaleSetConfidence, 2))}, ` +
     `tonic confidence ${String(round(estimate.tonicConfidence, 2))}) from ${used.join(', ')}; nothing was changed.`;
   const rest: string[] = [];
@@ -629,9 +669,14 @@ function buildBody(
       `The key seems to change: ${segments.map((s) => `${keyName(keyOf(s.key))} from ${String(Math.round(s.startSec))} s`).join(', ')} (see local_keys).`,
     );
   }
+  if (segments !== null) {
+    rest.push(
+      `The confidences above cover ${main === null ? 'the whole range' : 'the main part'}; scale_set_confidence in local_keys is the mean over the short windows of that segment alone, and can be lower.`,
+    );
+  }
   rest.push(...sentences);
-  if (clipInfo?.same_scale_set_as_estimate === false) {
-    rest.push("The clip's key in OpenTune has other notes than the estimate (see clip.key).");
+  if (clipInfo?.same_scale_set_as_estimate === false && vocals?.clipKey != null) {
+    rest.push(clipKeyText(vocals.clipKey, estimate.scaleSetConfidence >= SCALE_SET_SURE, !vocalsOnly));
   }
   rest.push('Pass recommendation.key as key to opentune_set_clip or as scale to opentune_autotune_range.');
 
@@ -695,12 +740,12 @@ export const estimateKeyTool = defineTool({
   name: TOOL,
   title: 'Estimate the key of a song',
   description:
-    "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch (OpenTune's analysis) " +
+    "OpenTune (audio vocal pitch editor): estimates a song's key from a clip's vocal pitch " +
     'and/or a WAV of the mix or backing (mix_path; PCM 16/24/32-bit or float32, mono or stereo). Returns the 5 best ' +
-    'keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses), ' +
-    'tonic_confidence, tuning offset in cents, local keys over time and keys per section (seconds; the mix and the ' +
-    "clip's source audio start together). Pass recommendation.key to opentune_set_clip or opentune_autotune_range. " +
-    'Read-only.',
+    'keys with probabilities, scale_set_confidence (relative keys share their 7 notes, which is what snapping uses) ' +
+    'and tonic_confidence (both over estimated_over), tuning offset in cents, local keys (each with a confidence over ' +
+    'its own segment) and keys per section (seconds on the clip; the mix starts with it). ' +
+    'Pass recommendation.key to opentune_set_clip or opentune_autotune_range. Read-only.',
   inputSchema: z.strictObject({
     clip: CLIP_FIELD.optional(),
     mix_path: z

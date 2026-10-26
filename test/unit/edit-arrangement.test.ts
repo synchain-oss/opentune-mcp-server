@@ -165,7 +165,9 @@ describe('every op against the mock', () => {
     const out = body(await editNow(env, { ops: [{ op: 'move', clip: id(env, 'b'), to_track_id: 5 }] }));
     expect(out.sideEffects).toMatchObject({ tracksRevealed: { trackIds: [4, 5] } });
     expect(codes(out)).toEqual(['TRACK_AUTO_REVEALED', 'TRACK_AUTO_REVEALED']);
-    expect(firstSentence(out.summary)).toContain('side effects: hidden tracks became visible');
+    // The first sentence names the tracks it showed instead of the generic words.
+    expect(firstSentence(out.summary)).toContain('revealed the hidden tracks 4, 5');
+    expect(firstSentence(out.summary)).not.toContain('hidden tracks became visible');
   });
 
   it('splits, reports the new clip ids, and merges them again with those ids', async () => {

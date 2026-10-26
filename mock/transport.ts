@@ -121,7 +121,12 @@ const setTempo: Handler = (context) => {
   if (signature.numerator !== t.timeSignature.numerator || signature.denominator !== t.timeSignature.denominator) {
     fields.timeSignature = { before: { ...t.timeSignature }, after: { ...signature }, unit: null };
   }
-  const previous = { bpm: t.bpm, timeSignature: { ...t.timeSignature } };
+  // The recipe lists the members the call changes, as OpenTune does: a call that changes only the tempo gets
+  // a recipe with the tempo alone, which a client must be able to carry out too.
+  const previous = {
+    ...(fields.bpm === undefined ? {} : { bpm: t.bpm }),
+    ...(fields.timeSignature === undefined ? {} : { timeSignature: { ...t.timeSignature } }),
+  };
   const dirtyBefore = world.project.dirty;
   const noOp = Object.keys(fields).length === 0;
   if (!noOp) {

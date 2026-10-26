@@ -408,6 +408,29 @@ describe('opentune_analyze_pitch without a usable analysis', () => {
     expect(clean.summary).not.toContain('use detail notes');
     expect(clean.summary).toContain('these notes have no index.');
   });
+
+  it('says what the deviations are measured against, and warns that the nearest semitone is not comparable', async () => {
+    const stored = await setup();
+    const withNotes = body(await analyzePitch(stored.ctx, { clip: stored.placement }));
+    expect(withNotes.baseline).toBe('stored_notes');
+    expect(withNotes.summary).not.toMatch(/not directly comparable/);
+    const bare = await setup({ notes: [] });
+    for (const detail of ['summary', 'phrases', 'notes'] as const) {
+      const out = body(await analyzePitch(bare.ctx, { clip: bare.placement, detail }));
+      expect(out.baseline).toBe('nearest_semitone');
+      expect(out.summary).toContain(
+        'The deviations are measured against the nearest semitone, not against stored notes, so they are not directly comparable with an analysis of the same clip once it has notes.',
+      );
+    }
+  });
+
+  it('gives the baseline when there is nothing to measure as well, in line with the source of the notes', async () => {
+    const { ctx, placement } = await setup({ analysis: 'unvoiced', notes: [] });
+    const out = body(await analyzePitch(ctx, { clip: placement }));
+    expect(out.summary).toContain('No notes to analyze');
+    expect(out.baseline).toBe(out.note_source === 'detected_segments' ? 'nearest_semitone' : 'stored_notes');
+    expect(['stored_notes', 'nearest_semitone']).toContain(out.baseline);
+  });
 });
 
 describe('opentune_analyze_pitch limits and declaration', () => {
