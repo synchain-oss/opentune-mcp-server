@@ -65,7 +65,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      # 提交检查看 PR 自己的提交（不是 GitHub 生成的测试合并提交），并且需要 origin/<base>：取 PR head、拉全历史。
+      # 提交检查看 PR 自己的提交（不是 GitHub 生成的测试合并提交），并且需要 origin/<base> 与 origin/<默认分支>：
+      # 取 PR head、拉全历史（fetch-depth: 0 拉所有分支）。同仓 PR 开到 feature/** 时，默认分支上已有的提交
+      # 不算 PR 带来的（例如把 dev 合回主支线的子 PR），scope 步骤给出 exclude，取不到该分支就报错。
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
@@ -81,6 +83,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           BASE_REF: ${{ github.base_ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           REPO: ${{ github.repository }}
           HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
           HEAD_REF: ${{ github.head_ref }}
@@ -89,10 +92,14 @@ jobs:
       - name: Gates (lint, format, typecheck, unit tests + coverage, gitleaks, privacy, audio, attribution, pull_request_target, skills zip)
         env:
           BASE: ${{ steps.scope.outputs.base }}
+          EXCLUDE: ${{ steps.scope.outputs.exclude }}
           ALLOW_EXTERNAL_AUTHORS: ${{ steps.scope.outputs.allow_external_authors }}
           ALLOW_DEPENDABOT: ${{ steps.scope.outputs.allow_dependabot }}
         run: |
           args=(--base "$BASE")
+          # exclude 是空格分隔的 ref 列表（可为空）；read -a 只按空格切，不做通配展开。
+          read -r -a excludes <<< "$EXCLUDE"
+          for ref in "${excludes[@]}"; do args+=(--exclude "$ref"); done
           if [ "$ALLOW_EXTERNAL_AUTHORS" = true ]; then args+=(--allow-external-authors); fi
           if [ "$ALLOW_DEPENDABOT" = true ]; then args+=(--allow-dependabot); fi
           node scripts/gates.mjs "${args[@]}" \

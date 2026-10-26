@@ -248,6 +248,20 @@ describe('ci.yml', () => {
     expect(light).toMatch(/^\s+--no-skip \\$/m);
   });
 
+  // A pull request into a feature/* trunk leaves the commits already on the default branch out of
+  // the attribution check (commitCheckScope). That needs the default branch's name and a clone that
+  // has origin/<default branch>, and the range the scope step computes has to reach the gates.
+  it('gives the light tier the default branch and the full history, and passes the excluded refs to the gates', () => {
+    const light = jobs.get('light') ?? '';
+    const [checkout] = stepsOf(light).filter((s) => s.includes('uses: actions/checkout@'));
+    expect(checkout).toMatch(/^\s+fetch-depth: 0$/m);
+    const scope = stepsOf(light).find((s) => /id: scope$/m.test(s)) ?? '';
+    expect(scope).toMatch(/^\s+DEFAULT_BRANCH: \$\{\{ github\.event\.repository\.default_branch \}\}$/m);
+    const gates = stepsOf(light).find((s) => s.includes('node scripts/gates.mjs')) ?? '';
+    expect(gates).toMatch(/^\s+EXCLUDE: \$\{\{ steps\.scope\.outputs\.exclude \}\}$/m);
+    expect(gates).toMatch(/--exclude "\$ref"/);
+  });
+
   // Runs queued in one concurrency group replace each other even without cancel-in-progress, so a
   // push run grouped by branch could be dropped before it checked the commits it brought.
   it('gives every push its own run that nothing cancels or supersedes', () => {
