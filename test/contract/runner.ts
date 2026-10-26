@@ -27,6 +27,8 @@ export interface Outcome {
 export interface RunOptions {
   /** How long an expect step waits for its line; 10 s unless given. */
   readonly readTimeoutMs?: number;
+  /** How long a vector that ends the instance waits for a close and for the end; 15 s unless given. */
+  readonly endWaitMs?: number;
 }
 
 /** The instance did not behave as the vector expects. */
@@ -40,6 +42,13 @@ const PROBE_ID = 'otcp-runner-probe';
 const READ_TIMEOUT_MS = 10_000;
 /** expectClosed without withinMs, and connectionAfter closed. */
 const CLOSE_WAIT_MS = 5000;
+/**
+ * The same waits in a vector that ends the instance, and how long after its last step the instance
+ * has to be gone (vectors/README.md, "Vectors that end the instance").
+ */
+const END_WAIT_MS = 15_000;
+/** How often the port is tried while it is expected to refuse connections. */
+const PORT_POLL_MS = 50;
 const PLAIN_INTEGER_RE = /^(0|[1-9][0-9]*)$/;
 
 const versionNumbers = (v: string) => v.split('.').map(Number);
@@ -78,6 +87,8 @@ class Run {
     readonly spec: OtcpSpec,
     readonly bindings: Bindings,
     readonly readTimeoutMs: number,
+    /** How long a wait for a close takes where the vector gives none. */
+    readonly closeWaitMs: number = CLOSE_WAIT_MS,
   ) {}
 
   async connect(name: string): Promise<RunnerConnection> {
@@ -267,13 +278,25 @@ class Run {
     }
   }
 
+  /** Whether the port of the instance still accepts a connection; one that got in is closed again at once. */
+  async portAccepts(): Promise<boolean> {
+    try {
+      (await RunnerConnection.open(Number(this.instance.discovery.port))).destroy();
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   async expectClosed(name: string, options: { noBytes?: unknown; withinMs?: unknown }): Promise<void> {
     const conn = this.conn(name);
     const deadline =
-      typeof options.withinMs === 'number' ? this.#stepEnd + options.withinMs : performance.now() + CLOSE_WAIT_MS;
+      typeof options.withinMs === 'number' ? this.#stepEnd + options.withinMs : performance.now() + this.closeWaitMs;
     if (!(await conn.waitClosed(deadline))) {
       const within =
-        typeof options.withinMs === 'number' ? `${String(options.withinMs)} ms after the previous step` : 'in 5 s';
+        typeof options.withinMs === 'number'
+          ? `${String(options.withinMs)} ms after the previous step`
+          : `in ${String(this.closeWaitMs / 1000)} s`;
       throw new VectorFailure(`${name}: the server did not close the connection ${within}`);
     }
     const sent = conn.receivedBytes - conn.bytesAtStepEnd;
@@ -350,14 +373,19 @@ function checkParamsValid(vector: Vector, request: unknown, spec: OtcpSpec): voi
   }
 }
 
+/** Whether a step sends something to the instance. */
+const sends = (step: Step): boolean => ['send', 'sendRaw', 'sendHex', 'sendFilled'].some((key) => key in step);
+
 async function runSteps(vector: Vector, run: Run): Promise<void> {
   if (vector.type === 'request') {
     const request = resolve(vector.request, run.bindings);
     checkParamsValid(vector, request, run.spec);
+    // The request that makes the instance end: from here on an end is one that was asked for, whatever follows.
+    if (vector.endsSession === true) run.instance.endRequested?.();
     run.sendValue('main', request);
     await run.expect('main', vector.response);
     if (vector.connectionAfter === 'closed') {
-      if (!(await run.conn('main').waitClosed(performance.now() + CLOSE_WAIT_MS))) {
+      if (!(await run.conn('main').waitClosed(performance.now() + run.closeWaitMs))) {
         throw new VectorFailure('main: the server kept the connection open after the response, expected it to close');
       }
     } else {
@@ -365,7 +393,43 @@ async function runSteps(vector: Vector, run: Run): Promise<void> {
     }
     return;
   }
-  for (const step of vector.steps ?? []) await run.step(step);
+  const steps = vector.steps ?? [];
+  // A scenario that ends the instance ends with the call that makes it quit (the last step that sends).
+  let quitting = -1;
+  if (vector.endsSession === true) {
+    steps.forEach((step, index) => {
+      if (sends(step)) quitting = index;
+    });
+  }
+  for (const [index, step] of steps.entries()) {
+    if (index === quitting) run.instance.endRequested?.();
+    await run.step(step);
+  }
+}
+
+/**
+ * What a vector with endsSession asks beyond its steps (vectors/README.md, "Vectors that end the
+ * instance", rule 3): within the end wait the instance is gone. Returns what the target could not observe.
+ */
+async function checkEnded(run: Run): Promise<readonly string[]> {
+  const deadline = performance.now() + run.closeWaitMs;
+  for (const [name, conn] of run.connections) {
+    if (!(await conn.waitClosed(deadline))) {
+      throw new VectorFailure(`${name}: the server did not close the connection after the instance was to end`);
+    }
+  }
+  while (await run.portAccepts()) {
+    if (performance.now() >= deadline) {
+      throw new VectorFailure('the port of the instance still accepts connections after it was to end');
+    }
+    await sleep(PORT_POLL_MS);
+  }
+  if (run.instance.expectEnded === undefined) {
+    return ['the exit of the process and the removal of the discovery file are not checked by this target'];
+  }
+  const { problems, notChecked } = await run.instance.expectEnded(Math.max(0, Math.ceil(deadline - performance.now())));
+  if (problems.length > 0) throw new VectorFailure(problems.join('; '));
+  return notChecked;
 }
 
 /** Runs one vector against a fresh instance of the target. Never throws. */
@@ -416,12 +480,21 @@ export async function runVector(
       else throw new InvalidVector(`$ref to ${name}, which nothing binds`);
     }
 
-    run = new Run(instance, spec, bindings, options.readTimeoutMs ?? READ_TIMEOUT_MS);
+    run = new Run(
+      instance,
+      spec,
+      bindings,
+      options.readTimeoutMs ?? READ_TIMEOUT_MS,
+      vector.endsSession === true ? (options.endWaitMs ?? END_WAIT_MS) : CLOSE_WAIT_MS,
+    );
     await run.connect('main');
     if (vector.session === 'authenticated') await run.authenticate('main');
     run.markStep();
     await runSteps(vector, run);
-    return outcome('PASS', vector.type === 'scenario' ? `${String(vector.steps?.length ?? 0)} steps` : '');
+    const notChecked = vector.endsSession === true ? await checkEnded(run) : [];
+    const notes = vector.type === 'scenario' ? [`${String(vector.steps?.length ?? 0)} steps`] : [];
+    if (notChecked.length > 0) notes.push(`not checked: ${notChecked.join(', ')}`);
+    return outcome('PASS', notes.join('; '));
   } catch (error) {
     if (error instanceof VectorFailure) {
       const failed = outcome('FAIL', error.message);

@@ -87,12 +87,36 @@ Each run reports, next to the PASS / FAIL / SKIP counts, how many instances
 
 - stopped normally with their discovery file removed;
 - were ended by force (Windows, or no exit in time), so the clean-up on exit was not verified;
-- ended by themselves during a vector, with the exit code when it is known;
+- quit by themselves as a vector asked for it (`endsSession`, below), with their discovery file removed;
+- ended by themselves during a vector that did not ask for it, with the exit code when it is known;
 - exited after a normal stop request but left their discovery file behind;
 - could not be confirmed as started by this run and were not ended.
 
 The last three are deviations: each one also makes the vector it happened in FAIL, whatever the
 vector itself gave.
+
+### Vectors that end the instance
+
+A vector with `endsSession` true (`app/quit-clean`, `app/quit-saved-path`, `app/quit-dirty-discard`) makes the
+instance quit by itself, and `spec/otcp/v1/vectors/README.md` ("Vectors that end the instance") says what a runner
+checks. This runner gives every vector an instance of its own, so the next vector is unaffected; no ordering is
+needed. For such a vector it
+
+- waits up to 15 seconds, not 5, for a close (`connectionAfter` `closed`, `expectClosed` without `withinMs`);
+- then waits, within 15 seconds, until every connection of the vector is closed and the port of the instance accepts
+  no connection any more;
+- asks the target how the instance ended (`expectEnded`). The exe target waits for the process it started to exit by
+  itself and requires exit code 0; for a process that a launcher handed over to it can see only that the process is
+  gone, not how it exited, and says so in the note of the vector (`not checked: ...`). Both require the discovery
+  file to be gone. The mock target requires the mock to have stopped completely and the file to be gone, and notes
+  that it has no process of its own.
+
+The instance that quit is not counted as one that "ended by itself during a vector" and is not ended again by
+`close()`. From the moment the runner sends the call that makes it quit (the request of a request vector, the last step
+that sends in a scenario) its end is one that was asked for, also when the vector fails at that step or afterwards, so
+the failure is the one of the vector and not a second one for an early end. An instance that ends before that call was
+sent, because an earlier step failed, is still one that ended by itself. A vector that does not set `endsSession` and
+sees its instance end is still a deviation.
 
 `OTCP_CONTRACT_SUMMARY_EXE` (a file path) makes the run write its counts as JSON, which is how
 `npm run gates` fills its "contract vectors (exe)" row. The file also names the runner (`exe`), the build

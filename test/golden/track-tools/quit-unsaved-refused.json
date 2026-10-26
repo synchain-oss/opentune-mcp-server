@@ -1,0 +1,20 @@
+{
+  "description": "Unsaved changes: nothing is closed, and the next step is to save first (the project has no file yet).",
+  "tool": "opentune_quit",
+  "input": {},
+  "result": {
+    "error": {
+      "kind": "UNSAVED_CHANGES",
+      "reason": "project_dirty",
+      "detail": "the project has unsaved changes; discardUnsaved true quits anyway and loses them",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "tool": "opentune_save_project",
+        "message": "The project was never saved, so it has no file: save it with opentune_save_project (mode save_as, an absolute .otproj path, for example next to the vocal file), then call opentune_quit again. Or ask the user whether the unsaved changes may be thrown away; only if the user explicitly agrees, call opentune_quit again with discard_unsaved: true."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-unsaved_changes"
+    }
+  }
+}

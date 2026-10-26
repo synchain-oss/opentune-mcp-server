@@ -631,6 +631,7 @@ async function contractVectorsExe() {
     `${summary.total} vectors: ${summary.pass} PASS, ${summary.fail} FAIL` +
     `${summary.fail ? ` (${summary.failed.join(', ')})` : ''}, ${summary.skip} SKIP${skips ? ` (${skips})` : ''}; ` +
     `instances: ${i.verified} stopped normally, ${i.forced} ended by force (clean-up not verified), ` +
+    `${i.endedAsAsked ?? 0} quit by themselves as a vector asked, ` +
     `${i.exitedEarly} ended by themselves, ${i.leftDiscoveryFile} left their discovery file, ` +
     `${i.notEnded} not confirmed as started by this run and not ended`;
   return { result: status === 0 && summary.fail === 0 ? 'PASS' : 'FAIL', note };
