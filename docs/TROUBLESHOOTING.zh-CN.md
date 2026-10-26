@@ -113,7 +113,7 @@ OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`�
 
 ### Error UNSAVED_CHANGES
 
-该请求会丢弃未保存的改动。请问用户是保存还是丢弃。
+该请求会丢弃未保存的改动。请问用户是保存还是丢弃。`opentune_quit` 给出这个错误是有意的:OpenTune 窗口的关闭按钮不会询问就直接退出,而这个工具不会。请先用 `opentune_save_project` 保存(`save`;从未保存过的工程用 `save_as`),再调用 `opentune_quit`;只有用户明确同意丢掉改动时,才带 `discard_unsaved: true` 调用。
 
 ### Error ALREADY_EXISTS
 
@@ -121,7 +121,7 @@ OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`�
 
 ### Error BUSY
 
-OpenTune 正被使用:有对话框开着、用户正在拖动,或有导入、导出、工程操作在进行。请在 OpenTune 里完成它,再重试。原因为 `modal_open` 时有模态对话框开着;第一个通常就是一次性的首次引导对话框,见 [First launch dialog](#first-launch-dialog)。`opentune_manage_ui` 的 `dismiss_dialogs` 可以像按 Esc 一样关掉对话框;关闭时会提交所示取值的对话框(轨道颜色对话框)只有带 `accept_commit: true` 才会关,而这需要用户同意。关掉确认框等于取消它询问的操作,所以关闭任何对话框之前都要先问用户。
+OpenTune 正被使用:有对话框开着、用户正在拖动,或有导入、导出、工程操作在进行。请在 OpenTune 里完成它,再重试。原因为 `modal_open` 时有模态对话框开着;第一个通常就是一次性的首次引导对话框,见 [First launch dialog](#first-launch-dialog)。`opentune_manage_ui` 的 `dismiss_dialogs` 可以像按 Esc 一样关掉对话框;关闭时会提交所示取值的对话框(轨道颜色对话框)只有带 `accept_commit: true` 才会关,而这需要用户同意。关掉确认框等于取消它询问的操作,所以关闭任何对话框之前都要先问用户。原因为 `job_in_progress`(来自 `opentune_quit`)时,有任务还没结束(例如设置改动),退出会把它中断:等几秒再调用。
 
 ### Error TIMEOUT
 
@@ -137,7 +137,7 @@ OpenTune 在截止时间之前没有开始处理该请求。没有任何改动;�
 
 ### Error UNSUPPORTED
 
-OpenTune 或该构建不提供这个操作。原因为 `capability_missing` 时,`detail` 指出缺少的能力;原因为 `no_editor_window` 时,OpenTune 是在没有编辑器窗口的情况下运行的,带窗口启动 OpenTune Standalone 后再试;原因为 `job_not_cancellable` 时,任务会继续,可以用 `opentune_get_job` 跟踪。`opentune_manage_ui` 的 op `switch_view` 需要能力 `ui.workspace`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请在 OpenTune 窗口里切换视图(走带栏里的编曲视图与钢琴卷帘按钮),或改用较新的测试构建。
+OpenTune 或该构建不提供这个操作。原因为 `capability_missing` 时,`detail` 指出缺少的能力;原因为 `no_editor_window` 时,OpenTune 是在没有编辑器窗口的情况下运行的,带窗口启动 OpenTune Standalone 后再试;原因为 `job_not_cancellable` 时,任务会继续,可以用 `opentune_get_job` 跟踪。`opentune_manage_ui` 的 op `switch_view` 需要能力 `ui.workspace`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请在 OpenTune 窗口里切换视图(走带栏里的编曲视图与钢琴卷帘按钮),或改用较新的测试构建。`opentune_quit` 需要能力 `app.quit`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请先用 `opentune_save_project` 保存工程,再请用户关闭 OpenTune 窗口(窗口关闭时不会询问未保存的改动)。
 
 ### Error INTERNAL
 

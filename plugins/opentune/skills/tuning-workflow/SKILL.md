@@ -83,6 +83,7 @@ OpenTune has no autosave, and the undo history is not stored in the project file
 - **Next time**, continue with `opentune_open_project`. If the current project has unsaved changes it fails with `UNSAVED_CHANGES`: save first, or ask the user. Opening clears the undo history and invalidates all clip ids, so read the project again afterwards.
 - **After undo**, going back to the saved state still leaves OpenTune marking the project as modified: save once more before opening another project or ending the session.
 - **After opening a project**, read the project and notes again; do not reuse ids or cursors from before. Right after opening, `cursor_stale` can appear occasionally: wait a few seconds and read again.
+- **When the user says they are finished**, save first (`opentune_save_project`), then close OpenTune with `opentune_quit` and tell the user where the project file is; do not close it when the user only says "for now" or wants a pause.
 
 ## Things that go wrong
 

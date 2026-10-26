@@ -118,11 +118,13 @@ export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
         '| --- | --- | --- | --- |',
         ...outcomes.map((o) => `| ${o.id} | ${o.result} | ${cell(o.note)} | ${o.dataDir ?? ''} |`),
       ];
-      const { verified, forced, exitedEarly, leftDiscoveryFile, notEnded, templateSkipped } = target.stats;
+      const { verified, forced, endedAsAsked, exitedEarly, leftDiscoveryFile, notEnded, templateSkipped } =
+        target.stats;
       process.stderr.write(
         `\nContract vectors (exe target):\n${table.join('\n')}\n` +
           `Instances: ${String(verified)} exited normally with their discovery file removed, ` +
           `${String(forced)} ended by force (clean-up on exit not verified), ` +
+          `${String(endedAsAsked)} quit by themselves where a vector asked for it, ` +
           `${String(exitedEarly)} ended by themselves during a vector, ` +
           `${String(leftDiscoveryFile)} left their discovery file behind, ` +
           `${String(notEnded)} could not be confirmed as started by this run and were not ended\n` +
@@ -152,7 +154,7 @@ export function registerExeVectors(env: NodeJS.ProcessEnv = process.env): void {
           failed: outcomes.filter((o) => o.result === 'FAIL').map((o) => o.id),
           // Relative to OTCP_TARGET_DATA_DIR; empty unless that was set.
           dataDirs: Object.fromEntries(outcomes.flatMap((o) => (o.dataDir === undefined ? [] : [[o.id, o.dataDir]]))),
-          instances: { verified, forced, exitedEarly, leftDiscoveryFile, notEnded },
+          instances: { verified, forced, endedAsAsked, exitedEarly, leftDiscoveryFile, notEnded },
           templateSkipped,
         };
         writeFileSync(file, `${JSON.stringify(summary, null, 2)}\n`);

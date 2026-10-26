@@ -23,6 +23,7 @@ import { MockError } from './errors.js';
 import { stripHome } from './privacy.js';
 import { WorkFiles } from './files.js';
 import { applyGiven, WORLD_GIVEN_MEMBERS, type GivenState } from './given.js';
+import { quitResult } from './app.js';
 import { arrangementHandlers } from './arrangement.js';
 import { audioHandlers } from './audio.js';
 import { editHandlers } from './edit.js';
@@ -86,6 +87,7 @@ export const MOCK_CAPABILITIES: readonly string[] = [
   'project.io',
   'prefs.write',
   'audio.device',
+  'app.quit',
 ];
 
 const LOOPBACK = '127.0.0.1';
@@ -105,6 +107,7 @@ const NO_EDITOR_METHODS: ReadonlySet<string> = new Set([
   'project.saveAs',
   'project.open',
   'audio.set',
+  'app.quit',
 ]);
 const APP_VERSION = '0.0.0-mock';
 
@@ -211,6 +214,11 @@ export interface OtcpMock {
    * `UNSUPPORTED(no_editor_window)`, `executed` false, and change nothing (PROTOCOL.md section 7 rule 6).
    */
   setNoEditor(on: boolean): void;
+  /**
+   * Ends a job that `given.jobs` made (it runs for ever otherwise), as cancelled. Returns false for an unknown job, one
+   * that has ended already, and one the mock drives itself.
+   */
+  endJob(jobId: string): boolean;
   /** While the transport plays on a running device, the position advances by `rate` timeline seconds per second (0: it stays). */
   setTransportRate(rate: number): void;
   /**
@@ -222,6 +230,13 @@ export interface OtcpMock {
   failNextAnalysis(count?: number): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
   stop(): Promise<void>;
+  /**
+   * app.quit was answered with success. The mock then stops by itself, through the path of stop(), as OpenTune
+   * ends after it answered; what ends is the mock, never the process that runs it.
+   */
+  readonly quitRequested: boolean;
+  /** Resolves once the mock has stopped completely: its connections and listener are closed and the discovery file is gone. */
+  whenEnded(): Promise<void>;
 }
 
 interface InFlight {
@@ -282,7 +297,12 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   const acceptWaiters: { count: number; resolve: () => void }[] = [];
   let sessionCount = 0;
   let stopping = false;
+  let quitRequested = false;
   const connections = new Set<Connection>();
+  let markEnded: () => void = () => undefined;
+  const ended = new Promise<void>((resolve) => {
+    markEnded = resolve;
+  });
 
   const err = (init: ErrorInit) => makeError(spec, init);
   const send = (conn: Connection, line: Buffer) => {
@@ -383,9 +403,58 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     limits: LIMITS,
   });
 
+  /** Answers with the result `produce` builds, or with the error it throws; `after` runs once the result is written. */
+  const respond = (
+    conn: Connection,
+    id: RequestId,
+    method: string,
+    produce: () => Record<string, unknown>,
+    after?: () => void,
+  ) => {
+    try {
+      send(conn, successLine(id, produce()));
+    } catch (error) {
+      if (error instanceof MockError) reply(conn, id, error.init);
+      else {
+        const detail = error instanceof Error ? error.message : 'unexpected failure';
+        reply(conn, id, { kind: 'INTERNAL', detail: `the mock failed in ${method}: ${detail}`, executed: true });
+      }
+      return;
+    }
+    after?.();
+  };
+
+  /** A window-less run: a method that acts through the editor window fails (section 7 rule 6); true when it did. */
+  const refusedNoEditor = (conn: Connection, id: RequestId, method: string): boolean => {
+    if (!world.noEditor || !NO_EDITOR_METHODS.has(method)) return false;
+    reply(conn, id, {
+      kind: 'UNSUPPORTED',
+      reason: 'no_editor_window',
+      detail: `${method} acts through the OpenTune editor window, and this instance has no editor window`,
+      executed: false,
+    });
+    return true;
+  };
+
+  /**
+   * app.quit has answered with success: the server is stopping from now on (a later request gets SHUTTING_DOWN) and
+   * stops through its normal path in the next turn of the event loop, after the answer has been written.
+   */
+  const beginQuit = () => {
+    quitRequested = true;
+    stopping = true;
+    setImmediate(() => {
+      void stopMock();
+    });
+  };
+
   const methods: Readonly<Record<string, (conn: Connection, request: Request) => void>> = {
     'session.info': (conn, { id }) => {
       send(conn, successLine(id, sessionInfo()));
+    },
+    'app.quit': (conn, { id, method, params }) => {
+      if (refusedNoEditor(conn, id, method)) return;
+      respond(conn, id, method, () => quitResult(world, jobs, params ?? {}), beginQuit);
     },
     'job.get': (conn, { id, params }) => {
       const jobId = String(params?.jobId);
@@ -452,15 +521,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   const runModel = (conn: Connection, { id, method, params }: Request) => {
     const handler = worldHandlers[method];
     if (handler === undefined) return false;
-    if (world.noEditor && NO_EDITOR_METHODS.has(method)) {
-      reply(conn, id, {
-        kind: 'UNSUPPORTED',
-        reason: 'no_editor_window',
-        detail: `${method} acts through the OpenTune editor window, and this instance has no editor window`,
-        executed: false,
-      });
-      return true;
-    }
+    if (refusedNoEditor(conn, id, method)) return true;
     const context: MethodContext = {
       world,
       params: params ?? {},
@@ -473,15 +534,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       startJob: (kind, work) => jobs.start({ kind }, oneShot(work)),
       jobs,
     };
-    try {
-      send(conn, successLine(id, handler(context)));
-    } catch (error) {
-      if (error instanceof MockError) reply(conn, id, error.init);
-      else {
-        const detail = error instanceof Error ? error.message : 'unexpected failure';
-        reply(conn, id, { kind: 'INTERNAL', detail: `the mock failed in ${method}: ${detail}`, executed: true });
-      }
-    }
+    respond(conn, id, method, () => handler(context));
     return true;
   };
 
@@ -712,6 +765,31 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   world.log(`control API listening on 127.0.0.1:${String(address.port)}; discovery file ${discoveryPath}`);
 
   let stopped: Promise<void> | undefined;
+  /** Section 3.6 rule 2, then the discovery file (section 5.4 rule 1); once, whoever asks first. */
+  const stopMock = (): Promise<void> => {
+    stopped ??= (async () => {
+      stopping = true;
+      for (const conn of connections) {
+        for (const pending of conn.inFlight.values()) {
+          pending.drop();
+          send(conn, errorLine(pending.id, err({ kind: 'SHUTTING_DOWN', detail: 'the server is stopping' })));
+        }
+        conn.inFlight.clear();
+      }
+      for (const conn of [...connections]) close(conn);
+      await new Promise<void>((resolve) => {
+        server.close(() => {
+          resolve();
+        });
+      });
+      fs.rmSync(discoveryPath, { force: true });
+      jobs.dispose();
+      files.dispose();
+      world.dispose();
+      markEnded();
+    })();
+    return stopped;
+  };
   return {
     address,
     discoveryPath,
@@ -794,6 +872,9 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     setNoEditor(on) {
       world.noEditor = on;
     },
+    endJob(jobId) {
+      return jobs.end(jobId);
+    },
     setTransportRate(rate) {
       world.settleTransport();
       world.transportRate = rate;
@@ -807,29 +888,11 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     logLine(text) {
       world.log(text);
     },
-    stop() {
-      stopped ??= (async () => {
-        stopping = true;
-        for (const conn of connections) {
-          for (const pending of conn.inFlight.values()) {
-            pending.drop();
-            send(conn, errorLine(pending.id, err({ kind: 'SHUTTING_DOWN', detail: 'the server is stopping' })));
-          }
-          conn.inFlight.clear();
-        }
-        for (const conn of [...connections]) close(conn);
-        await new Promise<void>((resolve) => {
-          server.close(() => {
-            resolve();
-          });
-        });
-        fs.rmSync(discoveryPath, { force: true });
-        jobs.dispose();
-        files.dispose();
-        world.dispose();
-      })();
-      return stopped;
+    stop: stopMock,
+    get quitRequested() {
+      return quitRequested;
     },
+    whenEnded: () => ended,
   };
 }
 
