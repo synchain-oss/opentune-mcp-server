@@ -57,7 +57,8 @@ first sentence: "Only the first 200 entries of created are listed." A cut list w
 named by it ("962 notes"); otherwise it is "items". The code documents the three numbers: `omittedCount` and the
 envelope's `omittedChangeCount` are OpenTune's, per kind and for `changes`; `changeTable.omittedChangeCount` is this
 server's and counts every entity of the result that is not a row of the table, so rows plus that number are all the
-entities of the result.
+entities of the result. A method gives one of the two members for `changes`, never both; a result that has both counts
+the same left-out entries in both, so they are not added and the larger one is taken.
 
 **Client impact.** `changeTable.omittedChangeCount` is larger than before for a result with a cut `created` or
 `removed` list (it used to count only `changes` left out by the method and the rows beyond the row limit). Summaries
@@ -76,8 +77,10 @@ in `restore` (`{op: "switch_view", view: <the view the window showed>}`); `rever
 recipe for the side effect. On an instance without `ui.workspace` the line says that no tool of this server switches
 the window back and that the user can click the view buttons in the transport bar, and `restore` is `null`. A result
 of `switch_view` itself carries its own recipe in `undo.revert`, so it gets no second line, and a dry run, which
-switched nothing, gets none either. A view name that this server does not know is not repeated: the line says "another
-view" and falls back to the click.
+switched nothing, gets none either. A view name that this server does not know is not repeated. Without `ui.workspace`
+the line then says "another view" and that the user clicks; with `ui.workspace` it does not claim that no tool can
+switch back (the op exists, only the earlier view is unknown): it says the earlier view is not known and to show the
+view the user wants with `switch_view`, and `restore` is `null` because there is no call to hand out.
 
 **Client impact.** Wording, plus one revert line whose `restore` is now set for a `focus_clip` that opened the editor
 on an instance with `ui.workspace`. Clients that read `restore` need no change. The `RenderContext` of the renderer
@@ -109,7 +112,8 @@ built from the result, that "OpenTune also copies the audio the project uses int
 project file" (files copied before and unchanged are skipped): right after the first sentence for a save to a new
 place (`save_as`, overwrite), and after the facts of the save for a save to the project's own file. The body gains
 `mediaFolder`: the folder, built from the path this server checked itself (`save_as` and overwrite); `null` with the
-reason `project_path_not_given` for a save to the project's current file, whose path only OpenTune knows.
+reason `project_path_not_given` for a save to the project's current file, whose path only OpenTune knows. The reason is
+put next to the `nullReasons` that the write envelope may carry itself, which stay; it does not replace them.
 
 **Client impact.** Wording, plus one added member (`mediaFolder`) that clients may ignore.
 
@@ -120,10 +124,12 @@ is more trustworthy. The two confidences were not described: the top-level pair 
 `local_keys` confidence is a mean over a segment. The last `local_keys` entry ended at the length of the mix (270.63 s)
 although the clip lasts 272 s.
 
-**Fix.** The sentence names the clip key and where it came from (set by the user, found automatically) and gives a
-verdict: a key set by the user stands; an automatic key gives way to a sure estimate (scale set confidence at least
-0.6) that also hears the mix; otherwise neither is clearly better and the user is asked. A scale other than major and
-minor is named as "dorian on root 2". The summary states the range of the estimate ("over 0 to 272 s", or "of the main
+**Fix.** The sentence names the clip key and where it came from (set by the user, found automatically; a missing origin
+or one this server does not know is "of unknown origin", never "found automatically") and gives a verdict: a key set by
+the user stands; an automatic key gives way to a sure estimate (scale set confidence at least 0.6) that also hears the
+mix; otherwise neither is clearly better and the user is asked (for a key of unknown origin that is so even when the
+estimate is sure and hears the mix, and the sentence says it is not known who chose the key). A scale other than major
+and minor is named as "dorian on root 2". The summary states the range of the estimate ("over 0 to 272 s", or "of the main
 part") and that the confidences cover it, and that `scale_set_confidence` in `local_keys` is the mean over the short
 windows of that segment. With a clip, `local_keys` and `estimated_over` end at the end of the clip; the mix is read from
 its start. The warning for a mix and a clip of different lengths now says that times follow the clip. The tool

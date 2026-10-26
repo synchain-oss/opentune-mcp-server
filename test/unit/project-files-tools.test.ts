@@ -16,6 +16,7 @@ import { startMock } from '../../mock/server.js';
 import { getJob } from '../../src/tools/jobs.js';
 import { TOOLS } from '../../src/tools/index.js';
 import {
+  mediaFolderMembers,
   openProject,
   openProjectTool,
   overwriteProject,
@@ -112,6 +113,31 @@ describe('opentune_save_project', () => {
     expect(again.summary.indexOf(MEDIA_COPY)).toBeGreaterThan(again.summary.indexOf('cannot be restored'));
     expect(again.mediaFolder).toBeNull();
     expect(again.nullReasons).toMatchObject({ mediaFolder: 'project_path_not_given' });
+  });
+
+  it('keeps the reasons the write envelope gives for its own null members next to the one for mediaFolder', () => {
+    // A save to the project's own file: the folder is unknown, and the envelope has reasons of its own.
+    const rendered = { nullReasons: { ui: 'no_editor_window', history: 'capability_missing' } };
+    expect(mediaFolderMembers(rendered, null)).toEqual({
+      mediaFolder: null,
+      nullReasons: { ui: 'no_editor_window', history: 'capability_missing', mediaFolder: 'project_path_not_given' },
+    });
+    // Without reasons of the envelope, the reason of mediaFolder is the only one.
+    expect(mediaFolderMembers({}, null)).toEqual({
+      mediaFolder: null,
+      nullReasons: { mediaFolder: 'project_path_not_given' },
+    });
+    // A nullReasons that is not an object is not spread into the result.
+    for (const odd of ['text', 7, null, ['a']]) {
+      expect(mediaFolderMembers({ nullReasons: odd }, null)).toEqual({
+        mediaFolder: null,
+        nullReasons: { mediaFolder: 'project_path_not_given' },
+      });
+    }
+    // With a folder there is nothing to explain, and the envelope's reasons are left as they are.
+    expect(mediaFolderMembers(rendered, 'C:\\Music\\Project_Media')).toEqual({
+      mediaFolder: 'C:\\Music\\Project_Media',
+    });
   });
 
   it('does not call a save_as onto the file the project already has a new file', async () => {

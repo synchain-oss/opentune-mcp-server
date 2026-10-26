@@ -113,6 +113,15 @@ export const workspaceSwitchBackText = (from: unknown): string =>
   'arguments in restore, as they are (reverts side effect workspaceSwitched).';
 
 /**
+ * The way back for a switch of the view on an instance that reports ui.workspace, when the view the window showed
+ * before is not known (the result names none this server knows): the op exists, but there is no call to hand out, so
+ * the line says to show the view the user wants.
+ */
+export const workspaceUnknownBackText =
+  'The view the window showed before is not known; with the op switch_view of opentune_manage_ui, show the view the ' +
+  'user wants (arrangement or piano_roll) (reverts side effect workspaceSwitched).';
+
+/**
  * What a change of the vocoder weight says about rendering again. OpenTune renders every content again once the
  * new weight has loaded; a job that did not wait for the vocoder (it was not ready before the call) can end before
  * that, and when the weight cannot be loaded nothing is rendered again (PROTOCOL.md section 12.7 rule 4).

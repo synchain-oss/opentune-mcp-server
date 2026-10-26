@@ -282,11 +282,18 @@ function clipKeyName(clipKey: ClipKey): string {
  * The sentence for a clip whose key has other notes than the estimate, in plain words and with a verdict on
  * which of the two to trust. A key a person set stands. A key OpenTune found on its own gives way to a sure
  * estimate that also hears the mix; against a vocals-only estimate (the same kind of evidence as OpenTune's)
- * or an unsure one, neither is clearly better and the user decides.
+ * or an unsure one, neither is clearly better and the user decides. Only the two origins this server knows
+ * (`manual`, `automatic`) are said as such; a missing origin or one it does not know (the protocol lets it grow)
+ * is said as "of unknown origin", and the sentence then never claims that the key was found automatically.
  */
 function clipKeyText(clipKey: ClipKey, estimateSure: boolean, hearsMix: boolean): string {
-  const found = clipKey.origin === 'manual' ? 'set by the user' : 'found automatically';
-  const head = `The clip's key in OpenTune (${clipKeyName(clipKey)}, ${found}) has other notes than this estimate`;
+  const source =
+    clipKey.origin === 'manual'
+      ? 'set by the user'
+      : clipKey.origin === 'automatic'
+        ? 'found automatically'
+        : 'of unknown origin';
+  const head = `The clip's key in OpenTune (${clipKeyName(clipKey)}, ${source}) has other notes than this estimate`;
   if (clipKey.origin === 'manual')
     return `${head}: the user's choice is the more trustworthy, so keep it unless the user wants another.`;
   if (clipKey.origin === 'automatic' && estimateSure && hearsMix) {
@@ -296,7 +303,7 @@ function clipKeyText(clipKey: ClipKey, estimateSure: boolean, hearsMix: boolean)
     ? 'the estimate is uncertain'
     : !hearsMix
       ? 'the estimate rests on the vocals alone'
-      : 'OpenTune did not say where its key came from';
+      : 'it is not known whether the user set that key or OpenTune found it, and a key the user set stands';
   return `${head}, and neither is clearly the more trustworthy (${why}): ask the user which one is right.`;
 }
 

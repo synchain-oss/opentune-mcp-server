@@ -22,6 +22,7 @@ import {
   undoReasonText,
   workspaceRevertText,
   workspaceSwitchBackText,
+  workspaceUnknownBackText,
   type ReRenderState,
 } from './text.js';
 import { uiEffects, type UiEffect } from './ui-effects.js';
@@ -104,14 +105,16 @@ function revertLine(revert: unknown, text: (sentence: string) => string): Line {
 
 /**
  * The way back for a switch of the view (sideEffects.workspaceSwitched, whose own revert OpenTune sends as null):
- * the switch_view call of opentune_manage_ui when the instance can switch the view, else the user's own click.
+ * the switch_view call of opentune_manage_ui when the instance can switch the view and the view the window showed
+ * before is known; when it is not known, the same op with the view the user wants, without a call to carry out;
+ * the user's own click on an instance that cannot switch the view.
  * `revert` stays null, as OpenTune sent it; the restore call is this server's.
  */
 function workspaceBackLine(from: unknown, canSwitchView: boolean): Line {
   const view = from === 'arrangement' || from === 'pianoRoll' ? from : null;
-  const plan =
-    canSwitchView && view !== null ? revertPlan({ method: 'ui.setWorkspace', params: { workspace: view } }) : null;
-  const restore = plan === null ? null : restoreCall(plan);
+  if (!canSwitchView) return { kind: 'revert', text: workspaceRevertText(from), revert: null, restore: null };
+  if (view === null) return { kind: 'revert', text: workspaceUnknownBackText, revert: null, restore: null };
+  const restore = restoreCall(revertPlan({ method: 'ui.setWorkspace', params: { workspace: view } }));
   return {
     kind: 'revert',
     text: restore === null ? workspaceRevertText(from) : workspaceSwitchBackText(from),

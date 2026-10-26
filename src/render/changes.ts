@@ -9,7 +9,8 @@
 // - `omittedCount` and `omittedChangeCount` of the envelope are OpenTune's. A method lists at most
 //   200 entries each in `changes`, `created` and `removed` and counts the rest: `omittedCount`
 //   {changes, created, removed} per kind (content.autoTune, project.open), `omittedChangeCount` for
-//   `changes` alone (content.editNotes). They count what the method left out of those lists.
+//   `changes` alone (content.editNotes). They count what the method left out of those lists. A method
+//   uses one of the two for `changes`, never both; when both are present, the larger one is taken.
 // - `changeTable.omittedChangeCount` is this server's and counts every entity of the result that is not
 //   a row of the table: what the method left out, plus what it listed beyond the first MAX_TABLE_ROWS
 //   rows. So the rows plus this number are all the entities of the result.
@@ -77,12 +78,15 @@ const count = (value: unknown): number =>
 
 /**
  * How many entities of each kind the method itself left out of `changes`, `created` and `removed`,
- * from the members of the envelope that count them (see the head of this file).
+ * from the members of the envelope that count them (see the head of this file). The specification gives each
+ * method one of the two members for `changes` (`omittedChangeCount` to content.editNotes, `omittedCount.changes`
+ * to content.autoTune and project.open), never both. If both are present they count the same entries, so adding
+ * them would count those twice: the larger of the two is taken.
  */
 export function methodOmitted(envelope: Json): Record<TableRow['kind'], number> {
   const kinds = isObject(envelope.omittedCount) ? envelope.omittedCount : {};
   return {
-    changed: count(kinds.changes) + count(envelope.omittedChangeCount),
+    changed: Math.max(count(kinds.changes), count(envelope.omittedChangeCount)),
     created: count(kinds.created),
     removed: count(kinds.removed),
   };

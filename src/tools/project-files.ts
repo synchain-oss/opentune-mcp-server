@@ -76,6 +76,22 @@ function mediaFolderOf(file: string | null, platform: NodeJS.Platform): string |
   return `${dir}${sep}${MEDIA_FOLDER}`;
 }
 
+/**
+ * The members of a save result that give the media folder: `mediaFolder`, and when it is null, its reason. The write
+ * envelope may carry nullReasons of its own (for members of the envelope that are null); they stay, and the reason of
+ * the member this server adds is put next to them, so that no null member of the result loses its reason.
+ */
+export function mediaFolderMembers(rendered: Json, media: string | null): Json {
+  if (media !== null) return { mediaFolder: media };
+  return {
+    mediaFolder: null,
+    nullReasons: {
+      ...(isObject(rendered.nullReasons) ? rendered.nullReasons : {}),
+      mediaFolder: 'project_path_not_given',
+    },
+  };
+}
+
 /** The error for a save that would replace another project file, with the way forward. */
 function refuseOverwrite(detail: string): Outcome {
   return {
@@ -260,8 +276,7 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
           (toNewPlace ? '' : ` ${MEDIA_COPY}`),
         job: jobRef(job),
         notSavedInProject: stored.names,
-        mediaFolder: media,
-        ...(media === null ? { nullReasons: { mediaFolder: 'project_path_not_given' } } : {}),
+        ...mediaFolderMembers(rendered, media),
         ...extra,
       },
     } satisfies Outcome;
