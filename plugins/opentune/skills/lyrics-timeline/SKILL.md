@@ -7,7 +7,6 @@ metadata:
   version: '0.3.0'
   runs-locally: 'true'
   models: Qwen3-ASR + Qwen3-ForcedAligner-0.6B (Apache-2.0)
-allowed-tools: Bash Read Write
 ---
 
 # Lyrics timeline
