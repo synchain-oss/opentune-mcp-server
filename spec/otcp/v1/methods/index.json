@@ -282,6 +282,14 @@
       "schema": "defined"
     },
     {
+      "method": "ui.setWorkspace",
+      "layer": "L6",
+      "capability": "ui.workspace",
+      "write": "conditional",
+      "since": "1.0",
+      "schema": "defined"
+    },
+    {
       "method": "project.save",
       "layer": "L8",
       "capability": "project.io",

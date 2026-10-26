@@ -270,6 +270,47 @@ async function scenarios(): Promise<Record<string, Scenario>> {
       },
     );
   }
+  {
+    const { ctx } = await world({ clips: [clip()], dirty: false });
+    await run(
+      ctx,
+      'manage-ui-switch-view-piano-roll',
+      'The piano roll with no clip selected: only the view changes, and the roll is empty.',
+      'opentune_manage_ui',
+      { op: 'switch_view', view: 'piano_roll' },
+    );
+    await run(
+      ctx,
+      'manage-ui-switch-view-noop',
+      'The window already shows the piano roll: nothing changes.',
+      'opentune_manage_ui',
+      { op: 'switch_view', view: 'piano_roll' },
+    );
+    await run(
+      ctx,
+      'manage-ui-switch-view',
+      'Closing the piano roll: back to the arrangement view, with the call that opens it again.',
+      'opentune_manage_ui',
+      { op: 'switch_view', view: 'arrangement' },
+    );
+    await run(
+      ctx,
+      'manage-ui-switch-view-missing-view',
+      'switch_view without a view: nothing is sent.',
+      'opentune_manage_ui',
+      { op: 'switch_view' },
+    );
+  }
+  {
+    const { ctx } = await world({ clips: [clip()], withoutCapabilities: ['ui.workspace'] });
+    await run(
+      ctx,
+      'manage-ui-switch-view-unsupported',
+      'A build without ui.workspace: the user switches the view in the window.',
+      'opentune_manage_ui',
+      { op: 'switch_view', view: 'arrangement' },
+    );
+  }
   return out;
 }
 

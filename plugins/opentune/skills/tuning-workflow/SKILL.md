@@ -50,10 +50,13 @@ tuning.
 - `opentune_transport` drives play, pause, stop, seek, the tempo and time signature, and the loop flag. `bpm` and
   `time_signature` are saved with the project and cannot be undone; say which section the project should follow before
   setting them (the `beat-grid` skill measures the tempo per section).
-- `opentune_manage_ui` selects a clip, closes dialogs or marks the first-run onboarding as shown. Selecting a clip can
-  make OpenTune generate its notes with no undo entry: run `focus_clip` with `dry_run: true` first and tell the user.
-  Closing a confirmation dialog cancels the action it asked about, and a dialog that commits its value on close is
-  closed only with `accept_commit: true`, which the user has to allow.
+- `opentune_manage_ui` selects a clip, switches the view, closes dialogs or marks the first-run onboarding as shown.
+  Selecting a clip can make OpenTune generate its notes with no undo entry: run `focus_clip` with `dry_run: true`
+  first and tell the user. `switch_view` shows the arrangement view or the piano roll and changes nothing in the
+  project; when a passage is finished and you opened it in the piano roll, or the user asks to close the piano roll,
+  go back with `switch_view` and `view: arrangement`. Closing a confirmation dialog cancels the action it asked
+  about, and a dialog that commits its value on close is closed only with `accept_commit: true`, which the user has to
+  allow.
 
 ## Global settings
 

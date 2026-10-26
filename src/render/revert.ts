@@ -383,6 +383,14 @@ const TOOL_FOR = table<(params: Json) => Mapped | null>({
       ? null
       : { call: { tool: 'opentune_manage_ui', arguments: { op: 'focus_clip', clip } }, needsRevision: false };
   },
+  // The workspace the window showed before: the recipe switches back, as the tool's switch_view does.
+  'ui.setWorkspace': (params) => {
+    const view =
+      params.workspace === 'arrangement' ? 'arrangement' : params.workspace === 'pianoRoll' ? 'piano_roll' : null;
+    return view === null
+      ? null
+      : { call: { tool: 'opentune_manage_ui', arguments: { op: 'switch_view', view } }, needsRevision: false };
+  },
   'edit.undo': (params) => history('opentune_undo', params),
   'edit.redo': (params) => history('opentune_redo', params),
   'arrangement.edit': editArrangement,

@@ -284,7 +284,7 @@ If an option value is invalid, the discovery directory fails its checks, the lis
 
 4. Each entry has `code`, `since` and `description`; registries are append-only within a major version (section 2.2). Every code a server sends MUST be registered for the protocol version of the session.
 5. Clients MUST accept codes they do not know (section 2.3).
-6. The capability report says which methods the instance implements; this rule says that some of those methods also need the editor window at run time. Some methods act through the OpenTune editor window, which OpenTune Standalone creates when it starts: the methods of `ui.bridge` (`ui.getState`, `ui.dismiss`, `ui.setSelection`), `track.add`, `track.duplicate`, `track.delete`, `project.save`, `project.saveAs`, `project.open` and `audio.set`. An instance reports their capabilities whether or not an editor exists. While no editor exists, for example in a window-less run of a test build, such a method fails with `UNSUPPORTED(no_editor_window)`, `executed` false, and changes nothing; where this check comes among the method's own checks is not part of the contract. The other methods work without an editor, among them `track.set`, the transport methods and `project.clearRecent`; values that only the editor holds are null in their results, with the reason `no_editor` (section 16), as `ui` of the write envelope is (section 14.6).
+6. The capability report says which methods the instance implements; this rule says that some of those methods also need the editor window at run time. Some methods act through the OpenTune editor window, which OpenTune Standalone creates when it starts: the methods of `ui.bridge` (`ui.getState`, `ui.dismiss`, `ui.setSelection`), `ui.setWorkspace`, `track.add`, `track.duplicate`, `track.delete`, `project.save`, `project.saveAs`, `project.open` and `audio.set`. An instance reports their capabilities whether or not an editor exists. While no editor exists, for example in a window-less run of a test build, such a method fails with `UNSUPPORTED(no_editor_window)`, `executed` false, and changes nothing; where this check comes among the method's own checks is not part of the contract. The other methods work without an editor, among them `track.set`, the transport methods and `project.clearRecent`; values that only the editor holds are null in their results, with the reason `no_editor` (section 16), as `ui` of the write envelope is (section 14.6).
 
 ## 8. Clocks and units
 
@@ -533,8 +533,8 @@ Exactly one of these holds for every write result; `common.schema.json#/$defs/wr
 
 Each entry is `{entity, ref, label, fields}`:
 
-- `entity` names the kind of entity: `note`, `placement`, `track`, `timeHandle`, `key`, `pitchShift`, `content`, `preference`, `tempo`, `transport`, `project`, `dialog`, `selection`, `audioDevice` (more MAY be added).
-- `ref` identifies it with handles (`common.schema.json#/$defs/entityRef`). An entity of which the instance has exactly one (`transport`, `tempo`, `project`, `selection`, `audioDevice`) is referenced as `{singleton: <entity>}`, for example `{"singleton": "tempo"}`.
+- `entity` names the kind of entity: `note`, `placement`, `track`, `timeHandle`, `key`, `pitchShift`, `content`, `preference`, `tempo`, `transport`, `project`, `dialog`, `selection`, `audioDevice`, `ui` (more MAY be added).
+- `ref` identifies it with handles (`common.schema.json#/$defs/entityRef`). An entity of which the instance has exactly one (`transport`, `tempo`, `project`, `selection`, `audioDevice`) is referenced as `{singleton: <entity>}`, for example `{"singleton": "tempo"}`. The entity `ui` is the one exception: it stands for state of the OpenTune window, and `ref` names the member group that changed, `{"singleton": "workspace"}` for the workspace the window shows (`ui.setWorkspace`).
 - `label` is a short display label generated from positions and values, or null. It never contains names taken from files or projects (section 20).
 - `fields` maps each changed member name to `{before, after, unit}`, where `unit` is the member's unit suffix in lower case (`sec`, `frame`, `midi`, `hz`, `cents`, `semitones`, `db`, `linear`, `ms`, `bytes`), `bpm` for tempo, or null for members without a unit (section 8.2).
 
@@ -576,17 +576,19 @@ The world revision vector consists of the components below. The server captures 
 
 `sideEffects` maps a side-effect name to an object describing it; it contains only effects that happened (an empty object means none). Each side effect carries `revert`, a revert recipe or null (section 15.2). Side effects are state changes that only the server can observe. Defined names:
 
-| Name                | Meaning                                                                                                 |
-| ------------------- | ------------------------------------------------------------------------------------------------------- |
-| `notesGenerated`    | OpenTune generated notes for a content (for example on selection in the `openDyne` scheme, section 21). |
-| `reRenderQueued`    | Rendering of one or more contents was queued.                                                           |
-| `uiScaleChanged`    | The scale shown in the transport bar changed.                                                           |
-| `workspaceSwitched` | The window switched between the arrangement and the piano roll.                                         |
-| `tracksRevealed`    | Hidden tracks became visible.                                                                           |
-| `dialogClosed`      | A dialog was closed.                                                                                    |
-| `dialogCommitted`   | Closing a dialog committed its value.                                                                   |
+| Name                      | Meaning                                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `notesGenerated`          | OpenTune generated notes for a content (for example on selection in the `openDyne` scheme, section 21). |
+| `reRenderQueued`          | Rendering of one or more contents was queued.                                                           |
+| `uiScaleChanged`          | The scale shown in the transport bar changed.                                                           |
+| `workspaceSwitched`       | The window switched between the arrangement and the piano roll (`ui.setSelection`, `ui.setWorkspace`).  |
+| `tracksRevealed`          | Hidden tracks became visible.                                                                           |
+| `dialogClosed`            | A dialog was closed.                                                                                    |
+| `dialogCommitted`         | Closing a dialog committed its value.                                                                   |
 
 The members of each side-effect object besides `revert` are defined with the methods that produce it.
+
+The workspace the window shows changes in two ways. `ui.setSelection` with `openEditor` true opens a clip in the piano roll. `ui.setWorkspace` does what the two view buttons of the transport bar do: it switches to `arrangement` or to `pianoRoll`, so closing the piano roll is switching to `arrangement`. Both report the switch as `sideEffects.workspaceSwitched {from, to, revert: null}`; `ui.setWorkspace` also lists it in `changes` (entity `ui`, `ref` `{"singleton": "workspace"}`, member `workspace`), and its revert recipe switches back. The workspace is view state (section 15.2 rule 6): switching it never changes a content, a key, a note or a clip, never generates or queues anything and does not mark the project as changed, so `revisionDiff` is empty and `dirty` stays as it was. With no clip selected, the piano roll shows no clip, as in the window, and that is not an error.
 
 ### 14.7 Method-specific members
 
@@ -819,64 +821,67 @@ The scheme changes what some operations do. The protocol never hides these diffe
 
 ## 22. Layers and method index
 
-| Layer | Content                                                        | Capabilities                                               |
-| ----- | -------------------------------------------------------------- | ---------------------------------------------------------- |
-| L2    | Reads: session, project, contents, transport, preferences, log | `session.v1`, `read.v1`                                    |
-| L3    | Jobs, import, export, UI state and dialogs                     | `jobs.v1`, `import.v1`, `export.v1`, `ui.bridge`           |
-| L4    | Key, AUTO, note edits, pitch shift, undo and redo              | `edit.v1`, `history.v1`                                    |
-| L5    | Timing: section shifts and time-grid handles                   | `timing.v1`                                                |
-| L6    | Arrangement, tracks, transport control, selection              | `transport.v1`, `arrangement.v1`, `tracks.v1`, `ui.bridge` |
-| L7    | Drawing-style note, curve, EQ and envelope edits               | not defined in this version                                |
-| L8    | Project save and open, preference changes, audio device        | `project.io`, `prefs.write`, `audio.device`                |
+| Layer | Content                                                                          | Capabilities                                                                               |
+| ----- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| L2    | Reads: session, project, contents, transport, preferences, log                   | `session.v1`, `read.v1`                                                                    |
+| L3    | Jobs, import, export, UI state and dialogs                                       | `jobs.v1`, `import.v1`, `export.v1`, `ui.bridge`                                           |
+| L4    | Key, AUTO, note edits, pitch shift, undo and redo                                | `edit.v1`, `history.v1`                                                                    |
+| L5    | Timing: section shifts and time-grid handles                                     | `timing.v1`                                                                                |
+| L6    | Arrangement, tracks, transport control, selection, workspace | `transport.v1`, `arrangement.v1`, `tracks.v1`, `ui.bridge`, `ui.workspace` |
+| L7    | Drawing-style note, curve, EQ and envelope edits                                 | not defined in this version                                                                |
+| L8    | Project save and open, preference changes, audio device                          | `project.io`, `prefs.write`, `audio.device`                                                |
 
 `ui.onboardingClose` is an additional capability of `ui.dismiss`: without it, `ui.dismiss` can prevent the first-run overlay but not close one that is already showing.
 
+`ui.workspace` is the capability of `ui.setWorkspace` alone. An instance that does not report it can open the piano roll (`ui.setSelection` with `openEditor`) but has no request that switches back to the arrangement view; the end user does that with the view buttons of the transport bar.
+
 Every method of version 1 (also in `methods/index.json`). Write: `yes` changes state, `conditional` changes state only for some params or as a reported side effect, `no` never does. Schema: `defined` means `methods/<method>.schema.json` is normative; `pending` means the schema is added before the `1.0.0-rc.1` tag; `planned` means it is added in a later `1.0.0` release candidate. Until its schema is defined, a method has no normative shape: an implementation MAY provide it provisionally, following this document, for development against a release candidate, and MUST change it to match the schema once the schema is defined. Since `1.0.0-rc.2` every method in this table has a defined schema.
 
-| Method                  | Layer | Capability       | Write       | Since | Schema  | Purpose                                                                                    |
-| ----------------------- | ----- | ---------------- | ----------- | ----- | ------- | ------------------------------------------------------------------------------------------ |
-| `session.hello`         | L2    | `session.v1`     | no          | 1.0   | defined | Authenticate and negotiate the version.                                                    |
-| `session.info`          | L2    | `session.v1`     | no          | 1.0   | defined | Build, runtime, device, processing settings, capabilities, import and export capabilities. |
-| `project.get`           | L2    | `read.v1`        | no          | 1.0   | defined | Tracks, placements, selection, transport, history, project path and dirty flag.            |
-| `content.getNotes`      | L2    | `read.v1`        | no          | 1.0   | defined | Notes with times, detected and target pitch, parameters.                                   |
-| `content.getPitchCurve` | L2    | `read.v1`        | no          | 1.0   | defined | Original and corrected pitch curves, paginated.                                            |
-| `content.segmentNotes`  | L2    | `read.v1`        | no          | 1.0   | defined | Read-only note segmentation of the original pitch, for analysis.                           |
-| `content.getDetails`    | L2    | `read.v1`        | no          | 1.0   | defined | Key, pitch shift, analysis and render state, time grid, AUTO modes.                        |
-| `transport.get`         | L2    | `read.v1`        | no          | 1.0   | defined | Play state, position, tempo, time signature, loop flag.                                    |
-| `prefs.get`             | L2    | `read.v1`        | no          | 1.0   | defined | Preferences and recent projects.                                                           |
-| `app.getLog`            | L2    | `read.v1`        | no          | 1.0   | defined | Tail of OpenTune's log, redacted.                                                          |
-| `job.get`               | L3    | `jobs.v1`        | no          | 1.0   | defined | Read a job, optionally waiting up to 30 s.                                                 |
-| `job.cancel`            | L3    | `jobs.v1`        | no          | 1.0   | defined | Request cancellation of a job.                                                             |
-| `import.start`          | L3    | `import.v1`      | yes         | 1.0   | defined | Import audio files (single, sequential, one track per file) as a job.                      |
-| `export.start`          | L3    | `export.v1`      | yes         | 1.0   | defined | Export a clip, a track or the master mix as a job (section 19).                            |
-| `ui.getState`           | L3    | `ui.bridge`      | no          | 1.0   | defined | Busy state, dialogs, view, selection.                                                      |
-| `ui.dismiss`            | L3    | `ui.bridge`      | conditional | 1.0   | defined | Close dialogs or the first-run overlay.                                                    |
-| `content.setKey`        | L4    | `edit.v1`        | yes         | 1.0   | defined | Set a clip's key (not undoable, with revert recipe).                                       |
-| `content.autoTune`      | L4    | `edit.v1`        | yes         | 1.0   | defined | AUTO on ranges with an explicit mode, scale and parameters.                                |
-| `content.editNotes`     | L4    | `edit.v1`        | yes         | 1.0   | defined | Target pitch, cent shift, snap and parameters of selected notes.                           |
-| `content.setPitchShift` | L4    | `edit.v1`        | yes         | 1.0   | defined | Clip pitch shift.                                                                          |
-| `edit.getHistory`       | L4    | `history.v1`     | no          | 1.0   | defined | Top entries of the undo and redo history.                                                  |
-| `edit.undo`             | L4    | `history.v1`     | yes         | 1.0   | defined | Undo the expected entry (section 15.3).                                                    |
-| `edit.redo`             | L4    | `history.v1`     | yes         | 1.0   | defined | Redo the expected entry (section 15.3).                                                    |
-| `content.shiftTiming`   | L5    | `timing.v1`      | yes         | 1.0   | defined | Shift a section earlier or later.                                                          |
-| `content.editTimeGrid`  | L5    | `timing.v1`      | yes         | 1.0   | defined | Seed time-grid anchors (job) and move handles.                                             |
-| `transport.control`     | L6    | `transport.v1`   | yes         | 1.0   | defined | Play, pause, stop, seek.                                                                   |
-| `transport.setTempo`    | L6    | `transport.v1`   | yes         | 1.0   | defined | Tempo and time signature.                                                                  |
-| `transport.setLoop`     | L6    | `transport.v1`   | yes         | 1.0   | defined | Loop flag.                                                                                 |
-| `arrangement.edit`      | L6    | `arrangement.v1` | yes         | 1.0   | defined | Move, trim, gain, fades, split, merge, delete.                                             |
-| `arrangement.copy`      | L6    | `arrangement.v1` | yes         | 1.0   | defined | Copy or duplicate clips.                                                                   |
-| `track.set`             | L6    | `tracks.v1`      | yes         | 1.0   | defined | Mute, solo, volume, colour.                                                                |
-| `track.add`             | L6    | `tracks.v1`      | yes         | 1.0   | defined | Show more tracks.                                                                          |
-| `track.duplicate`       | L6    | `tracks.v1`      | yes         | 1.0   | defined | Duplicate a track.                                                                         |
-| `track.delete`          | L6    | `tracks.v1`      | yes         | 1.0   | defined | Delete a track (irreversible).                                                             |
-| `ui.setSelection`       | L6    | `ui.bridge`      | conditional | 1.0   | defined | Select or open a clip, with predicted side effects.                                        |
-| `project.save`          | L8    | `project.io`     | yes         | 1.0   | defined | Save the project as a job.                                                                 |
-| `project.saveAs`        | L8    | `project.io`     | yes         | 1.0   | defined | Save under a new path; replacing another project needs confirmation.                       |
-| `project.open`          | L8    | `project.io`     | yes         | 1.0   | defined | Open a project as a job; never saves implicitly.                                           |
-| `project.clearRecent`   | L8    | `project.io`     | yes         | 1.0   | defined | Clear the recent-projects list.                                                            |
-| `prefs.set`             | L8    | `prefs.write`    | yes         | 1.0   | defined | Change processing preferences (user-global, with revert values).                           |
-| `audio.get`             | L8    | `audio.device`   | no          | 1.0   | defined | Audio device settings.                                                                     |
-| `audio.set`             | L8    | `audio.device`   | yes         | 1.0   | defined | Change the audio device, with rollback on failure.                                         |
+| Method                     | Layer | Capability       | Write       | Since | Schema  | Purpose                                                                                    |
+| -------------------------- | ----- | ---------------- | ----------- | ----- | ------- | ------------------------------------------------------------------------------------------ |
+| `session.hello`            | L2    | `session.v1`     | no          | 1.0   | defined | Authenticate and negotiate the version.                                                    |
+| `session.info`             | L2    | `session.v1`     | no          | 1.0   | defined | Build, runtime, device, processing settings, capabilities, import and export capabilities. |
+| `project.get`              | L2    | `read.v1`        | no          | 1.0   | defined | Tracks, placements, selection, transport, history, project path and dirty flag.            |
+| `content.getNotes`         | L2    | `read.v1`        | no          | 1.0   | defined | Notes with times, detected and target pitch, parameters.                                   |
+| `content.getPitchCurve`    | L2    | `read.v1`        | no          | 1.0   | defined | Original and corrected pitch curves, paginated.                                            |
+| `content.segmentNotes`     | L2    | `read.v1`        | no          | 1.0   | defined | Read-only note segmentation of the original pitch, for analysis.                           |
+| `content.getDetails`       | L2    | `read.v1`        | no          | 1.0   | defined | Key, pitch shift, analysis and render state, time grid, AUTO modes.             |
+| `transport.get`            | L2    | `read.v1`        | no          | 1.0   | defined | Play state, position, tempo, time signature, loop flag.                                    |
+| `prefs.get`                | L2    | `read.v1`        | no          | 1.0   | defined | Preferences and recent projects.                                                           |
+| `app.getLog`               | L2    | `read.v1`        | no          | 1.0   | defined | Tail of OpenTune's log, redacted.                                                          |
+| `job.get`                  | L3    | `jobs.v1`        | no          | 1.0   | defined | Read a job, optionally waiting up to 30 s.                                                 |
+| `job.cancel`               | L3    | `jobs.v1`        | no          | 1.0   | defined | Request cancellation of a job.                                                             |
+| `import.start`             | L3    | `import.v1`      | yes         | 1.0   | defined | Import audio files (single, sequential, one track per file) as a job.                      |
+| `export.start`             | L3    | `export.v1`      | yes         | 1.0   | defined | Export a clip, a track or the master mix as a job (section 19).                            |
+| `ui.getState`              | L3    | `ui.bridge`      | no          | 1.0   | defined | Busy state, dialogs, view, selection.                                                      |
+| `ui.dismiss`               | L3    | `ui.bridge`      | conditional | 1.0   | defined | Close dialogs or the first-run overlay.                                                    |
+| `content.setKey`           | L4    | `edit.v1`        | yes         | 1.0   | defined | Set a clip's key (not undoable, with revert recipe).                                       |
+| `content.autoTune`         | L4    | `edit.v1`        | yes         | 1.0   | defined | AUTO on ranges with an explicit mode, scale and parameters.                                |
+| `content.editNotes`        | L4    | `edit.v1`        | yes         | 1.0   | defined | Target pitch, cent shift, snap and parameters of selected notes.                           |
+| `content.setPitchShift`    | L4    | `edit.v1`        | yes         | 1.0   | defined | Clip pitch shift.                                                                          |
+| `edit.getHistory`          | L4    | `history.v1`     | no          | 1.0   | defined | Top entries of the undo and redo history.                                                  |
+| `edit.undo`                | L4    | `history.v1`     | yes         | 1.0   | defined | Undo the expected entry (section 15.3).                                                    |
+| `edit.redo`                | L4    | `history.v1`     | yes         | 1.0   | defined | Redo the expected entry (section 15.3).                                                    |
+| `content.shiftTiming`      | L5    | `timing.v1`      | yes         | 1.0   | defined | Shift a section earlier or later.                                                          |
+| `content.editTimeGrid`     | L5    | `timing.v1`      | yes         | 1.0   | defined | Seed time-grid anchors (job) and move handles.                                             |
+| `transport.control`        | L6    | `transport.v1`   | yes         | 1.0   | defined | Play, pause, stop, seek.                                                                   |
+| `transport.setTempo`       | L6    | `transport.v1`   | yes         | 1.0   | defined | Tempo and time signature.                                                                  |
+| `transport.setLoop`        | L6    | `transport.v1`   | yes         | 1.0   | defined | Loop flag.                                                                                 |
+| `arrangement.edit`         | L6    | `arrangement.v1` | yes         | 1.0   | defined | Move, trim, gain, fades, split, merge, delete.                          |
+| `arrangement.copy`         | L6    | `arrangement.v1` | yes         | 1.0   | defined | Copy or duplicate clips.                                                                   |
+| `track.set`                | L6    | `tracks.v1`      | yes         | 1.0   | defined | Mute, solo, volume, colour.                                                                |
+| `track.add`                | L6    | `tracks.v1`      | yes         | 1.0   | defined | Show more tracks.                                                                          |
+| `track.duplicate`          | L6    | `tracks.v1`      | yes         | 1.0   | defined | Duplicate a track.                                                                         |
+| `track.delete`             | L6    | `tracks.v1`      | yes         | 1.0   | defined | Delete a track (irreversible).                                                             |
+| `ui.setSelection`          | L6    | `ui.bridge`      | conditional | 1.0   | defined | Select or open a clip, with predicted side effects.                                        |
+| `ui.setWorkspace`          | L6    | `ui.workspace`   | conditional | 1.0   | defined | Switch the window between the arrangement view and the piano roll.                         |
+| `project.save`             | L8    | `project.io`     | yes         | 1.0   | defined | Save the project as a job.                                                                 |
+| `project.saveAs`           | L8    | `project.io`     | yes         | 1.0   | defined | Save under a new path; replacing another project needs confirmation.                       |
+| `project.open`             | L8    | `project.io`     | yes         | 1.0   | defined | Open a project as a job; never saves implicitly.                                           |
+| `project.clearRecent`      | L8    | `project.io`     | yes         | 1.0   | defined | Clear the recent-projects list.                                                            |
+| `prefs.set`                | L8    | `prefs.write`    | yes         | 1.0   | defined | Change processing preferences (user-global, with revert values).                           |
+| `audio.get`                | L8    | `audio.device`   | no          | 1.0   | defined | Audio device settings.                                                                     |
+| `audio.set`                | L8    | `audio.device`   | yes         | 1.0   | defined | Change the audio device, with rollback on failure.                                         |
 
 ## 23. Method schema files and test vectors
 

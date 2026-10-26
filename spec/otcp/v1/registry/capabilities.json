@@ -50,6 +50,11 @@
       "description": "ui.dismiss can close a first-run onboarding overlay that is already showing (not only prevent it)."
     },
     {
+      "code": "ui.workspace",
+      "since": "1.0",
+      "description": "ui.setWorkspace, which switches the OpenTune window between the arrangement view and the piano roll and needs the OpenTune editor window."
+    },
+    {
       "code": "transport.v1",
       "since": "1.0",
       "description": "transport.control, transport.setTempo and transport.setLoop."

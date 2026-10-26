@@ -192,7 +192,7 @@ read-only the export fails and the server does not choose another folder. Call `
 ### Error UNSUPPORTED
 
 OpenTune or this build does not offer the operation. With reason `capability_missing`, `detail` names the missing
-capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`.
+capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`. `opentune_manage_ui` with op `switch_view` needs the capability `ui.workspace`, which test builds before `1.0.0-rc.7` of the specification lack: switch the view in the OpenTune window (the arrangement view and piano roll buttons of the transport bar), or use a newer test build.
 
 ### Error INTERNAL
 

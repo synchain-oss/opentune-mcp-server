@@ -188,7 +188,7 @@ The server offers 27 tools; their parameters are in [docs/reference.md](docs/ref
 | Tool | What it does | Undo and your agreement |
 | --- | --- | --- |
 | `opentune_transport` | Play, pause, stop, seek, tempo, time signature, loop. | Tempo and time signature cannot be undone (the result gives the restoring call). Looping has no audible effect in the standalone app, and without an audio device nothing is heard. |
-| `opentune_manage_ui` | Selects a clip (and can open it in the piano roll), closes dialogs, marks the first-run dialog as shown. | Marked destructive. Selecting a clip can make OpenTune generate its notes (no undo entry). A dialog that commits its value when it closes needs `accept_commit`, only with your agreement. Marking the first-run dialog as shown cannot be undone. |
+| `opentune_manage_ui` | Selects a clip (and can open it in the piano roll), switches between the arrangement view and the piano roll (closing the piano roll), closes dialogs, marks the first-run dialog as shown. | Marked destructive. Selecting a clip can make OpenTune generate its notes (no undo entry). A dialog that commits its value when it closes needs `accept_commit`, only with your agreement. Switching the view changes the view only and the result gives the call that switches back. Marking the first-run dialog as shown cannot be undone. |
 
 **Projects and settings**
 

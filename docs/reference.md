@@ -428,9 +428,9 @@ OTCP capabilities: `transport.v1`. OTCP methods: `transport.control`, `transport
 
 **Manage OpenTune window state**: changes state, destructive, idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): op focus_clip selects a clip (placement id), optionally opening it in the piano roll. Selecting can make OpenTune generate the clip notes (no undo entry, project marked changed) and change the transport-bar scale; dry_run predicts this, and a real result names it first. dismiss_dialogs closes all dialogs like Escape; a dialog that commits its value on close (track colour) is refused unless accept_commit is true, which only the user may allow. dismiss_onboarding marks the first-run onboarding as shown (global, cannot be undone).
+OpenTune (audio vocal pitch editor): op focus_clip selects a clip, optionally opening the piano roll; selecting can generate the clip notes (no undo entry, project marked changed) and change the transport-bar scale, which dry_run predicts and a real result names first. switch_view shows view arrangement or piano_roll; arrangement closes the piano roll. dismiss_dialogs closes dialogs like Escape; one that commits its value needs accept_commit true, which only the user may allow. dismiss_onboarding marks first-run onboarding as shown (global, irreversible).
 
-OTCP capabilities: `ui.bridge`. OTCP methods: `ui.setSelection`, `ui.dismiss`.
+OTCP capabilities: `ui.bridge`, `ui.workspace`. OTCP methods: `ui.setSelection`, `ui.setWorkspace`, `ui.dismiss`.
 
 | Parameter | Type | Required | Description |
 | --- | --- | --- | --- |
@@ -438,5 +438,6 @@ OTCP capabilities: `ui.bridge`. OTCP methods: `ui.setSelection`, `ui.dismiss`.
 | `clip` | string | no | focus_clip: clip placement id (p:...) from opentune_get_project. |
 | `open_editor` | boolean | no | focus_clip: also open the clip in the piano roll. |
 | `dry_run` | boolean | no | focus_clip: predict the effects, select nothing. |
+| `view` | string | no | switch_view: the view to show; arrangement is what closing the piano roll returns to. |
 | `accept_commit` | boolean | no | dismiss_dialogs: true only when the user agreed that closing commits the value shown. |
 | `instance_id` | string, matching `^[0-9a-f]{32}$` | no | OpenTune instance (32 hex digits, from opentune_get_status). Optional when one instance runs. |
