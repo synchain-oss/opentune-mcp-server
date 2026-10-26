@@ -25,6 +25,7 @@ import {
   type GivenEnv,
 } from '../contract/exe-given.js';
 import { PreconditionUnavailable } from '../contract/target.js';
+import { loadVectors } from '../contract/vectors.js';
 
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
@@ -79,6 +80,8 @@ describe('which preconditions the exe target can make', () => {
     [{ audio: { running: true } }, 'given.audio'],
     [{ dialogs: [{ kind: 'message' }] }, 'given.dialogs'],
     [{ onboarding: 'showing' }, 'given.onboarding'],
+    [{ keyboardFocus: 'tempoField' }, 'given.keyboardFocus'],
+    [{ dirty: false, keyboardFocus: 'tempoField' }, 'where its keyboard focus is'],
     [{ editingScheme: 'openDyne' }, 'given.editingScheme'],
     [{ preferences: { tuningHz: 442 } }, 'given.preferences'],
     [{ jobs: [] }, 'given.jobs'],
@@ -114,6 +117,20 @@ describe('which preconditions the exe target can make', () => {
     ],
   ] as const)('refuses %j with its reason', (given, expected) => {
     expect(unsupportedReason(given as unknown as Record<string, unknown>)).toContain(expected);
+  });
+});
+
+describe('the vector that needs the keyboard focus in the tempo field', () => {
+  // A started OpenTune rounds the tempo at a switch of the view only while its tempo field holds the keyboard focus,
+  // which depends on whether its window is in the foreground. The exe target cannot make that so, so it must skip
+  // the vector instead of running it and failing on a window in the background.
+  it('is skipped by the exe target, with the reason', () => {
+    const found = loadVectors().find((loaded) => loaded.id === 'ui/set-workspace-tempo-rounded');
+    expect(found?.problems).toEqual([]);
+    expect(found?.vector.given).toMatchObject({ keyboardFocus: 'tempoField' });
+    expect(unsupportedReason(found?.vector.given ?? {})).toBe(
+      'the exe target cannot establish given.keyboardFocus (whether the window is in the foreground and where its keyboard focus is belong to the machine, not to the runner)',
+    );
   });
 });
 

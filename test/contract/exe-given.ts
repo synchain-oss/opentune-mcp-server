@@ -36,6 +36,8 @@ const MEMBER_REASONS: Readonly<Record<string, string>> = {
   preferences: 'it would change the preferences of the machine',
   dialogs: 'no request opens a dialog',
   onboarding: 'no request starts or resets the first-run overlay',
+  keyboardFocus:
+    'whether the window is in the foreground and where its keyboard focus is belong to the machine, not to the runner',
   audio: 'the audio device belongs to the machine',
   projectFile: 'it needs a project saved by the vector itself',
   clipOnEveryTrack: 'it needs a clip on every track slot of the build',

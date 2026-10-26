@@ -3,8 +3,9 @@
 
 // The `given` preconditions of a contract vector (spec/otcp/v1/vectors/README.md, "Preconditions")
 // that concern project and window state: the editing scheme, the unsaved-changes flag, clips, files,
-// the undo and redo histories, dialogs, the first-run onboarding, preferences and the audio device. A test sets them up directly on the model, never through OTCP. Jobs and
-// capabilities belong to the server and are handled there.
+// the undo and redo histories, dialogs, the first-run onboarding, the keyboard focus (which the mock's window
+// always holds in the tempo field, so there is nothing to set), preferences and the audio device. A test sets them
+// up directly on the model, never through OTCP. Jobs and capabilities belong to the server and are handled there.
 
 import type { WorkFiles, GivenFile } from './files.js';
 import { snapOf } from './history.js';
@@ -68,6 +69,12 @@ export interface GivenState {
   /** The dialogs open, from the bottom of the stack to the top. */
   readonly dialogs?: readonly GivenDialog[];
   readonly onboarding?: 'notShown' | 'shown' | 'showing';
+  /**
+   * Where the keyboard focus is: `tempoField`, the tempo field of the transport bar. The mock's window always holds
+   * the focus there (mock/ui.ts, tempoRounding), so there is nothing to set; it is a member of the mock's own so that
+   * the vector that depends on it runs.
+   */
+  readonly keyboardFocus?: 'tempoField';
   readonly preferences?: {
     readonly tuningHz?: number;
     readonly hybridMode?: boolean;
@@ -102,6 +109,7 @@ export const WORLD_GIVEN_MEMBERS = [
   'audio',
   'dialogs',
   'onboarding',
+  'keyboardFocus',
   'preferences',
   'projectFile',
 ] as const;

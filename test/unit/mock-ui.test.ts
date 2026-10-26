@@ -447,6 +447,15 @@ describe('the tempo field when the window switches view', () => {
     expect(await tempoIs(session, 120.3)).toBe(true);
   });
 
+  it('establishes the keyboard focus in the tempo field, which the mock always has, and rounds as before', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    expect(mock.given({ dirty: false, keyboardFocus: 'tempoField' })).toEqual({});
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(field(opened, 'sideEffects', 'tempoRounded')).toMatchObject({ fromBpm: 120.27, toBpm: 120.3 });
+  });
+
   it('keeps the time signature, and marks a clean project as changed', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;
