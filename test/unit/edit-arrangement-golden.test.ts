@@ -76,9 +76,6 @@ async function scenarios(): Promise<Record<string, Scenario>> {
       { op: 'move', clip: b, to_track_id: 5 },
     ],
   });
-  await run('set-reference', 'A reference binding: experimental in OpenTune.', {
-    ops: [{ op: 'set_reference', clip: a, reference_clip: b }],
-  });
   await run('trim-fades', 'A trim that shortens the fades: FADES_RECLAMPED, and the undo step restores them.', {
     ops: [{ op: 'trim', clip: a, edge: 'end', to_timeline_sec: 1.5 }],
   });

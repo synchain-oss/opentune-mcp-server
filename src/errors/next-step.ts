@@ -172,18 +172,6 @@ const REASONS: Readonly<Record<string, NextStep>> = {
     'Another export is running in OpenTune (from the window or another client). Wait for it to end, then call again.',
   ),
   'NOT_FOUND/job_not_found': agent('The job is unknown or expired (finished jobs are kept for 30 minutes).'),
-  'NOT_READY/reference_analysis_stalled': user(
-    'OpenTune no longer accepts reference analyses in this session (a known defect of OpenTune), so retrying does ' +
-      'not help. Ask the user to save the project and restart OpenTune, then try again.',
-  ),
-  'NOT_READY/reference_analysis_timeout': agent(
-    'The reference analysis did not finish within the wait limit; OpenTune may still be analysing. Wait a little, ' +
-      'then call again (a new request waits for the analysis again).',
-  ),
-  'ANALYSIS_FAILED/reference_analysis_failed': agent(
-    'OpenTune could not analyse the reference. Choose another reference clip, or ask the user to check the ' +
-      'reference audio.',
-  ),
   'NOT_READY/f0_failed': user('Pitch analysis of this clip failed, so it cannot be edited. Tell the user.'),
   'NOT_READY/f0_empty': user('OpenTune found no singing in this clip, so it cannot be edited. Tell the user.'),
   'BUSY/request_limit': agent('Too many requests at once. Wait for the pending ones, then retry.'),

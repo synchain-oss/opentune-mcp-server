@@ -218,7 +218,7 @@ async function walk(mode: string): Promise<string[]> {
 }
 
 describe('the stand-in follows the specification', () => {
-  for (const mode of ['smoke', 'smoke-dry', 'smoke-auto-job', 'smoke-open-scale']) {
+  for (const mode of ['smoke', 'smoke-dry', 'smoke-open-scale']) {
     it(
       `every reply of ${mode} is valid against its result or jobResult schema`,
       async () => {
@@ -238,11 +238,8 @@ describe('the stand-in follows the specification', () => {
   });
 
   it(
-    'AUTO passes when the work is handed to a job, and with a scale AUTO does not take',
+    'AUTO passes with a scale AUTO does not take',
     async () => {
-      const job = await runSmoke(config('smoke-auto-job'));
-      expect(job.result).toBe('PASS');
-      expect(job.steps.find((s) => s.name === 'AUTO (regenerate)')?.note).toContain('8 notes (before 0)');
       const open = await runSmoke(config('smoke-open-scale'));
       expect(open.result).toBe('PASS');
       expect(open.steps.find((s) => s.name === 'AUTO (regenerate)')?.note).toContain('lydian');

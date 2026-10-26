@@ -5,7 +5,7 @@
 // establish on a started OpenTune through its own public calls (vectors/README.md, "Preconditions").
 // Whatever cannot be made faithfully stays a SKIP with the reason: state that only the UI or the
 // machine can produce (dialogs, audio device, preferences, the first-run overlay), content that a
-// vector describes exactly (notes, keys, time grids, reference bindings), and files that need a
+// vector describes exactly (notes, keys, time grids, fades, pitch shifts), and files that need a
 // project OpenTune wrote itself or an access control list. Everything is built from audio generated
 // at run time (mock/files.ts); no file outside the vector's own work directory is read.
 //
@@ -23,7 +23,7 @@ export interface Rpc {
 
 /** The reason of every vector whose clips are described by their exact content. */
 export const EXACT_CONTENT =
-  "needs exact content (notes, key, time grid or reference); covered by the fork's headless runner";
+  "needs exact content (notes, key, time grid, fades or pitch shift); covered by the fork's headless runner";
 
 const isObject = (v: unknown): v is Json => typeof v === 'object' && v !== null && !Array.isArray(v);
 const list = (v: unknown): Json[] => (Array.isArray(v) ? v.filter(isObject) : []);

@@ -5,7 +5,7 @@
 // device, clear recent), the combination of two groups, a change handed to a prefsApply job and
 // followed, each error with its next step, the capabilities the groups need (and do not need), the
 // untrusted device name as data, and the shape the tool declares. A second block covers the vocoder
-// weight, rendering priority, pitch model and reference alignment mode: the job that waits for the
+// weight, rendering priority and pitch model: the job that waits for the
 // vocoder, its two failures, a value the installation does not offer, the wording of the re-render a
 // weight change causes, and the refusal of a job member on an instance without jobs.v1.
 
@@ -418,7 +418,7 @@ async function untilVocoder(ctx: TestContext, ready: boolean): Promise<void> {
   throw new Error(`the vocoder never reported ready ${String(ready)}`);
 }
 
-describe('opentune_set_settings: vocoder weight, rendering priority, pitch model, reference alignment mode', () => {
+describe('opentune_set_settings: vocoder weight, rendering priority and pitch model', () => {
   it('changes the vocoder weight by a job that waits for the vocoder and says every content renders again', async () => {
     const { mock, ctx } = await withMock();
     const ids = mock.given({ clips: [clip()] });
@@ -588,43 +588,33 @@ describe('opentune_set_settings: vocoder weight, rendering priority, pitch model
     expect(both.summary).toContain('a new vocoder weight makes every content render again once it has loaded');
   });
 
-  it('changes the pitch model and the reference alignment mode in the call, with EXPERIMENTAL_FEATURE for the mode', async () => {
+  it('changes the pitch model in the call, not by a job', async () => {
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()], preferences: { options: { f0Model: ['fcpe', 'rmvpe'] } } });
     const sent = await recordCalls(ctx);
-    const out = body(
-      await setSettings(ctx, { processing: { f0_model: 'rmvpe', reference_align_mode: 'game' }, wait_seconds: 0 }),
-    );
-    // Neither member is applied by a job: the call itself made the change.
+    const out = body(await setSettings(ctx, { processing: { f0_model: 'rmvpe' }, wait_seconds: 0 }));
+    // The member is not applied by a job: the call itself made the change.
     expect(sent).toEqual(['prefs.set']);
     expect(out.changes).toMatchObject([
       { ref: { preference: 'f0Model' }, fields: { f0Model: { before: 'fcpe', after: 'rmvpe' } } },
-      {
-        ref: { preference: 'referenceAlignMode' },
-        fields: { referenceAlignMode: { before: 'standardAuto', after: 'game' } },
-      },
     ]);
-    expect(warningCodes(out)).toContain('EXPERIMENTAL_FEATURE');
-    expect(linesOf(out).find((l) => l.kind === 'warning' && l.code === 'EXPERIMENTAL_FEATURE')).toMatchObject({
-      subject: { preference: 'referenceAlignMode' },
-    });
+    expect(warningCodes(out)).not.toContain('EXPERIMENTAL_FEATURE');
     expect(revertLine(out)?.restore).toEqual({
       tool: 'opentune_set_settings',
-      arguments: { processing: { f0_model: 'fcpe', reference_align_mode: 'standardAuto' } },
+      arguments: { processing: { f0_model: 'fcpe' } },
     });
-    // The revert line puts both back; the pitch model in use is a no-op.
+    // The revert line puts the model back; the pitch model in use is a no-op.
     body(await setSettings(ctx, (revertLine(out)?.restore as { arguments: SetArgs }).arguments));
-    expect(await processingOf(ctx)).toMatchObject({ f0Model: 'fcpe', referenceAlignMode: 'standardAuto' });
+    expect(await processingOf(ctx)).toMatchObject({ f0Model: 'fcpe' });
     expect(body(await setSettings(ctx, { processing: { f0_model: 'fcpe' } })).noOp).toBe(true);
   });
 
-  it('lists and restores all eight preferences in the order of the protocol, whatever order the call names them in', async () => {
+  it('lists and restores all seven preferences in the order of the protocol, whatever order the call names them in', async () => {
     const { mock, ctx } = await withMock();
     mock.given({ clips: [clip()], preferences: { options: { f0Model: ['fcpe', 'rmvpe'] } } });
     const out = body(
       await setSettings(ctx, {
         processing: {
-          reference_align_mode: 'game',
           f0_model: 'rmvpe',
           rendering_priority: 'cpuFirst',
           vocoder_weight: 'hifigan_coulin9.onnx',
@@ -643,7 +633,6 @@ describe('opentune_set_settings: vocoder weight, rendering priority, pitch model
       'vocoderWeight',
       'renderingPriority',
       'f0Model',
-      'referenceAlignMode',
     ]);
     const restore = revertLine(out)?.restore as { arguments: { processing: Record<string, unknown> } };
     expect(Object.keys(restore.arguments.processing)).toEqual([
@@ -654,7 +643,6 @@ describe('opentune_set_settings: vocoder weight, rendering priority, pitch model
       'vocoder_weight',
       'rendering_priority',
       'f0_model',
-      'reference_align_mode',
     ]);
     body(await setSettings(ctx, restore.arguments));
     expect(await processingOf(ctx)).toMatchObject({
@@ -665,7 +653,6 @@ describe('opentune_set_settings: vocoder weight, rendering priority, pitch model
       vocoderWeight: 'hifigan.onnx',
       renderingPriority: 'gpuFirst',
       f0Model: 'fcpe',
-      referenceAlignMode: 'standardAuto',
     });
   });
 
@@ -763,13 +750,8 @@ describe('opentune_set_settings: vocoder weight, rendering priority, pitch model
     expect(mock.snapshot()).toEqual(before);
     expect(await processingOf(ctx)).toMatchObject({ tuningHz: 440, editingScheme: 'openTune' });
     // A member that finishes inside the call needs no job.
-    const out = body(
-      await setSettings(ctx, {
-        processing: { tuning_hz: 442, hybrid_mode: true, f0_model: 'fcpe', reference_align_mode: 'game' },
-      }),
-    );
-    expect(warningCodes(out)).toContain('EXPERIMENTAL_FEATURE');
-    expect(await processingOf(ctx)).toMatchObject({ tuningHz: 442, referenceAlignMode: 'game' });
+    body(await setSettings(ctx, { processing: { tuning_hz: 442, hybrid_mode: true, f0_model: 'fcpe' } }));
+    expect(await processingOf(ctx)).toMatchObject({ tuningHz: 442, hybridMode: true });
   });
 
   it('names prefs.write first when an instance lacks it and jobs.v1', async () => {

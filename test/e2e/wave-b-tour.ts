@@ -69,7 +69,6 @@ const PLACEMENT_MEMBERS = [
   'gainLinear',
   'fadeInSec',
   'fadeOutSec',
-  'referencePlacementId',
 ] as const;
 const NOTE_MEMBERS = [
   'startContentSec',
@@ -91,10 +90,9 @@ const PROCESSING_MEMBERS = [
   'vocoderWeight',
   'renderingPriority',
   'f0Model',
-  'referenceAlignMode',
 ] as const;
 /** The processing preferences prefs.set takes since 1.0.0-rc.6, in addition to the earlier four. */
-const RC6_MEMBERS = ['vocoderWeight', 'renderingPriority', 'f0Model', 'referenceAlignMode'] as const;
+const RC6_MEMBERS = ['vocoderWeight', 'renderingPriority', 'f0Model'] as const;
 const DEVICE_MEMBERS = [
   'running',
   'deviceType',
@@ -396,8 +394,6 @@ class Reads {
           values.pitchShift = summary.pitchShift;
           values.f0State = summary.f0State;
         }
-        const details = await this.details(contentId);
-        values.referencePlacementId = objectMember(details, 'reference', 'content details').referencePlacementId;
         return values;
       }
       case 'note': {
@@ -509,13 +505,10 @@ class Reads {
     if (kind.startsWith('content:')) {
       const contentId = kind.slice('content:'.length);
       const details = await this.details(contentId);
-      const reference = objectMember(details, 'reference', 'content details');
       const listed = await this.notes(contentId);
       return {
         key: details.key,
         pitchShift: details.pitchShift,
-        referencePlacementId: reference.referencePlacementId,
-        alignmentReady: reference.alignmentReady,
         noteCount: listed.notes.length,
         notes: listed.notes.map((note) =>
           pick(note, ['index', 'startContentSec', 'endContentSec', 'targetMidi', 'offsetCents']),
@@ -977,8 +970,6 @@ export interface ToolSpec {
   readonly visible: (body: Json) => Promise<string | null>;
   /** Puts the change back through the tool or OTCP; a failure is a problem. */
   readonly restore?: (body: Json) => Promise<void>;
-  /** The note of a PASS that is not the usual "the change is in a fresh read", or null. */
-  readonly passNote?: () => string | null;
 }
 
 /** The first-sentence checks of a tool result: what cannot be undone, replaces or affects more than asked. */
@@ -1095,14 +1086,6 @@ const visibleTracks = (project: Json): Json[] =>
 const placementById = (project: Json, placementId: string): Json | undefined =>
   listOf(member(project, 'placements', 'project.get')).find((p) => p.placementId === placementId);
 
-/** The revision of `contentId` in the asOf block of a read result. */
-const revisionOf = (read: Json, contentId: string): string => {
-  const asOf = member(read, 'asOf', 'the read');
-  const entry = listOf(member(asOf, 'contents', 'asOf')).find((c) => c.contentId === contentId);
-  if (entry === undefined) throw new Error('the read result carries no revision for the content');
-  return text(entry, 'revision', 'the content tokens');
-};
-
 const arrangementOf = (project: Json): string =>
   text(member(project, 'asOf', 'project.get'), 'arrangementRevision', 'asOf');
 
@@ -1120,24 +1103,6 @@ const isRevisionConflict = (error: unknown): boolean =>
 /** A recipe may be refused for its token only when the arrangement has moved on from the revision it names. */
 export const refusalIsDefect = (currentRevision: string, recipeRevision: unknown): boolean =>
   currentRevision === recipeRevision;
-
-/**
- * The wait limit of a referenceAnalysis job. The protocol leaves the value to the implementation
- * (PROTOCOL.md section 12.6); the fork waits this long, as the mock does.
- */
-export const REFERENCE_WAIT_LIMIT_MS = 30_000;
-
-const KNOWN_STALLED_REASON = 'reference_analysis_stalled';
-
-/**
- * Whether a failed content.autoTune (mode reference) is the known defect of the locked OpenTune: its
- * reference analysis service accepts only one task per session, and the fork reports every later
- * analysis as NOT_READY(reference_analysis_stalled) (PROTOCOL.md section 15.4 rule 8). Only that
- * error counts, and only when the job ended before the wait limit: one that ended at the limit, or
- * another error such as reference_analysis_timeout, is a failure of the step.
- */
-export const isKnownStalledDefect = (failure: ErrorData | undefined, elapsedMs: number): boolean =>
-  failure?.kind === 'NOT_READY' && failure.reason === KNOWN_STALLED_REASON && elapsedMs < REFERENCE_WAIT_LIMIT_MS;
 
 /** A step that could not put the state back; the scenario stops after it. */
 export class Unrestored extends Error {}
@@ -1212,7 +1177,6 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
   let clipId = '';
   /** The copy arrangement.copy made, and the revert recipe that removes it again. */
   let copyId = '';
-  let copyContentId = '';
   let copyRevert: Json | null = null;
   let geometryBeforeCopy: Json | null = null;
   let stopReason: string | undefined;
@@ -1273,42 +1237,6 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
 
   const placementOfContent = (project: Json, wanted: string): Json | undefined =>
     listOf(member(project, 'placements', 'project.get')).find((p) => p.contentId === wanted);
-
-  /** The number of undo steps now. */
-  const undoCountOf = async (): Promise<number> => {
-    const read = await theTour().call('read', 'edit.getHistory', {});
-    return num(member(read, 'history', 'the edit.getHistory result'), 'undoCount', 'the history');
-  };
-
-  /**
-   * The notes of a content and the undo stack now. The function it returns reads both again and lists
-   * what changed: for a job that failed with the known defect and so had to leave the project as it was.
-   */
-  const captureState = async (contentId: string): Promise<() => Promise<string[]>> => {
-    const t = theTour();
-    const kind = `notes:${contentId}`;
-    t.reads.clear();
-    const notes = await t.reads.snapshot([kind]);
-    const undoCount = await undoCountOf();
-    return async () => {
-      t.reads.clear();
-      const found: string[] = [];
-      const moved = differences(notes, await t.reads.snapshot([kind]));
-      if (moved.length > 0) found.push(`the notes changed although the job failed: ${moved.join('; ')}`);
-      const undoAfter = await undoCountOf();
-      if (undoAfter !== undoCount) {
-        found.push(`the undo stack went from ${String(undoCount)} to ${String(undoAfter)} steps`);
-      }
-      return found;
-    };
-  };
-
-  /** Lists the defect in the report once, however many steps met it. */
-  const recordKnownDefect = (name: string): void => {
-    const listed = scenario.facts.knownUpstreamDefects;
-    const names = typeof listed === 'object' && listed !== null ? listed : [];
-    if (!names.includes(name)) scenario.facts.knownUpstreamDefects = [...names, name];
-  };
 
   await step('prepare', async () => {
     root = await scratchDir(SCENARIO_NAME);
@@ -1539,13 +1467,13 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
         if (Date.now() >= deadline) throw new Error(`the pitch analysis was not ready within ${String(timeoutMs)} ms`);
         await sleep(500);
       }
-      // The reference checks need notes on the clip; the import asked for them.
+      // The note checks need notes on the clip; the import asked for them.
       const notesDeadline = Date.now() + 60_000;
       for (;;) {
         const count = noteCountOf(await tourOfProject(s), contentId);
         if (count > 0) break;
         if (Date.now() >= notesDeadline) {
-          throw new Error('OpenTune generated no notes for the imported clip, which the reference checks need');
+          throw new Error('OpenTune generated no notes for the imported clip, which the note checks need');
         }
         await sleep(500);
       }
@@ -2175,13 +2103,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     };
     const options = processing.options;
     if (!isObject(options)) {
-      for (const name of [
-        'renderingPriority',
-        'referenceAlignMode',
-        'f0Model',
-        'vocoderWeight',
-        'vocoderWeightRefused',
-      ]) {
+      for (const name of ['renderingPriority', 'f0Model', 'vocoderWeight', 'vocoderWeightRefused']) {
         skip(name, 'prefs.get reports no processing.options, so the instance does not take the members of 1.0.0-rc.6');
       }
       return;
@@ -2445,13 +2367,6 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     if (priority === null) skip('renderingPriority', 'prefs.get reports neither gpuFirst nor cpuFirst');
     else {
       await roundTrip({ name: 'renderingPriority', wanted: priority, job: true, warnings: [], reRender: 'absent' });
-    }
-
-    // The reference alignment mode: finishes inside the call; the result warns that the feature is experimental.
-    const mode = otherOf(processing.referenceAlignMode, ['standardAuto', 'game']);
-    if (mode === null) skip('referenceAlignMode', 'prefs.get reports neither standardAuto nor game');
-    else {
-      await roundTrip({ name: 'referenceAlignMode', wanted: mode, job: false, warnings: ['EXPERIMENTAL_FEATURE'] });
     }
 
     // The pitch model: the one in use is a no-op, and nothing changes.
@@ -2806,7 +2721,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     );
   });
 
-  await checkStep('arrangement.copy and arrangement.edit op setReference', async () => {
+  await checkStep('arrangement.copy', async () => {
     requireCapabilities(['arrangement.v1', 'history.v1']);
     const problems: string[] = [];
     const t = theTour();
@@ -2841,123 +2756,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     );
     if (created === undefined) throw new Error('the copy created no clip');
     copyId = text(member(created, 'ref', 'the created clip'), 'placementId', 'the created clip');
-    copyContentId = text(placementById(await t.reads.project(), copyId), 'contentId', 'the copied clip');
-
-    const bindParams = async (): Promise<Json> => ({
-      expectedArrangementRevision: arrangementOf(await t.reads.project()),
-      ops: [{ op: 'setReference', placementId: copyId, referencePlacementId: clipId }],
-    });
-    const bound = await t.write({
-      step: 'arrangement.edit (setReference)',
-      method: 'arrangement.edit',
-      params: await bindParams(),
-      snapshot: ['placements'],
-      expect: { applied: true, noOp: false, undoable: true, revert: 'none', warnings: ['EXPERIMENTAL_FEATURE'] },
-    });
-    collect('arrangement.edit (setReference)', problems, bound);
-    // The round trip above took the binding back; bind it again for the reference checks of the next step.
-    const rebound = await t.writeKept({
-      step: 'arrangement.edit (setReference again)',
-      method: 'arrangement.edit',
-      params: await bindParams(),
-      expect: { applied: true, noOp: false, undoable: true, revert: 'none', warnings: ['EXPERIMENTAL_FEATURE'] },
-    });
-    collect('arrangement.edit (setReference again)', problems, rebound);
-    const fresh = placementById(await t.reads.project(), copyId);
-    if (fresh?.referencePlacementId !== clipId) {
-      problems.push('the reference binding is not in a fresh project read');
-    }
-    return finish(
-      'arrangement.copy and arrangement.edit op setReference',
-      problems,
-      'the copy shows the source content; the binding was taken back and set again',
-    );
-  });
-
-  await checkStep('content.analyzeReference and content.autoTune in mode reference', async () => {
-    requireCapabilities(['reference.v1', 'edit.v1', 'history.v1']);
-    const problems: string[] = [];
-    const t = theTour();
-    const analysisStarted = performance.now();
-    const started = await t.call('write', 'content.analyzeReference', { placementId: copyId });
-    problems.push(
-      ...schemaProblems(schemaPath('content.analyzeReference', 'result'), started, 'content.analyzeReference'),
-    );
-    const job = member(started, 'job', 'the content.analyzeReference result');
-    if (!isObject(job)) throw new Error('content.analyzeReference handed over no job');
-    // The same rule as for content.autoTune below: only the stalled error that came before the wait
-    // limit is the known defect; any other failure of the job fails the step.
-    let analysisStalled = false;
-    try {
-      const analysis = await t.followJob('content.analyzeReference', 'reference analysis', job);
-      problems.push(
-        ...schemaProblems(schemaPath('content.analyzeReference', 'jobResult'), analysis, 'the reference analysis job'),
-      );
-      if (analysis.placementId !== copyId || analysis.referencePlacementId !== clipId) {
-        problems.push('the job result names another binding than the one asked for');
-      }
-      if (analysis.alignmentReady !== true) problems.push('the alignment data is not ready after the job');
-    } catch (error) {
-      if (!(error instanceof OtcpError) || !isKnownStalledDefect(error.data, performance.now() - analysisStarted)) {
-        throw error;
-      }
-      analysisStalled = true;
-    }
-    const details = await t.reads.details(copyContentId);
-    const alignmentReady =
-      member(member(details, 'reference', 'content details'), 'alignmentReady', 'reference') === true;
-    if (analysisStalled) {
-      // The job wrote nothing, so the alignment data is still missing; that it is missing is the defect.
-      if (alignmentReady) problems.push('content.getDetails reports alignment data although the analysis was stalled');
-    } else if (!alignmentReady) {
-      problems.push('content.getDetails does not report the alignment data of the copy');
-    }
-
-    const unchanged = await captureState(copyContentId);
-    const tuned = await t.write({
-      step: 'content.autoTune (reference)',
-      method: 'content.autoTune',
-      params: {
-        contentId: copyContentId,
-        mode: 'reference',
-        placementId: copyId,
-        expectedRevision: revisionOf(details, copyContentId),
-      },
-      followJob: true,
-      snapshot: [`notes:${copyContentId}`],
-      expect: { applied: true, absentWarnings: ['IRREVERSIBLE', 'REPLACES_ALL_NOTES'] },
-    });
-    if (isKnownStalledDefect(tuned.failure, tuned.ms)) {
-      // The defect is OpenTune's and the protocol does not hide it: the step passes only if the error
-      // is exactly that one, it came at once, and the failed job left the project as it was.
-      problems.push(...(await unchanged()));
-      if (problems.length === 0) recordKnownDefect(KNOWN_STALLED_REASON);
-      return finish(
-        'content.analyzeReference and content.autoTune in mode reference',
-        problems,
-        'known upstream defect: OpenTune completes only one reference analysis per session, reported as NOT_READY(reference_analysis_stalled); nothing changed' +
-          (analysisStalled ? ' (by content.analyzeReference and by content.autoTune)' : ' (by content.autoTune)'),
-      );
-    }
-    collect('content.autoTune (reference)', problems, tuned);
-    if (tuned.envelope.noOp !== true) {
-      const undo = isObject(tuned.envelope.undo) ? tuned.envelope.undo : null;
-      if (undo?.undoable !== true) problems.push('mode reference did not commit one undo step');
-    }
-    // The analysis was stalled but the alignment still ran: the defect is listed only when nothing else
-    // is wrong, so that a failing step does not put it in the report.
-    const stalledNote = analysisStalled && problems.length === 0;
-    if (stalledNote) recordKnownDefect(KNOWN_STALLED_REASON);
-    return finish(
-      'content.analyzeReference and content.autoTune in mode reference',
-      problems,
-      (stalledNote
-        ? 'known upstream defect: OpenTune completes only one reference analysis per session, reported as NOT_READY(reference_analysis_stalled) by content.analyzeReference; the alignment still ran; '
-        : '') +
-        (tuned.envelope.noOp === true
-          ? 'the alignment data was computed; the notes already followed the reference'
-          : 'the alignment data was computed and the notes were aligned in one undo step'),
-    );
+    return finish('arrangement.copy', problems, 'the copy shows the source content; its revert recipe was kept');
   });
 
   await checkStep('the wave-B MCP tools', async () => {
@@ -2974,7 +2773,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       const args = member(line.restore, 'arguments', 'the restore call');
       await mcpProcess().call(tool, isObject(args) ? args : {});
     };
-    // The undo of the two undoable tool results needs history.v1; without it the change stays.
+    // The undo of the undoable tool result needs history.v1; without it the change stays.
     const canUndo = capabilities.includes('history.v1');
     const undoFromBody = async (body: Json): Promise<void> => {
       const undo = isObject(body.undo) ? body.undo : null;
@@ -3029,8 +2828,7 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
         tool: spec.tool,
         ms,
         outcome: found.length === 0 ? 'ok' : 'error',
-        note:
-          found.length === 0 ? (spec.passNote?.() ?? 'the change is in a fresh read') : found.slice(0, 4).join('; '),
+        note: found.length === 0 ? 'the change is in a fresh read' : found.slice(0, 4).join('; '),
       });
       problems.push(...found.map((problem) => `${spec.tool}: ${problem}`));
     };
@@ -3174,66 +2972,11 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
       });
     }
 
-    // opentune_autotune_range in mode reference: the result may hand the work to a job (the method
-    // does); the job's result is followed and the change is confirmed by a fresh read.
-    const copyRead = await mcpProcess().call('opentune_get_project');
-    const copyClip = listOf(copyRead.body.placements).find((p) => p.placementId === copyId);
-    const copyRevision = copyClip === undefined ? null : copyClip.clip_revision;
-    if (typeof copyRevision !== 'string') problems.push('opentune_autotune_range: the copy has no clip_revision');
-    else {
-      const before = revisionOf(await t.reads.details(copyContentId), copyContentId);
-      const unchanged = await captureState(copyContentId);
-      let undoId: string | null = null;
-      let knownDefect = false;
-      // The clock of the wait starts before the tool call, not inside the check that follows it: the
-      // job runs while the tool call is answered, so a clock that starts later measures less than
-      // the wait really was, and a stalled error that came at the wait limit would pass as a known
-      // defect.
-      const toolStarted = performance.now();
-      await runTool({
-        tool: 'opentune_autotune_range',
-        args: { clip: copyId, expected_revision: copyRevision, mode: 'reference' },
-        capabilities: ['edit.v1', 'reference.v1'],
-        passNote: () =>
-          knownDefect
-            ? 'known upstream defect: OpenTune completes only one reference analysis per session, reported as NOT_READY(reference_analysis_stalled); nothing changed'
-            : null,
-        visible: async (body) => {
-          let envelope = body;
-          if (isObject(body.job)) {
-            try {
-              envelope = await t.followJob('opentune_autotune_range', 'reference alignment', body.job);
-            } catch (error) {
-              // The same rule as for content.autoTune: only the stalled error that came before the wait
-              // limit, with the project left as it was, is the known defect; anything else is a problem.
-              if (!(error instanceof OtcpError) || !isKnownStalledDefect(error.data, performance.now() - toolStarted)) {
-                throw error;
-              }
-              const moved = await unchanged();
-              if (moved.length > 0) return moved.join('; ');
-              knownDefect = true;
-              recordKnownDefect(KNOWN_STALLED_REASON);
-              return null;
-            }
-            t.reads.clear();
-          }
-          const undo = isObject(envelope.undo) ? envelope.undo : null;
-          if (typeof undo?.undoId === 'string') undoId = undo.undoId;
-          const now = revisionOf(await t.reads.details(copyContentId), copyContentId);
-          if (envelope.noOp === true) return now === before ? null : 'the result says noOp but the clip changed';
-          return now === before ? 'the clip did not change after the tool reported a change' : null;
-        },
-        restore: async () => {
-          if (!canUndo || undoId === null) return;
-          await mcpProcess().call('opentune_undo', { undo_id: undoId });
-        },
-      });
-    }
     const checked = tools.filter((entry) => entry.outcome !== 'skip').length;
     return finish(
       'the wave-B MCP tools',
       problems,
-      `${String(checked)} of 7 tools called; the change of each is visible in a fresh OTCP read`,
+      `${String(checked)} of 6 tools called; the change of each is visible in a fresh OTCP read`,
     );
   });
 

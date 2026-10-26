@@ -33,7 +33,16 @@ const reasonOf = (source: Json | null, member: string): unknown =>
   source !== null && isObject(source.nullReasons) ? source.nullReasons[member] : undefined;
 
 /**
- * Merge the processing settings of session.info and prefs.get. Both schemas list the same eight
+ * Members that an instance of specification 1.0.0-rc.6 still reports and that rc.7 removed with the reference
+ * alignment (`processing.referenceAlignMode` and its entry in `processing.options`). opentune_set_settings refuses
+ * the setting, so this tool does not show it either, whatever the build reports.
+ */
+const RETIRED_MEMBERS: ReadonlySet<string> = new Set(['referenceAlignMode']);
+const withoutRetired = (source: Json): Json =>
+  Object.fromEntries(Object.entries(source).filter(([key]) => !RETIRED_MEMBERS.has(key)));
+
+/**
+ * Merge the processing settings of session.info and prefs.get. Both schemas list the same seven
  * settings; session.info is the instance's live view, so its value is taken first. A member that is
  * null (or missing) there is filled from prefs.get when that has a value; a null never replaces a
  * value. session.info alone has the runtime members (backend, vocoder state); prefs.get alone has
@@ -52,6 +61,7 @@ function mergeProcessing(
   const prefsValues = stripReasons(fromPrefs);
   const merged: Json = {};
   for (const key of new Set([...Object.keys(prefsValues), ...Object.keys(infoValues)])) {
+    if (RETIRED_MEMBERS.has(key)) continue;
     merged[key] = infoValues[key] ?? prefsValues[key] ?? null;
   }
   const language = [info.language, prefs?.language].find((v): v is string => typeof v === 'string');
@@ -59,7 +69,7 @@ function mergeProcessing(
   merged.onboardingShown = typeof prefs?.onboardingShown === 'boolean' ? prefs.onboardingShown : null;
   // The values opentune_set_settings accepts. Only prefs.get has them, and an instance of an earlier release
   // candidate of the specification does not report them: null with a reason, never an error.
-  merged.options = isObject(prefsValues.options) ? prefsValues.options : null;
+  merged.options = isObject(prefsValues.options) ? withoutRetired(prefsValues.options) : null;
   const reasons: Json = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value !== null) continue;
@@ -190,7 +200,7 @@ export const getSettingsTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. ' +
     'sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, ' +
-    'pitch model, reference alignment mode, experimental features, language, onboarding shown, options: the ' +
+    'pitch model, experimental features, language, onboarding shown, options: the ' +
     'values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available ' +
     'values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log ' +
     '(OpenTune log lines; only when asked). Default: all but log. Read-only.',

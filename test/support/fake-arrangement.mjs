@@ -390,7 +390,6 @@ export function createArrangement(mode) {
         gainLinear: p.gainLinear,
         fadeInSec: p.fadeInSec,
         fadeOutSec: p.fadeOutSec,
-        referencePlacementId: null,
         sourcePath: null,
         geometryHash: p.geometryHash,
       })),
@@ -910,7 +909,6 @@ export function createArrangement(mode) {
         undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
       }),
       trackIdMap,
-      danglingReferences: [],
       possiblyStaleEntries: { undo: 0, redo: 0 },
     };
   }
@@ -1168,7 +1166,6 @@ export function createArrangement(mode) {
           vocoderReady: true,
           vocoderReconfiguring: false,
           experimentalFeatures: false,
-          referenceAlignMode: null,
         },
       });
     }

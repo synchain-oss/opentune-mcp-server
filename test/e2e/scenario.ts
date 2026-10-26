@@ -29,7 +29,7 @@ export interface ScenarioReport {
   readonly manualChecks: readonly string[];
 }
 
-/** A fact the scenario observed: a scalar, or a list of names (such as the known upstream defects met). */
+/** A fact the scenario observed: a scalar, or a list of names (such as the preferences touched). */
 export type FactValue = string | number | boolean | null | readonly string[];
 
 export interface StepOptions {

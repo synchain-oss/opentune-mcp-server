@@ -55,7 +55,7 @@
               "changed": {
                 "key": {
                   "before": "k7",
-                  "after": "k14"
+                  "after": "k13"
                 }
               }
             }
@@ -66,9 +66,9 @@
           "contents": [
             {
               "contentId": "c:01234567:0:1",
-              "revision": "r10",
+              "revision": "r9",
               "gridRevision": "g6",
-              "keyRevision": "k14"
+              "keyRevision": "k13"
             }
           ],
           "placements": []
@@ -84,7 +84,7 @@
                 "root": 9,
                 "scale": "minor"
               },
-              "expectedKeyRevision": "k14"
+              "expectedKeyRevision": "k13"
             }
           }
         },
@@ -150,7 +150,7 @@
                   "root": 9,
                   "scale": "minor"
                 },
-                "expectedKeyRevision": "k14"
+                "expectedKeyRevision": "k13"
               }
             },
             "restore": {
@@ -204,8 +204,8 @@
               "contentId": "c:01234567:0:1",
               "changed": {
                 "pitchShift": {
-                  "before": "p12",
-                  "after": "p15"
+                  "before": "p11",
+                  "after": "p14"
                 }
               }
             }
@@ -216,9 +216,9 @@
           "contents": [
             {
               "contentId": "c:01234567:0:1",
-              "revision": "r10",
+              "revision": "r9",
               "gridRevision": "g6",
-              "keyRevision": "k14"
+              "keyRevision": "k13"
             }
           ],
           "placements": []
@@ -335,6 +335,6 @@
         ]
       }
     ],
-    "clip_revision": "cr1.WyJyMTAiLCJnNiIsImsxNCIsImgxMSJd"
+    "clip_revision": "cr1.WyJyOSIsImc2IiwiazEzIiwiaDEwIl0"
   }
 }

@@ -148,7 +148,7 @@ OpenTune 会分析录好的人声,把它显示为音符与音高曲线,并用神
 | --- | --- | --- |
 | `opentune_get_project` | 轨道、片段、选区、走带,以及写入类工具需要的版本号。 | 只读。 |
 | `opentune_get_notes` | 一个片段的音符,分页返回。 | 只读。 |
-| `opentune_get_clip_details` | 一个片段的时长、调性、移调、分析状态、时间柄、参考绑定与 AUTO 模式。 | 只读。 |
+| `opentune_get_clip_details` | 一个片段的时长、调性、移调、分析状态、时间柄与 AUTO 模式。 | 只读。 |
 | `opentune_get_settings` | OpenTune 的全局设置:处理选项、音频设备、最近工程、导入导出限制、日志行。 | 只读。 |
 
 **分析**
@@ -179,7 +179,7 @@ OpenTune 会分析录好的人声,把它显示为音符与音高曲线,并用神
 
 | 工具 | 作用 | 撤销与需要你同意的情况 |
 | --- | --- | --- |
-| `opentune_edit_arrangement` | 时间线上的片段:移动、裁剪、增益、淡入淡出、设置参考(实验性)、拆分、合并、删除、复制。`dry_run` 可预览。 | 标记为破坏性。拆分、合并、删除与复制不能撤销,所以 agent 会先问你;删除需要 `confirm: true`。 |
+| `opentune_edit_arrangement` | 时间线上的片段:移动、裁剪、增益、淡入淡出、拆分、合并、删除、复制。`dry_run` 可预览。 | 标记为破坏性。拆分、合并、删除与复制不能撤销,所以 agent 会先问你;删除需要 `confirm: true`。 |
 | `opentune_set_tracks` | 轨道的静音、独奏、音量与颜色;显示隐藏轨道;复制轨道。 | 静音、独奏、音量与颜色在 OpenTune 里没有撤销条目;结果会给出恢复原值的调用。 |
 | `opentune_delete_track` | 删除一条轨道及其中的片段。 | 标记为破坏性。不能撤销,后面的轨道编号都会减 1。需要 `confirm: true`,只能在你同意删除这条轨道后使用。 |
 
@@ -197,7 +197,7 @@ OpenTune 会分析录好的人声,把它显示为音符与音高曲线,并用神
 | `opentune_save_project` | 保存工程,或另存为新的 `.otproj` 文件。 | 不会替换另一个已有文件。 |
 | `opentune_save_project_overwrite` | 把工程保存到另一个已有的 `.otproj` 文件上,覆盖它。 | 标记为破坏性。旧文件会丢失。需要 `confirm: true`,只能在你同意替换该文件后使用。 |
 | `opentune_open_project` | 打开 `.otproj` 文件,替换当前工程。 | 标记为破坏性。从不自动保存:有未保存的修改时会失败(`UNSAVED_CHANGES`),除非带 `discard_unsaved: true`,只能在你同意后使用。会清空撤销历史。 |
-| `opentune_set_settings` | 修改 OpenTune 的全局设置(A4 标准音高、混合模式、编辑方案、实验功能、声码器权重、渲染优先级、音高模型、参考对齐模式、音频设备),或清空最近工程列表。 | 标记为破坏性。设置属于 OpenTune 安装而不是工程,没有撤销条目;结果会给出原来的值和恢复它们的调用。最近工程列表清空后无法重新填回。 |
+| `opentune_set_settings` | 修改 OpenTune 的全局设置(A4 标准音高、混合模式、编辑方案、实验功能、声码器权重、渲染优先级、音高模型、音频设备),或清空最近工程列表。 | 标记为破坏性。设置属于 OpenTune 安装而不是工程,没有撤销条目;结果会给出原来的值和恢复它们的调用。最近工程列表清空后无法重新填回。 |
 
 ### 需要你同意的操作
 
@@ -225,7 +225,6 @@ opentune-mcp  (本仓库,Node.js,MIT)
 - **混合模式与小幅修正。** OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 Hybrid Mode: Small corrections use DSP, large corrections use vocoder)默认开启。修正量中小于 75 音分的部分走 DSP 移调而不是声码器,这是 OpenTune 自身的设计,在真实人声上这种小修正可能几乎听不出来。想让小修正也明显生效,请在 OpenTune 首选项里关闭该项,或让 agent 用 `opentune_set_settings`(`processing.hybrid_mode`)来关;它是 OpenTune 的全局设置而不是工程设置,关掉之后一直保持关闭,直到有人再把它打开。见[混合模式](docs/TROUBLESHOOTING.zh-CN.md#hybrid-mode)。
 - **有些修改不能撤销。** 导入音频、改片段的调性和时间网格的 `seed` 不能撤销。拆分、合并、删除片段也不能撤销,这是 OpenTune 的缺陷(它释放了自己的撤销条目还要用的对象);复制片段和删除轨道同样不能撤销。静音、独奏、音量、颜色、速度、拍号和全局设置在 OpenTune 里没有撤销条目。结果会在第一句话里写明,破坏性的操作 agent 会先问你,有办法还原时结果还会给出恢复原状的调用。
 - **没有自动保存。** OpenTune 不会自己保存,撤销历史也不会存进工程文件。OpenTune 关闭或崩溃时,没保存的内容会丢失:请让 agent 在每个完成的步骤之后保存。
-- **每个会话只能完成一次参考分析。** OpenTune 每个会话只能完成一次参考分析(这是 OpenTune 自身的缺陷)。之后以模式 `reference` 调用 `opentune_autotune_range` 会得到 `NOT_READY`,直到重启 OpenTune;请先保存工程。见 [NOT_READY](docs/TROUBLESHOOTING.zh-CN.md#error-not_ready)。
 - **`RUNNING_WITHOUT_API` 只做了人工核对。** 「运行着没开控制接口的官方 OpenTune」这一状态是人工验证的,没有自动化测试。
 - **源目录只读。** 不给 `path` 的导出会写在源文件旁。该目录只读时导出会报错,不会自动换目录。请指定一个可写的 `path`。
 - **首次启动需要人工操作。** 首次引导对话框需要有人回答一次([首次启动](#首次启动))。

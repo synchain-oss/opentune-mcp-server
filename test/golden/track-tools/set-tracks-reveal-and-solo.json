@@ -44,8 +44,8 @@
         "revisionDiff": {
           "arrangement": null,
           "trackState": {
-            "before": "t12",
-            "after": "t13"
+            "before": "t11",
+            "after": "t12"
           },
           "contents": []
         },
@@ -202,8 +202,8 @@
         "revisionDiff": {
           "arrangement": null,
           "trackState": {
-            "before": "t13",
-            "after": "t14"
+            "before": "t12",
+            "after": "t13"
           },
           "contents": []
         },

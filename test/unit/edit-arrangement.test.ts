@@ -115,7 +115,7 @@ describe('declaration', () => {
     expect(editArrangementTool.description).toMatch(/timeline clock, seconds/);
   });
 
-  it('takes ops of the nine kinds and at most 64 of them', () => {
+  it('takes ops of the eight kinds and at most 64 of them', () => {
     const schema = editArrangementTool.inputSchema;
     const op = { op: 'gain', clip: 'p:01234567:0:1', gain_db: -3 };
     expect(schema.safeParse({ expected_revision: 'x', ops: Array(MAX_OPS).fill(op) }).success).toBe(true);
@@ -123,6 +123,10 @@ describe('declaration', () => {
     expect(schema.safeParse({ expected_revision: 'x', ops: [] }).success).toBe(false);
     expect(schema.safeParse({ expected_revision: 'x', ops: [{ ...op, gain_linear: 1 }] }).success).toBe(false);
     expect(schema.safeParse({ expected_revision: 'x', ops: [{ op: 'resize', clip: op.clip }] }).success).toBe(false);
+    // The reference binding was removed with the reference alignment.
+    expect(schema.safeParse({ expected_revision: 'x', ops: [{ op: 'set_reference', clip: op.clip }] }).success).toBe(
+      false,
+    );
   });
 });
 
@@ -162,17 +166,6 @@ describe('every op against the mock', () => {
     expect(out.sideEffects).toMatchObject({ tracksRevealed: { trackIds: [4, 5] } });
     expect(codes(out)).toEqual(['TRACK_AUTO_REVEALED', 'TRACK_AUTO_REVEALED']);
     expect(firstSentence(out.summary)).toContain('side effects: hidden tracks became visible');
-  });
-
-  it('binds a reference and removes it again, each an undo step', async () => {
-    const env = await setup();
-    const bound = body(
-      await editNow(env, { ops: [{ op: 'set_reference', clip: id(env, 'a'), reference_clip: id(env, 'b') }] }),
-    );
-    expect(codes(bound)).toEqual(['EXPERIMENTAL_FEATURE']);
-    expect(env.mock.snapshot().placements[0]?.reference).toBe(id(env, 'b'));
-    body(await editNow(env, { ops: [{ op: 'set_reference', clip: id(env, 'a') }] }));
-    expect(env.mock.snapshot().placements[0]?.reference).toBeNull();
   });
 
   it('splits, reports the new clip ids, and merges them again with those ids', async () => {
@@ -328,7 +321,6 @@ describe('what may share a call', () => {
     expect(refusal([{ op: 'merge', leading_clip: A, trailing_clip: 'p:01234567:0:01' }]).detail).toContain(
       'ops[0].trailing_clip',
     );
-    expect(refusal([{ op: 'set_reference', clip: A, reference_clip: 'x' }]).detail).toContain('reference_clip');
     expect(refusal([{ ...copy, clips: [A, 'p:1'] }]).detail).toContain('ops[0].clips');
     expect(refusal([{ op: 'move', clip: A, to_track_id: 1.5 }]).detail).toContain('whole number');
     expect(refusal([{ op: 'move', clip: A }]).detail).toContain('move needs to_track_id, start_timeline_sec');
@@ -348,7 +340,6 @@ describe('what may share a call', () => {
           { op: 'trim', clip: A, edge: 'start', to_timeline_sec: 1.5 },
           { op: 'gain', clip: B, gain_db: -3 },
           { op: 'fade', clip: B, fade_out_sec: 0.2 },
-          { op: 'set_reference', clip: A, reference_clip: B },
         ],
         { dry_run: true },
       ),
@@ -362,7 +353,6 @@ describe('what may share a call', () => {
           { op: 'trim', placementId: A, edge: 'start', toTimelineSec: 1.5 },
           { op: 'setGain', placementId: B, gainDb: -3 },
           { op: 'setFade', placementId: B, fadeOutSec: 0.2 },
-          { op: 'setReference', placementId: A, referencePlacementId: B },
         ],
       },
     });
@@ -515,11 +505,6 @@ describe('next steps of the errors', () => {
       name: 'a trim past the audio of the content',
       key: 'INVALID_ARGUMENT/trim_out_of_range',
       ops: (env) => [{ op: 'trim', clip: id(env, 'a'), edge: 'end', to_timeline_sec: 30 }],
-    },
-    {
-      name: 'a reference to the clip itself',
-      key: 'INVALID_ARGUMENT/reference_ineligible',
-      ops: (env) => [{ op: 'set_reference', clip: id(env, 'a'), reference_clip: id(env, 'a') }],
     },
     {
       name: 'a clip that does not exist',

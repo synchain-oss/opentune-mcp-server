@@ -138,7 +138,7 @@ const vocoderOf = async (session: TestSession) => {
 
 const OPTIONS = { vocoderWeight: ['hifigan.onnx', 'hifigan_coulin9.onnx'], f0Model: ['fcpe', 'rmvpe'] };
 
-describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch model, reference alignment mode', () => {
+describe('prefs.get and prefs.set: vocoder weight, rendering priority and pitch model', () => {
   it('lists the values prefs.set accepts in processing.options, which session.info does not report', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;
@@ -146,12 +146,10 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
       vocoderWeight: 'hifigan.onnx',
       renderingPriority: 'gpuFirst',
       f0Model: 'fcpe',
-      referenceAlignMode: 'standardAuto',
       options: {
         vocoderWeight: ['hifigan.onnx', 'hifigan_coulin9.onnx'],
         f0Model: ['fcpe'],
         renderingPriority: ['gpuFirst', 'cpuFirst'],
-        referenceAlignMode: ['standardAuto', 'game'],
       },
     });
     const info = (await ok('session.info')).processing as Record<string, unknown>;
@@ -171,7 +169,6 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
     const { mock, ok } = session;
     mock.given({ clips: [clip()] });
     const started = await ok('prefs.set', {
-      referenceAlignMode: 'game',
       renderingPriority: 'cpuFirst',
       vocoderWeight: 'hifigan_coulin9.onnx',
       hybridMode: true,
@@ -181,19 +178,17 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
     clock.advance(1000);
     const job = await jobOf(session, started);
     expect(job.state).toBe('succeeded');
-    const names = ['tuningHz', 'hybridMode', 'vocoderWeight', 'renderingPriority', 'referenceAlignMode'];
+    const names = ['tuningHz', 'hybridMode', 'vocoderWeight', 'renderingPriority'];
     expect((job.result?.changes as { ref: { preference: string } }[]).map((c) => c.ref.preference)).toEqual(names);
     expect(job.result?.warnings).toMatchObject([
       { code: 'GLOBAL_PREFERENCE', data: { preferences: names } },
       { code: 'NOT_RETROACTIVE', subject: { preference: 'tuningHz' } },
-      { code: 'EXPERIMENTAL_FEATURE', subject: { preference: 'referenceAlignMode' }, data: null },
     ]);
     expect(field(job.result, 'undo', 'revert', 'params')).toEqual({
       tuningHz: 440,
       hybridMode: false,
       vocoderWeight: 'hifigan.onnx',
       renderingPriority: 'gpuFirst',
-      referenceAlignMode: 'standardAuto',
     });
   });
 
@@ -211,29 +206,21 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
     expect(priority.result?.sideEffects).toEqual({});
     const weight = await start({ vocoderWeight: 'hifigan_coulin9.onnx' });
     expect(field(weight.result, 'sideEffects', 'reRenderQueued', 'contentIds')).toEqual([ids['clip.contentId']]);
-    // The reference alignment mode takes effect at the next AUTO Ref: nothing is rendered.
-    const mode = await session.ok('prefs.set', { referenceAlignMode: 'game' });
-    expect(mode.job).toBeNull();
-    expect(mode.sideEffects).toEqual({});
+    // The experimental features switch is applied inside the call: nothing is rendered.
+    const switched = await session.ok('prefs.set', { experimentalFeatures: true });
+    expect(switched.job).toBeNull();
+    expect(switched.sideEffects).toEqual({});
   });
 
-  it('applies the pitch model, the reference alignment mode and the experimental features without a job', async () => {
+  it('applies the pitch model and the experimental features without a job', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;
     mock.given({ preferences: { options: OPTIONS } });
-    const set = await ok('prefs.set', { f0Model: 'rmvpe', referenceAlignMode: 'game', experimentalFeatures: true });
+    const set = await ok('prefs.set', { f0Model: 'rmvpe', experimentalFeatures: true });
     expect(set).toMatchObject({ applied: true, job: null });
-    expect(await processing(session)).toMatchObject({
-      f0Model: 'rmvpe',
-      referenceAlignMode: 'game',
-      experimentalFeatures: true,
-    });
+    expect(await processing(session)).toMatchObject({ f0Model: 'rmvpe', experimentalFeatures: true });
     await revert(session, set);
-    expect(await processing(session)).toMatchObject({
-      f0Model: 'fcpe',
-      referenceAlignMode: 'standardAuto',
-      experimentalFeatures: false,
-    });
+    expect(await processing(session)).toMatchObject({ f0Model: 'fcpe', experimentalFeatures: false });
     // The values it already has: nothing to do, and no job.
     expect(
       await ok('prefs.set', { f0Model: 'fcpe', vocoderWeight: 'hifigan.onnx', renderingPriority: 'gpuFirst' }),
@@ -820,7 +807,6 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority, pitch mod
       { vocoderWeight: 'hifigan_coulin9.onnx' },
       { renderingPriority: 'cpuFirst' },
       { f0Model: 'fcpe' },
-      { referenceAlignMode: 'game' },
     ]) {
       expect((await session.fails('prefs.set', params)).data).toMatchObject({ reason: 'modal_open' });
     }
