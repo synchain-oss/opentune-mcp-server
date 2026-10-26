@@ -15,7 +15,7 @@ OpenTune MCP Server 是由 [Synchain](https://www.synchain.ca) 主导的开源�
 
 ## 状态
 
-> **早期版本(0.1.0)。** npm 包 [`@synchain/opentune-mcp`](https://www.npmjs.com/package/@synchain/opentune-mcp)、Claude Code 插件与 MCPB 包都已发布,见 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases)。在官方 OpenTune 内置控制接口之前,本服务只能配合 OpenTune 的[非官方测试版](https://github.com/synchain-oss/OpenTune/releases)使用。工具名称从现在起固定;确需改名时,旧名以 deprecated 形式保留一个 minor 版本。
+> **早期版本(0.2.0)。** npm 包 [`@synchain/opentune-mcp`](https://www.npmjs.com/package/@synchain/opentune-mcp)、Claude Code 插件与 MCPB 包都已发布,见 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases)。在官方 OpenTune 内置控制接口之前,本服务只能配合 OpenTune 的[非官方测试版](https://github.com/synchain-oss/OpenTune/releases)使用。工具名称从现在起固定;确需改名时,旧名以 deprecated 形式保留一个 minor 版本。
 
 | 环境 | 状态 |
 | --- | --- |
