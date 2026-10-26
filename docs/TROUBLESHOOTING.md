@@ -10,7 +10,8 @@ export take, see [How long to wait](COMPATIBILITY.md#how-long-to-wait).
 ### Status READY
 
 OpenTune runs with the control API and this server verified it. With several instances running, pass `instance_id` to
-the other tools; the server never picks one on its own.
+the other tools; the server never picks one on its own. A dialog that is open in the OpenTune window blocks every write
+operation; then the result carries `blockedBy`, see [First launch dialog](#first-launch-dialog).
 
 ### Status NOT_READY
 
@@ -325,10 +326,28 @@ hexadecimal characters, so nothing could be checked: unpack the test build again
 
 The first time OpenTune starts with a fresh data folder it shows a one-time welcome (onboarding) dialog. A person has to
 answer it once in the OpenTune window. While it, or any other modal dialog, is open, every write operation fails with
-[BUSY](#error-busy) and reason `modal_open`. `opentune_get_settings` reports whether onboarding was shown. Ask the user
-to answer the dialog, then retry. `opentune_manage_ui` can close it like the Escape key (op `dismiss_dialogs`, or op
-`dismiss_onboarding` for the onboarding overlay, which also marks onboarding as shown: a global setting that cannot be
-undone, so ask the user first). The server never presses a button of a dialog.
+[BUSY](#error-busy) and reason `modal_open`. `opentune_get_status` and `opentune_launch` read the window once when the
+instance can report it and add `blockedBy` (`kind` `onboarding` or `dialog`, and a hint) to the result, with a summary
+that says writes are refused until the dialog is closed; they do not say that everything is ready. `opentune_get_settings`
+also reports whether onboarding was shown. Ask the user to answer the dialog, then retry. `opentune_manage_ui` can close
+it like the Escape key: op `dismiss_onboarding` for the onboarding overlay (it also marks onboarding as shown, a global
+setting that cannot be undone, so tell the user first), op `dismiss_dialogs` for any other dialog. The server never
+presses a button of a dialog. If the window cannot be read, `blockedBy` is null with a reason in `nullReasons`, and the
+status is still reported as ready.
+
+## Rendering backend and vocoder
+
+`opentune_get_settings` (section `processing`) shows the rendering priority and the backend OpenTune uses now
+(`processing.backend`). With `gpuFirst` OpenTune tries the GPU each time the vocoder loads and falls back to the CPU
+without a word when that fails, so the GPU is not guaranteed. When the priority is `gpuFirst` but the backend is `cpu`,
+the summary says so. To see why, read the log: `opentune_get_settings` with sections `["log"]` and `log_lines` 30 shows
+the lines about the backend. On Windows also run `opentune-mcp doctor`: it checks the Direct3D 12 runtime that a test
+build lists in `opentune-control.json` (see [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied)). After a change of the
+rendering priority, `opentune_set_settings` reads the backend once the job has ended and reports it in
+`rendering_backend`; if the vocoder is still reloading after a short wait, it says so instead of guessing.
+
+`vocoderReady: false` just after OpenTune starts is normal, not a fault: the vocoder loads when the first render needs
+it. Nothing has to be done about it.
 
 ## Hybrid mode
 

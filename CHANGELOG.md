@@ -22,6 +22,31 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- Results of the write tools that list many entries are cut so that a host does not reject them (contract change record
+  `docs/contract-changes/20261026-agent-feedback.md`). `changes`, `created`, `removed` and `idMap` list at most 20
+  entries each and count the rest in `omittedCount`; the change table is a preview of 10 rows; the list of time-grid
+  handles of `opentune_edit_timing` holds 100. For a write that is not a dry run, the undo information (the undo id, or
+  "not undoable" with the way to restore it) comes first in the result, in the text and in the structured content. A
+  regenerate of a whole song of 1,200 notes now gives a result of under 20,000 characters.
+- `opentune_get_status` and `opentune_launch` read the window of a ready instance once (`ui.getState`, capability
+  `ui.bridge`). When the first-run welcome page or another dialog is open, the result carries `blockedBy` (`kind` and a
+  hint), the summary says that writes are refused until it is closed, and the next step is `opentune_manage_ui` with
+  `dismiss_onboarding` or `dismiss_dialogs`. A vocoder that is not loaded yet is no longer worded as a problem: one
+  sentence says that it loads at the first render.
+- `opentune_get_settings` gives next to `options.renderingPriority` one note per value (`optionNotes`: what it means and
+  when it takes effect), and a summary sentence when the priority is `gpuFirst` but the CPU runs, with the log and
+  `opentune-mcp doctor` as the places to look. `opentune_set_settings` reads the backend once after a change of the
+  rendering priority (`rendering_backend`) and says "gpuFirst was requested, but OpenTune is now using the CPU" or that the
+  vocoder is still reloading. The description of `rendering_priority` says what the values do.
+- `opentune_edit_notes` describes `delta_cents`, `retune_speed`, `pitch_drift_scale` (the usual meaning of "vibrato" in a
+  request), `vibrato_depth` and `vibrato_rate_hz` in the parameters.
+- `opentune_edit_arrangement` no longer says "ask the user first" for every split, merge and delete: a request that
+  names the clip or the time counts as the agreement and the step runs at once; the first sentence of the result says that
+  it cannot be undone and how to restore it. Only a target that is not clear, and a merge or delete the user did not ask
+  for, are asked about first. This matches the companion skill.
+- `opentune_export_audio` reads the file it wrote, in blocks, and reports `peakDbfs` and `clippedSampleCount`; a peak
+  above 0 dBFS adds a sentence to the summary. A read that fails only leaves the two members null, with the reason in
+  `nullReasons`.
 - The companion skills `tuning-workflow`, `check-results` and `lyrics-timeline` now treat a clear request from the user as the agreement for that step, ask a question only once and only about what the tools cannot find out, use only the files the user named, confirm that the render is current before a result is called ready to listen to, and compare before and after pitch figures only when they share the same target basis.
 
 ### Removed
@@ -53,6 +78,11 @@ versioned separately and has its own changelog.
 
 ### Fixed
 
+- A whole-song regenerate gave a result of about 60,000 characters that a host rejected, which lost the undo id; see
+  Changed.
+- `opentune_estimate_key` names the scale of the key of a clip in a sentence only when it is one of the scales of the
+  protocol, else "another scale". `opentune_manage_ui` names a side effect whose details are not an object from the
+  fixed table instead of saying "no other side effects".
 - Result wording that disagreed with the facts of the same result (contract change record
   `docs/contract-changes/20261026-result-wording.md`):
   - A change of the tempo alone or of the time signature alone is now restorable with `opentune_transport`; the
