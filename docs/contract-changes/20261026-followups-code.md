@@ -21,6 +21,7 @@ the tool catalog.
 | `src/tools/timing.ts`                                      | The full format is used only while the result fits the output budget; the description of `ops` says that a long result is compact.                         |
 | `src/tools/notes.ts`, `src/tools/client-timeout.ts`        | A read for `output_path` has a time budget inside the time a client waits; the constant of that time moves to its own file and is shared with `timing.ts`. |
 | `mock/server.ts`                                           | A stop whose removal of the discovery file fails still marks the end and runs the clean-up; `app.quit` does not leave an unhandled rejection.              |
+| `mock/timing.ts`                                           | `content.shiftTiming` takes the range as closed: a handle exactly on the end moves too.                                                                    |
 | `test/golden/tools-list.json`                              | The description of `ops` of `opentune_edit_timing`.                                                                                                        |
 | `docs/reference.md`                                        | Regenerated from the golden catalog by `npm run catalog:update`.                                                                                           |
 | `docs/TROUBLESHOOTING.md`, `docs/TROUBLESHOOTING.zh-CN.md` | The vocoder paragraph, and the new reason `read_too_slow` under `REQUEST_TIMEOUT`.                                                                         |
@@ -125,6 +126,18 @@ not run; `app.quit` called `void stopMock()`, which turned the failure into an u
 rejects with the failure, once, for whoever asks; the stop that `app.quit` starts catches it.
 
 **Client impact.** None: the mock is a test double.
+
+## 8. The mock: the range of `content.shiftTiming` is closed
+
+**Problem.** The mock moved the handles with `start <= outputSec < end`, so a handle exactly on the end of the range
+stayed. The real OpenTune takes both ends of the range in, so a mock that left the end out answered differently for a
+range that ends on a handle.
+
+**Fix.** `start <= outputSec <= end`. A case puts a handle exactly on the end, one exactly on the start, and a range
+whose two ends are the same handle.
+
+**Client impact.** None: the mock is a test double; a client that only ran against the mock now sees what the real
+OpenTune does for a handle on the end.
 
 ## Compatibility
 

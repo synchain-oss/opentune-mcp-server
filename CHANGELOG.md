@@ -202,6 +202,8 @@ versioned separately and has its own changelog.
   - The mock: a stop that cannot remove the discovery file (for example `EPERM` on Windows) still ends it:
     `whenEnded()` resolves and the clean-up runs; `stop()` rejects with the failure, and an `app.quit` that stops the
     mock leaves no unhandled rejection.
+  - The mock: `content.shiftTiming` takes the range as closed, so a handle exactly on the end moves as well as one
+    exactly on the start, as the real OpenTune does. The mock used to leave out a handle on the end.
 
 ## [0.2.0] - 2026-10-26
 
