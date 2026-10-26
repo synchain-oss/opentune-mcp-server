@@ -138,6 +138,60 @@ describe('writeNewFile', () => {
     expect(readdirSync(dir)).toEqual([]);
   });
 
+  it('removes the half-written file a failed copy leaves at the name, and only then', async () => {
+    const dir = folder();
+    const target = path.join(dir, 'notes.json');
+    const removed: string[] = [];
+    const { ops: seam } = ops({
+      link: () => Promise.reject(errno('EPERM')),
+      copyNew: (_source, name) => {
+        writeFileSync(name, '{"half');
+        return Promise.reject(errno('ENOSPC'));
+      },
+      remove: async (file) => {
+        removed.push(file);
+        await realFiles.remove(file);
+      },
+    });
+    const failure = await writeNewFile(target, '{"whole":true}', system, seam).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(FileWriteError);
+    expect(failure).toMatchObject({ kind: 'io', code: 'ENOSPC' });
+    // The half-written target and the temporary file are both gone, and no other name was touched.
+    expect(removed).toHaveLength(2);
+    expect(removed).toContain(target);
+    expect(removed.find((file) => file !== target)).toMatch(/.[0-9a-f]{16}.tmp$/);
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it('keeps a file that was there before, and reports the copy failure when the clean-up fails too', async () => {
+    const dir = folder();
+    const target = path.join(dir, 'notes.json');
+    writeFileSync(target, 'precious');
+    const removed: string[] = [];
+    let copies = 0;
+    const { ops: seam } = ops({
+      link: () => Promise.reject(errno('EPERM')),
+      copyNew: (_source, name) => {
+        copies += 1;
+        // The first name is taken (EEXIST: nothing of ours to clean up); the second fails halfway.
+        if (copies === 1) return Promise.reject(errno('EEXIST'));
+        writeFileSync(name, 'half');
+        return Promise.reject(errno('EIO'));
+      },
+      remove: async (file) => {
+        removed.push(file);
+        if (file !== target && !file.endsWith('.tmp')) throw errno('EBUSY');
+        await realFiles.remove(file);
+      },
+    });
+    const failure = await writeNewFile(target, 'x', system, seam).catch((e: unknown) => e);
+    // The failed removal of the half-written second name (EBUSY) does not replace the error of the copy (EIO).
+    expect(failure).toMatchObject({ kind: 'io', code: 'EIO' });
+    expect(removed).toContain(path.join(dir, 'notes (2).json'));
+    expect(removed).not.toContain(target);
+    expect(readFileSync(target, 'utf8')).toBe('precious');
+  });
+
   it('removes the temporary file when creating it fails halfway', async () => {
     const dir = folder();
     const removed: string[] = [];

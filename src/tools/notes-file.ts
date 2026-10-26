@@ -24,7 +24,11 @@ export interface FileOps {
   create: (path: string, data: string) => Promise<void>;
   /** Makes `target` another name of `existing`; fails with EEXIST when `target` exists. */
   link: (existing: string, target: string) => Promise<void>;
-  /** Copies `source` to a `target` that must not exist; fails with EEXIST when it does. */
+  /**
+   * Copies `source` to a `target` that must not exist; fails with EEXIST when it does, and then leaves that
+   * file alone. It creates the target exclusively, so any other failure can leave only a file that this call
+   * created (perhaps half written).
+   */
   copyNew: (source: string, target: string) => Promise<void>;
   /** Removes a file; a file that is already gone is not an error. */
   remove: (path: string) => Promise<void>;
@@ -103,7 +107,12 @@ async function place(ops: FileOps, temp: string, candidate: string): Promise<boo
     await ops.copyNew(temp, candidate);
     return true;
   } catch (error) {
+    // An exclusive create that finds the name taken always says EEXIST, and that file is not ours: it stays.
     if (errnoOf(error) === 'EEXIST') return false;
+    // Any other failure (a full disk, a lost network share) can leave the half-written file this copy created
+    // at the name: remove it, so a later run does not take it for a finished file. The failure of the removal
+    // does not hide the failure of the copy.
+    await ops.remove(candidate).catch(() => undefined);
     throw error;
   }
 }
