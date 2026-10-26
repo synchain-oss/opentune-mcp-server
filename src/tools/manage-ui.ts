@@ -10,8 +10,8 @@
 //
 // switch_view shows the arrangement view or the piano roll (capability ui.workspace); closing the piano
 // roll is switch_view arrangement. It changes view state only, so a result that reports nothing else says
-// that the project did not change; a result that reports anything more gets the generic summary, which
-// names it.
+// that the project did not change, and whether the project still has the unsaved changes it had before; a
+// result that reports anything more gets the generic summary, which names it.
 
 import { z } from 'zod';
 
@@ -92,12 +92,17 @@ export function focusSummary(envelope: Json): string {
 const workspaceOf = (value: unknown): keyof typeof WORKSPACE_WORDS | null =>
   value === 'arrangement' || value === 'pianoRoll' ? value : null;
 
-/** Nothing but the workspace changed: no content, no mark on the project, no side effect besides the switch. */
+/**
+ * Nothing but the workspace changed: only the window is listed in `changes`, no content, no mark on the
+ * project, no side effect besides the switch.
+ */
 function viewOnly(envelope: Json): boolean {
   const effects = Object.keys(isObject(envelope.sideEffects) ? envelope.sideEffects : {});
   const diff = isObject(envelope.revisionDiff) ? envelope.revisionDiff : {};
   const dirty = isObject(envelope.dirty) ? envelope.dirty : {};
   return (
+    Array.isArray(envelope.changes) &&
+    envelope.changes.every((change) => isObject(change) && change.entity === 'ui') &&
     effects.every((name) => name === 'workspaceSwitched') &&
     warningCodes(envelope).length === 0 &&
     diff.arrangement === null &&
@@ -130,9 +135,16 @@ export function switchSummary(envelope: Json, view: (typeof VIEWS)[number], fall
       : '';
   const origin = from === null ? '' : `from ${WORKSPACE_WORDS[from]} `;
   const back = from === null ? '' : `; switch back with switch_view ${VIEW_OF[from]}`;
+  // viewOnly has checked that dirty.before is a boolean equal to dirty.after: a project that had unsaved changes
+  // still has them, and the sentence must not read as if the project had none.
+  const dirty = isObject(envelope.dirty) ? envelope.dirty : {};
+  const mark =
+    dirty.before === true
+      ? 'the project still has the unsaved changes it had before the switch'
+      : 'the switch did not mark the project as changed';
   return (
     `${TOOL}: switched the window ${origin}to ${WORKSPACE_WORDS[asked]}, which changes the view only: ` +
-    `no clip, note or setting changed and the project is not marked as changed${back}.${empty}`
+    `no clip, note or setting changed and ${mark}${back}.${empty}`
   );
 }
 

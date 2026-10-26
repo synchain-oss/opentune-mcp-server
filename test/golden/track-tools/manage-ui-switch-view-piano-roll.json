@@ -6,7 +6,7 @@
     "view": "piano_roll"
   },
   "result": {
-    "summary": "opentune_manage_ui: switched the window from the arrangement view to the piano roll, which changes the view only: no clip, note or setting changed and the project is not marked as changed; switch back with switch_view arrangement. No clip is selected, so the piano roll is empty; select one with focus_clip.",
+    "summary": "opentune_manage_ui: switched the window from the arrangement view to the piano roll, which changes the view only: no clip, note or setting changed and the switch did not mark the project as changed; switch back with switch_view arrangement. No clip is selected, so the piano roll is empty; select one with focus_clip.",
     "applied": true,
     "noOp": false,
     "dryRun": false,

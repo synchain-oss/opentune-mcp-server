@@ -346,9 +346,10 @@ const setSelection: Handler = (context) => {
 /**
  * Switches the window between the arrangement view and the piano roll, as the two view buttons of the
  * transport bar do. The workspace is view state: no content, clip or track changes, nothing is generated and
- * the project is not marked as changed. Switching to the piano roll shows the selected clip, or nothing when
- * no clip is selected. The piano roll keeps the content it showed while the arrangement view is shown, as the
- * editor does, so switching back to the arrangement does not forget it.
+ * the project is not marked as changed. Switching to the piano roll shows the clip that is selected at that
+ * moment, or nothing (`pianoRollContent` null) when no clip is selected, even if the piano roll showed another
+ * clip before. Switching to the arrangement view leaves `pianoRollContent` as it is, as the editor keeps the
+ * content it showed.
  */
 const setWorkspace: Handler = (context) => {
   const { world, params } = context;

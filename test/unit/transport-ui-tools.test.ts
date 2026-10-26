@@ -324,7 +324,7 @@ describe('opentune_manage_ui: switch_view', () => {
     const before = mock.snapshot();
     const result = body(await manageUi(ctx, { op: 'switch_view', view: 'piano_roll' }));
     expect(firstSentence(result.summary)).toBe(
-      'opentune_manage_ui: switched the window from the arrangement view to the piano roll, which changes the view only: no clip, note or setting changed and the project is not marked as changed; switch back with switch_view arrangement',
+      'opentune_manage_ui: switched the window from the arrangement view to the piano roll, which changes the view only: no clip, note or setting changed and the switch did not mark the project as changed; switch back with switch_view arrangement',
     );
     // No clip is selected: the piano roll is empty, and the summary says what to do about it.
     expect(result.summary).toContain('No clip is selected, so the piano roll is empty; select one with focus_clip.');
@@ -354,6 +354,23 @@ describe('opentune_manage_ui: switch_view', () => {
       tool: 'opentune_manage_ui',
       arguments: { op: 'switch_view', view: 'piano_roll' },
     });
+  });
+
+  it('says that a project with unsaved changes keeps them, and not that it has none', async () => {
+    const { mock, ctx } = await setup();
+    mock.given({ dirty: true, clips: [clip()] });
+    const before = mock.snapshot();
+    const result = body(await manageUi(ctx, { op: 'switch_view', view: 'piano_roll' }));
+    expect(result).toMatchObject({ applied: true, noOp: false, dirty: { before: true, after: true } });
+    expect(firstSentence(result.summary)).toBe(
+      'opentune_manage_ui: switched the window from the arrangement view to the piano roll, which changes the view only: no clip, note or setting changed and the project still has the unsaved changes it had before the switch; switch back with switch_view arrangement',
+    );
+    // A project that had unsaved changes is not described as one that was not marked as changed.
+    expect(result.summary).not.toMatch(/not mark|not marked/);
+    expect(mock.snapshot()).toEqual(before);
+    const back = body(await manageUi(ctx, { op: 'switch_view', view: 'arrangement' }));
+    expect(back).toMatchObject({ noOp: false, dirty: { before: true, after: true } });
+    expect(back.summary).toContain('the project still has the unsaved changes it had before the switch');
   });
 
   it('closes the piano roll that focus_clip opened, with the clip still selected', async () => {
@@ -471,6 +488,7 @@ describe('opentune_manage_ui: switch_view', () => {
       noOp: false,
       dryRun: false,
       warnings: [],
+      changes: [{ entity: 'ui', ref: { singleton: 'workspace' } }],
       revisionDiff: { arrangement: null, trackState: null, contents: [] },
       dirty: { before: false, after: false },
       ui: { workspace: 'pianoRoll', selectedPlacementIds: ['p:01234567:0:1'] },
@@ -478,11 +496,21 @@ describe('opentune_manage_ui: switch_view', () => {
     };
     const generic = 'generic summary of the write result';
     expect(switchSummary(switched, 'piano_roll', generic)).toMatch(/^opentune_manage_ui: switched the window from/);
+    // The mark on the project is described by what it was before the switch.
+    expect(switchSummary(switched, 'piano_roll', generic)).toContain('the switch did not mark the project as changed');
+    expect(switchSummary({ ...switched, dirty: { before: true, after: true } }, 'piano_roll', generic)).toContain(
+      'the project still has the unsaved changes it had before the switch',
+    );
     const reported = [
       { ...switched, sideEffects: { ...switched.sideEffects, notesGenerated: { noteCount: 3, revert: null } } },
       { ...switched, warnings: [{ code: 'IRREVERSIBLE', subject: null, data: null }] },
       { ...switched, dirty: { before: false, after: true } },
       { ...switched, dirty: {} },
+      // Something besides the window is listed as changed: the generic summary names it.
+      { ...switched, changes: [...switched.changes, { entity: 'selection', ref: { singleton: 'selection' } }] },
+      { ...switched, changes: [{ entity: 'clip', ref: { placementId: 'p:01234567:0:1' } }] },
+      { ...switched, changes: [null] },
+      { ...switched, changes: undefined },
       { ...switched, revisionDiff: { arrangement: null, trackState: null, contents: [{ contentId: 'c' }] } },
       { ...switched, revisionDiff: { arrangement: { before: 'a1', after: 'a2' }, trackState: null, contents: [] } },
     ];
@@ -497,7 +525,7 @@ describe('opentune_manage_ui: switch_view', () => {
     const summary = switchSummary(hostile, 'arrangement', generic);
     expect(summary).not.toMatch(/Ignore|delete everything/);
     expect(summary).toBe(
-      'opentune_manage_ui: switched the window to the arrangement view, which changes the view only: no clip, note or setting changed and the project is not marked as changed.',
+      'opentune_manage_ui: switched the window to the arrangement view, which changes the view only: no clip, note or setting changed and the switch did not mark the project as changed.',
     );
   });
 });
