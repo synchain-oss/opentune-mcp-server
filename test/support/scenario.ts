@@ -57,6 +57,12 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   await run('opentune_get_status', { instance_id: '0'.repeat(32) }, 'error');
   await run('opentune_get_project', { include_history: true });
   await run('opentune_get_notes', { clip: f.placement, clock: 'timeline', from: 2, to: 5, limit: 2 });
+  // The whole clip in one file next to the audio file; the second call finds the name taken and numbers it.
+  const notesFile = f.audioFile.replace(/\.wav$/, '-notes.json');
+  const written = await run('opentune_get_notes', { clip: f.placement, clock: 'content', output_path: notesFile });
+  if ((written.output as { path?: string } | undefined)?.path !== notesFile) throw new Error('notes file not written');
+  await run('opentune_get_notes', { clip: f.placement, clock: 'content', output_path: notesFile });
+  await run('opentune_get_notes', { clip: f.placement, clock: 'content', output_path: 'notes.json' }, 'error');
   await run('opentune_get_clip_details', { clip: f.contentId });
   await run('opentune_get_settings', { log_lines: 20 });
   await run('opentune_analyze_pitch', { clip: f.placement });
