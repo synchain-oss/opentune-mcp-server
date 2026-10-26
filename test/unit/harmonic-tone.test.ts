@@ -26,6 +26,16 @@ const YIN_THRESHOLD = 0.05;
 const MIN_HZ = 80;
 const MAX_HZ = 1000;
 
+/**
+ * Time limit of the cases that read a whole tone back with the YIN estimator below (about 160 frames
+ * of 1.1 million multiply-adds each). Measured on a developer machine: 0.12 s without coverage; with
+ * coverage on, in the full unit run, the slower of the two longest took 1.97 s (1.1 s when run alone).
+ * A CI runner then took 5.4 s, past the default limit of 5 s. The limit is 1.97 s x 4 (how much slower
+ * a CI runner may be) x 2.5 (margin) = 19.7 s, rounded up. It only bounds a hung or runaway estimator;
+ * no tolerance of the checks depends on it.
+ */
+const F0_ESTIMATE_TIMEOUT_MS = 20_000;
+
 /** YIN (de Cheveigne and Kawahara, 2002) on one frame centred at `centre`; null when unvoiced. */
 function yin(samples: Float64Array, rate: number, centre: number): number | null {
   const start = centre - WINDOW / 2;
@@ -116,9 +126,13 @@ const NOTES = [
 
 describe('harmonic tone generator', () => {
   for (const tuningHz of [440, 432]) {
-    it(`agrees with an independent F0 estimate at tuningHz ${String(tuningHz)}`, () => {
-      checkAgainstTruth(generateTone({ seed: 7, notes: NOTES, tuningHz }));
-    });
+    it(
+      `agrees with an independent F0 estimate at tuningHz ${String(tuningHz)}`,
+      () => {
+        checkAgainstTruth(generateTone({ seed: 7, notes: NOTES, tuningHz }));
+      },
+      F0_ESTIMATE_TIMEOUT_MS,
+    );
   }
 
   it('holds the pitch centre under vibrato and an amplitude envelope', () => {
