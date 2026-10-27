@@ -298,25 +298,48 @@ function clipKeySource(clipKey: ClipKey): string {
 }
 
 /**
- * The part of recommendation.reason for a clip whose key has other notes than the estimate. Setting the key of a
- * clip cannot be undone, so the agent asks first, whatever the origin of the key; a key the user set stands unless
- * the user wants another.
+ * A clip key that the agent must not replace without asking: it has other notes than the estimate, or the two
+ * cannot be compared (the scale is one this server has no name for, so it is not known whether the notes are the same).
  */
-function clipKeyAsk(clipKey: ClipKey): string {
-  const head = `the clip's key in OpenTune (${clipKeyName(clipKey)}, ${clipKeySource(clipKey)}) has other notes than this estimate`;
+interface ClipConflict {
+  readonly clipKey: ClipKey;
+  readonly comparable: boolean;
+}
+
+/**
+ * The part of recommendation.reason for a clip key that may differ from the estimate. Setting the key of a clip
+ * cannot be undone, so the agent asks first, whatever the origin of the key; a key the user set stands unless the
+ * user wants another.
+ */
+function clipKeyAsk({ clipKey, comparable }: ClipConflict): string {
+  const head = `the clip's key in OpenTune (${clipKeyName(clipKey)}, ${clipKeySource(clipKey)}) ${
+    comparable
+      ? 'has other notes than this estimate'
+      : 'cannot be compared with this estimate (its scale is not one this server knows)'
+  }`;
   return clipKey.origin === 'manual'
     ? `${head}: keep the user's choice unless the user wants another, and ask before calling opentune_set_clip`
     : `${head}: ask the user which one to use before calling opentune_set_clip`;
 }
 
 /**
- * The sentence for a clip whose key has the same notes as the estimate: snapping gives the same result, so the key
- * of the clip stays as it is and the agent has no irreversible step to take.
+ * The summary sentence for a clip key that cannot be compared with the estimate. It does not name the key: the scale
+ * is a word this server does not know.
  */
-function sameNotesText(clipKey: ClipKey): string {
+const NOT_COMPARABLE_TEXT =
+  "The clip has a key in OpenTune that this server cannot compare with this estimate (its scale is not one it knows): ask the user which one is right before the clip's key is set.";
+
+/**
+ * The sentence for a clip whose key has the same notes as a sure estimate: snapping gives the same result, so the key
+ * of the clip stays as it is and the agent has no irreversible step to take. Only where the estimate is the one to
+ * snap to: with a key change, each part has its own key (local_keys), and `scale: "clip"` is not offered.
+ */
+function sameNotesText(clipKey: ClipKey, changes: boolean): string {
   return (
     `The clip's key in OpenTune (${clipKeyName(clipKey)}, ${clipKeySource(clipKey)}) has the same notes as this estimate, ` +
-    'so snapping gives the same result: leave the clip key as it is and use scale "clip" in opentune_autotune_range.'
+    (changes
+      ? 'so snapping gives the same result and the clip key need not change; each part of the song still gets its own key (see local_keys).'
+      : 'so snapping gives the same result: leave the clip key as it is and use scale "clip" in opentune_autotune_range.')
   );
 }
 
@@ -366,9 +389,10 @@ function sourcesIn(e: Evidence, fromSec?: number, toSec?: number): SourceEvidenc
 
 /**
  * What to do with the estimate. `ask_user` is true when the scale set is uncertain, and also when the clip has a key
- * (`otherClipKey`) with other notes than the estimate: setting the key of the clip over it cannot be undone.
+ * (`conflict`) with other notes than the estimate, or one that cannot be compared with it: setting the key of the
+ * clip over it cannot be undone. A clip key with the same notes, and a clip without a key, do not add to it.
  */
-function recommendation(estimate: KeyEstimate, changes: boolean, otherClipKey: ClipKey | null = null): Json {
+function recommendation(estimate: KeyEstimate, changes: boolean, conflict: ClipConflict | null = null): Json {
   const top = estimate.order[0] ?? 0;
   const key = keyOf(top);
   const sure = estimate.scaleSetConfidence >= SCALE_SET_SURE;
@@ -383,7 +407,7 @@ function recommendation(estimate: KeyEstimate, changes: boolean, otherClipKey: C
       `${keyName(key)} and ${keyName(keyOf(relativeIndex(top)))} have the same notes, so snapping is the same with either`,
     );
   }
-  if (otherClipKey !== null) parts.push(clipKeyAsk(otherClipKey));
+  if (conflict !== null) parts.push(clipKeyAsk(conflict));
   if (changes) {
     parts.push(
       "the key changes (see local_keys): for each part, opentune_autotune_range with that part's range and key",
@@ -391,7 +415,7 @@ function recommendation(estimate: KeyEstimate, changes: boolean, otherClipKey: C
   }
   return {
     key: sure ? { root: key.root, scale: key.scale } : { root: key.root, scale: 'chromatic' },
-    ask_user: !sure || otherClipKey !== null,
+    ask_user: !sure || conflict !== null,
     reason: parts.join('; '),
   };
 }
@@ -600,6 +624,8 @@ function buildBody(
     );
   }
 
+  const clipSame =
+    vocals?.clipKey == null || estimate === null ? null : sameScaleSet(vocals.clipKey, keyOf(estimate.order[0] ?? 0));
   const clipInfo: Json | undefined =
     vocals === null
       ? undefined
@@ -607,10 +633,7 @@ function buildBody(
           contentId: vocals.contentId,
           placementId: vocals.placementId,
           key: vocals.clipKey,
-          same_scale_set_as_estimate:
-            vocals.clipKey === null || estimate === null
-              ? null
-              : sameScaleSet(vocals.clipKey, keyOf(estimate.order[0] ?? 0)),
+          same_scale_set_as_estimate: clipSame,
         };
   if (vocals !== null && vocals.clipKey === null) {
     reasons['clip.key'] = vocals.clipKeyInvalid ? 'invalid' : 'not_analyzed';
@@ -716,14 +739,24 @@ function buildBody(
     );
   }
   rest.push(...sentences);
-  // The clip key that has other notes than the estimate: asking the user before it is replaced is the recommendation.
-  const otherClipKey = clipInfo?.same_scale_set_as_estimate === false ? (vocals?.clipKey ?? null) : null;
-  if (otherClipKey !== null) {
-    rest.push(clipKeyText(otherClipKey, estimate.scaleSetConfidence >= SCALE_SET_SURE, !vocalsOnly));
-  } else if (clipInfo?.same_scale_set_as_estimate === true && vocals?.clipKey != null) {
-    rest.push(sameNotesText(vocals.clipKey));
+  // A clip key with other notes than the estimate, or one that cannot be compared with it: asking the user before it
+  // is replaced is the recommendation. A clip without a key has nothing to ask about.
+  const sure = estimate.scaleSetConfidence >= SCALE_SET_SURE;
+  const conflict: ClipConflict | null =
+    vocals?.clipKey != null && clipSame !== true ? { clipKey: vocals.clipKey, comparable: clipSame === false } : null;
+  if (conflict !== null) {
+    rest.push(conflict.comparable ? clipKeyText(conflict.clipKey, sure, !vocalsOnly) : NOT_COMPARABLE_TEXT);
+  } else if (clipSame === true && sure && vocals?.clipKey != null) {
+    // Only for a sure estimate: with an unsure one the recommendation is chromatic, not the key of the clip.
+    rest.push(sameNotesText(vocals.clipKey, changes));
   }
-  rest.push('Pass recommendation.key as key to opentune_set_clip or as scale to opentune_autotune_range.');
+  rest.push(
+    clipSame === true
+      ? 'Pass recommendation.key as scale to opentune_autotune_range.'
+      : conflict !== null
+        ? 'Pass recommendation.key as scale to opentune_autotune_range, or as key to opentune_set_clip once the user has agreed.'
+        : 'Pass recommendation.key as key to opentune_set_clip or as scale to opentune_autotune_range.',
+  );
 
   // A section is outside the audio only when both the mix and the clip's source audio end before it.
   const audioEndSec =
@@ -760,7 +793,7 @@ function buildBody(
     scale_set_confidence: round(estimate.scaleSetConfidence),
     tonic_confidence: round(estimate.tonicConfidence),
     scale_set: { keys: [keyEntry(top), keyEntry(relativeIndex(top))], tonic_clear: tonicClear },
-    recommendation: recommendation(estimate, changes, otherClipKey),
+    recommendation: recommendation(estimate, changes, conflict),
     tuning_offset_cents: cents(primary?.offsetCents),
     tuning,
     sources,

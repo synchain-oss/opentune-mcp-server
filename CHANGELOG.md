@@ -90,16 +90,20 @@ versioned separately and has its own changelog.
 - The companion skills `tuning-workflow`, `check-results` and `lyrics-timeline` now treat a clear request from the user as the agreement for that step, ask a question only once and only about what the tools cannot find out, use only the files the user named, confirm that the render is current before a result is called ready to listen to, and compare before and after pitch figures only when they share the same target basis.
 - The `tuning-workflow` and `check-results` skills now tell the agent to check the earlier corrections after reopening a project before saying the content is all there, name the file that holds the version before a risky step, name an open welcome page or dialog from the `kind` of `blockedBy` (`onboarding` or `dialog`) and close it only with the user's agreement, read a status again before reporting it as not ready, describe the rendering priority by the backend actually in use, ask before a `regenerate` that resets the notes, give one key confidence figure, mention clipping only when the export result reports a peak above 0 dBFS (and say neither that it clips nor that it does not when the peak was not measured), and state only the range that was checked.
 - `opentune_estimate_key` sets `recommendation.ask_user` to `true` also when the key the clip already has in OpenTune
-  has other notes than the estimate (`clip.same_scale_set_as_estimate` is `false`), whether the key was set by the user,
+  has other notes than the estimate (`clip.same_scale_set_as_estimate` is `false`) or cannot be compared with it
+  (`null` while the clip has a key: its scale is one this server has no name for), whether the key was set by the user,
   found automatically or is of unknown origin; before, only a scale set confidence under 0.6 did, so a result could say
   "offer it to the user before setting it" and `ask_user: false` at once. `recommendation.reason` then says that the
-  clip's key has other notes and that the user is asked before `opentune_set_clip` is called (a key the user set stands
-  unless they want another). When the clip key has the same notes as the estimate, the summary says that snapping gives
-  the same result and the clip key need not change (`scale: "clip"`). Without a clip, without a clip key or when the
-  scales cannot be compared nothing changes. The `tuning-workflow` skill says the same: a request for the whole job
-  ("analyse it, then tune it") does not cover replacing the key OpenTune found for the clip, which cannot be undone, so
-  the agent asks once, leaves the clip key as it is when the user does not answer, and after a key change says in the
-  first sentence that it changed, cannot be undone and how to go back in plain words. See
+  clip's key has other notes (or cannot be compared) and that the user is asked before `opentune_set_clip` is called (a
+  key the user set stands unless they want another), and the closing sentence of the summary offers `opentune_set_clip`
+  only once the user has agreed. When the clip key has the same notes as a sure estimate, the summary says that
+  snapping gives the same result and the clip key need not change, and offers `scale: "clip"` only when the key does
+  not change along the song; with an unsure estimate it says nothing about the clip key (the recommendation is
+  chromatic), and its closing sentence no longer names `opentune_set_clip`. Without a clip or without a clip key
+  nothing changes. The `tuning-workflow` skill says the same: a request for the whole job ("analyse it, then tune it")
+  does not cover replacing the key OpenTune found for the clip, which cannot be undone, so the agent asks once (also
+  when the notes could not be compared), leaves the clip key as it is when the user does not answer, and after a key
+  change says in the first sentence that it changed, cannot be undone and how to go back in plain words. See
   `docs/contract-changes/20261027-estimate-key-ask-user.md`.
 
 ### Removed
