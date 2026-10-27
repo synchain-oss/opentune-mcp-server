@@ -288,6 +288,38 @@ export function clipKeyName(clipKey: Pick<ClipKey, 'root' | 'scale'>): string {
   return `${named} on root ${String(clipKey.root)}`;
 }
 
+/** Where the key of the clip comes from, in words; an origin this server does not know is "of unknown origin". */
+function clipKeySource(clipKey: ClipKey): string {
+  return clipKey.origin === 'manual'
+    ? 'set by the user'
+    : clipKey.origin === 'automatic'
+      ? 'found automatically'
+      : 'of unknown origin';
+}
+
+/**
+ * The part of recommendation.reason for a clip whose key has other notes than the estimate. Setting the key of a
+ * clip cannot be undone, so the agent asks first, whatever the origin of the key; a key the user set stands unless
+ * the user wants another.
+ */
+function clipKeyAsk(clipKey: ClipKey): string {
+  const head = `the clip's key in OpenTune (${clipKeyName(clipKey)}, ${clipKeySource(clipKey)}) has other notes than this estimate`;
+  return clipKey.origin === 'manual'
+    ? `${head}: keep the user's choice unless the user wants another, and ask before calling opentune_set_clip`
+    : `${head}: ask the user which one to use before calling opentune_set_clip`;
+}
+
+/**
+ * The sentence for a clip whose key has the same notes as the estimate: snapping gives the same result, so the key
+ * of the clip stays as it is and the agent has no irreversible step to take.
+ */
+function sameNotesText(clipKey: ClipKey): string {
+  return (
+    `The clip's key in OpenTune (${clipKeyName(clipKey)}, ${clipKeySource(clipKey)}) has the same notes as this estimate, ` +
+    'so snapping gives the same result: leave the clip key as it is and use scale "clip" in opentune_autotune_range.'
+  );
+}
+
 /**
  * The sentence for a clip whose key has other notes than the estimate, in plain words and with a verdict on
  * which of the two to trust. A key a person set stands. A key OpenTune found on its own gives way to a sure
@@ -297,13 +329,7 @@ export function clipKeyName(clipKey: Pick<ClipKey, 'root' | 'scale'>): string {
  * is said as "of unknown origin", and the sentence then never claims that the key was found automatically.
  */
 function clipKeyText(clipKey: ClipKey, estimateSure: boolean, hearsMix: boolean): string {
-  const source =
-    clipKey.origin === 'manual'
-      ? 'set by the user'
-      : clipKey.origin === 'automatic'
-        ? 'found automatically'
-        : 'of unknown origin';
-  const head = `The clip's key in OpenTune (${clipKeyName(clipKey)}, ${source}) has other notes than this estimate`;
+  const head = `The clip's key in OpenTune (${clipKeyName(clipKey)}, ${clipKeySource(clipKey)}) has other notes than this estimate`;
   if (clipKey.origin === 'manual')
     return `${head}: the user's choice is the more trustworthy, so keep it unless the user wants another.`;
   if (clipKey.origin === 'automatic' && estimateSure && hearsMix) {
@@ -338,7 +364,11 @@ function sourcesIn(e: Evidence, fromSec?: number, toSec?: number): SourceEvidenc
   return out;
 }
 
-function recommendation(estimate: KeyEstimate, changes: boolean): Json {
+/**
+ * What to do with the estimate. `ask_user` is true when the scale set is uncertain, and also when the clip has a key
+ * (`otherClipKey`) with other notes than the estimate: setting the key of the clip over it cannot be undone.
+ */
+function recommendation(estimate: KeyEstimate, changes: boolean, otherClipKey: ClipKey | null = null): Json {
   const top = estimate.order[0] ?? 0;
   const key = keyOf(top);
   const sure = estimate.scaleSetConfidence >= SCALE_SET_SURE;
@@ -353,6 +383,7 @@ function recommendation(estimate: KeyEstimate, changes: boolean): Json {
       `${keyName(key)} and ${keyName(keyOf(relativeIndex(top)))} have the same notes, so snapping is the same with either`,
     );
   }
+  if (otherClipKey !== null) parts.push(clipKeyAsk(otherClipKey));
   if (changes) {
     parts.push(
       "the key changes (see local_keys): for each part, opentune_autotune_range with that part's range and key",
@@ -360,7 +391,7 @@ function recommendation(estimate: KeyEstimate, changes: boolean): Json {
   }
   return {
     key: sure ? { root: key.root, scale: key.scale } : { root: key.root, scale: 'chromatic' },
-    ask_user: !sure,
+    ask_user: !sure || otherClipKey !== null,
     reason: parts.join('; '),
   };
 }
@@ -685,8 +716,12 @@ function buildBody(
     );
   }
   rest.push(...sentences);
-  if (clipInfo?.same_scale_set_as_estimate === false && vocals?.clipKey != null) {
-    rest.push(clipKeyText(vocals.clipKey, estimate.scaleSetConfidence >= SCALE_SET_SURE, !vocalsOnly));
+  // The clip key that has other notes than the estimate: asking the user before it is replaced is the recommendation.
+  const otherClipKey = clipInfo?.same_scale_set_as_estimate === false ? (vocals?.clipKey ?? null) : null;
+  if (otherClipKey !== null) {
+    rest.push(clipKeyText(otherClipKey, estimate.scaleSetConfidence >= SCALE_SET_SURE, !vocalsOnly));
+  } else if (clipInfo?.same_scale_set_as_estimate === true && vocals?.clipKey != null) {
+    rest.push(sameNotesText(vocals.clipKey));
   }
   rest.push('Pass recommendation.key as key to opentune_set_clip or as scale to opentune_autotune_range.');
 
@@ -725,7 +760,7 @@ function buildBody(
     scale_set_confidence: round(estimate.scaleSetConfidence),
     tonic_confidence: round(estimate.tonicConfidence),
     scale_set: { keys: [keyEntry(top), keyEntry(relativeIndex(top))], tonic_clear: tonicClear },
-    recommendation: recommendation(estimate, changes),
+    recommendation: recommendation(estimate, changes, otherClipKey),
     tuning_offset_cents: cents(primary?.offsetCents),
     tuning,
     sources,
