@@ -1,0 +1,129 @@
+{
+  "description": "A save when the project folder has audio: the old version gets a copy of it in its own Project_Media folder, so it still opens when the original audio is gone.",
+  "tool": "opentune_save_project",
+  "input": {
+    "mode": "save",
+    "wait_seconds": 10
+  },
+  "result": {
+    "summary": "opentune_save_project: saved the project to its file (path in path), replacing its previous content; a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences. OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "NOT_SAVED_IN_PROJECT",
+        "text": "The change is not saved in the project file.",
+        "subject": null,
+        "data": {
+          "items": [
+            "visibleTrackCount",
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      },
+      {
+        "code": "NOT_SAVED_IN_PROJECT",
+        "subject": null,
+        "data": {
+          "items": [
+            "visibleTrackCount",
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      }
+    ],
+    "job": {
+      "jobId": "j:01234567:5",
+      "kind": "projectSave",
+      "state": "succeeded"
+    },
+    "path": "<tmp-2>/existing.otproj",
+    "sizeBytes": "<size>",
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [],
+    "changeTable": {
+      "rows": [],
+      "omittedChangeCount": 0
+    },
+    "notSavedInProject": [
+      "visibleTrackCount",
+      "undoHistory",
+      "preferences"
+    ],
+    "mediaFolder": null,
+    "nullReasons": {
+      "mediaFolder": "project_path_not_given"
+    },
+    "oldVersion": {
+      "path": "<tmp-2>/existing.oldversion/existing-20261028-140509-2.otproj",
+      "folder": "<tmp-2>/existing.oldversion",
+      "keep": 10,
+      "reused": false,
+      "media": {
+        "copied": 1,
+        "notCopied": [],
+        "notCopiedCount": 0
+      },
+      "removedOlder": 0,
+      "couldNotRemove": 0
+    }
+  }
+}

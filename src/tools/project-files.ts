@@ -7,10 +7,12 @@
 // autosave of its own, so this tool provides one: mode autosave writes a numbered copy of the project
 // into <name>.autosave next to the project file and never touches the project file, its unsaved-changes
 // flag or the recent-projects list. Replacing the project file (mode save, save_as, the overwrite tool)
-// first copies the old content into <name>.oldversion; replacing another project file and discarding
-// unsaved changes are separate, explicit steps that need the user's consent. The file system work is in
-// src/files/project-folders.ts. File names and paths come back only as data inside the result, never in
-// the summary.
+// first copies the old content into <name>.oldversion, together with the audio the old content uses (the files of
+// the Project_Media folder next to that file, into <name>.oldversion/Project_Media, where an old version looks for
+// its audio; a failure to copy the audio does not stop the save and comes back as a warning); replacing another
+// project file and discarding unsaved changes are separate, explicit steps that need the user's consent. The file
+// system work is in src/files/project-folders.ts. File names and paths come back only as data inside the result,
+// never in the summary.
 
 import { z } from 'zod';
 
@@ -25,6 +27,7 @@ import {
   removeOldVersion,
   rollAutosaves,
   rollOldVersions,
+  type MediaCopy,
   type OldVersion,
   type ProjectFs,
   type Rolled,
@@ -353,6 +356,47 @@ const KEPT =
   'a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); ' +
   'opening that copy with opentune_open_project goes back to it.';
 
+/**
+ * The code of the warning line this server adds when the audio of a replaced project could not be copied beside its old
+ * version. It is not a code of OpenTune's registry, so the line says `source: 'server'`.
+ */
+const MEDIA_NOT_COPIED = 'OLD_VERSION_MEDIA_NOT_COPIED';
+
+/** The sentence of the summary for audio that was not copied. Fixed: the names are data in oldVersion.media. */
+const MEDIA_NOT_COPIED_SENTENCE =
+  ' The audio of the replaced project could not be copied completely into the Project_Media folder inside the ' +
+  'oldversion folder (listed in oldVersion.media.notCopied), so that old version may not find its audio when it is ' +
+  'opened after the original audio files are gone.';
+
+/** `oldVersion.media`: how many audio files were copied, and which were not (`notCopied`, relative paths, as data). */
+const mediaMember = (media: MediaCopy): Json => ({
+  copied: media.copied,
+  notCopied: [...media.notCopied],
+  notCopiedCount: media.notCopiedCount,
+});
+
+/** The sentence about audio that was not copied, or nothing when all of it was (or there was none). */
+const mediaSentence = (backup: OldVersion | null): string =>
+  backup === null || backup.media.notCopiedCount === 0 ? '' : MEDIA_NOT_COPIED_SENTENCE;
+
+/** The lines of a result, and the warning line about audio that was not copied when some was not. */
+function linesWithMedia(lines: unknown, backup: OldVersion | null): unknown[] {
+  const own = Array.isArray(lines) ? (lines as unknown[]) : [];
+  if (backup === null || backup.media.notCopiedCount === 0) return own;
+  const warning: Json = {
+    kind: 'warning',
+    code: MEDIA_NOT_COPIED,
+    source: 'server',
+    text:
+      'The audio of the replaced project was not copied completely into the Project_Media folder inside the ' +
+      'oldversion folder, so that old version may not find its audio when it is opened after the original audio ' +
+      'files are gone (the files are in data.notCopied).',
+    subject: null,
+    data: { notCopied: [...backup.media.notCopied], notCopiedCount: backup.media.notCopiedCount },
+  };
+  return [...own, warning];
+}
+
 /** Starts a save job, waits for it and renders the result. */
 async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: number | undefined, save: Save) {
   const capabilities = save.replaces === 'requested' ? CAPABILITIES : SAVE_CAPABILITIES;
@@ -384,7 +428,13 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
     const kept: Json | null =
       backup === null
         ? null
-        : { path: backup.file, folder: backup.folder, keep: OLDVERSION_KEEP, reused: backup.reused };
+        : {
+            path: backup.file,
+            folder: backup.folder,
+            keep: OLDVERSION_KEEP,
+            reused: backup.reused,
+            media: mediaMember(backup.media),
+          };
     if (job === null || !isTerminal(job)) {
       const outcome = writeOutcome(started, { tool: save.tool });
       if (!outcome.ok) return outcome;
@@ -397,7 +447,8 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
         ok: true,
         body: {
           ...outcome.body,
-          summary: outcome.body.summary + note + keptNote,
+          summary: outcome.body.summary + note + keptNote + mediaSentence(backup),
+          lines: linesWithMedia(outcome.body.lines, backup),
           ...(kept === null ? {} : { oldVersion: kept }),
           ...extra,
         },
@@ -466,8 +517,9 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
         ...rendered,
         summary:
           `${save.tool}: ${first}${reusedNote}${rolledSentence(rolled, OLDVERSION_KEEP, 'old version', 'old versions')}` +
-          `${toNewPlace ? ` ${MEDIA_COPY}` : ''}${dirty === '' ? '' : ` ${dirty}`}${missing}` +
+          `${mediaSentence(backup)}${toNewPlace ? ` ${MEDIA_COPY}` : ''}${dirty === '' ? '' : ` ${dirty}`}${missing}` +
           (toNewPlace ? '' : ` ${MEDIA_COPY}`),
+        lines: linesWithMedia(rendered.lines, backup),
         job: jobRef(job),
         notSavedInProject: stored.names,
         ...mediaMembers,

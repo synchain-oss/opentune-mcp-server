@@ -69,6 +69,14 @@ function recorded(overrides: Partial<ProjectFs> = {}) {
       calls.push({ op: 'copyNew', args: [from, to] });
       return (overrides.copyNew ?? nodeProjectFs.copyNew)(from, to);
     },
+    copyReplace: (from, to) => {
+      calls.push({ op: 'copyReplace', args: [from, to] });
+      return (overrides.copyReplace ?? nodeProjectFs.copyReplace)(from, to);
+    },
+    stat: (file) => {
+      calls.push({ op: 'stat', args: [file] });
+      return (overrides.stat ?? nodeProjectFs.stat)(file);
+    },
     remove: (file) => {
       calls.push({ op: 'remove', args: [file] });
       return (overrides.remove ?? nodeProjectFs.remove)(file);
@@ -133,6 +141,10 @@ async function setup(options: SetupOptions = {}) {
     autosaveDir: path.join(dir, `${stem}.autosave`),
     oldDir: path.join(dir, `${stem}.oldversion`),
     otherOldDir: path.join(path.dirname(other), `${otherStem}.oldversion`),
+    mediaDir: path.join(dir, 'Project_Media'),
+    oldMediaDir: path.join(dir, `${stem}.oldversion`, 'Project_Media'),
+    otherMediaDir: path.join(path.dirname(other), 'Project_Media'),
+    otherOldMediaDir: path.join(path.dirname(other), `${otherStem}.oldversion`, 'Project_Media'),
   };
 }
 
@@ -651,6 +663,12 @@ describe('where the file system work happens', () => {
     populate(s.oldDir, ['notes.txt', 'mine.otproj']);
     populate(s.autosaveDir, ['notes.txt', 'mine.otproj']);
     fs.mkdirSync(path.join(s.autosaveDir, 'Project_Media'));
+    // The audio next to both project files, one file of which an older copy exists of in the oldversion folder.
+    populate(s.mediaDir, ['1.wav', '2.wav']);
+    populate(s.otherMediaDir, ['1.wav']);
+    fs.mkdirSync(path.join(s.mediaDir, 'sub'));
+    populate(s.oldMediaDir, ['2.wav']);
+    fs.utimesSync(path.join(s.oldMediaDir, '2.wav'), new Date(2020, 0, 1), new Date(2020, 0, 1));
 
     body(await autosave(s.ctx));
     body(await autosave(s.ctx));
@@ -659,6 +677,12 @@ describe('where the file system work happens', () => {
     body(await overwriteProject(s.ctx, { path: s.other, confirm: true, ...wait }));
 
     const folders = new Set([s.autosaveDir, s.oldDir, s.otherOldDir]);
+    // The audio folders next to the project files, and the folder next to each old version that gets a copy of it.
+    const mediaTargets = new Map([
+      [s.mediaDir, s.oldMediaDir],
+      [s.otherMediaDir, s.otherOldMediaDir],
+    ]);
+    const oldMediaDirs = new Set(mediaTargets.values());
     const projectFiles = new Set([s.proj, s.other]);
     const pattern = (dir: string): RegExp => {
       const stem = dir === s.otherOldDir ? otherStem : s.stem;
@@ -672,18 +696,35 @@ describe('where the file system work happens', () => {
       const [first = '', second = ''] = call.args;
       switch (call.op) {
         case 'list':
+          expect(folders.has(first) || mediaTargets.has(first), `list ${first}`).toBe(true);
+          break;
         case 'makeDir':
-          expect(folders.has(first), `${call.op} ${first}`).toBe(true);
+          expect(folders.has(first) || oldMediaDirs.has(first), `makeDir ${first}`).toBe(true);
           break;
         case 'remove':
+          // Nothing in an audio folder is deleted (only the part of a failed copy is, which no call here has).
           expect(folders.has(path.dirname(first)), `remove ${first}`).toBe(true);
           expect(pattern(path.dirname(first)).test(path.basename(first)), `remove ${first}`).toBe(true);
           break;
-        case 'copyNew':
-          expect(projectFiles.has(first), `copy from ${first}`).toBe(true);
-          expect(path.dirname(second) === s.oldDir || path.dirname(second) === s.otherOldDir, `copy to ${second}`).toBe(
+        case 'stat':
+          expect(mediaTargets.has(path.dirname(first)) || oldMediaDirs.has(path.dirname(first)), `stat ${first}`).toBe(
             true,
           );
+          break;
+        case 'copyNew':
+        case 'copyReplace':
+          if (mediaTargets.has(path.dirname(first))) {
+            // An audio file goes to the audio folder of the old versions of its own project file, under its own name.
+            expect(path.dirname(second), `copy to ${second}`).toBe(mediaTargets.get(path.dirname(first)));
+            expect(path.basename(second), `copy to ${second}`).toBe(path.basename(first));
+          } else {
+            expect(call.op, `copy from ${first}`).toBe('copyNew');
+            expect(projectFiles.has(first), `copy from ${first}`).toBe(true);
+            expect(
+              path.dirname(second) === s.oldDir || path.dirname(second) === s.otherOldDir,
+              `copy to ${second}`,
+            ).toBe(true);
+          }
           break;
         case 'fileExists':
           expect(projectFiles.has(first), `fileExists ${first}`).toBe(true);
@@ -707,6 +748,13 @@ describe('where the file system work happens', () => {
     }
     expect(fs.existsSync(path.join(s.autosaveDir, 'Project_Media'))).toBe(true);
     expect(fs.existsSync(s.proj) && fs.existsSync(s.other)).toBe(true);
+    // The audio was copied beside the old versions, by both a first copy and a replacement of an older file, and the
+    // audio folders next to the project files are as they were.
+    expect(calls.some((c) => c.op === 'copyNew' && c.args[1]?.startsWith(s.oldMediaDir))).toBe(true);
+    expect(calls.some((c) => c.op === 'copyReplace' && c.args[1]?.startsWith(s.oldMediaDir))).toBe(true);
+    expect(names(s.oldMediaDir)).toEqual(['1.wav', '2.wav']);
+    expect(names(s.otherOldMediaDir)).toEqual(['1.wav']);
+    expect(names(s.mediaDir)).toEqual(['1.wav', '2.wav', 'sub']);
   });
 });
 
