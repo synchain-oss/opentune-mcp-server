@@ -2,8 +2,8 @@
 
 - Date: 2026-10-28
 - Frozen surface: `spec/otcp/v1/**`
-- Specification version: `1.0.0-rc.7` → `1.0.0-rc.8` (wire version `1.0`, unchanged). `1.0.0-rc.8` is unreleased; its section in
-  the changelog is dated when the maintainers fix the text. The tag `spec-v1.0.0-rc.8` is set by the maintainers after approval.
+- Specification version: `1.0.0-rc.7` → `1.0.0-rc.8` (wire version `1.0`, unchanged). The changelog section of `1.0.0-rc.8` is dated
+  2026-10-28, the day it is merged. The tag `spec-v1.0.0-rc.8` is set by the maintainers on that day, after approval.
 - Implementation lines changed with it: this commit changes the specification only. The mock, the tools and the tests that use
   the method follow in the same pull request (`20261028-autosave-and-save-rules.md`).
 
