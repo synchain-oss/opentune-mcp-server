@@ -215,11 +215,11 @@ describe('opentune_save_project', () => {
     expect(JSON.stringify(done)).toContain('succeeded');
   });
 
-  it('declares itself non-destructive and idempotent, with the project methods it calls', () => {
+  it('declares itself non-destructive and not idempotent (each autosave is a new copy), with the project methods it calls', () => {
     expect(saveProjectTool.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: true,
+      idempotentHint: false,
       openWorldHint: false,
     });
     expect(saveProjectTool.capabilities).toContain('project.io');
@@ -308,8 +308,18 @@ describe('opentune_open_project', () => {
     const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true });
     const error = failure(await openProject(ctx, { path: need(ids, 'existing'), ...wait }));
     expect(error).toMatchObject({ kind: 'UNSAVED_CHANGES', reason: 'project_dirty' });
-    expect(error.nextStep).toMatchObject({ actor: 'agent', tool: 'opentune_save_project' });
+    // The agent writes a copy and asks; it is not sent to save the project file.
+    expect(error.nextStep).toMatchObject({
+      actor: 'agent',
+      tool: 'opentune_save_project',
+      args: { mode: 'autosave' },
+    });
+    expect(error.nextStep.message).toMatch(/mode autosave/);
+    expect(error.nextStep.message).toMatch(/ask the user whether to save the project/);
+    expect(error.nextStep.message).toMatch(/do neither without an answer/);
     expect(error.nextStep.message).toMatch(/discard_unsaved: true/);
+    expect(JSON.stringify(error.nextStep.args)).not.toContain('"save"');
+    expect(error.nextStep.message).not.toMatch(/save the project (first|with)/i);
     expect(mock.snapshot().placements.length).toBe(1);
 
     const result = body(await openProject(ctx, { path: need(ids, 'existing'), discard_unsaved: true, ...wait }));

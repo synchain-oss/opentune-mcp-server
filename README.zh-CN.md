@@ -139,7 +139,7 @@ OpenTune 会分析录好的人声,把它显示为音符与音高曲线,并用神
 | --- | --- | --- |
 | `opentune_get_status` | 报告 OpenTune 现在能否使用,附带 `nextStep`,并列出正在运行的实例。最先调用它。 | 只读。 |
 | `opentune_launch` | 用控制接口启动配置好的 OpenTune 构建,或说明为什么不能启动。 | 第二个实例需要 `allow_second_instance`,只能在你同意后使用。 |
-| `opentune_quit` | 像窗口的关闭按钮一样关闭 OpenTune,并等到它真正退出。 | 标记为破坏性。与窗口不同,有未保存的改动时它会拒绝关闭(`UNSAVED_CHANGES`):先保存,或在你同意后带 `discard_unsaved: true`;这样丢掉的改动无法找回。用 `opentune_launch` 重新启动 OpenTune。 |
+| `opentune_quit` | 像窗口的关闭按钮一样关闭 OpenTune,并等到它真正退出。 | 标记为破坏性。与窗口不同,有未保存的改动时它会拒绝关闭(`UNSAVED_CHANGES`):agent 先写一个自动副本,再问你是保存工程还是放弃改动;只有你同意后才带 `discard_unsaved: true`,这样丢掉的改动无法找回。用 `opentune_launch` 重新启动 OpenTune。 |
 | `opentune_get_job` | 跟踪长时间的操作(导入、导出、分析、工程打开或保存)。 | 只读。 |
 | `opentune_cancel_job` | 请 OpenTune 停止一个运行中的任务。任务已经提交的部分会保留。 | 无法取消的任务会继续运行,错误里会说明。 |
 

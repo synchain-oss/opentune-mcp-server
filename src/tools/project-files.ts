@@ -149,12 +149,20 @@ const noPathStep: NextStep = {
     'absolute .otproj path, for example next to the vocal file.',
 };
 
+/**
+ * The agent writes a copy (an autosave leaves the project file alone) and asks; it never saves the project file or
+ * gives the changes up on its own.
+ */
 const unsavedStep: NextStep = {
   actor: 'agent',
   tool: SAVE,
+  args: { mode: 'autosave' },
   message:
-    'Save the project first with opentune_save_project. Only if the user explicitly agrees to lose the unsaved ' +
-    'changes, call opentune_open_project again with discard_unsaved: true.',
+    'Write a copy first with opentune_save_project (mode autosave; a project that was never saved has no file for a ' +
+    'copy, so skip it). Then ask the user whether to save the project (mode save, or mode save_as with an absolute ' +
+    '.otproj path if it was never saved) or to throw the unsaved changes away; do neither without an answer. After ' +
+    'a save, call opentune_open_project again. Only if the user explicitly agrees to throw the changes away, call ' +
+    'it again with discard_unsaved: true.',
 };
 
 /** Items of NOT_SAVED_IN_PROJECT that this server can name, in the order OpenTune listed them. */
@@ -353,9 +361,10 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
     const prepared = await keepOldVersion(ctx, session, save);
     if (!prepared.ok) return prepared.outcome;
     const { backup, folders } = prepared;
-    // The old version made for a save that did not happen is deleted again: the file it copied is still there.
+    // The old version made for a save that did not happen is deleted again: the file it copied is still there. One
+    // that was there before (the newest already held the content) is not this save's to delete.
     const dropBackup = async (): Promise<void> => {
-      if (backup !== null && folders !== null) await removeOldVersion(ops, folders, backup.name);
+      if (backup !== null && !backup.reused && folders !== null) await removeOldVersion(ops, folders, backup.name);
     };
     let run;
     try {
@@ -373,7 +382,9 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
     const { started, job, waitFailed } = run;
     const extra: Json = save.requested === null ? {} : { requestedPath: save.requested };
     const kept: Json | null =
-      backup === null ? null : { path: backup.file, folder: backup.folder, keep: OLDVERSION_KEEP };
+      backup === null
+        ? null
+        : { path: backup.file, folder: backup.folder, keep: OLDVERSION_KEEP, reused: backup.reused };
     if (job === null || !isTerminal(job)) {
       const outcome = writeOutcome(started, { tool: save.tool });
       if (!outcome.ok) return outcome;
@@ -381,7 +392,7 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
       const keptNote =
         kept === null
           ? ''
-          : ' The previous content of the file was copied to its oldversion folder (path in oldVersion.path).';
+          : ' The previous content of the file is kept in its oldversion folder (path in oldVersion.path).';
       return {
         ok: true,
         body: {
@@ -432,6 +443,10 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
           : backup === null
             ? "saved the project to the file given (path in path); from now on it is the project's file."
             : `saved the project to the file given (path in path), which was already the project's file, replacing its previous content; ${KEPT}`;
+    const reusedNote =
+      backup?.reused === true
+        ? ' The newest old version already held exactly this content, so no new copy was made.'
+        : '';
     const stored = notStored(result);
     const missing = stored.phrases.length === 0 ? '' : ` Not stored in the project file: ${stored.phrases.join(', ')}.`;
     const dirty = dirtySentence(result);
@@ -450,7 +465,7 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
       body: {
         ...rendered,
         summary:
-          `${save.tool}: ${first}${rolledSentence(rolled, OLDVERSION_KEEP, 'old version', 'old versions')}` +
+          `${save.tool}: ${first}${reusedNote}${rolledSentence(rolled, OLDVERSION_KEEP, 'old version', 'old versions')}` +
           `${toNewPlace ? ` ${MEDIA_COPY}` : ''}${dirty === '' ? '' : ` ${dirty}`}${missing}` +
           (toNewPlace ? '' : ` ${MEDIA_COPY}`),
         job: jobRef(job),
@@ -776,10 +791,10 @@ export const saveProjectTool = defineTool({
   title: 'Save OpenTune project',
   description:
     'OpenTune (audio vocal pitch editor): saves the project. mode autosave writes a numbered copy into ' +
-    '<name>.autosave next to the project file (newest 50 kept) and writes nothing outside that folder: use it after each step ' +
-    'without asking. mode save overwrites the project file; save_as takes an absolute .otproj path and makes ' +
-    'it the project file; both keep the replaced file in <name>.oldversion (newest 10), only when the user ' +
-    'asks or agrees. A different existing file is refused: use another path, or ' +
+    '<name>.autosave next to the project file (newest 50 kept) and writes nothing outside that folder: use it ' +
+    'after each step without asking. mode save overwrites the project file; save_as takes an absolute .otproj ' +
+    'path and makes it the project file; use both only when the user asks or agrees (the replaced file goes to ' +
+    '<name>.oldversion, newest 10). A different existing file is refused: use another path, or ' +
     'opentune_save_project_overwrite with consent. Waits up to wait_seconds (default 25, max 30).',
   inputSchema: z.strictObject({
     mode: z
@@ -798,7 +813,8 @@ export const saveProjectTool = defineTool({
     instance_id: instanceIdSchema,
   }),
   outputSchema: WRITE_RESULT_OUTPUT,
-  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  // Not idempotent: every autosave writes a new numbered copy.
+  annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   capabilities: [...SAVE_CAPABILITIES],
   optionalCapabilities: [COPY_CAPABILITY],
   otcpMethods: ['project.save', 'project.saveAs', 'project.saveCopy', 'project.get', 'job.get'],
@@ -834,8 +850,9 @@ export const openProjectTool = defineTool({
   title: 'Open OpenTune project',
   description:
     'OpenTune (audio vocal pitch editor): opens an .otproj file (absolute path) and replaces the current project. ' +
-    "Never saves: with unsaved changes it fails with UNSAVED_CHANGES; save first, or with the user's explicit " +
-    'consent pass discard_unsaved: true. Clears the undo history; old clip and placement ids become invalid ' +
+    'Never saves: with unsaved changes it fails with UNSAVED_CHANGES; write a copy with mode autosave and ask the ' +
+    'user to save or give the changes up, and only with their explicit consent pass discard_unsaved: true. ' +
+    'Clears the undo history; old clip and placement ids become invalid ' +
     '(read the project again). Clips whose media file is missing are skipped and listed. Waits up to ' +
     'wait_seconds (default 25, max 30).',
   inputSchema: z.strictObject({

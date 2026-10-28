@@ -106,7 +106,7 @@ OTCP capabilities: `session.v1`. OTCP methods: `session.hello`, `session.info`.
 
 **Quit OpenTune**: changes state, destructive, idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES, so save first with opentune_save_project, or pass discard_unsaved: true only when the user explicitly agreed to lose the changes (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune again with opentune_launch.
+OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES. Then write a copy with opentune_save_project (mode autosave) and ask the user to save or to give the changes up; pass discard_unsaved: true only when the user explicitly agreed to lose them (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune again with opentune_launch.
 
 OTCP capabilities: `app.quit`. OTCP methods: `app.quit`.
 
@@ -334,9 +334,9 @@ OTCP capabilities: `read.v1`. OTCP methods: `content.getDetails`, `content.getNo
 
 ### `opentune_save_project`
 
-**Save OpenTune project**: changes state, not destructive, idempotent, closed world.
+**Save OpenTune project**: changes state, not destructive, not idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): saves the project. mode autosave writes a numbered copy into <name>.autosave next to the project file (newest 50 kept) and writes nothing outside that folder: use it after each step without asking. mode save overwrites the project file; save_as takes an absolute .otproj path and makes it the project file; both keep the replaced file in <name>.oldversion (newest 10), only when the user asks or agrees. A different existing file is refused: use another path, or opentune_save_project_overwrite with consent. Waits up to wait_seconds (default 25, max 30).
+OpenTune (audio vocal pitch editor): saves the project. mode autosave writes a numbered copy into <name>.autosave next to the project file (newest 50 kept) and writes nothing outside that folder: use it after each step without asking. mode save overwrites the project file; save_as takes an absolute .otproj path and makes it the project file; use both only when the user asks or agrees (the replaced file goes to <name>.oldversion, newest 10). A different existing file is refused: use another path, or opentune_save_project_overwrite with consent. Waits up to wait_seconds (default 25, max 30).
 
 OTCP capabilities: `project.io`, `jobs.v1`, `read.v1`. Needed by one mode only: `project.copy`. OTCP methods: `project.save`, `project.saveAs`, `project.saveCopy`, `project.get`, `job.get`.
 
@@ -366,7 +366,7 @@ OTCP capabilities: `project.io`, `jobs.v1`. OTCP methods: `project.saveAs`, `job
 
 **Open OpenTune project**: changes state, destructive, not idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): opens an .otproj file (absolute path) and replaces the current project. Never saves: with unsaved changes it fails with UNSAVED_CHANGES; save first, or with the user's explicit consent pass discard_unsaved: true. Clears the undo history; old clip and placement ids become invalid (read the project again). Clips whose media file is missing are skipped and listed. Waits up to wait_seconds (default 25, max 30).
+OpenTune (audio vocal pitch editor): opens an .otproj file (absolute path) and replaces the current project. Never saves: with unsaved changes it fails with UNSAVED_CHANGES; write a copy with mode autosave and ask the user to save or give the changes up, and only with their explicit consent pass discard_unsaved: true. Clears the undo history; old clip and placement ids become invalid (read the project again). Clips whose media file is missing are skipped and listed. Waits up to wait_seconds (default 25, max 30).
 
 OTCP capabilities: `project.io`, `jobs.v1`. OTCP methods: `project.open`, `job.get`.
 

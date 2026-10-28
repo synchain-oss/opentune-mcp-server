@@ -162,9 +162,11 @@ The undo history does not have the expected entry on top. Ask the user how to pr
 ### Error UNSAVED_CHANGES
 
 The request would discard unsaved changes. Ask the user whether to save or discard them. From `opentune_quit` the
-refusal is deliberate: the close button of the OpenTune window quits without asking, this tool does not. Save first with
-`opentune_save_project` (mode `save`, or `save_as` for a project that was never saved) and call `opentune_quit` again;
-only when the user explicitly agrees to lose the changes, call it with `discard_unsaved: true`.
+refusal is deliberate: the close button of the OpenTune window quits without asking, this tool does not. The agent writes a copy first with
+`opentune_save_project` (mode `autosave`; a project that was never saved has no file for a copy) and then asks the user:
+save the project file (mode `save`, or `save_as` for a project that was never saved) and call `opentune_quit` again, or
+give the changes up. Only when the user explicitly agrees to lose the changes, call it with `discard_unsaved: true`.
+`opentune_open_project` gives the same error and the same way out.
 
 ### Error ALREADY_EXISTS
 
@@ -201,7 +203,7 @@ read-only the export fails and the server does not choose another folder. Call `
 ### Error UNSUPPORTED
 
 OpenTune or this build does not offer the operation. With reason `capability_missing`, `detail` names the missing
-capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`. `opentune_manage_ui` with op `switch_view` needs the capability `ui.workspace`, which test builds before `1.0.0-rc.7` of the specification lack: switch the view in the OpenTune window (the arrangement view and piano roll buttons of the transport bar), or use a newer test build. `opentune_quit` needs the capability `app.quit`, which test builds before `1.0.0-rc.7` of the specification lack: save the project with `opentune_save_project`, then ask the user to close the OpenTune window (the window closes without asking about unsaved changes). `opentune_save_project` with `mode: autosave` needs the capability `project.copy`, which test builds before `1.0.0-rc.8` of the specification lack: no copy is written; remind the user to save the project when they want to keep their work, or use a newer test build.
+capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`. `opentune_manage_ui` with op `switch_view` needs the capability `ui.workspace`, which test builds before `1.0.0-rc.7` of the specification lack: switch the view in the OpenTune window (the arrangement view and piano roll buttons of the transport bar), or use a newer test build. `opentune_quit` needs the capability `app.quit`, which test builds before `1.0.0-rc.7` of the specification lack: write a copy with `opentune_save_project` (mode `autosave`), ask the user whether to save the project file, then ask the user to close the OpenTune window (the window closes without asking about unsaved changes). `opentune_save_project` with `mode: autosave` needs the capability `project.copy`, which test builds before `1.0.0-rc.8` of the specification lack: no copy is written; remind the user to save the project when they want to keep their work, or use a newer test build.
 
 ### Error INTERNAL
 
@@ -394,9 +396,14 @@ never touches the project file, the unsaved-changes mark or the list of recent p
 `Project_Media` folder with its audio: OpenTune replaces an older audio file of the same name in such a folder, which is
 why the copies get a folder of their own and cannot replace the audio of another project). Every save that replaces a
 project file first copies the old file into `<name>.oldversion/<name>-<YYYYMMDD-HHMMSS>.otproj` (local time, `-2`, `-3`
-when the second is taken) and keeps the newest 10. The server deletes only regular files whose names match these
-patterns in these two folders: the `Project_Media` folder that OpenTune fills inside `<name>.autosave`, your own files
-and other project files are never deleted. To get earlier work back, open the wanted file with `opentune_open_project`.
+when the second is taken) and keeps the newest 10; when the newest old version already holds exactly the bytes of the
+file to be replaced (a save right after a save that changed nothing), no new copy is made and the result says so
+(`oldVersion.reused`). The server deletes only regular files in these two folders whose names match these patterns:
+such a file counts as a copy or an old version and is deleted once it is beyond the newest 50 or 10, whoever put it
+there. Folders, links, files with any other name, the `Project_Media` folder that OpenTune fills inside
+`<name>.autosave` and the files of other projects are never touched. When a save is refused or fails after its old
+version was made and deleted again, an empty `<name>.oldversion` folder can remain; the server never deletes folders.
+To get earlier work back, open the wanted file with `opentune_open_project`.
 
 An autosave copy or an old version names its audio relative to the folder it is in. In `<name>.oldversion` there is no
 `Project_Media` folder, so OpenTune falls back to the audio source path that the save recorded in the project, and the file opens as

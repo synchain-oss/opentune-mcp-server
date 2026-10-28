@@ -19,6 +19,7 @@ import {
   ProjectFolders,
   autosavesToDelete,
   localStamp,
+  newestOldVersion,
   nextAutosaveNumber,
   nodeProjectFs,
   oldVersionsToDelete,
@@ -79,6 +80,10 @@ function recorded(overrides: Partial<ProjectFs> = {}) {
     sameFile: (a, b) => {
       calls.push({ op: 'sameFile', args: [a, b] });
       return (overrides.sameFile ?? nodeProjectFs.sameFile)(a, b);
+    },
+    sameContent: (a, b) => {
+      calls.push({ op: 'sameContent', args: [a, b] });
+      return (overrides.sameContent ?? nodeProjectFs.sameContent)(a, b);
     },
   };
   return { ops, calls };
@@ -339,7 +344,10 @@ describe('the old version kept before a save replaces a project file', () => {
   it('adds -2 and -3 when the name of the second is taken', async () => {
     const s = await setup();
     body(await save(s.ctx));
+    // Something else changes the file between the saves, so that no old version already holds its content.
+    fs.writeFileSync(s.proj, 'changed once');
     body(await save(s.ctx));
+    fs.writeFileSync(s.proj, 'changed twice');
     body(await save(s.ctx));
     expect(names(s.oldDir)).toEqual(
       [`${s.stem}-${STAMP}.otproj`, `${s.stem}-${STAMP}-2.otproj`, `${s.stem}-${STAMP}-3.otproj`].sort(),
@@ -402,6 +410,114 @@ describe('the old version kept before a save replaces a project file', () => {
     expect(failure(await save(s.ctx))).toMatchObject({ kind: 'IO_ERROR', reason: 'backup_failed' });
     expect(fs.readFileSync(s.proj).equals(original)).toBe(true);
     expect(s.mock.snapshot().dirty).toBe(true);
+  });
+
+  it('deletes the part of a copy that failed, and nothing that was there before', async () => {
+    const { ops, calls } = recorded({
+      copyNew: (_from, to) => {
+        fs.writeFileSync(to, 'a part of the file');
+        return Promise.reject(Object.assign(new Error('full'), { code: 'ENOSPC' }));
+      },
+    });
+    const s = await setup({ files: ops });
+    const older = `${s.stem}-20260101-120000.otproj`;
+    populate(s.oldDir, ['notes.txt', older]);
+    const original = fs.readFileSync(s.proj);
+    const error = failure(await save(s.ctx));
+    expect(error).toMatchObject({ kind: 'IO_ERROR', reason: 'backup_failed', executed: false });
+    expect(error.detail).toContain('(ENOSPC)');
+    // The half-written file is gone, the files that were there are not, and no save ran.
+    expect(names(s.oldDir)).toEqual(['notes.txt', older].sort());
+    expect(calls.filter((c) => c.op === 'remove').map((c) => c.args[0])).toEqual([
+      path.join(s.oldDir, `${s.stem}-${STAMP}.otproj`),
+    ]);
+    expect(fs.readFileSync(s.proj).equals(original)).toBe(true);
+    expect(s.mock.snapshot().dirty).toBe(true);
+  });
+
+  it('keeps a file that was there under the name it tried first, and goes on to the next name', async () => {
+    const { ops, calls } = recorded();
+    const s = await setup({ files: ops });
+    const taken = `${s.stem}-${STAMP}.otproj`;
+    populate(s.oldDir, [taken]);
+    body(await save(s.ctx));
+    expect(fs.readFileSync(path.join(s.oldDir, taken), 'utf8')).toBe(`content of ${taken}`);
+    expect(names(s.oldDir)).toEqual([taken, `${s.stem}-${STAMP}-2.otproj`].sort());
+    expect(calls.filter((c) => c.op === 'remove')).toEqual([]);
+  });
+
+  it('does not copy again when the newest old version already holds the same bytes', async () => {
+    const { ops, calls } = recorded();
+    const s = await setup({ files: ops });
+    const older = `${s.stem}-20260101-120000.otproj`;
+    const newest = path.join(s.oldDir, `${s.stem}-20260102-120000.otproj`);
+    populate(s.oldDir, [older]);
+    fs.copyFileSync(s.proj, newest);
+    const result = body(await save(s.ctx));
+    expect(names(s.oldDir)).toEqual([older, path.basename(newest)]);
+    expect(calls.filter((c) => c.op === 'copyNew')).toEqual([]);
+    expect(result.oldVersion).toMatchObject({ path: newest, folder: s.oldDir, reused: true, removedOlder: 0 });
+    expect(result.summary).toContain(
+      'The newest old version already held exactly this content, so no new copy was made.',
+    );
+    // The save itself ran.
+    expect(s.mock.snapshot().dirty).toBe(false);
+  });
+
+  it('tells a new copy from a reused one in the result', async () => {
+    const s = await setup();
+    const result = body(await save(s.ctx));
+    expect(result.oldVersion).toMatchObject({ reused: false });
+    expect(result.summary).not.toContain('already held exactly this content');
+  });
+
+  it('copies when the newest old version differs: by one byte of the same size, or by its size', async () => {
+    for (const change of ['same size', 'longer', 'empty'] as const) {
+      const s = await setup();
+      const original = fs.readFileSync(s.proj);
+      const different =
+        change === 'same size'
+          ? Buffer.concat([original.subarray(0, original.length - 1), Buffer.from([(original.at(-1) ?? 0) ^ 1])])
+          : change === 'longer'
+            ? Buffer.concat([original, Buffer.from(' ')])
+            : Buffer.alloc(0);
+      fs.mkdirSync(s.oldDir, { recursive: true });
+      fs.writeFileSync(path.join(s.oldDir, `${s.stem}-20260102-120000.otproj`), different);
+      const result = body(await save(s.ctx));
+      expect(result.oldVersion, change).toMatchObject({ reused: false });
+      expect(names(s.oldDir), change).toHaveLength(2);
+      expect(fs.readFileSync(path.join(s.oldDir, `${s.stem}-${STAMP}.otproj`)).equals(original), change).toBe(true);
+    }
+  });
+
+  it('compares only with the newest old version, not with an older one', async () => {
+    const s = await setup();
+    fs.mkdirSync(s.oldDir, { recursive: true });
+    fs.copyFileSync(s.proj, path.join(s.oldDir, `${s.stem}-20260101-120000.otproj`));
+    fs.writeFileSync(path.join(s.oldDir, `${s.stem}-20260102-120000.otproj`), 'newer, and different');
+    body(await save(s.ctx));
+    expect(names(s.oldDir)).toHaveLength(3);
+    expect(names(s.oldDir)).toContain(`${s.stem}-${STAMP}.otproj`);
+  });
+
+  it('copies after all when the comparison cannot be made', async () => {
+    const { ops } = recorded({ sameContent: denied });
+    const s = await setup({ files: ops });
+    fs.mkdirSync(s.oldDir, { recursive: true });
+    fs.copyFileSync(s.proj, path.join(s.oldDir, `${s.stem}-20260102-120000.otproj`));
+    const result = body(await save(s.ctx));
+    expect(result.oldVersion).toMatchObject({ reused: false });
+    expect(names(s.oldDir)).toHaveLength(2);
+  });
+
+  it('does not delete an old version it only reused when the save fails', async () => {
+    const s = await setup();
+    const reused = `${s.stem}-20260102-120000.otproj`;
+    fs.mkdirSync(s.oldDir, { recursive: true });
+    fs.copyFileSync(s.proj, path.join(s.oldDir, reused));
+    failTemporaryWrites();
+    expect(failure(await save(s.ctx))).toMatchObject({ kind: 'IO_ERROR', reason: 'write_failed' });
+    expect(names(s.oldDir)).toEqual([reused]);
   });
 
   it('keeps nothing for a first save_as to a path where no file exists', async () => {
@@ -575,6 +691,14 @@ describe('where the file system work happens', () => {
         case 'sameFile':
           expect(projectFiles.has(first) && projectFiles.has(second), `sameFile ${first}`).toBe(true);
           break;
+        case 'sameContent':
+          expect(projectFiles.has(first), `sameContent ${first}`).toBe(true);
+          expect(
+            path.dirname(second) === s.oldDir || path.dirname(second) === s.otherOldDir,
+            `sameContent ${second}`,
+          ).toBe(true);
+          expect(pattern(path.dirname(second)).test(path.basename(second)), `sameContent ${second}`).toBe(true);
+          break;
       }
     }
     // What a user keeps in those folders, and the project files, are all still there.
@@ -713,5 +837,62 @@ describe('the names and the rolls, without a file system', () => {
     ];
     expect(oldVersionsToDelete(f, mixed, 2)).toEqual(['song-20260101-000000.otproj', 'song-20261028-140509.otproj']);
     expect(oldVersionsToDelete(f, mixed)).toEqual([]);
+  });
+});
+
+describe('the newest old version and the comparison of two files', () => {
+  const entry = (name: string, isFile = true): FolderEntry => ({ name, isFile });
+  const folders = ProjectFolders.of('C:\\Music\\take1.otproj', 'win32');
+
+  it('names the newest old version of this project by time, then by the number after a collision', () => {
+    expect(folders).not.toBeNull();
+    if (folders === null) return;
+    expect(newestOldVersion(folders, [])).toBeNull();
+    expect(
+      newestOldVersion(folders, [
+        entry('take1-20260101-120000.otproj'),
+        entry('take1-20260102-090000.otproj'),
+        entry('take1-20260102-090000-2.otproj'),
+        entry('take1-20260102-090000-10.otproj'),
+        entry('take1-20251231-235959.otproj'),
+      ]),
+    ).toBe('take1-20260102-090000-10.otproj');
+  });
+
+  it('ignores directories, other projects and names that are not old versions', () => {
+    expect(folders).not.toBeNull();
+    if (folders === null) return;
+    expect(
+      newestOldVersion(folders, [
+        entry('take1-20260101-120000.otproj'),
+        entry('take1-20270101-120000.otproj', false),
+        entry('take2-20270101-120000.otproj'),
+        entry('take1-autosave-0009.otproj'),
+        entry('notes.txt'),
+        entry('Project_Media', false),
+      ]),
+    ).toBe('take1-20260101-120000.otproj');
+  });
+
+  it('says two files are the same only when every byte is', async () => {
+    const t = tempDir();
+    cleanup.push(t.remove);
+    const write = (name: string, data: Buffer): string => {
+      const file = path.join(t.dir, name);
+      fs.writeFileSync(file, data);
+      return file;
+    };
+    // More than one chunk, and a difference in the last one.
+    const big = Buffer.alloc(200_000, 7);
+    const late = Buffer.from(big);
+    late[199_999] = 8;
+    const a = write('a.bin', big);
+    expect(await nodeProjectFs.sameContent(a, write('b.bin', Buffer.from(big)))).toBe(true);
+    expect(await nodeProjectFs.sameContent(a, write('late.bin', late))).toBe(false);
+    expect(await nodeProjectFs.sameContent(a, write('short.bin', big.subarray(0, 199_999)))).toBe(false);
+    expect(await nodeProjectFs.sameContent(write('e1.bin', Buffer.alloc(0)), write('e2.bin', Buffer.alloc(0)))).toBe(
+      true,
+    );
+    await expect(nodeProjectFs.sameContent(a, path.join(t.dir, 'missing.bin'))).rejects.toThrow();
   });
 });

@@ -116,6 +116,7 @@
       "path": "<tmp-1>/fresh.oldversion/fresh-20261028-140509.otproj",
       "folder": "<tmp-1>/fresh.oldversion",
       "keep": 10,
+      "reused": false,
       "removedOlder": 0,
       "couldNotRemove": 0
     }

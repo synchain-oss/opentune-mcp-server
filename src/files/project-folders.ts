@@ -10,9 +10,12 @@
 // The path policy of these operations: they run only on a project file whose path passed the rules of
 // spec/otcp/v1/PROTOCOL.md section 20.1, they create at most the two folders directly below that file's
 // directory, they write only files inside them, and they delete only a regular file in them whose name
-// matches the pattern of its folder for this project name. A directory, a link, `Project_Media`, another
-// project's copies and any file a user put there are never deleted, whatever else the folder holds. The
-// names come from this module, never from a tool argument.
+// matches the pattern of its folder for this project name. Such a file counts as a copy or an old version of
+// this project and can be deleted by the roll, whoever put it there. A directory, a link, `Project_Media`,
+// another project's copies and every file with any other name are never touched, whatever else the folder
+// holds. A folder, once made, stays: when the save it was made for is refused, an empty `.oldversion` folder
+// can remain, on purpose, because deleting directories is outside what this module does. The names come from
+// this module, never from a tool argument.
 
 import fs from 'node:fs/promises';
 
@@ -46,6 +49,41 @@ export interface ProjectFs {
   fileExists(file: string): Promise<boolean>;
   /** Whether two paths name the same existing file (the file system's own identity, not the path text). */
   sameFile(a: string, b: string): Promise<boolean>;
+  /** Whether two regular files hold exactly the same bytes. Fails when either cannot be read. */
+  sameContent(a: string, b: string): Promise<boolean>;
+}
+
+/** The size of the chunks in which two files are compared. */
+const COMPARE_CHUNK = 64 * 1024;
+
+async function sameBytes(a: string, b: string): Promise<boolean> {
+  const first = await fs.open(a, 'r');
+  try {
+    const second = await fs.open(b, 'r');
+    try {
+      const [sizeA, sizeB] = await Promise.all([first.stat(), second.stat()]);
+      if (sizeA.size !== sizeB.size) return false;
+      const x = Buffer.alloc(COMPARE_CHUNK);
+      const y = Buffer.alloc(COMPARE_CHUNK);
+      for (let position = 0; position < sizeA.size; position += COMPARE_CHUNK) {
+        const [readA, readB] = await Promise.all([
+          first.read(x, 0, COMPARE_CHUNK, position),
+          second.read(y, 0, COMPARE_CHUNK, position),
+        ]);
+        if (
+          readA.bytesRead !== readB.bytesRead ||
+          !x.subarray(0, readA.bytesRead).equals(y.subarray(0, readB.bytesRead))
+        ) {
+          return false;
+        }
+      }
+      return true;
+    } finally {
+      await second.close();
+    }
+  } finally {
+    await first.close();
+  }
 }
 
 const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
@@ -95,6 +133,7 @@ export const nodeProjectFs: ProjectFs = {
       return false;
     }
   },
+  sameContent: sameBytes,
 };
 
 const escapeRegExp = (text: string): string => text.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&');
@@ -187,13 +226,9 @@ export function autosavesToDelete(
   return copies.slice(0, Math.max(0, copies.length - keep)).map((copy) => copy.name);
 }
 
-/** The names of the old versions to delete so that the newest `keep` stay: regular files of this pattern only. */
-export function oldVersionsToDelete(
-  folders: ProjectFolders,
-  entries: readonly FolderEntry[],
-  keep = OLDVERSION_KEEP,
-): string[] {
-  const versions = entries
+/** The old versions of this project among the entries (regular files of its pattern only), oldest first. */
+function sortedOldVersions(folders: ProjectFolders, entries: readonly FolderEntry[]): { name: string }[] {
+  return entries
     .filter((entry) => entry.isFile)
     .flatMap((entry) => {
       const key = folders.oldVersionKey(entry.name);
@@ -206,7 +241,21 @@ export function oldVersionsToDelete(
           ? -1
           : 1,
     );
+}
+
+/** The names of the old versions to delete so that the newest `keep` stay: regular files of this pattern only. */
+export function oldVersionsToDelete(
+  folders: ProjectFolders,
+  entries: readonly FolderEntry[],
+  keep = OLDVERSION_KEEP,
+): string[] {
+  const versions = sortedOldVersions(folders, entries);
   return versions.slice(0, Math.max(0, versions.length - keep)).map((version) => version.name);
+}
+
+/** The name of the newest old version of this project among the entries, or null when there is none. */
+export function newestOldVersion(folders: ProjectFolders, entries: readonly FolderEntry[]): string | null {
+  return sortedOldVersions(folders, entries).at(-1)?.name ?? null;
 }
 
 export interface Rolled {
@@ -257,42 +306,72 @@ export async function rollOldVersions(
 }
 
 export interface OldVersion {
-  /** The copy of the file that was written. */
+  /** The copy of the file that was written, or the existing one that already held the content (`reused`). */
   readonly file: string;
   /** The folder it is in. */
   readonly folder: string;
   /** Its name, which `removeOldVersion` accepts. */
   readonly name: string;
+  /** true: the newest old version already held exactly this content, so no new copy was made. */
+  readonly reused: boolean;
 }
 
 /** The most same-second collisions of old versions that are tried before the backup fails. */
 const MAX_SAME_SECOND = 999;
 
 /**
- * Copies a project file that is about to be replaced into the `.oldversion` folder next to it, as
- * `<name>-<YYYYMMDD-HHMMSS>.otproj` (`-2`, `-3`, … when that name is taken in the same second). Throws when the folder
- * cannot be made or the copy fails: the caller must then not replace the file. Rolling is separate, so that a failed
- * save leaves the older versions alone.
+ * The newest old version when it holds exactly the bytes of the project file, else null. Anything that goes wrong
+ * (the folder cannot be listed, a file cannot be read) is "not the same": a new copy is made then.
+ */
+async function sameAsNewest(ops: ProjectFs, folders: ProjectFolders): Promise<OldVersion | null> {
+  try {
+    const entries = await ops.list(folders.oldversionDir);
+    const name = entries === null ? null : newestOldVersion(folders, entries);
+    if (name === null) return null;
+    const file = `${folders.oldversionDir}${folders.sep}${name}`;
+    return (await ops.sameContent(folders.file, file))
+      ? { file, folder: folders.oldversionDir, name, reused: true }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Keeps a project file that is about to be replaced in the `.oldversion` folder next to it: it copies it as
+ * `<name>-<YYYYMMDD-HHMMSS>.otproj` (`-2`, `-3`, … when that name is taken in the same second), unless the newest old
+ * version already holds exactly its bytes (a save after a save that changed nothing), which is then the old version
+ * (`reused`) and would only crowd out an older one. Throws when the folder cannot be made or the copy fails: the
+ * caller must then not replace the file. A copy that failed part way is deleted again (only the file this attempt
+ * named). Rolling is separate, so that a failed save leaves the older versions alone.
  */
 export async function copyToOldVersions(ops: ProjectFs, folders: ProjectFolders, epochMs: number): Promise<OldVersion> {
   await ops.makeDir(folders.oldversionDir);
+  const same = await sameAsNewest(ops, folders);
+  if (same !== null) return same;
   const stamp = localStamp(epochMs);
   for (let suffix = 1; suffix <= MAX_SAME_SECOND; suffix += 1) {
     const name = folders.oldVersionName(stamp, suffix);
     const file = `${folders.oldversionDir}${folders.sep}${name}`;
     try {
       await ops.copyNew(folders.file, file);
-      return { file, folder: folders.oldversionDir, name };
+      return { file, folder: folders.oldversionDir, name, reused: false };
     } catch (error) {
-      if (codeOf(error) !== 'EEXIST') throw error;
+      // EEXIST: the name belongs to a file that was there before, and stays. Any other failure may have left a
+      // part of the copy under this name, which this attempt made.
+      if (codeOf(error) !== 'EEXIST') {
+        await removeOldVersion(ops, folders, name);
+        throw error;
+      }
     }
   }
   throw new Error('too many old versions with the same time stamp');
 }
 
 /**
- * Deletes the old version just written, when the save it was made for failed and the file it copied is still the
- * project file. Only a name that is an old version of this project is deleted. Never throws.
+ * Deletes an old version that this call made: the one just written, when the save it was made for failed and the file
+ * it copied is still the project file, or the rest of a copy that failed part way. Only a name that is an old version
+ * of this project is deleted. Never throws.
  */
 export async function removeOldVersion(ops: ProjectFs, folders: ProjectFolders, name: string): Promise<boolean> {
   if (folders.oldVersionKey(name) === null) return false;

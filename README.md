@@ -139,7 +139,7 @@ The server offers 28 tools; their parameters are in [docs/reference.md](docs/ref
 | --- | --- | --- |
 | `opentune_get_status` | Reports whether OpenTune can be used, with a `nextStep`, and lists the running instances. Call it first. | Read-only. |
 | `opentune_launch` | Starts the configured OpenTune build with its control API, or says why it cannot. | A second instance needs `allow_second_instance`, only with your agreement. |
-| `opentune_quit` | Closes OpenTune like the window's close button, and waits until it has exited. | Marked destructive. Unlike the window it refuses to close over unsaved changes (`UNSAVED_CHANGES`): save first, or pass `discard_unsaved: true`, only with your agreement; the changes lost then cannot be recovered. Start OpenTune again with `opentune_launch`. |
+| `opentune_quit` | Closes OpenTune like the window's close button, and waits until it has exited. | Marked destructive. Unlike the window it refuses to close over unsaved changes (`UNSAVED_CHANGES`): the agent writes an autosave copy and asks you whether to save the project or give the changes up; `discard_unsaved: true` only with your agreement, and the changes lost then cannot be recovered. Start OpenTune again with `opentune_launch`. |
 | `opentune_get_job` | Follows a long operation (import, export, analysis, project open or save). | Read-only. |
 | `opentune_cancel_job` | Asks OpenTune to stop a running job. Work the job already committed stays. | A job that cannot be cancelled keeps running; the error says so. |
 

@@ -28,7 +28,9 @@ versioned separately and has its own changelog.
   keeps the newest 10. If the copy fails, nothing is saved, and the error says so. A save to a path where no file
   exists keeps nothing. The result gives the path of the old version (`oldVersion`), or `null` with the reason
   `no_previous_file`; the first sentence no longer says that the old content cannot be restored. A save that OpenTune
-  then refuses deletes the copy it made. See `docs/contract-changes/20261028-autosave-and-save-rules.md`.
+  then refuses deletes the copy it made. When the newest old version already holds exactly the bytes of the file to be
+  replaced, no new copy is made: that one is the old version (`oldVersion.reused` is true), so a repeated save does not
+  push an older version out of the ten. A copy that fails part way is deleted again. See `docs/contract-changes/20261028-autosave-and-save-rules.md`.
 - `opentune_manage_ui` has the op `switch_view` with `view` `arrangement` or `piano_roll`, so an agent can close the
   piano roll again after `focus_clip` opened it (`arrangement` shows the arrangement view). It sends the new OTCP
   method `ui.setWorkspace` of the specification `1.0.0-rc.7` (capability `ui.workspace`, which the op asks for in
