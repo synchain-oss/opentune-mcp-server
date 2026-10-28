@@ -10,6 +10,27 @@ versioned separately and has its own changelog.
 
 ### Added
 
+- `opentune_save_project` has the mode `autosave`: it writes a numbered copy of the project into
+  `<name>.autosave` next to the project file (`<name>-autosave-0001.otproj`, 0002, ...; the newest 50 are kept) and
+  writes nothing outside that folder (the audio that OpenTune copies goes into a `Project_Media` folder inside it, so a
+  copy never touches the audio of another project). The project file, the unsaved-changes flag, the recent-projects list, the undo history and the
+  window title stay as they are, so an agent can save after every step without touching the user's file or the
+  question of whether to save. It sends the new OTCP method `project.saveCopy` of the specification `1.0.0-rc.8`
+  (capability `project.copy`, job kind `projectCopy`; a copy never replaces a project file). The result names the copy
+  (`autosave.path`, `autosave.number`), the project file and its unsaved-changes flag, and the folder where OpenTune
+  copied the audio. A project without a file, and a test build without `project.copy` (everything up to
+  `1.0.0-rc.7`), get an error with a next step and nothing is written. Only files that match
+  `<name>-autosave-<number>.otproj` are ever deleted from the folder; the audio folder, other project files and
+  anything else a user keeps there stay.
+- Every save that replaces a project file (`opentune_save_project` with `mode: save`, `mode: save_as` onto the
+  project's own file, and `opentune_save_project_overwrite`) first copies the file it is about to replace into
+  `<name>.oldversion/<name>-<YYYYMMDD-HHMMSS>.otproj` next to it (local time; `-2`, `-3` for the same second) and
+  keeps the newest 10. If the copy fails, nothing is saved, and the error says so. A save to a path where no file
+  exists keeps nothing. The result gives the path of the old version (`oldVersion`), or `null` with the reason
+  `no_previous_file`; the first sentence no longer says that the old content cannot be restored. A save that OpenTune
+  then refuses deletes the copy it made. When the newest old version already holds exactly the bytes of the file to be
+  replaced, no new copy is made: that one is the old version (`oldVersion.reused` is true), so a repeated save does not
+  push an older version out of the ten. A copy that fails part way is deleted again. See `docs/contract-changes/20261028-autosave-and-save-rules.md`.
 - `opentune_manage_ui` has the op `switch_view` with `view` `arrangement` or `piano_roll`, so an agent can close the
   piano roll again after `focus_clip` opened it (`arrangement` shows the arrangement view). It sends the new OTCP
   method `ui.setWorkspace` of the specification `1.0.0-rc.7` (capability `ui.workspace`, which the op asks for in
@@ -61,6 +82,17 @@ versioned separately and has its own changelog.
 
 ### Changed
 
+- The instructions and the `tuning-workflow` skill now say: write an autosave copy after each step without asking
+  (`mode: autosave`), and overwrite the project file (`mode: save`) only when the user asks or agrees, offering it
+  every few steps and before closing. The skill also says what to do before closing or opening another project (write a
+  copy first, then ask whether the changes may be dropped), where earlier work is kept, and that its description now
+  covers clip, track and project edits. This replaces "save after each finished step", which let an agent overwrite the
+  user's file unasked.
+- The description of `opentune_set_tracks` begins with duplicating a track, and the description of
+  `opentune_edit_arrangement` says that a whole track is duplicated with `opentune_set_tracks`, not with `copy`.
+- The next step of `merge_not_possible` now lists every condition of a merge, including that the two clips have the
+  same key set the same way, and what to do when the keys differ (compare them with `opentune_get_clip_details`, ask
+  the user which key to keep, set it on both clips with `opentune_set_clip`, merge again).
 - Results of the write tools that list many entries are cut so that a host does not reject them (contract change record
   `docs/contract-changes/20261026-agent-feedback.md`). `changes`, `created`, `removed` and `idMap` list at most 20
   entries each and count the rest in `omittedCount`; the change table is a preview of 10 rows; the list of time-grid

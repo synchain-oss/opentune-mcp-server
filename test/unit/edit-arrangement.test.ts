@@ -120,6 +120,11 @@ describe('declaration', () => {
       /do one when the user named the clip or time, else ask first; delete needs confirm/,
     );
     expect(editArrangementTool.description).toMatch(/timeline clock, seconds/);
+    // Copying a clip range is not duplicating a track: the description points to the tool that duplicates a track.
+    expect(editArrangementTool.description).toContain(
+      'To duplicate a whole track, use opentune_set_tracks with op duplicate, not copy.',
+    );
+    expect(editArrangementTool.description.length).toBeLessThanOrEqual(600);
   });
 
   it('takes ops of the eight kinds and at most 64 of them', () => {
@@ -593,6 +598,25 @@ describe('next steps of the errors', () => {
       expect(step.message.length).toBeGreaterThan(40);
       if (step.tool !== undefined) expect(step.tool).toBe('opentune_get_project');
     }
+  });
+
+  it('tells what a merge needs, including the same key, and how to get there when the keys differ', () => {
+    const step = ERROR_STEPS['INVALID_ARGUMENT/merge_not_possible'];
+    expect(step).toBeDefined();
+    const message = step?.message ?? '';
+    // The conditions: one track, adjacent, one content, equal gain, and the same key set the same way.
+    for (const condition of ['on one track', 'equal gain', 'same key', 'same root and scale']) {
+      expect(message, condition).toContain(condition);
+    }
+    expect(message).toContain('both set by hand, or both from one detection');
+    expect(message).toMatch(/opened again OpenTune detects the key of every clip anew/);
+    // The way: equal gain with op gain, compare the keys, ask the user, set the key on both clips, merge again.
+    expect(message).toContain('with op gain');
+    expect(message).toContain('opentune_get_clip_details');
+    expect(message).toMatch(/ask the user which key the merged clip should have/);
+    expect(message).toMatch(/opentune_set_clip, also on the clip that already shows it/);
+    expect(message).toMatch(/merge again/);
+    expect(message).toMatch(/does not change the audio or the notes, but it cannot be undone/);
   });
 
   it('keeps the default step of other errors, and asks the user when the build lacks the capability', async () => {

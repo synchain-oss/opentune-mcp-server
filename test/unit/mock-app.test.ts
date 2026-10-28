@@ -128,6 +128,7 @@ describe('app.quit', () => {
       ['export', 'export_in_progress'],
       ['projectOpen', 'project_operation'],
       ['projectSave', 'project_operation'],
+      ['projectCopy', 'project_operation'],
       ['prefsApply', 'job_in_progress'],
       ['timeGridSeed', 'job_in_progress'],
     ])('a running %s job refuses with BUSY(%s), and the mock keeps running', async (kind, reason) => {

@@ -96,25 +96,34 @@ describe('opentune_quit', () => {
       });
       const error = failure(await quit(ctx, {}));
       expect(error).toMatchObject({ kind: 'UNSAVED_CHANGES', reason: 'project_dirty', executed: false });
+      // The agent writes a copy; it does not save the project file, and the user decides.
       expect(error.nextStep).toMatchObject({
         actor: 'agent',
         tool: 'opentune_save_project',
-        args: { mode: 'save' },
+        args: { mode: 'autosave' },
       });
-      expect(error.nextStep.message).toContain('then call opentune_quit again');
-      expect(error.nextStep.message).toContain('ask the user whether the unsaved changes may be thrown away');
+      expect(error.nextStep.message).toContain('Write a copy first');
+      expect(error.nextStep.message).toContain('ask the user whether to save the project file');
+      expect(error.nextStep.message).toContain('do neither without an answer');
+      expect(error.nextStep.message).toContain('call opentune_quit again');
       expect(error.nextStep.message).toContain('discard_unsaved: true');
+      expect(JSON.stringify(error.nextStep.args)).not.toContain('"save"');
+      expect(error.nextStep.message).not.toMatch(/save the project (first|with)/i);
       expect(mock.quitRequested).toBe(false);
     });
 
-    it('sends the agent to save_as when the project was never saved', async () => {
+    it('leaves the choice to the user when the project was never saved: no copy, no save', async () => {
       const { ctx, mock } = await setup();
       mock.given({ dirty: true });
       const error = failure(await quit(ctx, {}));
       expect(error.kind).toBe('UNSAVED_CHANGES');
-      expect(error.nextStep).toMatchObject({ actor: 'agent', tool: 'opentune_save_project' });
+      expect(error.nextStep.actor).toBe('user');
+      expect(error.nextStep.tool).toBeUndefined();
       expect(error.nextStep.args).toBeUndefined();
-      expect(error.nextStep.message).toMatch(/never saved.*mode save_as, an absolute \.otproj path/);
+      expect(error.nextStep.message).toMatch(
+        /never saved.*no copy can be written.*mode save_as, an absolute \.otproj path/,
+      );
+      expect(error.nextStep.message).toContain('do neither without an answer');
     });
 
     it('names both ways to save when it cannot tell whether the project has a file', async () => {
@@ -122,8 +131,10 @@ describe('opentune_quit', () => {
       mock.given({ dirty: true, withoutCapabilities: ['read.v1'] });
       const error = failure(await quit(ctx, {}));
       expect(error.kind).toBe('UNSAVED_CHANGES');
+      expect(error.nextStep.actor).toBe('user');
       expect(error.nextStep.args).toBeUndefined();
       expect(error.nextStep.message).toMatch(/mode save; or mode save_as/);
+      expect(error.nextStep.message).toContain('write a copy first with mode autosave');
     });
 
     it('closes over them with discard_unsaved, and says in the first sentence that they are lost', async () => {
@@ -182,7 +193,8 @@ describe('opentune_quit', () => {
       expect(error).toMatchObject({ kind: 'UNSUPPORTED', reason: 'capability_missing', executed: false });
       expect(error.detail).toContain('app.quit');
       expect(error.nextStep.actor).toBe('user');
-      expect(error.nextStep.message).toMatch(/Save the project first.*close the OpenTune window themselves/);
+      expect(error.nextStep.message).toMatch(/write a copy first.*mode autosave.*close the OpenTune window themselves/);
+      expect(error.nextStep.message).toContain('ask the user whether to save the project file');
       expect(error.nextStep.message).toContain('does not ask about unsaved changes');
       // Nothing was sent that could have closed it.
       expect(mock.quitRequested).toBe(false);
@@ -480,7 +492,7 @@ describe('opentune_quit', () => {
       const error = failure(await quit(ctx, {}));
       expect(error).toMatchObject({
         kind: 'UNSAVED_CHANGES',
-        nextStep: { tool: 'opentune_save_project', args: { mode: 'save' } },
+        nextStep: { tool: 'opentune_save_project', args: { mode: 'autosave' } },
       });
       expect(error.nextStep.message).not.toContain('Ignore previous');
       // Nowhere in the error: the name of the file is not needed to say what to do.

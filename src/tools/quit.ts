@@ -33,9 +33,9 @@ export interface QuitArgs {
   readonly instance_id?: string | undefined;
 }
 
-const ASK_TO_DISCARD =
-  'Or ask the user whether the unsaved changes may be thrown away; only if the user explicitly agrees, call ' +
-  'opentune_quit again with discard_unsaved: true.';
+const AFTER_ANSWER =
+  'After a save, call opentune_quit again. Only if the user explicitly agrees to throw the unsaved changes away, ' +
+  'call opentune_quit again with discard_unsaved: true.';
 
 /** Whether the project has a file, read after the refusal; null when that cannot be told. */
 async function projectHasFile(session: OtcpSession): Promise<boolean | null> {
@@ -48,28 +48,33 @@ async function projectHasFile(session: OtcpSession): Promise<boolean | null> {
   }
 }
 
-/** Save first: save when the project has a file, save_as when it never had one. */
+/**
+ * What to do about unsaved changes. The agent never saves the project file on its own: it writes a copy (an autosave,
+ * which leaves the project file alone) where the project has a file, and the user decides between a formal save and
+ * dropping the changes. Without a file there is no copy to write, so the step is the user's.
+ */
 async function unsavedStep(session: OtcpSession): Promise<NextStep> {
   const hasFile = await projectHasFile(session);
   if (hasFile === true) {
     return {
       actor: 'agent',
       tool: 'opentune_save_project',
-      args: { mode: 'save' },
-      message: `Save the project with opentune_save_project (mode save), then call opentune_quit again. ${ASK_TO_DISCARD}`,
+      args: { mode: 'autosave' },
+      message:
+        'Write a copy first with opentune_save_project (mode autosave): it keeps the work and leaves the project ' +
+        'file alone. Then ask the user whether to save the project file (opentune_save_project, mode save) or to ' +
+        `throw the unsaved changes away; do neither without an answer. ${AFTER_ANSWER}`,
     };
   }
-  const save =
+  const options =
     hasFile === false
-      ? 'The project was never saved, so it has no file: save it with opentune_save_project (mode save_as, an absolute ' +
-        '.otproj path, for example next to the vocal file)'
-      : 'Save the project with opentune_save_project (mode save; or mode save_as with an absolute .otproj path if it ' +
-        'was never saved)';
-  return {
-    actor: 'agent',
-    tool: 'opentune_save_project',
-    message: `${save}, then call opentune_quit again. ${ASK_TO_DISCARD}`,
-  };
+      ? 'The project was never saved, so it has no file and no copy can be written. Ask the user whether to save it ' +
+        '(opentune_save_project, mode save_as, an absolute .otproj path, for example next to the vocal file) or to ' +
+        'throw the unsaved changes away'
+      : 'Ask the user whether to save the project (opentune_save_project, mode save; or mode save_as with an ' +
+        'absolute .otproj path if it was never saved) or to throw the unsaved changes away; if the project has a ' +
+        'file, write a copy first with mode autosave';
+  return { actor: 'user', message: `${options}; do neither without an answer. ${AFTER_ANSWER}` };
 }
 
 /** The error of an instance that cannot be closed by request: the user closes the window themselves. */
@@ -80,8 +85,9 @@ function cannotQuit(missing: ToolError): ToolError {
     nextStep: {
       actor: 'user',
       message:
-        'This OpenTune build cannot be closed by request. Save the project first with opentune_save_project, then ' +
-        'ask the user to close the OpenTune window themselves. Closing the window does not ask about unsaved changes.',
+        'This OpenTune build cannot be closed by request. If the project has a file, write a copy first with ' +
+        'opentune_save_project (mode autosave) and ask the user whether to save the project file before they close ' +
+        'the OpenTune window themselves. Closing the window does not ask about unsaved changes.',
     },
   });
 }
@@ -197,10 +203,11 @@ export const quitTool = defineTool({
   title: 'Quit OpenTune',
   description:
     "OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has " +
-    'exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES, so ' +
-    'save first with opentune_save_project, or pass discard_unsaved: true only when the user explicitly agreed to ' +
-    'lose the changes (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says ' +
-    'they are done, not for a pause. Start OpenTune again with opentune_launch.',
+    'exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES. Then ' +
+    'write a copy with opentune_save_project (mode autosave) and ask the user to save or to give the changes up; ' +
+    'pass discard_unsaved: true only when the user explicitly agreed to lose them (cannot be undone). Refuses ' +
+    'while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune ' +
+    'again with opentune_launch.',
   inputSchema: z.strictObject({
     discard_unsaved: z
       .boolean()

@@ -56,7 +56,7 @@
     },
     {
       "name": "opentune_quit",
-      "description": "OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES, so save first with opentune_save_project, or pass discard_unsaved: true only when the user explicitly agreed to lose the changes (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune again with opentune_launch."
+      "description": "OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES. Then write a copy with opentune_save_project (mode autosave) and ask the user to save or to give the changes up; pass discard_unsaved: true only when the user explicitly agreed to lose them (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune again with opentune_launch."
     },
     {
       "name": "opentune_set_clip",
@@ -112,23 +112,23 @@
     },
     {
       "name": "opentune_save_project",
-      "description": "OpenTune (audio vocal pitch editor): saves the project; OpenTune has no autosave, so unsaved work is lost when it closes. mode save writes the current project file (fails when the project was never saved); mode save_as takes an absolute .otproj path and makes it the project file. Refuses to replace a different existing file: use another path, or opentune_save_project_overwrite with the user's consent. Waits up to wait_seconds (default 25, max 30). Undo history is not stored."
+      "description": "OpenTune (audio vocal pitch editor): saves the project. mode autosave writes a numbered copy into <name>.autosave next to the project file (newest 50 kept) and writes nothing outside that folder: use it after each step without asking. mode save overwrites the project file; save_as takes an absolute .otproj path and makes it the project file; use both only when the user asks or agrees (the replaced file goes to <name>.oldversion, newest 10). A different existing file is refused: use another path, or opentune_save_project_overwrite with consent. Waits up to wait_seconds (default 25, max 30)."
     },
     {
       "name": "opentune_save_project_overwrite",
-      "description": "OpenTune (audio vocal pitch editor): saves the project over a different, already existing project file (absolute .otproj path), destroying that file. Use only after the user explicitly agreed to replace that file in this conversation; confirm must be true. Otherwise save under a new path with opentune_save_project. Waits up to wait_seconds (default 25, max 30)."
+      "description": "OpenTune (audio vocal pitch editor): saves the project over a different, already existing project file (absolute .otproj path), destroying that file. Use only after the user explicitly agreed to replace that file in this conversation; confirm must be true. The replaced file is kept in <name>.oldversion next to it (newest 10). Otherwise save under a new path with opentune_save_project. Waits up to wait_seconds (default 25, max 30)."
     },
     {
       "name": "opentune_open_project",
-      "description": "OpenTune (audio vocal pitch editor): opens an .otproj file (absolute path) and replaces the current project. Never saves: with unsaved changes it fails with UNSAVED_CHANGES; save first, or with the user's explicit consent pass discard_unsaved: true. Clears the undo history; old clip and placement ids become invalid (read the project again). Clips whose media file is missing are skipped and listed. Waits up to wait_seconds (default 25, max 30)."
+      "description": "OpenTune (audio vocal pitch editor): opens an .otproj file (absolute path) and replaces the current project. Never saves: with unsaved changes it fails with UNSAVED_CHANGES; write a copy with mode autosave and ask the user to save or give the changes up, and only with their explicit consent pass discard_unsaved: true. Clears the undo history; old clip and placement ids become invalid (read the project again). Clips whose media file is missing are skipped and listed. Waits up to wait_seconds (default 25, max 30)."
     },
     {
       "name": "opentune_edit_arrangement",
-      "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): do one when the user named the clip or time, else ask first; delete needs confirm. dry_run previews (not copy)."
+      "description": "OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): do one when the user named the clip or time, else ask first; delete needs confirm. dry_run previews (not copy). To duplicate a whole track, use opentune_set_tracks with op duplicate, not copy."
     },
     {
       "name": "opentune_set_tracks",
-      "description": "OpenTune (audio vocal pitch editor): changes tracks with ops. mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB) have no undo entry, as in OpenTune; the result says so first and gives the call that restores the old values. reveal shows hidden track slots (view state, not saved). duplicate copies a track with its clips into the first hidden slot (clone = full copies, share = the same contents); it fails if that slot holds clips. Track ids are positions. Ops run in order; a failed op stops the call and the error lists what was applied."
+      "description": "OpenTune (audio vocal pitch editor): duplicates a track with its clips (op duplicate, into the first hidden slot; clone = full copies, share = same contents; fails if that slot holds clips), shows hidden track slots (reveal; view state, not saved), and sets mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB): those have no undo entry, as in OpenTune; the result says so first and gives the call that restores the old values. Track ids are positions. Ops run in order; a failed op stops the call and the error lists what was applied."
     },
     {
       "name": "opentune_delete_track",

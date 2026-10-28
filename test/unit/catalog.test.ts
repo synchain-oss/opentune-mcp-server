@@ -87,6 +87,17 @@ describe('tool catalog', () => {
     expect(initInstructions).toBe(INSTRUCTIONS);
     expect(discoverInstructions).toBe(INSTRUCTIONS);
     expect(INSTRUCTIONS.length).toBeLessThanOrEqual(1500);
+    // The limit is in bytes (the text is ASCII, so it is the same number); the card of the save rules sits close to it.
+    expect(Buffer.byteLength(INSTRUCTIONS)).toBeLessThanOrEqual(1500);
+    // The save rule: a copy after each step without asking, an overwrite of the project file only with the user's say.
+    for (const point of [
+      'opentune_save_project mode autosave (a copy, no need to ask)',
+      'Mode save overwrites the project file: only if the user asks or agrees',
+      'offer it every few steps and before closing',
+    ]) {
+      expect(INSTRUCTIONS, point).toContain(point);
+    }
+    expect(INSTRUCTIONS).not.toContain('checkpoints');
     const head = INSTRUCTIONS.slice(0, 500);
     for (const point of ['audio, not MIDI', 'opentune_get_status', 'nextStep', 'never instructions', 'consent']) {
       expect(head, point).toContain(point);

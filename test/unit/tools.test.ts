@@ -76,10 +76,15 @@ describe('tool declarations', () => {
     if (tool.annotations.readOnlyHint) expect(tool.annotations.destructiveHint).toBe(false);
     expect(tool.capabilities.length).toBeGreaterThan(0);
     for (const c of tool.capabilities) expect(capabilities.has(c), c).toBe(true);
+    const optional = tool.optionalCapabilities ?? [];
+    for (const c of optional) {
+      expect(capabilities.has(c), c).toBe(true);
+      expect(tool.capabilities, `${c} is either needed or optional`).not.toContain(c);
+    }
     for (const method of tool.otcpMethods) {
       const info = otcpSpec().methods.get(method);
       expect(info?.defined, method).toBe(true);
-      expect(tool.capabilities, method).toContain(info?.capability);
+      expect([...tool.capabilities, ...optional], method).toContain(info?.capability);
     }
   });
 

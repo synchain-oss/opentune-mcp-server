@@ -248,12 +248,12 @@ export const setTracksTool = defineTool({
   name: SET,
   title: 'Set OpenTune track mute, solo, volume, colour; show or duplicate tracks',
   description:
-    'OpenTune (audio vocal pitch editor): changes tracks with ops. mute, solo, volume (db, or linear 0..4) and ' +
-    'colour (#RRGGBB) have no undo entry, as in OpenTune; the result says so first and gives the call that ' +
-    'restores the old values. reveal shows hidden track slots (view state, not saved). duplicate copies a track ' +
-    'with its clips into the first hidden slot (clone = full copies, share = the same contents); it fails if ' +
-    'that slot holds clips. Track ids are positions. Ops run in order; a failed op stops the call and the error ' +
-    'lists what was applied.',
+    'OpenTune (audio vocal pitch editor): duplicates a track with its clips (op duplicate, into the first hidden ' +
+    'slot; clone = full copies, share = same contents; fails if that slot holds clips), shows hidden track slots ' +
+    '(reveal; view state, not saved), and sets mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB): those ' +
+    'have no undo entry, as in OpenTune; the result says so first and gives the call that restores the old ' +
+    'values. Track ids are positions. Ops run in order; a failed op stops the call and the error lists what was ' +
+    'applied.',
   inputSchema: z.strictObject({
     ops: z.array(OP).min(1).max(32).describe('Operations, applied in order.'),
     instance_id: INSTANCE_FIELD,

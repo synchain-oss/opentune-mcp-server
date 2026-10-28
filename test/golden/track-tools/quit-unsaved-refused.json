@@ -10,9 +10,8 @@
       "retryable": false,
       "executed": false,
       "nextStep": {
-        "actor": "agent",
-        "tool": "opentune_save_project",
-        "message": "The project was never saved, so it has no file: save it with opentune_save_project (mode save_as, an absolute .otproj path, for example next to the vocal file), then call opentune_quit again. Or ask the user whether the unsaved changes may be thrown away; only if the user explicitly agrees, call opentune_quit again with discard_unsaved: true."
+        "actor": "user",
+        "message": "The project was never saved, so it has no file and no copy can be written. Ask the user whether to save it (opentune_save_project, mode save_as, an absolute .otproj path, for example next to the vocal file) or to throw the unsaved changes away; do neither without an answer. After a save, call opentune_quit again. Only if the user explicitly agrees to throw the unsaved changes away, call opentune_quit again with discard_unsaved: true."
       },
       "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-unsaved_changes"
     }

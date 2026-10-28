@@ -298,6 +298,12 @@ describe('opentune_set_tracks', () => {
     expect(setTracksTool.description).toMatch(/no undo entry/);
     expect(setTracksTool.description.length).toBeLessThanOrEqual(600);
   });
+
+  it('puts duplicating a track at the start of the description, so that a search finds it', () => {
+    // An agent that wants a copy of a track looks at the first words of the description of each tool.
+    expect(setTracksTool.description.slice(0, 200)).toContain('duplicates a track with its clips (op duplicate');
+    expect(setTracksTool.description).toMatch(/clone = full copies, share = same contents/);
+  });
 });
 
 describe('opentune_delete_track', () => {

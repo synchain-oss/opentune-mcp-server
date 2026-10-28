@@ -22,6 +22,8 @@ import { clip, need } from '../support/mock-client.js';
 const UPDATE = process.env.OPENTUNE_MCP_UPDATE_CATALOG === '1';
 const DIR = new URL('../golden/project-files/', import.meta.url);
 const INSTANCE = '0123456789abcdef0123456789abcdef';
+/** The clock of the scenarios: a local time, so that the time stamp in the name of an old version does not depend on the zone. */
+const NOW = new Date(2026, 9, 28, 14, 5, 9).getTime();
 
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
@@ -65,7 +67,7 @@ async function scenarios(): Promise<Record<string, Scenario>> {
   cleanup.push(t.remove);
   const mock = await startMock({ discoveryDir: t.dir, instanceId: INSTANCE });
   cleanup.push(() => mock.stop());
-  const ctx = testContext(t.dir);
+  const ctx = testContext(t.dir, { now: NOW });
   cleanup.push(() => {
     ctx.instances.close();
   });
@@ -94,14 +96,20 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     { mode: 'save_as', path: need(ids, 'fresh'), wait_seconds: 10 },
   );
   await run(
+    'autosave',
+    'An autosave copy of a project that has a file: a numbered copy in the autosave folder next to it; the project file and its unsaved-changes flag do not change.',
+    'opentune_save_project',
+    { mode: 'autosave', wait_seconds: 10 },
+  );
+  await run(
     'save-current-file',
-    'A later save to the same file: the previous content is replaced; the media copy follows the facts.',
+    'A later save to the same file: the previous content is replaced and kept as an old version; the media copy follows the facts.',
     'opentune_save_project',
     { mode: 'save', wait_seconds: 10 },
   );
   await run(
     'save-overwrite-other-file',
-    'Replacing another project file: destructive, and the audio is copied next to it too.',
+    'Replacing another project file: destructive, the replaced file is kept as an old version next to it, and the audio is copied next to it too.',
     'opentune_save_project_overwrite',
     { path: need(ids, 'existing'), confirm: true, wait_seconds: 10 },
   );
@@ -131,6 +139,8 @@ describe('project save tool result golden snapshots', () => {
     const all = JSON.stringify(await scenarios());
     expect(all).toContain('<tmp-1>/Project_Media');
     expect(all).toContain('<tmp-2>/Project_Media');
+    expect(all).toContain('.autosave/Project_Media');
+    expect(all).toContain('.oldversion/');
     // No backslash of a Windows path (a JSON backslash is two characters), no drive letter, no folder of a user.
     expect(all).not.toContain('\\\\');
     expect(all).not.toMatch(/"[A-Za-z]:\//);

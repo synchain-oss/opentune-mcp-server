@@ -1,5 +1,5 @@
 {
-  "description": "Replacing another project file: destructive, and the audio is copied next to it too.",
+  "description": "Replacing another project file: destructive, the replaced file is kept as an old version next to it, and the audio is copied next to it too.",
   "tool": "opentune_save_project_overwrite",
   "input": {
     "path": "<tmp-2>/existing.otproj",
@@ -7,7 +7,7 @@
     "wait_seconds": 10
   },
   "result": {
-    "summary": "opentune_save_project_overwrite: OVERWROTE another existing project file at the user's request (path in path); the old file cannot be restored. OpenTune also copies the audio the project uses into the Project_Media folder next to the project file. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences.",
+    "summary": "opentune_save_project_overwrite: OVERWROTE another existing project file at the user's request (path in path); a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. OpenTune also copies the audio the project uses into the Project_Media folder next to the project file. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -109,7 +109,7 @@
       }
     ],
     "job": {
-      "jobId": "j:01234567:3",
+      "jobId": "j:01234567:4",
       "kind": "projectSave",
       "state": "succeeded"
     },
@@ -170,6 +170,14 @@
       "preferences"
     ],
     "mediaFolder": "<tmp-2>/Project_Media",
+    "oldVersion": {
+      "path": "<tmp-2>/existing.oldversion/existing-20261028-140509.otproj",
+      "folder": "<tmp-2>/existing.oldversion",
+      "keep": 10,
+      "reused": false,
+      "removedOlder": 0,
+      "couldNotRemove": 0
+    },
     "requestedPath": "<tmp-2>/existing.otproj"
   }
 }
