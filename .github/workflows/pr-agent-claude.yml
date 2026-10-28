@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
 # SPDX-License-Identifier: MIT
-name: PR Agent (Claude Haiku)
+name: PR Agent (Claude Haiku 5.5)
 
 # 交叉验证用的第二个 PR-Agent：Claude Haiku 5.5（effort high），走 Claude API credit（组织 secret
 # CLAUDE_API_KEY_FOR_PR_REVIEW），按量计费。本文件只是调用方，其余设置同 pr-agent.yml，都在
