@@ -57,6 +57,7 @@ const CAPABILITIES = ['project.io', 'jobs.v1'] as const;
 const SAVE_CAPABILITIES = ['project.io', 'jobs.v1', 'read.v1'] as const;
 /** What mode autosave needs besides project.copy, which it checks itself to give its own next step. */
 const AUTOSAVE_CAPABILITIES = ['read.v1', 'jobs.v1'] as const;
+const COPY_CAPABILITY = 'project.copy';
 const READ_TIMEOUT_MS = 15_000;
 
 const instanceIdSchema = z
@@ -508,7 +509,7 @@ const autosaveFolderFailed = (error: unknown): Outcome => ({
 async function runAutosave(ctx: ToolContext, args: SaveProjectArgs): Promise<Outcome> {
   const tool = SAVE;
   return withInstance(ctx, { instanceId: args.instance_id }, AUTOSAVE_CAPABILITIES, async (session) => {
-    if (!session.hello.capabilities.includes('project.copy')) return noCopyCapability;
+    if (!session.hello.capabilities.includes(COPY_CAPABILITY)) return noCopyCapability;
     const ops = ctx.files ?? nodeProjectFs;
     const file = await currentProjectFile(session);
     if (file === null) {
@@ -774,9 +775,9 @@ export const saveProjectTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): saves the project. mode autosave writes a numbered copy into ' +
     '<name>.autosave next to the project file (newest 50 kept) and changes nothing else: use it after each step ' +
-    'without asking. mode save overwrites the project file (fails if never saved); save_as takes an absolute ' +
-    '.otproj path and makes it the project file; both keep the replaced file in <name>.oldversion (newest 10), ' +
-    'only when the user asks or agrees. A different existing file is refused: use another path, or ' +
+    'without asking. mode save overwrites the project file; save_as takes an absolute .otproj path and makes ' +
+    'it the project file; both keep the replaced file in <name>.oldversion (newest 10), only when the user ' +
+    'asks or agrees. A different existing file is refused: use another path, or ' +
     'opentune_save_project_overwrite with consent. Waits up to wait_seconds (default 25, max 30).',
   inputSchema: z.strictObject({
     mode: z
@@ -797,6 +798,7 @@ export const saveProjectTool = defineTool({
   outputSchema: WRITE_RESULT_OUTPUT,
   annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   capabilities: [...SAVE_CAPABILITIES],
+  optionalCapabilities: [COPY_CAPABILITY],
   otcpMethods: ['project.save', 'project.saveAs', 'project.saveCopy', 'project.get', 'job.get'],
   run: (args, ctx) => saveProject(ctx, args),
 });

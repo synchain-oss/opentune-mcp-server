@@ -68,6 +68,11 @@ export interface ToolDefinition<S extends z.ZodObject = z.ZodObject> {
   readonly alwaysLoad?: true;
   /** OTCP capabilities the tool needs; missing ones give UNSUPPORTED(capability_missing). */
   readonly capabilities: readonly string[];
+  /**
+   * OTCP capabilities only some uses of the tool need (one mode). The tool checks them itself and answers with its
+   * own UNSUPPORTED(capability_missing) next step, so the other uses keep working against a server without them.
+   */
+  readonly optionalCapabilities?: readonly string[];
   /** OTCP methods the tool calls. */
   readonly otcpMethods: readonly string[];
   run(args: z.output<S>, ctx: ToolContext): Promise<Outcome>;

@@ -311,6 +311,9 @@ describe('opentune_save_project mode autosave', () => {
       expect.arrayContaining(['project.saveCopy', 'project.get', 'project.save', 'project.saveAs']),
     );
     expect(saveProjectTool.capabilities).toEqual(expect.arrayContaining(['project.io', 'jobs.v1', 'read.v1']));
+    // project.copy is needed by mode autosave only: the other modes must keep working against a server without it.
+    expect(saveProjectTool.capabilities).not.toContain('project.copy');
+    expect(saveProjectTool.optionalCapabilities).toEqual(['project.copy']);
   });
 });
 
