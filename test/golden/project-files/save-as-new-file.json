@@ -157,6 +157,10 @@
       "preferences"
     ],
     "mediaFolder": "<tmp-1>/Project_Media",
+    "oldVersion": null,
+    "nullReasons": {
+      "oldVersion": "no_previous_file"
+    },
     "requestedPath": "<tmp-1>/fresh.otproj"
   }
 }

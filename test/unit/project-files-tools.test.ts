@@ -103,14 +103,19 @@ describe('opentune_save_project', () => {
     });
     expect(fs.existsSync(need(ids, 'fresh'))).toBe(true);
 
+    // Nothing was replaced, so no old version was kept, and the result says why there is none.
+    expect(first.oldVersion).toBeNull();
+    expect(first.nullReasons).toMatchObject({ oldVersion: 'no_previous_file' });
+
     const again = body(await save(ctx, { mode: 'save' }));
     expect(again.summary).toMatch(
-      /^opentune_save_project: saved the project to its file \(path in path\); the previous/,
+      /^opentune_save_project: saved the project to its file \(path in path\), replacing its previous content; a copy of the replaced content was kept in the oldversion folder/,
     );
     expect(again.path).toBe(need(ids, 'fresh'));
+    expect((again.oldVersion as { path: string }).path).toMatch(/\.oldversion[\\/].*-\d{8}-\d{6}\.otproj$/);
     // A later save repeats it after the facts of the save, and does not know the folder (the file is OpenTune's).
     expect(again.summary.endsWith(MEDIA_COPY)).toBe(true);
-    expect(again.summary.indexOf(MEDIA_COPY)).toBeGreaterThan(again.summary.indexOf('cannot be restored'));
+    expect(again.summary.indexOf(MEDIA_COPY)).toBeGreaterThan(again.summary.indexOf('oldVersion.path'));
     expect(again.mediaFolder).toBeNull();
     expect(again.nullReasons).toMatchObject({ mediaFolder: 'project_path_not_given' });
   });
@@ -218,7 +223,13 @@ describe('opentune_save_project', () => {
       openWorldHint: false,
     });
     expect(saveProjectTool.capabilities).toContain('project.io');
-    expect(saveProjectTool.otcpMethods).toEqual(['project.save', 'project.saveAs', 'job.get']);
+    expect(saveProjectTool.otcpMethods).toEqual([
+      'project.save',
+      'project.saveAs',
+      'project.saveCopy',
+      'project.get',
+      'job.get',
+    ]);
   });
 });
 
@@ -244,7 +255,8 @@ describe('opentune_save_project_overwrite', () => {
       /^opentune_save_project_overwrite: OVERWROTE another existing project file at the user's request/,
     );
     expect(result.summary).not.toContain(need(ids, 'existing'));
-    expect(result.summary).toContain(`the old file cannot be restored. ${MEDIA_COPY}`);
+    expect(result.summary).toContain(`goes back to it. ${MEDIA_COPY}`);
+    expect(result.summary).not.toContain('cannot be restored');
     expect(result.mediaFolder).toBe(mediaFolderOf(need(ids, 'existing')));
     expect(result.path).toBe(need(ids, 'existing'));
     expect(fs.readFileSync(need(ids, 'existing'), 'utf8')).not.toBe(before);

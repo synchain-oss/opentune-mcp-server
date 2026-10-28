@@ -21,6 +21,7 @@ const JOB_BUSY_REASONS: Readonly<Record<string, string>> = {
   export: 'export_in_progress',
   projectOpen: 'project_operation',
   projectSave: 'project_operation',
+  projectCopy: 'project_operation',
 };
 const OTHER_JOB_REASON = 'job_in_progress';
 

@@ -133,11 +133,11 @@ OpenTune 在截止时间之前没有开始处理该请求。没有任何改动;�
 
 ### Error IO_ERROR
 
-某个文件无法读取或写入。不带 `path` 的导出写在源文件旁;该文件夹只读时导出会失败,服务不会另选文件夹。请用一个可写文件夹里的 `path` 再次调用 `opentune_export_audio`。
+某个文件无法读取或写入。不带 `path` 的导出写在源文件旁;该文件夹只读时导出会失败,服务不会另选文件夹。请用一个可写文件夹里的 `path` 再次调用 `opentune_export_audio`。来自 `opentune_save_project` 和 `opentune_save_project_overwrite` 的原因 `backup_failed` 表示:这次保存要替换的文件没能复制进它旁边的 `.oldversion` 文件夹,所以什么都没保存,那个文件也没变;见 [Autosave copies and old versions](#autosave-copies-and-old-versions)。来自 `opentune_save_project`(模式 `autosave`)的原因 `write_failed` 表示 `.autosave` 文件夹建不出来或写不进去。
 
 ### Error UNSUPPORTED
 
-OpenTune 或该构建不提供这个操作。原因为 `capability_missing` 时,`detail` 指出缺少的能力;原因为 `no_editor_window` 时,OpenTune 是在没有编辑器窗口的情况下运行的,带窗口启动 OpenTune Standalone 后再试;原因为 `job_not_cancellable` 时,任务会继续,可以用 `opentune_get_job` 跟踪。`opentune_manage_ui` 的 op `switch_view` 需要能力 `ui.workspace`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请在 OpenTune 窗口里切换视图(走带栏里的编曲视图与钢琴卷帘按钮),或改用较新的测试构建。`opentune_quit` 需要能力 `app.quit`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请先用 `opentune_save_project` 保存工程,再请用户关闭 OpenTune 窗口(窗口关闭时不会询问未保存的改动)。
+OpenTune 或该构建不提供这个操作。原因为 `capability_missing` 时,`detail` 指出缺少的能力;原因为 `no_editor_window` 时,OpenTune 是在没有编辑器窗口的情况下运行的,带窗口启动 OpenTune Standalone 后再试;原因为 `job_not_cancellable` 时,任务会继续,可以用 `opentune_get_job` 跟踪。`opentune_manage_ui` 的 op `switch_view` 需要能力 `ui.workspace`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请在 OpenTune 窗口里切换视图(走带栏里的编曲视图与钢琴卷帘按钮),或改用较新的测试构建。`opentune_quit` 需要能力 `app.quit`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请先用 `opentune_save_project` 保存工程,再请用户关闭 OpenTune 窗口(窗口关闭时不会询问未保存的改动)。`opentune_save_project` 的 `mode: autosave` 需要能力 `project.copy`,规范 `1.0.0-rc.8` 之前的测试构建没有它:不会写任何副本;请在用户想保住成果时提醒他保存工程,或改用较新的测试构建。
 
 ### Error INTERNAL
 
@@ -237,6 +237,12 @@ OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次�
 ## Hybrid mode
 
 OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 "Hybrid Mode: Small corrections use DSP, large corrections use vocoder")默认开启。修正量中小于 75 音分的部分走 DSP 移调,而不是声码器。这是 OpenTune 自身的设计,在它的窗口里和通过本服务都一样;在真实人声上,这种小修正可能几乎听不出来。如果需要小修正也明显可听,请在 OpenTune 的首选项里关闭该项,或让 agent 用 `opentune_set_settings`(`processing.hybrid_mode`)来关。它是 OpenTune 安装的全局设置而不是工程设置,关掉之后一直保持关闭,直到再把它打开;`opentune_set_settings` 的结果会给出恢复原值的调用。当时的设置会如实报告,位置有三处:`opentune_export_audio` 结果里的 `export.processing.hybridMode`;导出作业在调用内没跑完时,`opentune_get_job` 里的 `job.result.processing.hybridMode`;首选项本身在 `opentune_get_settings` 的 `processing` 小节。不要想当然。
+
+## Autosave copies and old versions
+
+两个文件夹都在工程文件旁边,以去掉 `.otproj` 的工程名命名。`opentune_save_project` 的 `mode: autosave` 写 `<工程名>.autosave/<工程名>-autosave-0001.otproj`、`-0002` 等,保留最新的 50 个;它从不改动工程文件、未保存标记或最近工程列表。每次会替换工程文件的保存,都会先把旧文件复制到 `<工程名>.oldversion/<工程名>-<YYYYMMDD-HHMMSS>.otproj`(本地时间,同一秒重名时加 `-2`、`-3`),保留最新的 10 个。服务只在这两个文件夹里删除名字符合上述模式的普通文件:OpenTune 在 `<工程名>.autosave` 里放的 `Project_Media` 文件夹、你自己的文件和其他工程文件都不会被删。要找回之前的成果,用 `opentune_open_project` 打开想要的那个文件。
+
+自动副本和旧版本里的音频路径是相对它所在文件夹写的。`<工程名>.oldversion` 里没有 `Project_Media` 文件夹,所以 OpenTune 会退回到工程里记录的原始音频路径:只要工程文件夹(以及里面的音频)没被移动,文件就能打开。`<工程名>.autosave` 里的副本有它自己的 `Project_Media` 文件夹。
 
 ## Slow process discovery
 

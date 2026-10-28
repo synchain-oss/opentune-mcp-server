@@ -1,0 +1,305 @@
+// SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
+// SPDX-License-Identifier: MIT
+
+// The two folders this server keeps next to a project file, and the only file system work it does in
+// them: `<name>.autosave` holds numbered copies of the project that opentune_save_project writes with
+// mode autosave (the newest 50 are kept), and `<name>.oldversion` holds the earlier content of a project
+// file that a save is about to replace (the newest 10 are kept). `<name>` is the file name without
+// `.otproj`.
+//
+// The path policy of these operations: they run only on a project file whose path passed the rules of
+// spec/otcp/v1/PROTOCOL.md section 20.1, they create at most the two folders directly below that file's
+// directory, they write only files inside them, and they delete only a regular file in them whose name
+// matches the pattern of its folder for this project name. A directory, a link, `Project_Media`, another
+// project's copies and any file a user put there are never deleted, whatever else the folder holds. The
+// names come from this module, never from a tool argument.
+
+import fs from 'node:fs/promises';
+
+import { splitPath } from '../paths/index.js';
+import { extensionOf, pathProblem, systemOf, type PathSystem } from '../paths/validate.js';
+
+/** Autosave copies kept per project; the oldest beyond this are deleted after a new one is written. */
+export const AUTOSAVE_KEEP = 50;
+/** Old versions kept per project file; the oldest beyond this are deleted after a save. */
+export const OLDVERSION_KEEP = 10;
+
+const EXTENSION = '.otproj';
+
+/** An entry of a directory: its name and whether it is a regular file (not a directory or a link). */
+export interface FolderEntry {
+  readonly name: string;
+  readonly isFile: boolean;
+}
+
+/** The file system operations of this module, so that tests can fail them one by one. */
+export interface ProjectFs {
+  /** The entries of a directory, or null when the directory does not exist. */
+  list(dir: string): Promise<readonly FolderEntry[] | null>;
+  /** Creates `dir` (not its parents). A directory that exists already is fine. */
+  makeDir(dir: string): Promise<void>;
+  /** Copies `from` to `to`, which must not exist: fails with code EEXIST when it does. */
+  copyNew(from: string, to: string): Promise<void>;
+  /** Deletes one file. */
+  remove(file: string): Promise<void>;
+  /** Whether a regular file exists at the path (links are followed). */
+  fileExists(file: string): Promise<boolean>;
+  /** Whether two paths name the same existing file (the file system's own identity, not the path text). */
+  sameFile(a: string, b: string): Promise<boolean>;
+}
+
+const codeOf = (error: unknown): string | undefined => (error as NodeJS.ErrnoException).code;
+
+/** The operations on the real file system. */
+export const nodeProjectFs: ProjectFs = {
+  async list(dir) {
+    try {
+      const entries = await fs.readdir(dir, { withFileTypes: true });
+      return entries.map((entry) => ({ name: entry.name, isFile: entry.isFile() }));
+    } catch (error) {
+      if (codeOf(error) === 'ENOENT') return null;
+      throw error;
+    }
+  },
+  async makeDir(dir) {
+    try {
+      await fs.mkdir(dir);
+    } catch (error) {
+      if (codeOf(error) !== 'EEXIST') throw error;
+      // Something is there: a directory is what is wanted; anything else must fail the copy that follows.
+      const stat = await fs.stat(dir);
+      if (!stat.isDirectory()) throw error;
+    }
+  },
+  async copyNew(from, to) {
+    await fs.copyFile(from, to, fs.constants.COPYFILE_EXCL);
+  },
+  async remove(file) {
+    await fs.unlink(file);
+  },
+  async fileExists(file) {
+    try {
+      return (await fs.stat(file)).isFile();
+    } catch (error) {
+      const code = codeOf(error);
+      if (code === 'ENOENT' || code === 'ENOTDIR') return false;
+      throw error;
+    }
+  },
+  async sameFile(a, b) {
+    try {
+      const [first, second] = await Promise.all([fs.stat(a, { bigint: true }), fs.stat(b, { bigint: true })]);
+      // A file system that reports no file id (0) gives no proof of identity.
+      return first.ino !== 0n && first.ino === second.ino && first.dev === second.dev;
+    } catch {
+      return false;
+    }
+  },
+};
+
+const escapeRegExp = (text: string): string => text.replace(/[\\^$.*+?()[\]{}|/-]/g, '\\$&');
+
+/** The pieces of the file names this module reads and writes, for one project file. */
+export class ProjectFolders {
+  private constructor(
+    readonly file: string,
+    readonly dir: string,
+    readonly stem: string,
+    readonly sep: string,
+  ) {}
+
+  /**
+   * The folders of a project file, or null when the path is not one this module may build paths from: not an
+   * absolute path by the rules of section 20.1, not ending in .otproj, or without a file name before the extension.
+   */
+  static of(file: string, platform: NodeJS.Platform): ProjectFolders | null {
+    const system: PathSystem = systemOf(platform);
+    if (pathProblem(file, system) !== undefined) return null;
+    if (extensionOf(file).toLowerCase() !== EXTENSION) return null;
+    const { dir, stem, sep } = splitPath(file, system);
+    return stem === '' || dir === '' ? null : new ProjectFolders(file, dir, stem, sep);
+  }
+
+  get autosaveDir(): string {
+    return `${this.dir}${this.sep}${this.stem}.autosave`;
+  }
+
+  get oldversionDir(): string {
+    return `${this.dir}${this.sep}${this.stem}.oldversion`;
+  }
+
+  autosaveName(number: number): string {
+    return `${this.stem}-autosave-${String(number).padStart(4, '0')}${EXTENSION}`;
+  }
+
+  /** The number in the name of an autosave copy of this project, or null for any other name. */
+  autosaveNumber(name: string): number | null {
+    const match = new RegExp(`^${escapeRegExp(this.stem)}-autosave-(\\d{4,})\\.otproj$`).exec(name);
+    const digits = match?.[1];
+    return digits === undefined ? null : Number.parseInt(digits, 10);
+  }
+
+  /** The sort key of an old version of this project (time, then the number after a same-second collision), or null. */
+  oldVersionKey(name: string): { readonly time: string; readonly suffix: number } | null {
+    const match = new RegExp(`^${escapeRegExp(this.stem)}-(\\d{8}-\\d{6})(?:-(\\d+))?\\.otproj$`).exec(name);
+    const time = match?.[1];
+    if (time === undefined) return null;
+    return { time, suffix: match?.[2] === undefined ? 1 : Number.parseInt(match[2], 10) };
+  }
+
+  oldVersionName(time: string, suffix: number): string {
+    return `${this.stem}-${time}${suffix <= 1 ? '' : `-${String(suffix)}`}${EXTENSION}`;
+  }
+}
+
+const pad = (n: number, width = 2): string => String(n).padStart(width, '0');
+
+/** `YYYYMMDD-HHMMSS` in the local time of this machine, the time stamp in the name of an old version. */
+export function localStamp(epochMs: number): string {
+  const d = new Date(epochMs);
+  return (
+    `${pad(d.getFullYear(), 4)}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `-${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+  );
+}
+
+/** The number the next autosave copy gets: one more than the highest number any entry of the folder carries. */
+export function nextAutosaveNumber(folders: ProjectFolders, entries: readonly FolderEntry[] | null): number {
+  let highest = 0;
+  // Every entry counts, whatever it is: a directory with such a name would make the copy fail, too.
+  for (const entry of entries ?? []) highest = Math.max(highest, folders.autosaveNumber(entry.name) ?? 0);
+  return highest + 1;
+}
+
+/** The names of the autosave copies to delete so that the newest `keep` stay: regular files of this pattern only. */
+export function autosavesToDelete(
+  folders: ProjectFolders,
+  entries: readonly FolderEntry[],
+  keep = AUTOSAVE_KEEP,
+): string[] {
+  const copies = entries
+    .filter((entry) => entry.isFile)
+    .flatMap((entry) => {
+      const number = folders.autosaveNumber(entry.name);
+      return number === null ? [] : [{ name: entry.name, number }];
+    })
+    .sort((a, b) => a.number - b.number || (a.name < b.name ? -1 : 1));
+  return copies.slice(0, Math.max(0, copies.length - keep)).map((copy) => copy.name);
+}
+
+/** The names of the old versions to delete so that the newest `keep` stay: regular files of this pattern only. */
+export function oldVersionsToDelete(
+  folders: ProjectFolders,
+  entries: readonly FolderEntry[],
+  keep = OLDVERSION_KEEP,
+): string[] {
+  const versions = entries
+    .filter((entry) => entry.isFile)
+    .flatMap((entry) => {
+      const key = folders.oldVersionKey(entry.name);
+      return key === null ? [] : [{ name: entry.name, key }];
+    })
+    .sort((a, b) =>
+      a.key.time === b.key.time
+        ? a.key.suffix - b.key.suffix || (a.name < b.name ? -1 : 1)
+        : a.key.time < b.key.time
+          ? -1
+          : 1,
+    );
+  return versions.slice(0, Math.max(0, versions.length - keep)).map((version) => version.name);
+}
+
+export interface Rolled {
+  /** Files that were deleted. */
+  readonly removed: number;
+  /** Files that should have been deleted and could not be. */
+  readonly failed: number;
+}
+
+async function removeAll(ops: ProjectFs, dir: string, sep: string, names: readonly string[]): Promise<Rolled> {
+  let removed = 0;
+  let failed = 0;
+  for (const name of names) {
+    try {
+      await ops.remove(`${dir}${sep}${name}`);
+      removed += 1;
+    } catch {
+      failed += 1;
+    }
+  }
+  return { removed, failed };
+}
+
+/** Deletes the autosave copies beyond the newest `keep`. A failure to list or delete is counted, never thrown. */
+export async function rollAutosaves(ops: ProjectFs, folders: ProjectFolders, keep = AUTOSAVE_KEEP): Promise<Rolled> {
+  try {
+    const entries = await ops.list(folders.autosaveDir);
+    if (entries === null) return { removed: 0, failed: 0 };
+    return await removeAll(ops, folders.autosaveDir, folders.sep, autosavesToDelete(folders, entries, keep));
+  } catch {
+    return { removed: 0, failed: 1 };
+  }
+}
+
+/** Deletes the old versions beyond the newest `keep`. A failure to list or delete is counted, never thrown. */
+export async function rollOldVersions(
+  ops: ProjectFs,
+  folders: ProjectFolders,
+  keep = OLDVERSION_KEEP,
+): Promise<Rolled> {
+  try {
+    const entries = await ops.list(folders.oldversionDir);
+    if (entries === null) return { removed: 0, failed: 0 };
+    return await removeAll(ops, folders.oldversionDir, folders.sep, oldVersionsToDelete(folders, entries, keep));
+  } catch {
+    return { removed: 0, failed: 1 };
+  }
+}
+
+export interface OldVersion {
+  /** The copy of the file that was written. */
+  readonly file: string;
+  /** The folder it is in. */
+  readonly folder: string;
+  /** Its name, which `removeOldVersion` accepts. */
+  readonly name: string;
+}
+
+/** The most same-second collisions of old versions that are tried before the backup fails. */
+const MAX_SAME_SECOND = 999;
+
+/**
+ * Copies a project file that is about to be replaced into the `.oldversion` folder next to it, as
+ * `<name>-<YYYYMMDD-HHMMSS>.otproj` (`-2`, `-3`, … when that name is taken in the same second). Throws when the folder
+ * cannot be made or the copy fails: the caller must then not replace the file. Rolling is separate, so that a failed
+ * save leaves the older versions alone.
+ */
+export async function copyToOldVersions(ops: ProjectFs, folders: ProjectFolders, epochMs: number): Promise<OldVersion> {
+  await ops.makeDir(folders.oldversionDir);
+  const stamp = localStamp(epochMs);
+  for (let suffix = 1; suffix <= MAX_SAME_SECOND; suffix += 1) {
+    const name = folders.oldVersionName(stamp, suffix);
+    const file = `${folders.oldversionDir}${folders.sep}${name}`;
+    try {
+      await ops.copyNew(folders.file, file);
+      return { file, folder: folders.oldversionDir, name };
+    } catch (error) {
+      if (codeOf(error) !== 'EEXIST') throw error;
+    }
+  }
+  throw new Error('too many old versions with the same time stamp');
+}
+
+/**
+ * Deletes the old version just written, when the save it was made for failed and the file it copied is still the
+ * project file. Only a name that is an old version of this project is deleted. Never throws.
+ */
+export async function removeOldVersion(ops: ProjectFs, folders: ProjectFolders, name: string): Promise<boolean> {
+  if (folders.oldVersionKey(name) === null) return false;
+  try {
+    await ops.remove(`${folders.oldversionDir}${folders.sep}${name}`);
+    return true;
+  } catch {
+    return false;
+  }
+}

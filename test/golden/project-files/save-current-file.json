@@ -1,12 +1,12 @@
 {
-  "description": "A later save to the same file: the previous content is replaced; the media copy follows the facts.",
+  "description": "A later save to the same file: the previous content is replaced and kept as an old version; the media copy follows the facts.",
   "tool": "opentune_save_project",
   "input": {
     "mode": "save",
     "wait_seconds": 10
   },
   "result": {
-    "summary": "opentune_save_project: saved the project to its file (path in path); the previous content of the file was replaced and cannot be restored. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences. OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.",
+    "summary": "opentune_save_project: saved the project to its file (path in path), replacing its previous content; a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences. OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -88,7 +88,7 @@
       }
     ],
     "job": {
-      "jobId": "j:01234567:2",
+      "jobId": "j:01234567:3",
       "kind": "projectSave",
       "state": "succeeded"
     },
@@ -111,6 +111,13 @@
     "mediaFolder": null,
     "nullReasons": {
       "mediaFolder": "project_path_not_given"
+    },
+    "oldVersion": {
+      "path": "<tmp-1>/fresh.oldversion/fresh-20261028-140509.otproj",
+      "folder": "<tmp-1>/fresh.oldversion",
+      "keep": 10,
+      "removedOlder": 0,
+      "couldNotRemove": 0
     }
   }
 }

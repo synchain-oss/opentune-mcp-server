@@ -249,8 +249,14 @@ export const ERROR_STEPS = table<NextStep>({
   ),
   'INVALID_ARGUMENT/merge_not_possible': agent(
     'Only two clips that OpenTune can join merge: on one track, the trailing clip starting where the leading one ' +
-      'ends, both showing adjacent parts of one content (as a split leaves them), with equal gain. Check the clips ' +
-      'with opentune_get_project; give them equal gain first with op gain if that is the difference.',
+      'ends, both showing adjacent parts of one content (as a split leaves them), with equal gain and the same ' +
+      'key. The same key means the same root and scale, set the same way: both set by hand, or both from one ' +
+      'detection. When a project is opened again OpenTune detects the key of every clip anew, so the two halves of ' +
+      'a split often differ. Check the clips with opentune_get_project. If the gain differs, make it equal first ' +
+      'with op gain. If the key differs, compare the two clips with opentune_get_clip_details and ask the user ' +
+      "which key the merged clip should have (the key from before the split, or the longer clip's). Then set that " +
+      'key on both clips with opentune_set_clip, also on the clip that already shows it, and merge again. ' +
+      'Setting a key does not change the audio or the notes, but it cannot be undone.',
   ),
   'INVALID_ARGUMENT/trim_out_of_range': agent(
     'A trim moves an edge only within the audio of the clip content, and the start must stay before the end. Read ' +
@@ -424,7 +430,8 @@ export const editArrangementTool = defineTool({
     'OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, ' +
     'fade run in order as one undo step. split, merge, delete and copy each go alone ' +
     'in a call and cannot be undone (the first three by an OpenTune defect): do one when the user named the ' +
-    'clip or time, else ask first; delete needs confirm. dry_run previews (not copy).',
+    'clip or time, else ask first; delete needs confirm. dry_run previews (not copy). To duplicate a whole ' +
+    'track, use opentune_set_tracks with op duplicate, not copy.',
   inputSchema: z.strictObject({
     expected_revision: z
       .string()

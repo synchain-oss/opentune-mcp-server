@@ -14,6 +14,7 @@ import { z } from 'zod';
 import { OtcpError, fromOtcpError, toolError, type ToolError } from '../errors/tool-error.js';
 import type { Logger } from '../log.js';
 import { cleanDetail } from '../sanitize/untrusted.js';
+import type { ProjectFs } from '../files/project-folders.js';
 import type { DiscoveryEntry } from '../discovery/file.js';
 import type { ProcessProbe } from '../discovery/process.js';
 import type { LaunchDeps } from '../launch/start.js';
@@ -30,6 +31,11 @@ export interface ToolContext {
   readonly logger: Logger;
   /** Current time in ms since the epoch. */
   readonly now: () => number;
+  /**
+   * The file system operations on the autosave and old-version folders next to a project file
+   * (src/files/project-folders.ts). The real file system when absent; tests pass their own.
+   */
+  readonly files?: ProjectFs;
   /** Starting OpenTune (opentune_launch) and the launch wait that opentune_get_status also uses. */
   readonly launch: LaunchDeps;
 }

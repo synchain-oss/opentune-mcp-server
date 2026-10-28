@@ -744,7 +744,7 @@ describe('showOnboarding', () => {
 });
 
 describe('a window-less run (no editor window)', () => {
-  // The eleven methods that act through the editor window (PROTOCOL.md section 7 rule 6; NO_EDITOR_METHODS of the mock).
+  // The twelve methods that act through the editor window (PROTOCOL.md section 7 rule 6; NO_EDITOR_METHODS of the mock).
   const NO_EDITOR_METHODS = [
     'ui.getState',
     'ui.dismiss',
@@ -755,10 +755,12 @@ describe('a window-less run (no editor window)', () => {
     'track.delete',
     'project.save',
     'project.saveAs',
+    'project.saveCopy',
     'project.open',
     'audio.set',
   ] as const;
   const projectFile = path.join(os.tmpdir(), 'ot-no-editor', 'song.otproj');
+  const copyFile = path.join(os.tmpdir(), 'ot-no-editor', 'song-copy.otproj');
 
   /** Valid params for every method of the rule, so that only the missing window can make a call fail. */
   const paramsFor = (
@@ -774,6 +776,7 @@ describe('a window-less run (no editor window)', () => {
     'track.delete': { trackId: 1, expectedArrangementRevision: arrangementRevision, confirm: true },
     'project.save': {},
     'project.saveAs': { path: projectFile },
+    'project.saveCopy': { path: copyFile },
     'project.open': { path: projectFile },
     'audio.set': { bufferSizeFrame: 256 },
   });

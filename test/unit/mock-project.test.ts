@@ -11,6 +11,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
+import { failTemporaryWrites } from '../support/fs-faults.js';
 import { Sessions, clip, need, type TestSession } from '../support/mock-client.js';
 
 const sessions = new Sessions();
@@ -307,5 +308,172 @@ describe('project.clearRecent', () => {
     expect(cleared.changes).toMatchObject([{ fields: { recentProjects: { before: [ids.r1, ids.r2], after: [] } } }]);
     expect(field(await ok('prefs.get'), 'recentProjects')).toEqual([]);
     expect(await ok('project.clearRecent')).toMatchObject({ noOp: true, changes: [] });
+  });
+});
+
+describe('project.saveCopy', () => {
+  const COPY_FILES = [
+    { bind: 'a', kind: 'absent', extension: '.otproj' },
+    { bind: 'b', kind: 'project', durationSec: 3 },
+    { bind: 'c', kind: 'absent', extension: '.otproj' },
+  ] as const;
+
+  const failedJob = async (session: TestSession, started: Record<string, unknown>) => {
+    const { job } = (await session.ok('job.get', { jobId: field(started, 'job', 'jobId'), waitMs: 5000 })) as {
+      job: { state: string; error: { data: Record<string, unknown> } };
+    };
+    return job;
+  };
+
+  it('writes a project file that opens, and changes nothing in the project', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({
+      files: [...COPY_FILES],
+      clips: [clip()],
+      dirty: true,
+      projectFile: 'b',
+      preferences: { recentProjects: ['b'] },
+    });
+    const original = readFileSync(need(ids, 'b'));
+    const result = await finished(session, await ok('project.saveCopy', { path: ids.a }));
+    expect(result).toMatchObject({ path: ids.a, projectPath: ids.b, projectDirty: true });
+    expect(result.sizeBytes).toBe(readFileSync(need(ids, 'a')).length);
+    expect(result).not.toHaveProperty('undo');
+    expect(result.warnings).toEqual([
+      {
+        code: 'NOT_SAVED_IN_PROJECT',
+        subject: null,
+        data: { items: ['visibleTrackCount', 'undoHistory', 'preferences'] },
+      },
+    ]);
+    // The project's file, its flag and the recent projects are as they were; the file of the project is untouched.
+    expect(readFileSync(need(ids, 'b')).equals(original)).toBe(true);
+    expect(field(await ok('project.get'), 'project')).toMatchObject({ path: ids.b, dirty: true });
+    expect(((await ok('prefs.get')).recentProjects as { path: string }[]).map((r) => r.path)).toEqual([ids.b]);
+    expect(((await ok('ui.getState')).busy as Record<string, boolean>).projectOperation).toBe(false);
+    // The copy is a project file: opening it gives a project with the clip that was copied.
+    await finished(session, await ok('project.open', { path: ids.a, discardUnsaved: true }));
+    expect(field(await ok('project.get'), 'project')).toMatchObject({ path: ids.a, dirty: false });
+    expect(mock.snapshot().placements.length).toBe(1);
+  });
+
+  it('reports no project path, with the reason, for a project that was never saved', async () => {
+    const session = await sessions.open();
+    const ids = session.mock.given({ files: [...COPY_FILES], clips: [clip()], dirty: true });
+    const result = await finished(session, await session.ok('project.saveCopy', { path: ids.a }));
+    expect(result).toMatchObject({
+      projectPath: null,
+      projectDirty: true,
+      nullReasons: { projectPath: 'no_project_path' },
+    });
+    expect(existsSync(need(ids, 'a'))).toBe(true);
+  });
+
+  it('never replaces a file, not even the file of the project', async () => {
+    const session = await sessions.open();
+    const { mock, fails } = session;
+    const ids = mock.given({ files: [...COPY_FILES], clips: [clip()], dirty: true, projectFile: 'b' });
+    const original = readFileSync(need(ids, 'b'));
+    expect(await fails('project.saveCopy', { path: ids.b })).toMatchObject({
+      data: { kind: 'ALREADY_EXISTS', reason: 'target_exists', executed: false },
+    });
+    expect(readFileSync(need(ids, 'b')).equals(original)).toBe(true);
+    expect(readdirSync(path.dirname(need(ids, 'b'))).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('rejects paths that are not project files, and a call without a path', async () => {
+    const session = await sessions.open();
+    session.mock.given({ files: [...COPY_FILES], clips: [clip()] });
+    expect((await session.fails('project.saveCopy', { path: absoluteWav })).data).toMatchObject({
+      kind: 'INVALID_ARGUMENT',
+      reason: 'path_bad_extension',
+    });
+    expect((await session.fails('project.saveCopy', { path: 'relative/copy.otproj' })).data).toMatchObject({
+      kind: 'INVALID_ARGUMENT',
+    });
+    expect((await session.fails('project.saveCopy', {})).data).toMatchObject({ kind: 'INVALID_ARGUMENT' });
+  });
+
+  it('is a project operation: other writes are refused while it runs, and it is refused while a save runs', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const { mock, ok, fails } = session;
+    const ids = mock.given({ files: [...COPY_FILES], clips: [clip()] });
+    const started = await ok('project.saveCopy', { path: ids.a });
+    expect(field(started, 'job', 'kind')).toBe('projectCopy');
+    expect((await fails('transport.setTempo', { bpm: 100 })).data).toMatchObject({ reason: 'project_operation' });
+    expect((await fails('project.saveCopy', { path: ids.c })).data).toMatchObject({
+      kind: 'BUSY',
+      reason: 'project_operation',
+    });
+    expect(((await ok('ui.getState')).busy as Record<string, boolean>).projectOperation).toBe(true);
+    clock.advance(0);
+    await finished(session, started);
+    await ok('transport.setTempo', { bpm: 100 });
+    // And the other way round: a copy is refused while a save runs.
+    const saving = await ok('project.saveAs', { path: ids.c });
+    expect((await fails('project.saveCopy', { path: ids.a })).data).toMatchObject({
+      kind: 'BUSY',
+      reason: 'project_operation',
+    });
+    clock.advance(0);
+    await finished(session, saving);
+  });
+
+  it('cannot be cancelled', async () => {
+    const clock = new ManualClock();
+    const session = await sessions.open({ clock });
+    const ids = session.mock.given({ files: [...COPY_FILES], clips: [clip()] });
+    const started = await session.ok('project.saveCopy', { path: ids.a });
+    const { job } = (await session.ok('job.get', { jobId: field(started, 'job', 'jobId') })) as {
+      job: { cancellable: boolean };
+    };
+    expect(job.cancellable).toBe(false);
+    expect((await session.fails('job.cancel', { jobId: field(started, 'job', 'jobId') })).data).toMatchObject({
+      kind: 'UNSUPPORTED',
+      reason: 'job_not_cancellable',
+    });
+    clock.advance(0);
+    await finished(session, started);
+  });
+
+  it('ends the job with IO_ERROR when the file cannot be written, and leaves no target and no temporary file', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ files: [...COPY_FILES], clips: [clip()], dirty: true, projectFile: 'b' });
+    failTemporaryWrites();
+    const job = await failedJob(session, await ok('project.saveCopy', { path: ids.a }));
+    expect(job.state).toBe('failed');
+    expect(job.error.data).toMatchObject({ kind: 'IO_ERROR', reason: 'write_failed' });
+    expect(existsSync(need(ids, 'a'))).toBe(false);
+    expect(readdirSync(path.dirname(need(ids, 'a'))).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    expect(((await ok('ui.getState')).busy as Record<string, boolean>).projectOperation).toBe(false);
+    expect(field(await ok('project.get'), 'project')).toMatchObject({ path: ids.b, dirty: true });
+  });
+
+  it('ends the job with ALREADY_EXISTS when a file appears at the target while it runs, and keeps that file', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ files: [...COPY_FILES], clips: [clip()] });
+    vi.spyOn(fs, 'linkSync').mockImplementation(() => {
+      fs.writeFileSync(need(ids, 'a'), 'someone else');
+      throw Object.assign(new Error('exists'), { code: 'EEXIST' });
+    });
+    const job = await failedJob(session, await ok('project.saveCopy', { path: ids.a }));
+    expect(job.state).toBe('failed');
+    expect(job.error.data).toMatchObject({ kind: 'ALREADY_EXISTS' });
+    expect(readFileSync(need(ids, 'a'), 'utf8')).toBe('someone else');
+    expect(readdirSync(path.dirname(need(ids, 'a'))).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('is refused without the capability project.copy', async () => {
+    const session = await sessions.open();
+    const ids = session.mock.given({ files: [...COPY_FILES], withoutCapabilities: ['project.copy'] });
+    expect((await session.fails('project.saveCopy', { path: ids.a })).data).toMatchObject({
+      kind: 'UNSUPPORTED',
+      reason: 'capability_missing',
+    });
+    expect(existsSync(need(ids, 'a'))).toBe(false);
   });
 });
