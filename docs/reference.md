@@ -336,7 +336,7 @@ OTCP capabilities: `read.v1`. OTCP methods: `content.getDetails`, `content.getNo
 
 **Save OpenTune project**: changes state, not destructive, idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): saves the project. mode autosave writes a numbered copy into <name>.autosave next to the project file (newest 50 kept) and changes nothing else: use it after each step without asking. mode save overwrites the project file; save_as takes an absolute .otproj path and makes it the project file; both keep the replaced file in <name>.oldversion (newest 10), only when the user asks or agrees. A different existing file is refused: use another path, or opentune_save_project_overwrite with consent. Waits up to wait_seconds (default 25, max 30).
+OpenTune (audio vocal pitch editor): saves the project. mode autosave writes a numbered copy into <name>.autosave next to the project file (newest 50 kept) and writes nothing outside that folder: use it after each step without asking. mode save overwrites the project file; save_as takes an absolute .otproj path and makes it the project file; both keep the replaced file in <name>.oldversion (newest 10), only when the user asks or agrees. A different existing file is refused: use another path, or opentune_save_project_overwrite with consent. Waits up to wait_seconds (default 25, max 30).
 
 OTCP capabilities: `project.io`, `jobs.v1`, `read.v1`. Needed by one mode only: `project.copy`. OTCP methods: `project.save`, `project.saveAs`, `project.saveCopy`, `project.get`, `job.get`.
 

@@ -240,9 +240,9 @@ OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英�
 
 ## Autosave copies and old versions
 
-两个文件夹都在工程文件旁边,以去掉 `.otproj` 的工程名命名。`opentune_save_project` 的 `mode: autosave` 写 `<工程名>.autosave/<工程名>-autosave-0001.otproj`、`-0002` 等,保留最新的 50 个;它从不改动工程文件、未保存标记或最近工程列表。每次会替换工程文件的保存,都会先把旧文件复制到 `<工程名>.oldversion/<工程名>-<YYYYMMDD-HHMMSS>.otproj`(本地时间,同一秒重名时加 `-2`、`-3`),保留最新的 10 个。服务只在这两个文件夹里删除名字符合上述模式的普通文件:OpenTune 在 `<工程名>.autosave` 里放的 `Project_Media` 文件夹、你自己的文件和其他工程文件都不会被删。要找回之前的成果,用 `opentune_open_project` 打开想要的那个文件。
+两个文件夹都在工程文件旁边,以去掉 `.otproj` 的工程名命名。`opentune_save_project` 的 `mode: autosave` 写 `<工程名>.autosave/<工程名>-autosave-0001.otproj`、`-0002` 等,保留最新的 50 个;它从不改动工程文件、未保存标记或最近工程列表,只在 `<工程名>.autosave` 里写文件(副本,以及 OpenTune 放进该文件夹自己的 `Project_Media` 的音频:OpenTune 会替换这种文件夹里同名且更旧的音频,所以副本用专用的文件夹,不会替换别的工程的音频)。每次会替换工程文件的保存,都会先把旧文件复制到 `<工程名>.oldversion/<工程名>-<YYYYMMDD-HHMMSS>.otproj`(本地时间,同一秒重名时加 `-2`、`-3`),保留最新的 10 个。服务只在这两个文件夹里删除名字符合上述模式的普通文件:OpenTune 在 `<工程名>.autosave` 里放的 `Project_Media` 文件夹、你自己的文件和其他工程文件都不会被删。要找回之前的成果,用 `opentune_open_project` 打开想要的那个文件。
 
-自动副本和旧版本里的音频路径是相对它所在文件夹写的。`<工程名>.oldversion` 里没有 `Project_Media` 文件夹,所以 OpenTune 会退回到工程里记录的原始音频路径:只要工程文件夹(以及里面的音频)没被移动,文件就能打开。`<工程名>.autosave` 里的副本有它自己的 `Project_Media` 文件夹。
+自动副本和旧版本里的音频路径是相对它所在文件夹写的。`<工程名>.oldversion` 里没有 `Project_Media` 文件夹,所以 OpenTune 会退回到保存时记在工程里的音频来源路径:只要工程文件夹(以及里面的音频)没被移动,文件就能打开。`<工程名>.autosave` 里的副本有它自己的 `Project_Media` 文件夹。
 
 ## Slow process discovery
 

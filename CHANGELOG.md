@@ -12,10 +12,11 @@ versioned separately and has its own changelog.
 
 - `opentune_save_project` has the mode `autosave`: it writes a numbered copy of the project into
   `<name>.autosave` next to the project file (`<name>-autosave-0001.otproj`, 0002, ...; the newest 50 are kept) and
-  changes nothing else. The project file, the unsaved-changes flag, the recent-projects list, the undo history and the
+  writes nothing outside that folder (the audio that OpenTune copies goes into a `Project_Media` folder inside it, so a
+  copy never touches the audio of another project). The project file, the unsaved-changes flag, the recent-projects list, the undo history and the
   window title stay as they are, so an agent can save after every step without touching the user's file or the
   question of whether to save. It sends the new OTCP method `project.saveCopy` of the specification `1.0.0-rc.8`
-  (capability `project.copy`, job kind `projectCopy`; a copy never replaces a file). The result names the copy
+  (capability `project.copy`, job kind `projectCopy`; a copy never replaces a project file). The result names the copy
   (`autosave.path`, `autosave.number`), the project file and its unsaved-changes flag, and the folder where OpenTune
   copied the audio. A project without a file, and a test build without `project.copy` (everything up to
   `1.0.0-rc.7`), get an error with a next step and nothing is written. Only files that match

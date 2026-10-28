@@ -390,14 +390,16 @@ within the call; and the preference itself in the `processing` section of `opent
 
 Both folders sit next to the project file and are named after it without `.otproj`. `opentune_save_project` with
 `mode: autosave` writes `<name>.autosave/<name>-autosave-0001.otproj`, `-0002` and so on, and keeps the newest 50; it
-never touches the project file, the unsaved-changes mark or the list of recent projects. Every save that replaces a
+never touches the project file, the unsaved-changes mark or the list of recent projects, and writes only inside `<name>.autosave` (the copy and the
+`Project_Media` folder with its audio: OpenTune replaces an older audio file of the same name in such a folder, which is
+why the copies get a folder of their own and cannot replace the audio of another project). Every save that replaces a
 project file first copies the old file into `<name>.oldversion/<name>-<YYYYMMDD-HHMMSS>.otproj` (local time, `-2`, `-3`
 when the second is taken) and keeps the newest 10. The server deletes only regular files whose names match these
 patterns in these two folders: the `Project_Media` folder that OpenTune fills inside `<name>.autosave`, your own files
 and other project files are never deleted. To get earlier work back, open the wanted file with `opentune_open_project`.
 
 An autosave copy or an old version names its audio relative to the folder it is in. In `<name>.oldversion` there is no
-`Project_Media` folder, so OpenTune falls back to the original audio path recorded in the project, and the file opens as
+`Project_Media` folder, so OpenTune falls back to the audio source path that the save recorded in the project, and the file opens as
 long as the project folder (and the audio in it) has not been moved. A copy in `<name>.autosave` has its own
 `Project_Media` folder.
 
