@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
 # SPDX-License-Identifier: MIT
-name: Claude PR Review
+name: Claude PR Review (Opus 5.5)
 
 # Claude 代码审查（Opus 5.5），走维护者订阅 OAuth token（非按量计费 API key）。只审不改。
 # 触发所有 base 分支 —— 子 PR（base = feature/*）上只有 review bot 一定会跑；dev → prod 的晋升 PR 不审。

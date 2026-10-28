@@ -384,6 +384,10 @@ MCPB package, the Claude Code plugin `opentune` and the skills zip.
   `v1.0.245` to `v1.0.253`, the version `dev` and the shared workflows use. The shared Claude review now also
   denies reading `/github` (the container-job layout), and `review-dispatch.yml` carries the same deny rule. The
   shared workflows also record the commit that ran in the step summary.
+- The review workflows are named after the model they run: `Claude PR Review (Opus 5.5)`,
+  `PR Agent (DeepSeek V4.1 Flash)` and `PR Agent (Claude Haiku 5.5)`. The check names are unchanged.
+  The workflow test that requires every call of `Synchain-oss/ci-workflows` to pin the same commit now
+  also counts a call that spells the owner or repository in another case.
 - The real-instance helper of the end-to-end scenarios now copies a data template with the rules the contract runner
   uses and the documentation describes: the template's ready file and discovery folder are left out.
 - The shared review workflows are pinned to `v1.3.1`. The Claude Haiku PR-Agent runs at effort `high`

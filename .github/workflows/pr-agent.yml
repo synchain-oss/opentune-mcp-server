@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
 # SPDX-License-Identifier: MIT
-name: PR Agent
+name: PR Agent (DeepSeek V4.1 Flash)
 
 # PR-Agent（describe / review / improve），DeepSeek V4.1 Flash 经 OpenCode Go 网关，按量计费。
 # 本文件只是调用方：模型、输出与输入上限、超时（不重试、无 fallback 模型）、按 digest 锁定的 pr-agent 镜像、
