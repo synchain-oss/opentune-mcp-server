@@ -31,6 +31,23 @@ versioned separately and has its own changelog.
   then refuses deletes the copy it made. When the newest old version already holds exactly the bytes of the file to be
   replaced, no new copy is made: that one is the old version (`oldVersion.reused` is true), so a repeated save does not
   push an older version out of the ten. A copy that fails part way is deleted again. See `docs/contract-changes/20261028-autosave-and-save-rules.md`.
+  An old version also gets its audio: in the same step, before the save, the files of the `Project_Media` folder next to
+  the file being replaced are copied into `<name>.oldversion/Project_Media`, where an old version looks for its audio,
+  so it still opens after the original audio files were deleted (until now it opened only while they were in place).
+  The rule is OpenTune's own for its audio folder: a file is copied when it is missing there or older than its source;
+  nothing is deleted, a newer file is never overwritten, links and sub-folders are skipped, and a copy that fails part way
+  is deleted again. A reused old version gets the missing files, too. The whole `Project_Media` folder is copied, which
+  every project file in the same directory shares, so the audio of the other projects there comes along and each
+  project file's `<name>.oldversion/Project_Media` holds its own copy: with several project files in one directory the
+  space taken multiplies by their number (one project per folder avoids that). The roll of the old versions does not
+  touch the folder, so it only grows. The copy stops after 15 seconds (checked between files) so that it cannot hold
+  the save up: the files left are listed as not copied, `oldVersion.media.timedOut` is true, and the next save that
+  replaces the file copies the rest. A failure to copy audio does not stop the save either: the result says so in
+  `oldVersion.media` (`copied`, `notCopied`, `notCopiedCount`, `timedOut`), a warning line
+  (`OLD_VERSION_MEDIA_NOT_COPIED`, `source: server`) and a sentence in the summary, a different one for a failure and for
+  the time limit. The troubleshooting page now also says when the old version of a save is deleted again (OpenTune
+  refuses the save or reports no change) and when it is kept (any other failure). See
+  `docs/contract-changes/20261028-oldversion-media.md`.
 - `opentune_manage_ui` has the op `switch_view` with `view` `arrangement` or `piano_roll`, so an agent can close the
   piano roll again after `focus_clip` opened it (`arrangement` shows the arrangement view). It sends the new OTCP
   method `ui.setWorkspace` of the specification `1.0.0-rc.7` (capability `ui.workspace`, which the op asks for in

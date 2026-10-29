@@ -400,15 +400,49 @@ when the second is taken) and keeps the newest 10; when the newest old version a
 file to be replaced (a save right after a save that changed nothing), no new copy is made and the result says so
 (`oldVersion.reused`). The server deletes only regular files in these two folders whose names match these patterns:
 such a file counts as a copy or an old version and is deleted once it is beyond the newest 50 or 10, whoever put it
-there. Folders, links, files with any other name, the `Project_Media` folder that OpenTune fills inside
-`<name>.autosave` and the files of other projects are never touched. When a save is refused or fails after its old
-version was made and deleted again, an empty `<name>.oldversion` folder can remain; the server never deletes folders.
-To get earlier work back, open the wanted file with `opentune_open_project`.
+there. Folders, links, files with any other name, the `Project_Media` folders (the one that OpenTune fills inside
+`<name>.autosave`, and the one this server fills inside `<name>.oldversion`, see below) and the files of other projects
+are never touched. If OpenTune refuses the save, or reports that it changed nothing (`executed` is `false`, or the
+refusal `confirm_required` of a different existing file), the project file is as it was, so the old version that was
+just made is deleted again (an old version that was only reused is never deleted). When the save fails in any other way,
+the old version is kept, because the project file may already have been partly written: it is then the way back. An
+empty `<name>.oldversion` folder can remain after a refused save; the server never deletes folders. To get earlier work
+back, open the wanted file with `opentune_open_project`.
 
-An autosave copy or an old version names its audio relative to the folder it is in. In `<name>.oldversion` there is no
-`Project_Media` folder, so OpenTune falls back to the audio source path that the save recorded in the project, and the file opens as
-long as the project folder (and the audio in it) has not been moved. A copy in `<name>.autosave` has its own
-`Project_Media` folder.
+An autosave copy or an old version names its audio relative to the folder it is in, so it finds the audio only in the
+`Project_Media` folder inside its own folder. A copy in `<name>.autosave` has one, which OpenTune fills. For an old
+version, the server fills it: whenever an old version is made (or an existing one is reused), and before the save runs,
+it copies the regular files of the `Project_Media` folder next to the file being replaced into
+`<name>.oldversion/Project_Media`. It follows OpenTune's own rule for that folder: a file is copied only when it is
+missing there or older than its source; a newer file is never overwritten, nothing is deleted, and links and
+sub-folders are skipped. With the audio there, an old version still opens after the original audio files (for example in
+a downloads folder) were deleted. If the file being replaced has no `Project_Media` folder, nothing is done.
+
+What is copied is the whole `Project_Media` folder, not only the audio that this project uses: telling which files a
+project uses would mean reading the project file, which this server does not do. That folder is shared by all the
+project files in the same directory, so the audio of the other projects there is copied too, and each project file has
+an `<name>.oldversion/Project_Media` of its own: with several project files in one directory, the space taken multiplies
+by their number. Keep one project per folder to avoid that. The rolling of old versions never touches this folder, so it
+only grows, and it can hold audio of other projects; delete it by hand if the old versions are no longer needed. As in
+the `Project_Media` folder next to the project, a file there is replaced by a newer source file of the same name, so an
+older old version then finds the newer audio under that name.
+
+The copy has a time limit of 15 seconds, so that the first save of a project with a lot of audio does not hold the save
+up. The time is checked between files, so a single very large file can still take longer. When the limit is reached, the
+files not tried yet are not copied and the save still happens: `oldVersion.media.timedOut` is `true`, those files are in
+`oldVersion.media.notCopied` (and in `notCopiedCount`), and the result carries the warning line below and a sentence in
+the summary. This is not a failure: the next save that replaces this project file copies the rest (only files that are
+missing or older are copied), so saving once or twice more completes a large folder. Until then, that old version may
+not find all of its audio once the original audio files are gone.
+
+If some audio could not be copied (a full or read-only disk, or a file that is in use), the save still happens, and
+`oldVersion.media.timedOut` is `false` unless the time ran out as well. The result then carries a warning line (code
+`OLD_VERSION_MEDIA_NOT_COPIED`, `source: server`; it is the same line for a failure and for the time limit, with one
+sentence for each) and a sentence in the summary, and `oldVersion.media.notCopied` lists the files (paths such as
+`Project_Media/1.wav`; `Project_Media` itself when the whole folder could not be read or made; `notCopiedCount` has the
+full count). That old version may not find its audio once the original audio files are gone. Fix the cause (free space,
+close the program that holds the file) and save again: the missing files are copied then. `oldVersion.media.copied`
+counts the files that were copied by this save.
 
 ## Slow process discovery
 

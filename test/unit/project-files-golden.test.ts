@@ -14,8 +14,9 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startMock } from '../../mock/server.js';
+import { MEDIA_COPY_BUDGET_MS, nodeProjectFs, type ProjectFs } from '../../src/files/project-folders.js';
 import { TOOLS } from '../../src/tools/index.js';
-import { render, type ToolDefinition } from '../../src/tools/registry.js';
+import { render, type ToolContext, type ToolDefinition } from '../../src/tools/registry.js';
 import { tempDir, testContext } from '../support/context.js';
 import { clip, need } from '../support/mock-client.js';
 
@@ -80,8 +81,39 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     dirty: true,
   });
   const folders = [path.dirname(need(ids, 'fresh')), path.dirname(need(ids, 'existing'))];
-  const run = async (id: string, description: string, name: string, input: Record<string, unknown>) => {
-    const result = render(await tool(name).run(tool(name).inputSchema.parse(input), ctx)).structuredContent;
+  // A file system that cannot copy audio, for the scenario in which the audio of an old version is not complete.
+  const noAudioCopy: ProjectFs = {
+    ...nodeProjectFs,
+    copyNew: (from, to) =>
+      path.basename(path.dirname(from)) === 'Project_Media'
+        ? Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }))
+        : nodeProjectFs.copyNew(from, to),
+  };
+  const failing = testContext(t.dir, { now: NOW, files: noAudioCopy });
+  cleanup.push(() => {
+    failing.instances.close();
+  });
+  // A file system on which copying audio takes the whole time budget of the copy, for the scenario in which the time runs out.
+  let late = 0;
+  const slowAudioCopy: ProjectFs = {
+    ...nodeProjectFs,
+    copyNew: async (from, to) => {
+      await nodeProjectFs.copyNew(from, to);
+      if (path.basename(path.dirname(from)) === 'Project_Media') late += MEDIA_COPY_BUDGET_MS;
+    },
+  };
+  const slow = testContext(t.dir, { now: () => NOW + late, files: slowAudioCopy });
+  cleanup.push(() => {
+    slow.instances.close();
+  });
+  const run = async (
+    id: string,
+    description: string,
+    name: string,
+    input: Record<string, unknown>,
+    using: ToolContext = ctx,
+  ) => {
+    const result = render(await tool(name).run(tool(name).inputSchema.parse(input), using)).structuredContent;
     out[id] = {
       description,
       tool: name,
@@ -112,6 +144,32 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     'Replacing another project file: destructive, the replaced file is kept as an old version next to it, and the audio is copied next to it too.',
     'opentune_save_project_overwrite',
     { path: need(ids, 'existing'), confirm: true, wait_seconds: 10 },
+  );
+  // The project file is now the one that was replaced, and has audio next to it.
+  const media = path.join(path.dirname(need(ids, 'existing')), 'Project_Media');
+  mkdirSync(media);
+  writeFileSync(path.join(media, '1.wav'), 'audio');
+  await run(
+    'save-copies-audio-for-old-version',
+    'A save when the project folder has audio: the old version gets a copy of it in its own Project_Media folder, so it still opens when the original audio is gone.',
+    'opentune_save_project',
+    { mode: 'save', wait_seconds: 10 },
+  );
+  writeFileSync(path.join(media, '2.wav'), 'audio');
+  await run(
+    'save-audio-not-copied',
+    'A save when some audio could not be copied: the save happens, and the result lists the file in oldVersion.media and carries a warning line made by this server.',
+    'opentune_save_project',
+    { mode: 'save', wait_seconds: 10 },
+    failing,
+  );
+  writeFileSync(path.join(media, '3.wav'), 'audio');
+  await run(
+    'save-audio-time-ran-out',
+    'A save when the copy of the audio used up its time: the files copied so far are kept, the files left are listed in oldVersion.media with timedOut true and a warning line made by this server, and the next save copies them.',
+    'opentune_save_project',
+    { mode: 'save', wait_seconds: 10 },
+    slow,
   );
   return out;
 }
