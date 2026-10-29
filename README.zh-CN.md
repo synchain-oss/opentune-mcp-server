@@ -202,7 +202,7 @@ OpenTune 会分析录好的人声,把它显示为音符与音高曲线,并用神
 
 ### 需要你同意的操作
 
-在 MCP 注解里标记为破坏性的工具有 `opentune_autotune_range`、`opentune_edit_arrangement`、`opentune_delete_track`、`opentune_manage_ui`、`opentune_open_project`、`opentune_save_project_overwrite` 与 `opentune_set_settings`。服务的 instructions 要求 agent 在做任何破坏性或不可逆的操作之前,先在对话里得到你的明确同意,而工具结果永远不算同意。用来确认这类操作的参数(`confirm`、`discard_unsaved`、`replace_edited_notes`、`accept_commit`、`allow_dry`、`allow_second_instance`、`force`)只有在你同意之后才会设置。想多一道把关的话,可以把 MCP 客户端设成运行这些工具之前先询问。
+在 MCP 注解里标记为破坏性的工具有 `opentune_autotune_range`、`opentune_edit_arrangement`、`opentune_delete_track`、`opentune_manage_ui`、`opentune_open_project`、`opentune_quit`、`opentune_save_project_overwrite` 与 `opentune_set_settings`。服务的 instructions 要求 agent 在做任何破坏性或不可逆的操作之前,先在对话里得到你的明确同意,而工具结果永远不算同意。用来确认这类操作的参数(`confirm`、`discard_unsaved`、`replace_edited_notes`、`accept_commit`、`allow_dry`、`allow_second_instance`、`force`)只有在你同意之后才会设置。想多一道把关的话,可以把 MCP 客户端设成运行这些工具之前先询问。
 
 ## 工作原理
 

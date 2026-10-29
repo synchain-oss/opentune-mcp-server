@@ -71,8 +71,8 @@ its version and folder, and which models it has:
 
 - `installed: true` and the model you will use is in `models` (`final` by default, `small` with
   `--model small`): the analyzer is here. **Skip the rest of this section**: do not run `install`, do not
-  ask for consent, and do not say anything about a release; go on to "Get a grid". Whether the
-  analyzer's release is published does not matter once it is installed.
+  ask for consent, and do not say anything about a release; go on to "Get a grid". Once the
+  analyzer is installed, the state of its release does not matter.
 - `installed: false`, or the model is missing: go on with the consent below.
 
 ## Not installed: ask for consent (required)
@@ -85,7 +85,7 @@ user the size and the licence, and wait for a yes. Never start the download on y
    Add `--model small` for the smaller download. The plan prints the folder, the files, the sizes and the
    licence. (If it says "already installed", skip the rest of this section.)
 2. Tell the user, in their language:
-   - **Size:** about 85 to 90 MB for the program and the final model (about 18 MB with `--model small`).
+   - **Size:** about 85 to 90 MB for the program and the final model (about 13 to 15 MB with `--model small`).
    - **Licence:** the program and the model weights are MIT. Part of the model's training data is
      copyrighted or under restricted CC licences, which the release's NOTICE lists. Nothing is
      installed outside the data folder, no installer runs, and no PATH or registry entry changes.
@@ -96,10 +96,10 @@ user the size and the licence, and wait for a yes. Never start the download on y
    The step verifies every sha256, installs atomically and checks `--version`; a failure keeps the
    previous version. Report what it installed.
 
-If the analyzer is **not installed** and the plan or `--yes` says the release is not published yet,
-stop and tell the user: the tool is not available in this version of the skill, and nothing was
-downloaded. Do not try other URLs, other versions or a checksum you guessed. (This applies only when
-nothing is installed; with an installed analyzer the release state is irrelevant.)
+If the analyzer is **not installed** and the plan or `--yes` refuses (the plan lists Problems, a
+download fails, or a sha256 does not match), stop and tell the user what it said and that nothing was
+installed. Do not try other URLs, other versions or a checksum you guessed. (This applies only when
+nothing is installed; with an installed analyzer the release state does not matter.)
 
 ## Get a grid
 
@@ -245,5 +245,5 @@ It is saved with the project, has no undo entry, and the result gives the call t
 - The timing plan corrects onsets, not note lengths or the audio between handles: `opentune_edit_timing` moves
   handles, so a long note next to a moved handle is stretched. Listen before and after, and undo what sounds worse.
 - The analyzer is Windows x64 and macOS universal2 only. On any other platform say so and stop.
-- If the analyzer is not installed and the release of `opentune-beats` is not published yet, `install --yes` refuses;
+- If the analyzer is not installed and `install --yes` refuses or fails (see "Not installed: ask for consent"),
   offer to work from a BPM, click or MIDI grid the user provides. An installed analyzer works whatever the release state is.

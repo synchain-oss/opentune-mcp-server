@@ -499,21 +499,34 @@ describe('SKILL.md', () => {
     expect(text).toMatch(/undo from the\s+newest one/);
   });
 
-  it('stops for an unpublished release only when nothing is installed', () => {
-    const matches = [...text.matchAll(/not published yet/g)];
-    expect(matches.length).toBeGreaterThanOrEqual(2);
+  it('stops for a refused install only when nothing is installed, and does not call the published release unpublished', () => {
+    // The shipped manifest marks the release as published, so the text must not tell the user otherwise.
+    const { loadManifest } = beatGridModule as unknown as { loadManifest: () => Json };
+    expect(loadManifest().released).toBe(true);
+    expect(text).not.toMatch(/not published|unpublished/);
+    const matches = [...text.matchAll(/plan or `--yes` refuses/g)];
+    expect(matches).toHaveLength(1);
     for (const match of matches) {
-      const around = text.slice(Math.max(0, match.index - 260), match.index + 260);
+      const around = text.slice(Math.max(0, match.index - 260), match.index + 460);
       expect(around, around).toMatch(/not installed|nothing is installed|installed: false/);
+      expect(around, around).toMatch(/nothing was\s+installed/);
     }
     // A reader who knows the analyzer is installed is told the release state does not matter.
-    expect(text).toMatch(/release state is irrelevant|whatever the release state is|does not matter/);
+    expect(text).toMatch(/release state does not matter|whatever the release state is/);
   });
 });
 
 describe('an analyzer that is already installed', () => {
   const { loadManifest } = beatGridModule as unknown as { loadManifest: () => Json };
-  const manifest = loadManifest();
+  const shipped = loadManifest();
+  // The shipped manifest turned back into one for a release that is not published (released: false, no sha256).
+  // The cases below are about that state: nothing may be downloaded, and an installed analyzer still works.
+  const manifest = JSON.parse(JSON.stringify(shipped)) as Json & {
+    platforms: Record<string, Json>;
+    models: Record<string, Json>;
+  };
+  manifest.released = false;
+  for (const entry of [...Object.values(manifest.platforms), ...Object.values(manifest.models)]) entry.sha256 = '';
   const version = String(manifest.version);
   const winDir = `opentune-beats-${version}-win-x64`;
 
@@ -539,6 +552,7 @@ describe('an analyzer that is already installed', () => {
     let err = '';
     const code = await main(argv, {
       env: {},
+      manifest,
       platform: 'win32',
       arch: 'x64',
       out: (text: string) => (out += text),
@@ -558,7 +572,9 @@ describe('an analyzer that is already installed', () => {
   }
 
   it('is built on a manifest that says the release is not published, so the cases below mean something', () => {
+    expect(shipped.released).toBe(true);
     expect(manifest.released).toBe(false);
+    expect(manifest.version).toBe(shipped.version);
   });
 
   it('says already installed in the plan, with no Problems, and exits 0', async () => {

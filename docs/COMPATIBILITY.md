@@ -20,7 +20,7 @@ The unofficial OpenTune test build that matches each release of this server:
 
 | Server | OTCP specification | Unofficial OpenTune test build |
 | ------ | ------------------ | ------------------------------ |
-| 0.2.0  | `1.0.0-rc.6`       | `synchain-test/v1.8.0-ctl.2`   |
+| 0.2.0  | `1.0.0-rc.8`       | `synchain-test/v1.8.0-ctl.2`   |
 | 0.1.0  | `1.0.0-rc.3`       | `synchain-test/v1.8.0-ctl.1`   |
 
 ## How long to wait
@@ -81,7 +81,7 @@ refused with `UNSUPPORTED` before anything is sent, so no change is applied that
 | `project.io`     | `opentune_save_project`, `opentune_save_project_overwrite`, `opentune_open_project`, and the `clear_recent` part of `opentune_set_settings`                                                                                                                                                                                                                                                                                               |
 | `prefs.write`    | `opentune_set_settings` (the `processing` part)                                                                                                                                                                                                                                                                                                                                                                                           |
 | `audio.device`   | `opentune_get_settings` (the `audio_device` section), `opentune_set_settings` (the `audio_device` part)                                                                                                                                                                                                                                                                                                                                   |
-| `app.quit`       | `opentune_quit`. The capability is new in `1.0.0-rc.7`, so the test build of `0.2.0` (`1.0.0-rc.6`) lacks it: there the tool answers `UNSUPPORTED`, reason `capability_missing`, before it sends anything, and a next step that asks the user to close the OpenTune window after the project is saved (the window closes without asking about unsaved changes).                                                                           |
+| `app.quit`       | `opentune_quit`. The capability is new in `1.0.0-rc.7`, so a test build of `1.0.0-rc.6` or older (such as the one of `0.1.0`) lacks it: there the tool answers `UNSUPPORTED`, reason `capability_missing`, before it sends anything, and a next step that asks the user to close the OpenTune window after the project is saved (the window closes without asking about unsaved changes).                                                 |
 
 ### Reference alignment was removed
 
