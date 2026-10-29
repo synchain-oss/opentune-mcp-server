@@ -15,7 +15,7 @@ OpenTune MCP Server (by Synchain) 让 AI 客户端操作 OpenTune 独立版,即�
 
 - **带控制接口的 OpenTune 构建。** 官方 OpenTune 发布版还没有控制接口,所以本服务只能配合 OpenTune 的[非官方测试版](https://github.com/synchain-oss/OpenTune/releases)使用(Windows x64)。配官方 OpenTune 时,`opentune_get_status` 报告 `NO_API_BUILD`。测试版使用已安装的官方 OpenTune(1.7.9 或更新)里的模型。安装配置见 [README](../README.zh-CN.md#安装) 与 [install.md](install.md)。
 - **只覆盖 OpenTune 独立版。** DAW 里的 OpenTune VST3/ARA 插件不在范围内;与 DAW 之间只通过文件路径交换。
-- **测试版要新到够用。** 每个工具都声明了它需要的测试版能力,缺少某项能力的工具会返回 `UNSUPPORTED` 并附下一步,其余工具照常工作。有三项功能需要比 0.2.0 随附的测试版(规范 `1.0.0-rc.6`)更新的构建:关闭 OpenTune(`app.quit`,自 `1.0.0-rc.7`)、切换视图(`ui.workspace`,自 `1.0.0-rc.7`)和自动副本(`project.copy`,自 `1.0.0-rc.8`)。下面的表里已标出。见 [COMPATIBILITY.md](COMPATIBILITY.md#capabilities-of-the-test-build)。
+- **测试版要新到够用。** 每个工具都声明了它需要的测试版能力,缺少某项能力的工具会返回 `UNSUPPORTED` 并附下一步,其余工具照常工作。0.2.0 随附的测试版是 `synchain-test/v1.8.0-ctl.2`(规范 `1.0.0-rc.8`),已包含关闭 OpenTune(`app.quit`)、切换视图(`ui.workspace`)和自动副本(`project.copy`)。更早的测试版缺少比它更晚加入的能力。见 [COMPATIBILITY.md](COMPATIBILITY.md#capabilities-of-the-test-build)。
 - **首次启动需要有人在场。** OpenTune 用全新数据目录第一次启动时会弹出一个一次性的欢迎对话框,必须在 OpenTune 窗口里回答;在此之前所有写操作都会以 `BUSY` 失败。见 [First launch dialog](TROUBLESHOOTING.zh-CN.md#first-launch-dialog)。
 - **自检。** `opentune-mcp doctor` 不启动 OpenTune,只检查上面这些配置。
 
@@ -162,7 +162,7 @@ Skill 是随插件或扩展一起提供的文字说明。它们不是额外的�
 - **`tuning-workflow`** 引导 agent 按固定顺序完成一次修音:检查 OpenTune、导入人声、测修前、定调(用 `opentune_estimate_key`,调性中途变化时按段落分别定)、先用 `dry_run` 再正式修音、测修后、导出并读取峰值。它带着本页的规则:破坏性的步骤先征得同意,每个问题只问一次,先用工具查清楚再来问你,绝不覆盖你的原文件,每一步之后写一个自动副本,每隔几步以及关闭之前提议真正保存。它也涵盖编排、轨道、走带、窗口与设置类工具,以及遇到挡住写操作的对话框或冲突时怎么办。
 - **`check-results`** 用 OpenTune 自己的分析(`opentune_analyze_pitch`,不用外部音高检测)检查修音结果,只有在前后两次的目标是同一种时才比较。检查导出的文件时,它先问你,再把副本导入到一条空轨,不抢走你的选中(`opentune_open_audio`,带 `new_track` 和 `focus: false`);这次导入不能撤销,你可以自己删掉这个副本。改过头就撤销,最后用一两句话汇报。
 - **`lyrics-timeline`** 给一个或多个干声 WAV 里的每个字或词标上起止时间,让「把第一段副歌第一句里的第一个字升高两个半音」这样的请求能找到对应的音符(用 `opentune_get_notes` 或 `opentune_edit_notes`)。支持的语言:普通话、粤语、英语、德语、西班牙语、法语、意大利语、葡萄牙语、俄语、韩语和日语。它在你的电脑上运行;第一次使用要下载 Python 环境和语音模型(约 4.7 GB,有 NVIDIA 显卡时约 10 GB),你同意后才开始。音频不会上传,但歌词和时间轴是文本,agent 会读取,等于进入了对话。对歌声的精度没有测过(对齐器是在说话语音上评估的):起点请按大约 50 到 150 毫秒的误差看待,长音的结尾更粗略。拿不准的地方 agent 会问你。
-- **`beat-grid`** 从**伴奏或原曲混音**(绝不用人声,节拍检测器对人声不可靠)测出一首歌的速度和节拍网格,按段落给出,找出网格相对于你的人声的位置,再把人声各音符的起点变成 `opentune_edit_timing` 的批次,每批最多 64 个 `shift`。它一次应用一批,再重新规划;你明确要求修时间就算同意,否则它先问你。它不会把分段速度写进工程(一个工程只有一个速度)。分析器(`opentune-beats`,MIT)要一次性下载,默认模型约 85 到 90 MB(精简版约 18 MB),你同意后才下载。如果分析器的发布版还没有发布,skill 会停下来并说明;只有干声时,它会改为请你提供 BPM、节拍轨或 MIDI 文件。
+- **`beat-grid`** 从**伴奏或原曲混音**(绝不用人声,节拍检测器对人声不可靠)测出一首歌的速度和节拍网格,按段落给出,找出网格相对于你的人声的位置,再把人声各音符的起点变成 `opentune_edit_timing` 的批次,每批最多 64 个 `shift`。它一次应用一批,再重新规划;你明确要求修时间就算同意,否则它先问你。它不会把分段速度写进工程(一个工程只有一个速度)。分析器(`opentune-beats`,MIT)要一次性从它的 GitHub Release 下载,默认模型约 85 到 90 MB(精简版约 13 到 15 MB),你同意后才下载;每个文件都按固定的 SHA-256 校验。如果安装被拒绝或失败,skill 会停下来并说明;只有干声时,它会改为请你提供 BPM、节拍轨或 MIDI 文件。
 
 ## 示例场景
 
@@ -217,7 +217,7 @@ Skill 是随插件或扩展一起提供的文字说明。它们不是额外的�
 - **OpenTune 里没有歌词、没有段落标记、不检测节拍。** agent 按时间、按乐句(`opentune_analyze_pitch` 的 `detail: phrases`),或者借助 `lyrics-timeline` skill 按歌词来定位,拿不准时会问你。节拍来自 `beat-grid` skill,或来自你给的 BPM、节拍轨或 MIDI 文件。一个工程只有一个速度和一个拍号。
 - **参考对齐已经没有了。** OpenTune 上游已经退役了参考轨和它的 AUTO Ref 按钮。本服务不提供对应的模式(见 [COMPATIBILITY.md](COMPATIBILITY.md#reference-alignment-was-removed))。
 - **有些修改不能撤销。** 导入音频、改片段的调性、时间网格的 `seed`、拆分、合并、删除与复制片段、复制与删除轨道、用 `notesOnly` 替换全部音符、关闭首次引导的欢迎页,以及清空最近工程列表。静音、独奏、音量、颜色、速度、拍号和全局设置没有撤销条目。结果会在第一句话里写明。
-- **混合模式。** OpenTune 的首选项「混合模式」默认开启,修正量中小于 75 音分的部分走 DSP 移调而不是声码器,所以小幅修正可能几乎听不出来。想让小修正也明显生效,可以让 agent 用 `opentune_set_settings`(`processing.hybrid_mode`)把它关掉;它是全局设置,关掉之后一直保持关闭,直到有人再把它打开。见 [Hybrid mode](TROUBLESHOOTING.zh-CN.md#hybrid-mode)。
+- **混合模式。** OpenTune 的首选项「混合模式」默认开启,修正量中小于 75 音分的部分走 DSP 移调而不是声码器,所以小幅修正可能几乎听不出来。想让小修正也明显生效,可以让 agent 用 `opentune_set_settings`(`processing.hybrid_mode`)把它关掉;它是全局设置,和别的全局设置一样,步骤做完后 agent 会把它恢复为原值,除非你要它保持关闭。见 [Hybrid mode](TROUBLESHOOTING.zh-CN.md#hybrid-mode)。
 - **agent 听不到声音。** 它给出的是音准数字和操作的效果。修出来好不好听,以及音色或节奏感方面的任何事,都要你自己判断。修音之后渲染需要一点时间;agent 会先确认渲染已经是最新的,才说结果可以听了。
 - **等待。** 长音频的导入、分析、渲染和导出需要时间;工具最多等 30 秒,之后返回一个任务编号去跟进。
 - **导出。** 不给 `path` 的导出会写在源文件旁;该文件夹只读时导出会失败,不会自动换文件夹。导出只有 WAV,而且从不覆盖。

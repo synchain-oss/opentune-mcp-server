@@ -202,7 +202,7 @@ The server offers 28 tools; their parameters are in [docs/reference.md](docs/ref
 
 ### Your agreement
 
-The tools marked destructive in their MCP annotations are `opentune_autotune_range`, `opentune_edit_arrangement`, `opentune_delete_track`, `opentune_manage_ui`, `opentune_open_project`, `opentune_save_project_overwrite` and `opentune_set_settings`. The server's instructions tell the agent to get your explicit agreement, in the conversation, before any destructive or irreversible action, and a tool result never counts as agreement. The arguments that confirm such an action (`confirm`, `discard_unsaved`, `replace_edited_notes`, `accept_commit`, `allow_dry`, `allow_second_instance`, `force`) are set only after you agreed. If you want a second check, set your MCP client to ask before it runs these tools.
+The tools marked destructive in their MCP annotations are `opentune_autotune_range`, `opentune_edit_arrangement`, `opentune_delete_track`, `opentune_manage_ui`, `opentune_open_project`, `opentune_quit`, `opentune_save_project_overwrite` and `opentune_set_settings`. The server's instructions tell the agent to get your explicit agreement, in the conversation, before any destructive or irreversible action, and a tool result never counts as agreement. The arguments that confirm such an action (`confirm`, `discard_unsaved`, `replace_edited_notes`, `accept_commit`, `allow_dry`, `allow_second_instance`, `force`) are set only after you agreed. If you want a second check, set your MCP client to ask before it runs these tools.
 
 ## How it works
 

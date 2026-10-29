@@ -52,8 +52,13 @@ save_as` onto it, the replaced file for `opentune_save_project_overwrite`.
 - The roll of the old versions does not touch the folder, so it only grows (and holds the audio of every project in
   that directory).
 - The copy has a time budget of `MEDIA_COPY_BUDGET_MS` = 15 000 ms, read after each file (so one very large file can
-  still take longer). A tool call lasts 45 seconds at most and the save itself waits up to 30 seconds for its job, so
-  the copy cannot take more than the rest. When the budget is used up, the files that were not tried are not copied:
+  still take longer). The budget is the limit of this one step, not a share of a total: `mode: save` also reads the
+  project (`READ_TIMEOUT_MS`, 15 seconds), starts the save (`START_TIMEOUT_MS`, 15 seconds) and waits for its job
+  (`wait_seconds`, 25 by default and 30 at most, plus `WAIT_MARGIN_MS`, 4 seconds). Normally each step is quick. If
+  every step used its whole limit, the save would take 15 + 15 + 15 + 29 = 74 seconds (79 with the largest
+  `wait_seconds`), more than the 60 seconds a client waits by default (`CLIENT_TIMEOUT_MS`). The client then gives up on
+  a save that has happened: the file is replaced, the result is lost, and the next read of the project shows it. The
+  values are not yet derived from that client timeout. When the budget is used up, the files that were not tried are not copied:
   they are listed in `notCopied` (at most 20 names, all counted in `notCopiedCount`) and `timedOut` is `true`. Nothing
   else is needed for the next save to finish the work: it copies the files that are missing or older, so only the rest.
 - A failure to copy audio, or the end of the budget, never fails or stops the save. It is reported (below).

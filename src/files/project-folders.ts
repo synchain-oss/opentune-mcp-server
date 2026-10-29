@@ -398,10 +398,15 @@ export interface MediaCopy {
 export const MAX_MEDIA_NAMED = 20;
 
 /**
- * The longest the copy of the audio of one project file into the oldversion folder runs, in milliseconds. A call of a
- * tool lasts 45 seconds at most, and the save itself, which follows the copy, may wait up to 30 seconds for its job:
- * that leaves 15 seconds for the copy. The time is read after each file, so a single very large file can take
- * longer; the files that are left when the time is used up are copied by the next save.
+ * The longest the copy of the audio of one project file into the oldversion folder runs, in milliseconds. It is the
+ * limit of this one step, not a share of a total: `mode: save` also reads the project (READ_TIMEOUT_MS of
+ * tools/project-files.ts, 15 seconds), starts the save (START_TIMEOUT_MS, 15 seconds) and waits for its job
+ * (`wait_seconds`, 25 by default and 30 at most, plus WAIT_MARGIN_MS, 4 seconds). Normally each step is quick. If every
+ * step used its whole limit, the save would take 15 + 15 + 15 + 29 = 74 seconds (79 with the largest `wait_seconds`),
+ * more than the 60 seconds a client waits by default (CLIENT_TIMEOUT_MS of tools/client-timeout.ts). The client then
+ * gives up on a save that has happened: the file is replaced, the result is lost, and the next read of the project
+ * shows it. The time is read after each file, so a single very large file can take longer; the files that are left when
+ * the time is used up are copied by the next save.
  */
 export const MEDIA_COPY_BUDGET_MS = 15_000;
 

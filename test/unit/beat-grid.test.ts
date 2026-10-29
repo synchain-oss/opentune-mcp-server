@@ -67,6 +67,7 @@ interface TimingPlan {
 }
 interface InstallPlan {
   problems: string[];
+  released: boolean;
   totalBytes: number | null;
   target: string | null;
   version: string | null;
@@ -230,6 +231,17 @@ function releasedManifest(files: Record<string, Buffer>, version = '0.1.0'): Man
   return manifest;
 }
 
+/**
+ * The shipped manifest turned back into one for a release that is not published: marked unreleased, no sha256.
+ * The installer keeps refusing such a manifest, and these tests keep that refusal covered.
+ */
+function unreleasedManifest(): Manifest {
+  const manifest = JSON.parse(JSON.stringify(loadManifest(MANIFEST_FILE))) as Manifest;
+  manifest.released = false;
+  for (const entry of [...Object.values(manifest.platforms), ...Object.values(manifest.models)]) entry.sha256 = '';
+  return manifest;
+}
+
 /** A fake analyzer: a Node script that prints fixed JSON and exits 0. */
 function fakeAnalyzer({ grid, exitCode = 0, stderr = '' }: { grid?: Json; exitCode?: number; stderr?: string } = {}) {
   return [
@@ -347,62 +359,86 @@ describe('the shipped manifest', () => {
     }
   });
 
-  it('is marked unreleased with every sha256 empty, and passes the manifest checks that way', () => {
-    expect(manifest.released).toBe(false);
+  it('is marked released with every sha256 pinned to the published asset, and passes the manifest checks', () => {
+    expect(manifest.released).toBe(true);
     for (const entry of [...Object.values(manifest.platforms), ...Object.values(manifest.models)]) {
-      expect(entry.sha256).toBe('');
+      expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
+      expect(entry.url).toContain(`/releases/download/${manifest.releaseTag}/${entry.asset}`);
     }
     expect(manifestProblems(manifest)).toEqual([]);
   });
 
   it('turns red on a guessed hash while unreleased, a missing hash once released, and a foreign URL', () => {
-    const guessed = JSON.parse(JSON.stringify(manifest)) as Manifest;
+    const unreleased = unreleasedManifest();
+    expect(manifestProblems(unreleased)).toEqual([]);
+
+    const guessed = JSON.parse(JSON.stringify(unreleased)) as Manifest;
     asset(guessed.models, 'final').sha256 = 'c'.repeat(64);
     expect(manifestProblems(guessed).join('\n')).toContain('must stay empty while manifest.released is false');
 
-    const released = JSON.parse(JSON.stringify(manifest)) as Manifest;
+    const released = JSON.parse(JSON.stringify(unreleased)) as Manifest;
     released.released = true;
     expect(manifestProblems(released).join('\n')).toContain('must be filled in before the release is marked released');
+
+    // The shipped manifest is marked released, so a hash that went missing from it is caught the same way.
+    const lost = JSON.parse(JSON.stringify(manifest)) as Manifest;
+    asset(lost.platforms, 'win-x64').sha256 = '';
+    expect(manifestProblems(lost).join('\n')).toContain('must be filled in before the release is marked released');
 
     const foreign = JSON.parse(JSON.stringify(manifest)) as Manifest;
     asset(foreign.models, 'mel').url = 'https://example.com/mel_spectrogram.onnx';
     expect(manifestProblems(foreign).join('\n')).toContain('the pinned release asset');
   });
 
-  it('says that the release does not exist yet in the plan, and refuses --yes', async () => {
+  it('plans the download of the published release without any problem', () => {
     const home = tempHome();
     cleanup.push(home.remove);
     const plan = installPlan({ manifest, target: 'win-x64', model: 'final', home: home.dir });
+    expect(plan.problems).toEqual([]);
+    expect(plan.released).toBe(true);
+    const text = formatPlan(plan);
+    expect(text).toContain('86 MB');
+    expect(text).toContain('MIT');
+    expect(text).not.toContain('not published yet');
+  });
+
+  it('says that the release does not exist yet in the plan, and refuses --yes, when the manifest says so', async () => {
+    const unreleased = unreleasedManifest();
+    const home = tempHome();
+    cleanup.push(home.remove);
+    const plan = installPlan({ manifest: unreleased, target: 'win-x64', model: 'final', home: home.dir });
     expect(plan.problems.join('\n')).toContain('is not published yet');
     const text = formatPlan(plan);
     expect(text).toContain('nothing has been downloaded');
-    expect(text).toContain('87 MB');
+    expect(text).toContain('86 MB');
     expect(text).toContain('MIT');
     expect(text).toContain('not published yet');
-    await expect(install({ manifest, home: home.dir, target: 'win-x64', model: 'final' })).rejects.toThrow(
+    await expect(install({ manifest: unreleased, home: home.dir, target: 'win-x64', model: 'final' })).rejects.toThrow(
       /not published yet/,
     );
     expect(fs.existsSync(path.join(home.dir, 'bin'))).toBe(false);
   });
 
   it('has no problem in the plan of an analyzer that is installed, whatever the release state is', () => {
-    const home = tempHome();
-    cleanup.push(home.remove);
-    expect(manifest.released).toBe(false);
-    const empty = installPlan({ manifest, target: 'win-x64', model: 'final', home: home.dir });
-    expect(empty.installed).toBeNull();
-    expect(empty.problems.length).toBeGreaterThan(0);
+    for (const state of [unreleasedManifest(), manifest]) {
+      const home = tempHome();
+      cleanup.push(home.remove);
+      const empty = installPlan({ manifest: state, target: 'win-x64', model: 'final', home: home.dir });
+      expect(empty.installed).toBeNull();
+      // Nothing is installed: an unreleased manifest blocks the plan, a released one only offers the download.
+      expect(empty.problems.length > 0).toBe(!state.released);
 
-    const dir = fakeInstall(home.dir, manifest, 'win-x64');
-    const plan = installPlan({ manifest, target: 'win-x64', model: 'final', home: home.dir });
-    expect(plan.problems).toEqual([]);
-    expect(plan.installed).toMatchObject({ version: manifest.version, target: 'win-x64', dir });
-    expect(plan.installed).toMatchObject({ models: { mel: true, final: true, small: false } });
-    expect(formatPlan(plan)).toContain('already installed');
-    // The model asked for decides: the small one is not there, so that plan is blocked as before.
-    const small = installPlan({ manifest, target: 'win-x64', model: 'small', home: home.dir });
-    expect(small.installed).toBeNull();
-    expect(small.problems.join('\n')).toContain('is not published yet');
+      const dir = fakeInstall(home.dir, state, 'win-x64');
+      const plan = installPlan({ manifest: state, target: 'win-x64', model: 'final', home: home.dir });
+      expect(plan.problems).toEqual([]);
+      expect(plan.installed).toMatchObject({ version: state.version, target: 'win-x64', dir });
+      expect(plan.installed).toMatchObject({ models: { mel: true, final: true, small: false } });
+      expect(formatPlan(plan)).toContain('already installed');
+      // The model asked for decides: the small one is not there, so that plan is not "already installed".
+      const small = installPlan({ manifest: state, target: 'win-x64', model: 'small', home: home.dir });
+      expect(small.installed).toBeNull();
+      expect(small.problems.join('\n').includes('is not published yet')).toBe(!state.released);
+    }
   });
 
   it('reports the size of the final and the small download in the plan', () => {
@@ -1123,16 +1159,35 @@ describe('status', () => {
     expect(result.current).toMatchObject({ version: '0.1.0', target: 'win-x64', dir });
     expect(result.models).toEqual({ mel: true, final: true, small: false });
     expect(result.homeSource).toBe('OPENTUNE_BEATS_HOME');
-    // The release is not published (the shipped manifest), but the analyzer is installed: nothing to warn about.
-    expect(manifest.released).toBe(false);
+    // The shipped manifest says released: there is no release note at all.
+    expect(manifest.released).toBe(true);
     expect(result.notes.join(' ')).not.toContain('not published yet');
 
-    // With nothing installed the note stays: it explains why an install would refuse.
+    // A manifest for a release that is not published, with the analyzer installed: nothing to warn about.
+    const unreleased = unreleasedManifest();
+    const unreleasedInstalled = status({
+      manifest: unreleased,
+      env: { OPENTUNE_BEATS_HOME: home.dir },
+      platform: 'win32',
+      arch: 'x64',
+    });
+    expect(unreleasedInstalled.installed).toBe(true);
+    expect(unreleasedInstalled.notes.join(' ')).not.toContain('not published yet');
+
+    // With nothing installed the note stays for such a manifest: it explains why an install would refuse.
     const empty = tempHome();
     cleanup.push(empty.remove);
-    const unused = status({ manifest, env: { OPENTUNE_BEATS_HOME: empty.dir }, platform: 'win32', arch: 'x64' });
+    const unused = status({
+      manifest: unreleased,
+      env: { OPENTUNE_BEATS_HOME: empty.dir },
+      platform: 'win32',
+      arch: 'x64',
+    });
     expect(unused.installed).toBe(false);
     expect(unused.notes.join(' ')).toContain('not published yet');
+    const releasedEmpty = status({ manifest, env: { OPENTUNE_BEATS_HOME: empty.dir }, platform: 'win32', arch: 'x64' });
+    expect(releasedEmpty.installed).toBe(false);
+    expect(releasedEmpty.notes.join(' ')).not.toContain('not published yet');
   });
 
   it('orders installations by semantic version, newest first', () => {
@@ -1548,12 +1603,14 @@ describe('the command line', () => {
     expect(statusRun.code).toBe(EXIT.OK);
     expect(statusRun.json).toMatchObject({ tool: 'beat-grid', command: 'status', installed: false });
 
-    const plan = await run(['install', '--model', 'final']);
+    // The manifest of a release that is not published, so that --yes below is refused and nothing is downloaded.
+    const unreleased = unreleasedManifest();
+    const plan = await run(['install', '--model', 'final'], { manifest: unreleased });
     expect(plan.code).toBe(EXIT.OK);
     expect(plan.out).toContain('nothing has been downloaded');
     expect(plan.out).toContain('not published yet');
 
-    const yes = await run(['install', '--model', 'final', '--yes']);
+    const yes = await run(['install', '--model', 'final', '--yes'], { manifest: unreleased });
     expect(yes.code).toBe(EXIT.INSTALL_FAILED);
     expect((yes.json?.error as Json).code).toBe('INSTALL_REFUSED');
   });
