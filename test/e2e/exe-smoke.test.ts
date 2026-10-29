@@ -7,6 +7,7 @@
 
 import { describe, it } from 'vitest';
 
+import { withUserSettingsWatch } from './settings-guard.js';
 import { formatTable, runSmoke, smokeSetupFromEnv, writeReport } from './smoke.js';
 
 describe('end-to-end smoke against the exe', () => {
@@ -28,7 +29,7 @@ describe('end-to-end smoke against the exe', () => {
   const { config } = setup;
 
   it('imports, tunes and exports a generated vocal', async (ctx) => {
-    const report = await runSmoke(config);
+    const report = await withUserSettingsWatch(() => runSmoke(config));
     process.stderr.write(`\n${formatTable(report)}\n`);
     if (config.reportPath !== undefined) writeReport(config.reportPath, report);
     if (report.result === 'FAIL') {

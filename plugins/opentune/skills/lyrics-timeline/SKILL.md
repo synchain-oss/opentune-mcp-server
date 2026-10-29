@@ -7,7 +7,6 @@ metadata:
   version: '0.3.0'
   runs-locally: 'true'
   models: Qwen3-ASR + Qwen3-ForcedAligner-0.6B (Apache-2.0)
-allowed-tools: Bash Read Write
 ---
 
 # Lyrics timeline
@@ -30,7 +29,7 @@ sings the bridge?". Do not use it for pitch questions that already have times or
 ## Before the first run: ask for consent (required)
 
 The first run downloads the speech models and a Python environment. Tell the user the size and
-wait for a yes. Never start the download on your own.
+wait for a yes, asked once (a request to time the lyrics is not a yes to the download). If they do not answer or say no, do not ask again. Never start the download on your own.
 
 1. Run the plan (changes nothing, prints sizes and folders). Claude Code's Bash tool is Git Bash on
    Windows, so use forward slashes there:
@@ -42,7 +41,7 @@ wait for a yes. Never start the download on your own.
    - **NVIDIA GPU found** (the plan's note says so): recommend the **GPU install** it shows,
      Qwen3-ASR 1.7B with CUDA PyTorch, about **10 GB**, because the GPU is much faster (on a CPU
      the 0.6B model took about 6 to 8 minutes for an 8-track song).
-   - **No NVIDIA GPU**: Qwen3-ASR 0.6B with CPU PyTorch, about **4.7 GB**.
+   - **No NVIDIA GPU**: Qwen3-ASR 0.6B with CPU PyTorch, about **4.7 GB** (on macOS this is PyPI's standard build).
    - **The note says the NVIDIA driver is too old**: the plan is the CPU install; tell the user
      that a driver update makes the GPU usable (then run setup again with `--torch cuda`).
 3. Only after the user agrees, run the same command with `--yes` instead of `--plan`. Useful flags:
@@ -84,11 +83,11 @@ Options: `--lyrics-file PATH` (a text or `.lrc` file; a path that cannot be read
 never taken as lyrics) or `--lyrics-text "..."` (the words themselves); `--language` (below);
 `--notes FILE [FILE ...]` (below); `--track-label FILE=NAME` (below); `--snap-window 0.09`
 (seconds); `--model-size auto|0.6B|1.7B`. Expect roughly 1 to 8 minutes per 5 minutes of vocal on a
-CPU, much less on an NVIDIA GPU. Use the vocal-only stems.
+CPU, much less on an NVIDIA GPU. Use the vocal-only stems. Do not ask whether the tracks start together: the run measures any offset and warns about it.
 
 ### Language (`--language`)
 
-`auto` (default), or one of `zh` (Mandarin), `yue` (Cantonese), `en`, `de`, `es`, `fr`, `it`, `pt`,
+`auto` (default: do not ask the user which language; the lyrics and the recogniser decide, and Cantonese only when the user names it), or one of `zh` (Mandarin), `yue` (Cantonese), `en`, `de`, `es`, `fr`, `it`, `pt`,
 `ru`, `ko`, `ja`: the languages the forced aligner can time. With `auto` the writing of the lyrics
 decides (kana: Japanese; Hangul: Korean; Chinese characters only: Mandarin; Cyrillic: Russian); for
 lyrics in Latin letters the recogniser's guess picks among the Latin-script languages, else English.
@@ -109,7 +108,7 @@ more evidence before it counts as sung on a labelled track.
 
 ### Several tracks of one song
 
-Pass every track file, in any order, and name them with `--track-label` to match the marks:
+Pass every track file the user named, in any order (ask for a missing one; do not search the folder), and name them with `--track-label` to match the marks:
 `... lyrics_timeline.py "C:/Music/lead-a.wav" "C:/Music/lead-b.wav" "C:/Music/harmony.wav" --lyrics-file "C:/Music/lyrics.txt" --track-label lead-a.wav=A --track-label lead-b.wav=B --out "$TEMP/timeline.json"`
 (`FILE` as given or just the file name). The models load once. The files should share one timeline
 (stems exported from the same start): a track that sings only a repeated chorus is placed using the
@@ -205,9 +204,9 @@ line (`line_in_section: 1`), the token with `text: 深`. Its `start` to `end` is
 3. Call `opentune_get_notes` with that `clip`, `clock: content`, `from` = token `start` and `to` =
    token `end` (a few tens of ms of margin is fine). If the token has `notes[]`, use those
    `note_index` values, for example the second note only.
-4. Call `opentune_edit_notes` with `dry_run: true` first, using the notes from step 3. Show the user
-   which notes will change and by how much.
-5. Only after the user confirms, repeat the call without `dry_run`.
+4. Call `opentune_edit_notes` with `dry_run: true` first, using the notes from step 3, and check which notes change and by how much.
+5. If the request names the change (word and amount), apply it and report what changed and how to undo it, in the user's terms (see the ground rules of `tuning-workflow`).
+   Ask first only if the word matches several places or the amount is unclear.
 
 ### Notes for snapping (`--notes`)
 

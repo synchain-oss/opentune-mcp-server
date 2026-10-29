@@ -1,0 +1,443 @@
+{
+  "description": "Seek and play without an audio device.",
+  "tool": "opentune_transport",
+  "input": {
+    "action": "seek",
+    "position_sec": 2.5,
+    "bpm": 96,
+    "time_signature": {
+      "numerator": 6,
+      "denominator": 8
+    },
+    "loop": true
+  },
+  "result": {
+    "summary": "opentune_transport: 3 requests ran in this order (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_transport, see the revert line; the project is now marked as changed; not undoable: the state is not kept in the project; cannot be restored by any request), reported separately in results. 1. changed 1 tempo. 2. changed 1 transport. Warnings: LOOP_NO_EFFECT_STANDALONE, NOT_PERSISTED. 3. changed 1 transport.",
+    "results": [
+      {
+        "method": "transport.setTempo",
+        "summary": "opentune_transport: changed 1 tempo (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_transport, see the revert line).",
+        "applied": true,
+        "noOp": false,
+        "dryRun": false,
+        "undo": {
+          "undoable": false,
+          "reason": "ui_parity",
+          "revert": {
+            "method": "transport.setTempo",
+            "params": {
+              "bpm": 120,
+              "timeSignature": {
+                "numerator": 4,
+                "denominator": 4
+              }
+            }
+          }
+        },
+        "lines": [
+          {
+            "kind": "revert",
+            "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_transport with the arguments in restore, as they are.",
+            "revert": {
+              "method": "transport.setTempo",
+              "params": {
+                "bpm": 120,
+                "timeSignature": {
+                  "numerator": 4,
+                  "denominator": 4
+                }
+              }
+            },
+            "restore": {
+              "tool": "opentune_transport",
+              "arguments": {
+                "bpm": 120,
+                "time_signature": {
+                  "numerator": 4,
+                  "denominator": 4
+                }
+              }
+            }
+          }
+        ],
+        "revisionDiff": {
+          "arrangement": null,
+          "trackState": null,
+          "contents": []
+        },
+        "tokens": {
+          "arrangementRevision": "a1",
+          "contents": [],
+          "placements": []
+        },
+        "dirty": {
+          "before": false,
+          "after": true
+        },
+        "ui": {
+          "workspace": "arrangement",
+          "pianoRollContentId": null,
+          "activeTrackId": 0,
+          "selectedPlacementIds": [],
+          "visibleTrackCount": 4
+        },
+        "sideEffects": {},
+        "warnings": [],
+        "job": null,
+        "tempo": {
+          "bpm": 96,
+          "timeSignature": {
+            "numerator": 6,
+            "denominator": 8
+          }
+        },
+        "changes": [
+          {
+            "entity": "tempo",
+            "ref": {
+              "singleton": "tempo"
+            },
+            "label": "Tempo",
+            "fields": {
+              "bpm": {
+                "before": 120,
+                "after": 96,
+                "unit": "bpm"
+              },
+              "timeSignature": {
+                "before": {
+                  "numerator": 4,
+                  "denominator": 4
+                },
+                "after": {
+                  "numerator": 6,
+                  "denominator": 8
+                },
+                "unit": null
+              }
+            }
+          }
+        ],
+        "created": [],
+        "removed": [],
+        "idMap": [],
+        "uiEffects": [
+          {
+            "surface": "transport bar",
+            "effect": "changed tempo",
+            "target": "project",
+            "visibleNow": true
+          },
+          {
+            "surface": "window title",
+            "effect": "unsaved-changes mark set",
+            "target": "project",
+            "visibleNow": false,
+            "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+          }
+        ],
+        "changeTable": {
+          "rows": [
+            {
+              "kind": "changed",
+              "entity": "tempo",
+              "label": "Tempo",
+              "ref": {
+                "singleton": "tempo"
+              },
+              "fields": [
+                {
+                  "field": "bpm",
+                  "before": 120,
+                  "after": 96,
+                  "unit": "bpm"
+                },
+                {
+                  "field": "timeSignature",
+                  "before": {
+                    "numerator": 4,
+                    "denominator": 4
+                  },
+                  "after": {
+                    "numerator": 6,
+                    "denominator": 8
+                  },
+                  "unit": null
+                }
+              ]
+            }
+          ],
+          "omittedChangeCount": 0
+        }
+      },
+      {
+        "method": "transport.setLoop",
+        "summary": "opentune_transport: changed 1 transport (not undoable: the state is not kept in the project; can be restored with opentune_transport, see the revert line). Warnings: LOOP_NO_EFFECT_STANDALONE, NOT_PERSISTED.",
+        "applied": true,
+        "noOp": false,
+        "dryRun": false,
+        "undo": {
+          "undoable": false,
+          "reason": "not_persisted_state",
+          "revert": {
+            "method": "transport.setLoop",
+            "params": {
+              "enabled": false
+            }
+          }
+        },
+        "lines": [
+          {
+            "kind": "warning",
+            "code": "LOOP_NO_EFFECT_STANDALONE",
+            "text": "The loop flag is set, but looping has no audible effect in OpenTune Standalone.",
+            "subject": null,
+            "data": null
+          },
+          {
+            "kind": "warning",
+            "code": "NOT_PERSISTED",
+            "text": "The change is applied in the running session but is not stored in the project file.",
+            "subject": {
+              "singleton": "transport"
+            },
+            "data": null
+          },
+          {
+            "kind": "revert",
+            "text": "Not undoable (the state is not kept in the project). Restore: call opentune_transport with the arguments in restore, as they are.",
+            "revert": {
+              "method": "transport.setLoop",
+              "params": {
+                "enabled": false
+              }
+            },
+            "restore": {
+              "tool": "opentune_transport",
+              "arguments": {
+                "loop": false
+              }
+            }
+          }
+        ],
+        "revisionDiff": {
+          "arrangement": null,
+          "trackState": null,
+          "contents": []
+        },
+        "tokens": {
+          "arrangementRevision": "a1",
+          "contents": [],
+          "placements": []
+        },
+        "dirty": {
+          "before": true,
+          "after": true
+        },
+        "ui": {
+          "workspace": "arrangement",
+          "pianoRollContentId": null,
+          "activeTrackId": 0,
+          "selectedPlacementIds": [],
+          "visibleTrackCount": 4
+        },
+        "sideEffects": {},
+        "warnings": [
+          {
+            "code": "LOOP_NO_EFFECT_STANDALONE",
+            "subject": null,
+            "data": null
+          },
+          {
+            "code": "NOT_PERSISTED",
+            "subject": {
+              "singleton": "transport"
+            },
+            "data": null
+          }
+        ],
+        "job": null,
+        "transport": {
+          "playing": false,
+          "positionTimelineSec": 0,
+          "playStartTimelineSec": 0,
+          "loopEnabled": true,
+          "bpm": 96,
+          "timeSignature": {
+            "numerator": 6,
+            "denominator": 8
+          },
+          "audioDeviceRunning": false,
+          "lastControl": null
+        },
+        "changes": [
+          {
+            "entity": "transport",
+            "ref": {
+              "singleton": "transport"
+            },
+            "label": "Transport",
+            "fields": {
+              "loopEnabled": {
+                "before": false,
+                "after": true,
+                "unit": null
+              }
+            }
+          }
+        ],
+        "created": [],
+        "removed": [],
+        "idMap": [],
+        "uiEffects": [
+          {
+            "surface": "transport bar",
+            "effect": "changed transport",
+            "target": "project",
+            "visibleNow": true
+          }
+        ],
+        "changeTable": {
+          "rows": [
+            {
+              "kind": "changed",
+              "entity": "transport",
+              "label": "Transport",
+              "ref": {
+                "singleton": "transport"
+              },
+              "fields": [
+                {
+                  "field": "loopEnabled",
+                  "before": false,
+                  "after": true,
+                  "unit": null
+                }
+              ]
+            }
+          ],
+          "omittedChangeCount": 0
+        }
+      },
+      {
+        "method": "transport.control",
+        "summary": "opentune_transport: changed 1 transport (not undoable: the state is not kept in the project; cannot be restored by any request).",
+        "applied": true,
+        "noOp": false,
+        "dryRun": false,
+        "undo": {
+          "undoable": false,
+          "reason": "not_persisted_state",
+          "revert": null
+        },
+        "lines": [
+          {
+            "kind": "revert",
+            "text": "Not undoable (the state is not kept in the project). No request of the protocol can restore the previous state.",
+            "revert": null,
+            "restore": null
+          }
+        ],
+        "revisionDiff": {
+          "arrangement": null,
+          "trackState": null,
+          "contents": []
+        },
+        "tokens": {
+          "arrangementRevision": "a1",
+          "contents": [],
+          "placements": []
+        },
+        "dirty": {
+          "before": true,
+          "after": true
+        },
+        "ui": {
+          "workspace": "arrangement",
+          "pianoRollContentId": null,
+          "activeTrackId": 0,
+          "selectedPlacementIds": [],
+          "visibleTrackCount": 4
+        },
+        "sideEffects": {},
+        "warnings": [],
+        "job": null,
+        "transport": {
+          "playing": false,
+          "positionTimelineSec": 2.5,
+          "playStartTimelineSec": 2.5,
+          "loopEnabled": true,
+          "bpm": 96,
+          "timeSignature": {
+            "numerator": 6,
+            "denominator": 8
+          },
+          "audioDeviceRunning": false,
+          "lastControl": {
+            "call": "seek",
+            "atMs": 1767225600000
+          }
+        },
+        "changes": [
+          {
+            "entity": "transport",
+            "ref": {
+              "singleton": "transport"
+            },
+            "label": "Transport",
+            "fields": {
+              "positionTimelineSec": {
+                "before": 0,
+                "after": 2.5,
+                "unit": "sec"
+              },
+              "playStartTimelineSec": {
+                "before": 0,
+                "after": 2.5,
+                "unit": "sec"
+              }
+            }
+          }
+        ],
+        "created": [],
+        "removed": [],
+        "idMap": [],
+        "uiEffects": [
+          {
+            "surface": "transport bar",
+            "effect": "changed transport",
+            "target": "project",
+            "visibleNow": true
+          }
+        ],
+        "changeTable": {
+          "rows": [
+            {
+              "kind": "changed",
+              "entity": "transport",
+              "label": "Transport",
+              "ref": {
+                "singleton": "transport"
+              },
+              "fields": [
+                {
+                  "field": "positionTimelineSec",
+                  "before": 0,
+                  "after": 2.5,
+                  "unit": "sec"
+                },
+                {
+                  "field": "playStartTimelineSec",
+                  "before": 0,
+                  "after": 2.5,
+                  "unit": "sec"
+                }
+              ]
+            }
+          ],
+          "omittedChangeCount": 0
+        }
+      }
+    ]
+  }
+}

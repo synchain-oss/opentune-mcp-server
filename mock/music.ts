@@ -72,6 +72,28 @@ export function medianDetected(durationSec: number, startContentSec: number, end
 }
 
 /**
+ * With hybrid mode on, OpenTune renders a block by resampling the audio, without the vocoder, as long as every voiced
+ * frame of the block is corrected by no more than this many cents; a block with a larger correction needs the vocoder.
+ */
+export const HYBRID_DSP_LIMIT_CENTS = 75;
+
+/**
+ * Whether the target of a note is more than HYBRID_DSP_LIMIT_CENTS away from the detected pitch at some voiced frame
+ * of the note: a render of such a note needs the vocoder even in hybrid mode. (The mock takes the target as the
+ * corrected pitch; it has no retune speed or vibrato in its curve.)
+ */
+export function exceedsHybridLimit(
+  durationSec: number,
+  note: { readonly startContentSec: number; readonly endContentSec: number; readonly targetMidi: number },
+): boolean {
+  for (let i = frameAtOrAfter(note.startContentSec); i * HOP_SEC < note.endContentSec - 1e-9; i++) {
+    const midi = detectedMidiAt(i, durationSec);
+    if (midi !== null && Math.abs(note.targetMidi - midi) * 100 > HYBRID_DSP_LIMIT_CENTS) return true;
+  }
+  return false;
+}
+
+/**
  * Splits the detected pitch into notes: a run of voiced frames ends at an unvoiced frame, and
  * within a run a new segment starts once the pitch has stayed more than `splitCents` away from the
  * median of the segment for a few frames.

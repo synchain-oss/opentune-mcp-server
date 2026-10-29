@@ -1,0 +1,24 @@
+{
+  "description": "The arrangement changed since it was read: nothing deleted, read again.",
+  "tool": "opentune_delete_track",
+  "input": {
+    "track_id": 1,
+    "confirm": true,
+    "expected_revision": "<arrangement_revision from opentune_get_project>"
+  },
+  "result": {
+    "error": {
+      "kind": "REVISION_CONFLICT",
+      "reason": "arrangement_changed",
+      "detail": "the arrangement changed since expectedArrangementRevision",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "tool": "opentune_get_project",
+        "message": "The arrangement changed since the arrangement_revision was read (clips or tracks moved, were added or removed). Nothing was deleted. Read the project again, check that the track id still names the track meant, then call again with the new arrangement_revision."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-revision_conflict"
+    }
+  }
+}

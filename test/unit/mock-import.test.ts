@@ -29,6 +29,8 @@ afterEach(async () => {
 interface Item {
   path: string;
   imported: boolean;
+  placementId: string | null;
+  contentId: string | null;
   trackId: number | null;
   startTimelineSec: number | null;
   durationSec: number | null;
@@ -121,8 +123,12 @@ describe('where clips go', () => {
     session.mock.given({ clips: [clip({ trackId: 0 }), clip({ bind: 'other', trackId: 1 })] });
     const first = await run(session, clock, { items: [{ path: audio('a.wav') }], layout: 'single', newTrack: true });
     expect(first.result?.items[0]?.trackId).toBe(2);
+    // The import focused its clip, which made track 2 the active track.
     const second = await run(session, clock, { items: [{ path: audio('b.wav') }], layout: 'single' });
-    expect(second.result?.items[0]?.trackId).toBe(0);
+    expect(second.result?.items[0]?.trackId).toBe(2);
+    await session.ok('ui.setSelection', { trackId: 0 });
+    const third = await run(session, clock, { items: [{ path: audio('c.wav') }], layout: 'single' });
+    expect(third.result?.items[0]?.trackId).toBe(0);
   });
 
   it('refuses newTrack when every track holds a clip, and an unknown track in every layout', async () => {
@@ -149,6 +155,72 @@ describe('where clips go', () => {
     expect(job.result?.warnings.map((w) => w.code)).toContain('TRACK_AUTO_REVEALED');
     expect(job.result?.revisionDiff.trackState).not.toBeNull();
     expect(await session.ok('project.get')).toMatchObject({ visibleTrackCount: 7 });
+  });
+});
+
+describe('the focused clip', () => {
+  it('is selected and its track becomes the active track', async () => {
+    const { clock, session, audio } = await open();
+    expect(((await session.ok('ui.getState')).ui as { activeTrackId: number }).activeTrackId).toBe(0);
+    await run(session, clock, { items: [{ path: audio('a.wav') }], layout: 'single', trackId: 2 });
+    expect((await session.ok('ui.getState')).ui).toMatchObject({ activeTrackId: 2 });
+  });
+
+  it('is loaded into the piano roll, while the window keeps showing the view it showed', async () => {
+    const { clock, session, audio } = await open();
+    const first = await run(session, clock, { items: [{ path: audio('a.wav') }], layout: 'single', trackId: 2 });
+    const item = first.result?.items[0];
+    expect(item?.contentId).toEqual(expect.any(String));
+    expect((await session.ok('ui.getState')).ui).toMatchObject({
+      workspace: 'arrangement',
+      pianoRollContentId: item?.contentId,
+      selectedPlacementIds: [item?.placementId],
+    });
+    // The last clip of the job is the focused one.
+    const second = await run(session, clock, {
+      items: [{ path: audio('b.wav') }, { path: audio('c.wav') }],
+      layout: 'sequential',
+      trackId: 2,
+    });
+    const last = second.result?.items[1];
+    expect(last?.contentId).not.toBe(item?.contentId);
+    expect((await session.ok('ui.getState')).ui).toMatchObject({
+      pianoRollContentId: last?.contentId,
+      selectedPlacementIds: [last?.placementId],
+    });
+    // With the piano roll shown, the view stays and its content is the imported clip.
+    await session.ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    const third = await run(session, clock, { items: [{ path: audio('d.wav') }], layout: 'single', trackId: 3 });
+    expect((await session.ok('ui.getState')).ui).toMatchObject({
+      workspace: 'pianoRoll',
+      pianoRollContentId: third.result?.items[0]?.contentId,
+      selectedPlacementIds: [third.result?.items[0]?.placementId],
+    });
+  });
+
+  it('does not switch the view, so the import reports no switch and does not round the tempo', async () => {
+    const { clock, session, audio } = await open();
+    await session.ok('transport.setTempo', { bpm: 120.27 });
+    const job = await run(session, clock, { items: [{ path: audio('a.wav') }], layout: 'single', trackId: 2 });
+    expect(Object.keys(job.result?.sideEffects ?? {})).not.toContain('workspaceSwitched');
+    expect(Object.keys(job.result?.sideEffects ?? {})).not.toContain('tempoRounded');
+    expect((await session.ok('ui.getState')).ui).toMatchObject({ workspace: 'arrangement' });
+    // The tempo is as it was: asking for it again changes nothing.
+    expect(await session.ok('transport.setTempo', { bpm: 120.27 })).toMatchObject({ noOp: true });
+  });
+
+  it('leaves the piano roll and the selection as they were with focus false', async () => {
+    const { clock, session, audio } = await open();
+    const ids = session.mock.given({ clips: [clip()] });
+    await session.ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+    const before = (await session.ok('ui.getState')).ui as { pianoRollContentId: string | null };
+    expect(before.pianoRollContentId).not.toBeNull();
+    await run(session, clock, { items: [{ path: audio('a.wav') }], layout: 'single', trackId: 2, focus: false });
+    expect((await session.ok('ui.getState')).ui).toMatchObject({
+      workspace: 'arrangement',
+      pianoRollContentId: before.pianoRollContentId,
+      selectedPlacementIds: [ids['clip.placementId']],
+    });
   });
 });
 

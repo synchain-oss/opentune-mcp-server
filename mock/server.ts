@@ -23,6 +23,7 @@ import { MockError } from './errors.js';
 import { stripHome } from './privacy.js';
 import { WorkFiles } from './files.js';
 import { applyGiven, WORLD_GIVEN_MEMBERS, type GivenState } from './given.js';
+import { quitResult } from './app.js';
 import { arrangementHandlers } from './arrangement.js';
 import { audioHandlers } from './audio.js';
 import { editHandlers } from './edit.js';
@@ -32,7 +33,7 @@ import { IMPORT_LIMITS, ImportService } from './import.js';
 import { JobStore, oneShot, UnsupportedPrecondition, type JobSpec } from './jobs.js';
 import { prefsHandlers } from './prefs.js';
 import { ProjectService } from './project.js';
-import { TRACK_SLOTS, World, type Analysis, type BusyState } from './model.js';
+import { TRACK_SLOTS, World, carries, type Analysis, type BusyState } from './model.js';
 import {
   classify,
   errorLine,
@@ -45,7 +46,6 @@ import {
   type RequestId,
 } from './protocol.js';
 import { readHandlers } from './reads.js';
-import { referenceHandlers } from './reference.js';
 import { timingHandlers } from './timing.js';
 import { trackHandlers } from './tracks.js';
 import { transportHandlers } from './transport.js';
@@ -83,16 +83,34 @@ export const MOCK_CAPABILITIES: readonly string[] = [
   'transport.v1',
   'ui.bridge',
   'ui.onboardingClose',
-  'reference.v1',
+  'ui.workspace',
   'project.io',
+  'project.copy',
   'prefs.write',
   'audio.device',
+  'app.quit',
 ];
 
 const LOOPBACK = '127.0.0.1';
 const PROTOCOL = '1.0';
 const PROTOCOL_MAJORS: readonly number[] = [1];
 const PROTOCOL_VERSION_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+/** The methods that act through the OpenTune editor window (PROTOCOL.md section 7 rule 6). */
+const NO_EDITOR_METHODS: ReadonlySet<string> = new Set([
+  'ui.getState',
+  'ui.dismiss',
+  'ui.setSelection',
+  'ui.setWorkspace',
+  'track.add',
+  'track.duplicate',
+  'track.delete',
+  'project.save',
+  'project.saveAs',
+  'project.saveCopy',
+  'project.open',
+  'audio.set',
+  'app.quit',
+]);
 const APP_VERSION = '0.0.0-mock';
 
 export interface MockOptions {
@@ -108,6 +126,12 @@ export interface MockOptions {
   readonly clock?: Clock;
   /** Where the files of clips and of the `files` precondition go; a temporary directory by default. */
   readonly workDir?: string;
+  /**
+   * How the vocoder reconfigures after a new weight or rendering priority: how long a command waits before the
+   * vocoder reports it (`queuedMs`), how long it then reconfigures (`reconfiguringMs`), and how long a prefsApply job
+   * waits for it (`waitLimitMs`, 60 s by default).
+   */
+  readonly vocoder?: Partial<{ queuedMs: number; reconfiguringMs: number; waitLimitMs: number }>;
 }
 
 export interface GivenJob extends JobSpec {
@@ -158,10 +182,63 @@ export interface OtcpMock {
   removeClip(placementId: string): void;
   /** The next `times` attempts to render a content fail, so that an export of it fails (PROTOCOL.md section 19 rule 6). */
   failRender(contentId: string, times?: number): void;
+  /**
+   * `stuck`: a reconfiguration of the vocoder never finishes, so that a prefsApply job passes its wait limit and fails
+   * with MODEL_UNAVAILABLE(vocoder_not_ready); `loadFails`: the vocoder can load only the weight and rendering priority
+   * in use when the fault is set, so that a reconfiguration to any other ends with the vocoder not ready and the job
+   * takes its changes back at once and fails with MODEL_UNAVAILABLE(vocoder_load_failed); null lets a stuck
+   * reconfiguration finish.
+   */
+  setVocoderFault(fault: 'stuck' | 'loadFails' | null): void;
+  /**
+   * OpenTune loads its vocoder at the first render that needs it, not at start: until then session.info reports the
+   * vocoder as not ready, and a change of the rendering priority or the weight does not wait for it. That render
+   * starts the load, and it is not published before the vocoder has loaded. With hybrid mode on, a render whose
+   * corrections all stay within 75 cents of the detected pitch is done by resampling, which needs no vocoder: it is
+   * published at once and loads nothing. Off by default, the vocoder is ready from the start.
+   */
+  setVocoderLoadOnDemand(on: boolean): void;
+  /**
+   * Whether the GPU can create the inference session. Unset, the mock reports no backend (null, reason unavailable).
+   * Set, processing.backend is "directml" under gpuFirst with the GPU available, and "cpu" otherwise: under gpuFirst
+   * without a GPU it is the fall back that OpenTune makes without a word.
+   */
+  setGpuAvailable(on: boolean): void;
+  /** OpenTune cannot load these pitch models: prefs.set of one of them (it must be among the options) fails with model_missing. */
+  failF0Model(...models: readonly string[]): void;
+  /**
+   * The first-run overlay starts, as OpenTune starts it while onboarding is not marked as shown. With
+   * `choiceShown` the overlay has shown its choice, which marks onboarding as shown, as OpenTune does.
+   */
+  showOnboarding(choiceShown: boolean): void;
+  /**
+   * A window-less run (no OpenTune editor window): the methods that act through the editor window fail with
+   * `UNSUPPORTED(no_editor_window)`, `executed` false, and change nothing (PROTOCOL.md section 7 rule 6).
+   */
+  setNoEditor(on: boolean): void;
+  /**
+   * Ends a job that `given.jobs` made (it runs for ever otherwise), as cancelled. Returns false for an unknown job, one
+   * that has ended already, and one the mock drives itself.
+   */
+  endJob(jobId: string): boolean;
+  /** While the transport plays on a running device, the position advances by `rate` timeline seconds per second (0: it stays). */
+  setTransportRate(rate: number): void;
+  /**
+   * The audio device offers `count` output channel pairs. OpenTune's Standalone offers the pair 0 only, which the
+   * mock does by default and the contract vectors assume; a test that switches the pair offers more.
+   */
+  setOutputChannelPairCount(count: number): void;
   /** The pitch analysis of the next `count` imported clips fails. */
   failNextAnalysis(count?: number): void;
   /** Stops as section 3.6 rule 2 describes and deletes the discovery file. */
   stop(): Promise<void>;
+  /**
+   * app.quit was answered with success. The mock then stops by itself, through the path of stop(), as OpenTune
+   * ends after it answered; what ends is the mock, never the process that runs it.
+   */
+  readonly quitRequested: boolean;
+  /** Resolves once the mock has stopped completely: its connections and listener are closed and the discovery file is gone. */
+  whenEnded(): Promise<void>;
 }
 
 interface InFlight {
@@ -211,6 +288,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
 
   const jobs = new JobStore(spec, clock, instanceId.slice(0, 8));
   const world = new World(instanceId, clock);
+  Object.assign(world.vocoderTiming, options.vocoder);
   const files = new WorkFiles(options.workDir);
   const exporter = new ExportService(world, jobs, files, clock);
   const importer = new ImportService(world, jobs, files, clock, spec);
@@ -221,7 +299,12 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   const acceptWaiters: { count: number; resolve: () => void }[] = [];
   let sessionCount = 0;
   let stopping = false;
+  let quitRequested = false;
   const connections = new Set<Connection>();
+  let markEnded: () => void = () => undefined;
+  const ended = new Promise<void>((resolve) => {
+    markEnded = resolve;
+  });
 
   const err = (init: ErrorInit) => makeError(spec, init);
   const send = (conn: Connection, line: Buffer) => {
@@ -298,20 +381,16 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       tuningHz: world.prefs.tuningHz,
       editingScheme: world.editingScheme,
       hybridMode: world.prefs.hybridMode,
-      vocoderWeight: null,
-      f0Model: null,
-      renderingPriority: null,
-      backend: null,
-      vocoderReady: false,
-      vocoderReconfiguring: false,
+      vocoderWeight: carries(world.prefs.vocoderWeight) ? world.prefs.vocoderWeight : null,
+      f0Model: world.prefs.f0Model,
+      renderingPriority: world.prefs.renderingPriority,
+      backend: world.backend,
+      vocoderReady: world.vocoder.ready,
+      vocoderReconfiguring: world.vocoder.reconfiguring,
       experimentalFeatures: world.prefs.experimentalFeatures,
-      referenceAlignMode: null,
       nullReasons: {
-        vocoderWeight: 'unavailable',
-        f0Model: 'unavailable',
-        renderingPriority: 'unavailable',
-        backend: 'unavailable',
-        referenceAlignMode: 'unavailable',
+        ...(world.backend === null ? { backend: 'unavailable' } : {}),
+        ...(carries(world.prefs.vocoderWeight) ? {} : { vocoderWeight: 'unavailable' }),
       },
     },
     language: world.prefs.language,
@@ -326,9 +405,60 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     limits: LIMITS,
   });
 
+  /** Answers with the result `produce` builds, or with the error it throws; `after` runs once the result is written. */
+  const respond = (
+    conn: Connection,
+    id: RequestId,
+    method: string,
+    produce: () => Record<string, unknown>,
+    after?: () => void,
+  ) => {
+    try {
+      send(conn, successLine(id, produce()));
+    } catch (error) {
+      if (error instanceof MockError) reply(conn, id, error.init);
+      else {
+        const detail = error instanceof Error ? error.message : 'unexpected failure';
+        reply(conn, id, { kind: 'INTERNAL', detail: `the mock failed in ${method}: ${detail}`, executed: true });
+      }
+      return;
+    }
+    after?.();
+  };
+
+  /** A window-less run: a method that acts through the editor window fails (section 7 rule 6); true when it did. */
+  const refusedNoEditor = (conn: Connection, id: RequestId, method: string): boolean => {
+    if (!world.noEditor || !NO_EDITOR_METHODS.has(method)) return false;
+    reply(conn, id, {
+      kind: 'UNSUPPORTED',
+      reason: 'no_editor_window',
+      detail: `${method} acts through the OpenTune editor window, and this instance has no editor window`,
+      executed: false,
+    });
+    return true;
+  };
+
+  /**
+   * app.quit has answered with success: the server is stopping from now on (a later request gets SHUTTING_DOWN) and
+   * stops through its normal path in the next turn of the event loop, after the answer has been written.
+   */
+  const beginQuit = () => {
+    quitRequested = true;
+    stopping = true;
+    setImmediate(() => {
+      // A stop that fails (the discovery file cannot be removed) must not become an unhandled rejection: the end is
+      // still marked (whenEnded), and stop() hands the same failure to whoever asks for it.
+      stopMock().catch(() => undefined);
+    });
+  };
+
   const methods: Readonly<Record<string, (conn: Connection, request: Request) => void>> = {
     'session.info': (conn, { id }) => {
       send(conn, successLine(id, sessionInfo()));
+    },
+    'app.quit': (conn, { id, method, params }) => {
+      if (refusedNoEditor(conn, id, method)) return;
+      respond(conn, id, method, () => quitResult(world, jobs, params ?? {}), beginQuit);
     },
     'job.get': (conn, { id, params }) => {
       const jobId = String(params?.jobId);
@@ -384,7 +514,6 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     ...arrangementHandlers,
     ...transportHandlers,
     ...uiHandlers,
-    ...referenceHandlers,
     ...prefsHandlers,
     ...audioHandlers,
     ...projects.handlers,
@@ -396,6 +525,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   const runModel = (conn: Connection, { id, method, params }: Request) => {
     const handler = worldHandlers[method];
     if (handler === undefined) return false;
+    if (refusedNoEditor(conn, id, method)) return true;
     const context: MethodContext = {
       world,
       params: params ?? {},
@@ -408,15 +538,7 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       startJob: (kind, work) => jobs.start({ kind }, oneShot(work)),
       jobs,
     };
-    try {
-      send(conn, successLine(id, handler(context)));
-    } catch (error) {
-      if (error instanceof MockError) reply(conn, id, error.init);
-      else {
-        const detail = error instanceof Error ? error.message : 'unexpected failure';
-        reply(conn, id, { kind: 'INTERNAL', detail: `the mock failed in ${method}: ${detail}`, executed: true });
-      }
-    }
+    respond(conn, id, method, () => handler(context));
     return true;
   };
 
@@ -647,6 +769,42 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
   world.log(`control API listening on 127.0.0.1:${String(address.port)}; discovery file ${discoveryPath}`);
 
   let stopped: Promise<void> | undefined;
+  /**
+   * Section 3.6 rule 2, then the discovery file (section 5.4 rule 1); once, whoever asks first. The mock has ended
+   * once it has stopped, whether or not the discovery file could be removed (a file that cannot be deleted, as on
+   * Windows with EPERM, makes rmSync throw): the clean-up after it runs and the end is marked in every case, and the
+   * failure is the rejection of the promise returned here.
+   */
+  const stopMock = (): Promise<void> => {
+    stopped ??= (async () => {
+      try {
+        stopping = true;
+        for (const conn of connections) {
+          for (const pending of conn.inFlight.values()) {
+            pending.drop();
+            send(conn, errorLine(pending.id, err({ kind: 'SHUTTING_DOWN', detail: 'the server is stopping' })));
+          }
+          conn.inFlight.clear();
+        }
+        for (const conn of [...connections]) close(conn);
+        await new Promise<void>((resolve) => {
+          server.close(() => {
+            resolve();
+          });
+        });
+        try {
+          fs.rmSync(discoveryPath, { force: true });
+        } finally {
+          jobs.dispose();
+          files.dispose();
+          world.dispose();
+        }
+      } finally {
+        markEnded();
+      }
+    })();
+    return stopped;
+  };
   return {
     address,
     discoveryPath,
@@ -709,35 +867,47 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
     failRender(contentId, times = 2) {
       exporter.failRender(world.content(contentId), times);
     },
+    setVocoderFault(fault) {
+      world.setVocoderFault(fault);
+    },
+    setVocoderLoadOnDemand(on) {
+      world.setVocoderLoadOnDemand(on);
+    },
+    setGpuAvailable(on) {
+      world.gpuAvailable = on;
+    },
+    failF0Model(...models) {
+      for (const model of models) world.unloadableF0Models.add(model);
+    },
+    showOnboarding(choiceShown) {
+      world.onboardingShowing = true;
+      // Onboarding counts as shown only once the overlay has shown its choice; without it the flag is cleared.
+      world.prefs.onboardingShown = choiceShown;
+    },
+    setNoEditor(on) {
+      world.noEditor = on;
+    },
+    endJob(jobId) {
+      return jobs.end(jobId);
+    },
+    setTransportRate(rate) {
+      world.settleTransport();
+      world.transportRate = rate;
+    },
+    setOutputChannelPairCount(count) {
+      world.outputChannelPairCount = count;
+    },
     failNextAnalysis(count = 1) {
       importer.failNextAnalysis(count);
     },
     logLine(text) {
       world.log(text);
     },
-    stop() {
-      stopped ??= (async () => {
-        stopping = true;
-        for (const conn of connections) {
-          for (const pending of conn.inFlight.values()) {
-            pending.drop();
-            send(conn, errorLine(pending.id, err({ kind: 'SHUTTING_DOWN', detail: 'the server is stopping' })));
-          }
-          conn.inFlight.clear();
-        }
-        for (const conn of [...connections]) close(conn);
-        await new Promise<void>((resolve) => {
-          server.close(() => {
-            resolve();
-          });
-        });
-        fs.rmSync(discoveryPath, { force: true });
-        jobs.dispose();
-        files.dispose();
-        world.dispose();
-      })();
-      return stopped;
+    stop: stopMock,
+    get quitRequested() {
+      return quitRequested;
     },
+    whenEnded: () => ended,
   };
 }
 

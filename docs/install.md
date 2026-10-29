@@ -5,8 +5,9 @@ SPDX-License-Identifier: MIT
 
 # Installing OpenTune MCP Server (by Synchain)
 
-This page is a skeleton: the MCPB section below is complete in outline, the other clients are filled in
-later. A Chinese version follows separately.
+This page is about the MCP client configuration. The Claude Code plugin, which also brings the skills, and the
+skills for Claude Desktop are described under Install in the [README](../README.md#install). A Chinese version
+follows separately.
 
 `opentune-mcp doctor --client <claude-code|claude-desktop|cursor>` prints the configuration for a client with
 your own paths filled in. It only prints; it never writes a client's configuration file.
@@ -55,3 +56,12 @@ Windows the command starts with `claude.cmd`; see [Troubleshooting](TROUBLESHOOT
 ## Cursor
 
 Run `opentune-mcp doctor --client cursor` and put the printed JSON into `~/.cursor/mcp.json`.
+
+## WSL
+
+The server must run with Windows Node.js, because OpenTune listens on `127.0.0.1` of Windows, which WSL cannot reach.
+Configure the MCP client to start the server with Windows Node.js; the configuration that `opentune-mcp doctor --client
+<name>` prints for Windows does that. A server that starts inside WSL reports `WSL_UNSUPPORTED_RUNTIME` (see
+[Status WSL_UNSUPPORTED_RUNTIME](TROUBLESHOOTING.md#status-wsl_unsupported_runtime)). An agent in WSL can still hand over
+files by path: a path argument such as `/mnt/c/Music/take1.wav` is converted to `C:\Music\take1.wav`, and results report
+Windows paths.

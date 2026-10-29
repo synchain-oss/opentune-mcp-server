@@ -1,0 +1,36 @@
+{
+  "description": "copy together with an undoable op: refused before anything is sent.",
+  "input": {
+    "ops": [
+      {
+        "op": "copy",
+        "clips": [
+          "p:01234567:0:1"
+        ],
+        "mode": "window",
+        "to_track_id": 3,
+        "start_timeline_sec": 20
+      },
+      {
+        "op": "gain",
+        "clip": "p:01234567:0:1",
+        "gain_db": -3
+      }
+    ],
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "error": {
+      "kind": "INVALID_ARGUMENT",
+      "reason": "op_not_alone",
+      "detail": "copy cannot be undone while the other ops are one undo step, so they cannot share a call: make two calls, copy alone in one and the other ops in the other, with the arrangement_revision of the first result",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "message": "The arguments were rejected; correct them as the detail says and call again."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-invalid_argument"
+    }
+  }
+}

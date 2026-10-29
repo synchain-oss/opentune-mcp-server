@@ -1,0 +1,114 @@
+{
+  "description": "Back to the last start.",
+  "tool": "opentune_transport",
+  "input": {
+    "action": "return_to_last_start"
+  },
+  "result": {
+    "summary": "opentune_transport: changed 1 transport (not undoable: the state is not kept in the project; cannot be restored by any request).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "not_persisted_state",
+      "revert": null
+    },
+    "lines": [
+      {
+        "kind": "revert",
+        "text": "Not undoable (the state is not kept in the project). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "transport": {
+      "playing": false,
+      "positionTimelineSec": 2.5,
+      "playStartTimelineSec": 2.5,
+      "loopEnabled": true,
+      "bpm": 96,
+      "timeSignature": {
+        "numerator": 6,
+        "denominator": 8
+      },
+      "audioDeviceRunning": false,
+      "lastControl": {
+        "call": "pauseAtLastStart",
+        "atMs": 1767225600000
+      }
+    },
+    "changes": [
+      {
+        "entity": "transport",
+        "ref": {
+          "singleton": "transport"
+        },
+        "label": "Transport",
+        "fields": {
+          "playing": {
+            "before": true,
+            "after": false,
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "transport bar",
+        "effect": "changed transport",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "transport",
+          "label": "Transport",
+          "ref": {
+            "singleton": "transport"
+          },
+          "fields": [
+            {
+              "field": "playing",
+              "before": true,
+              "after": false,
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
+  }
+}

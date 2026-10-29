@@ -12,6 +12,7 @@ import {
   OtcpError,
   errorDataFrom,
   fromOtcpError,
+  protocolMajorsOf,
   toolError,
 } from '../../src/errors/tool-error.js';
 import { cleanDetail, serializeResult, trustedToken } from '../../src/sanitize/untrusted.js';
@@ -41,6 +42,36 @@ describe('error kinds', () => {
     expect(kindStep('INVALID_ARGUMENT', 'some_future_reason').nextStep).toEqual(
       kindStep('INVALID_ARGUMENT', null).nextStep,
     );
+  });
+
+  it('gives the preference reasons of the vocoder their own step, actor and retryability', () => {
+    const unavailable = kindStep('INVALID_ARGUMENT', 'option_unavailable');
+    expect(unavailable.retryable).toBe(false);
+    expect(unavailable.nextStep).toMatchObject({ actor: 'agent', tool: 'opentune_get_settings' });
+    expect(unavailable.nextStep.message).toMatch(/nothing was changed/);
+    expect(unavailable.nextStep.message).toMatch(/processing\.options/);
+    const notReady = kindStep('MODEL_UNAVAILABLE', 'vocoder_not_ready');
+    expect(notReady.retryable).toBe(true);
+    expect(notReady.nextStep.actor).toBe('agent');
+    expect(notReady.nextStep.message).toMatch(/took its changes back/);
+    expect(notReady.nextStep.message).toMatch(/call again/);
+    expect(notReady.nextStep.message).toMatch(/opentune-mcp doctor/);
+    const failed = kindStep('MODEL_UNAVAILABLE', 'vocoder_load_failed');
+    expect(failed.retryable).toBe(false);
+    expect(failed.nextStep.actor).toBe('user');
+    expect(failed.nextStep.message).toMatch(/opentune-mcp doctor/);
+    // The kind's own step is unchanged for the other reasons.
+    expect(kindStep('MODEL_UNAVAILABLE', 'model_missing').nextStep).toEqual(
+      kindStep('MODEL_UNAVAILABLE', null).nextStep,
+    );
+  });
+
+  it('tells the user to start OpenTune with its window for no_editor_window', () => {
+    const noWindow = kindStep('UNSUPPORTED', 'no_editor_window');
+    expect(noWindow.nextStep.actor).toBe('user');
+    expect(noWindow.nextStep.message).toMatch(/with its window/);
+    expect(noWindow.nextStep).not.toEqual(kindStep('UNSUPPORTED', 'capability_missing').nextStep);
+    expect(noWindow.retryable).toBe(false);
   });
 
   it('handles unknown kinds like INTERNAL but keeps the kind', () => {
@@ -96,6 +127,35 @@ describe('error kinds', () => {
     });
     expect(new OtcpError(data).message).toBe('BUSY(modal_open)');
     expect(new OtcpError({ ...data, reason: null }).message).toBe('BUSY');
+  });
+
+  it('carries the protocol majors of a refusal, keeping only positive integers', () => {
+    expect(protocolMajorsOf([2, 2, 3, 0, -1, 1.5, 'x', 4])).toEqual([2, 3, 4]);
+    expect(protocolMajorsOf(['2'])).toEqual([]);
+    expect(protocolMajorsOf(undefined)).toEqual([]);
+    expect(protocolMajorsOf(Array.from({ length: 40 }, (_, i) => i + 1))).toHaveLength(16);
+    const data = {
+      kind: 'PROTOCOL_MISMATCH',
+      reason: 'major_not_served',
+      retryable: false,
+      detail: 'unsupported protocol major version',
+      executed: false,
+      protocolMajors: [2, 3, 4],
+    };
+    expect(fromOtcpError(data)).toMatchObject({ kind: 'PROTOCOL_MISMATCH', protocolMajors: [2, 3, 4] });
+    expect(toolError('PROTOCOL_MISMATCH', { detail: 'x', protocolMajors: [1] })).toMatchObject({
+      protocolMajors: [1],
+    });
+    // What an instance sends is never read: the member comes from the discovery file only.
+    expect(errorDataFrom({ data: { ...data } })).not.toHaveProperty('protocolMajors');
+    expect(errorDataFrom({ data: { kind: 'PROTOCOL_MISMATCH', protocolMajors: ['2'] } })).not.toHaveProperty(
+      'protocolMajors',
+    );
+    // None that can be a major leaves the member out rather than sending an empty list on.
+    expect(toolError('PROTOCOL_MISMATCH', { detail: 'x' })).not.toHaveProperty('protocolMajors');
+    expect(toolError('PROTOCOL_MISMATCH', { detail: 'x', protocolMajors: [0, -2] })).not.toHaveProperty(
+      'protocolMajors',
+    );
   });
 });
 

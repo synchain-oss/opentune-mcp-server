@@ -1,0 +1,28 @@
+{
+  "description": "A delete without confirm: an error that asks the user.",
+  "input": {
+    "ops": [
+      {
+        "op": "delete",
+        "clips": [
+          "p:01234567:0:1"
+        ]
+      }
+    ],
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "error": {
+      "kind": "INVALID_ARGUMENT",
+      "reason": "confirm_required",
+      "detail": "deleting clips cannot be undone; the end user must agree, then the call carries confirm true",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "message": "Deleting clips cannot be undone or restored, and a content no other clip shows leaves the project with them. If the user asked for this delete and named the clips, call again with confirm: true. Otherwise tell the user which clips would go (dry_run: true lists them) and call again with confirm: true only after the user explicitly agrees."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-invalid_argument"
+    }
+  }
+}

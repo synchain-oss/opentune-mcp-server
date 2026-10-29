@@ -1,0 +1,275 @@
+{
+  "description": "With the users consent the colour is committed.",
+  "tool": "opentune_manage_ui",
+  "input": {
+    "op": "dismiss_dialogs",
+    "accept_commit": true
+  },
+  "result": {
+    "summary": "opentune_manage_ui: changed 1 track (the colour of track 1 changed from #64B5F6 to #445566; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line; side effects: a dialog was closed, closing a dialog committed its value). Warnings: DIALOG_CLOSE_COMMITTED.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "track.set",
+        "params": {
+          "tracks": [
+            {
+              "trackId": 1,
+              "colour": "#64B5F6"
+            }
+          ]
+        }
+      }
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "DIALOG_CLOSE_COMMITTED",
+        "text": "Closing the dialog committed the value it showed.",
+        "subject": {
+          "trackId": 1
+        },
+        "data": {
+          "kind": "trackColour"
+        }
+      },
+      {
+        "kind": "sideEffect",
+        "name": "dialogClosed",
+        "text": "A dialog was closed.",
+        "details": {
+          "dialogs": [
+            {
+              "kind": "trackColour",
+              "trackId": 1
+            }
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "dialogCommitted",
+        "text": "Closing a dialog committed its value.",
+        "details": {
+          "kind": "trackColour",
+          "trackId": 1,
+          "colourBefore": "#64B5F6",
+          "colourAfter": "#445566",
+          "revert": {
+            "method": "track.set",
+            "params": {
+              "tracks": [
+                {
+                  "trackId": 1,
+                  "colour": "#64B5F6"
+                }
+              ]
+            }
+          }
+        },
+        "revert": {
+          "method": "track.set",
+          "params": {
+            "tracks": [
+              {
+                "trackId": 1,
+                "colour": "#64B5F6"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Restore: call opentune_set_tracks with the arguments in restore, as they are. (reverts side effect dialogCommitted)",
+        "revert": {
+          "method": "track.set",
+          "params": {
+            "tracks": [
+              {
+                "trackId": 1,
+                "colour": "#64B5F6"
+              }
+            ]
+          }
+        },
+        "restore": {
+          "tool": "opentune_set_tracks",
+          "arguments": {
+            "ops": [
+              {
+                "op": "colour",
+                "track_id": 1,
+                "colour": "#64B5F6"
+              }
+            ]
+          }
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_tracks with the arguments in restore, as they are.",
+        "revert": {
+          "method": "track.set",
+          "params": {
+            "tracks": [
+              {
+                "trackId": 1,
+                "colour": "#64B5F6"
+              }
+            ]
+          }
+        },
+        "restore": {
+          "tool": "opentune_set_tracks",
+          "arguments": {
+            "ops": [
+              {
+                "op": "colour",
+                "track_id": 1,
+                "colour": "#64B5F6"
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": {
+        "before": "t2",
+        "after": "t11"
+      },
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "dialogClosed": {
+        "dialogs": [
+          {
+            "kind": "trackColour",
+            "trackId": 1
+          }
+        ],
+        "revert": null
+      },
+      "dialogCommitted": {
+        "kind": "trackColour",
+        "trackId": 1,
+        "colourBefore": "#64B5F6",
+        "colourAfter": "#445566",
+        "revert": {
+          "method": "track.set",
+          "params": {
+            "tracks": [
+              {
+                "trackId": 1,
+                "colour": "#64B5F6"
+              }
+            ]
+          }
+        }
+      }
+    },
+    "warnings": [
+      {
+        "code": "DIALOG_CLOSE_COMMITTED",
+        "subject": {
+          "trackId": 1
+        },
+        "data": {
+          "kind": "trackColour"
+        }
+      }
+    ],
+    "job": null,
+    "changes": [
+      {
+        "entity": "track",
+        "ref": {
+          "trackId": 1
+        },
+        "label": "Track 2",
+        "fields": {
+          "colour": {
+            "before": "#64B5F6",
+            "after": "#445566",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "changed track",
+        "target": "track 1",
+        "visibleNow": true
+      },
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      },
+      {
+        "surface": "dialog",
+        "effect": "dialog closed",
+        "target": "project",
+        "visibleNow": true
+      },
+      {
+        "surface": "dialog",
+        "effect": "dialog value committed",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "track",
+          "label": "Track 2",
+          "ref": {
+            "trackId": 1
+          },
+          "fields": [
+            {
+              "field": "colour",
+              "before": "#64B5F6",
+              "after": "#445566",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
+  }
+}

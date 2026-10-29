@@ -1,0 +1,146 @@
+{
+  "description": "Opening the clip on a build without ui.workspace: the way back is the user clicking the view button.",
+  "tool": "opentune_manage_ui",
+  "input": {
+    "op": "focus_clip",
+    "clip": "p:01234567:0:1",
+    "open_editor": true
+  },
+  "result": {
+    "summary": "opentune_manage_ui: selected the clip and switched the window from the arrangement view to the piano roll, as open_editor asked, with no other side effects.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "not_persisted_state",
+      "revert": {
+        "method": "ui.setSelection",
+        "params": {
+          "trackId": 0
+        }
+      }
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "workspaceSwitched",
+        "text": "The window switched between the arrangement and the piano roll.",
+        "details": {
+          "from": "arrangement",
+          "to": "pianoRoll",
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "No tool of this server can switch the window back to the arrangement view yet; the user can click the view buttons in the transport bar (reverts side effect workspaceSwitched).",
+        "revert": null,
+        "restore": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (the state is not kept in the project). No tool of this server can carry out this restore yet; the user can restore it by hand in the OpenTune window.",
+        "revert": {
+          "method": "ui.setSelection",
+          "params": {
+            "trackId": 0
+          }
+        },
+        "restore": null
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "pianoRoll",
+      "pianoRollContentId": "c:01234567:0:1",
+      "activeTrackId": 0,
+      "selectedPlacementIds": [
+        "p:01234567:0:1"
+      ],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "workspaceSwitched": {
+        "from": "arrangement",
+        "to": "pianoRoll",
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "changes": [
+      {
+        "entity": "selection",
+        "ref": {
+          "singleton": "selection"
+        },
+        "label": "Selection",
+        "fields": {
+          "selectedPlacementIds": {
+            "before": [],
+            "after": [
+              "p:01234567:0:1"
+            ],
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "unknown",
+        "effect": "changed selection",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Look at the OpenTune window."
+      },
+      {
+        "surface": "main window",
+        "effect": "workspace switched",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "selection",
+          "label": "Selection",
+          "ref": {
+            "singleton": "selection"
+          },
+          "fields": [
+            {
+              "field": "selectedPlacementIds",
+              "before": [],
+              "after": [
+                "p:01234567:0:1"
+              ],
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
+  }
+}

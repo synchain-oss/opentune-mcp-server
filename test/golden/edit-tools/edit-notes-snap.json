@@ -24,10 +24,92 @@
     "expected_revision": "<clip_revision of the clip>"
   },
   "result": {
-    "summary": "opentune_edit_notes: changed 1 note (side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:5.",
+    "summary": "opentune_edit_notes: changed 1 note (side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:5.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:5",
+      "description": "Edit notes",
+      "innerActions": [
+        "setNotes"
+      ],
+      "steps": 1
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:5.",
+        "undoId": "u:01234567:5",
+        "description": "Edit notes"
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n21",
+              "after": "n25"
+            },
+            "pitch": {
+              "before": "p22",
+              "after": "p26"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r27",
+          "gridRevision": "g6",
+          "keyRevision": "k16"
+        }
+      ],
+      "placements": []
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "omittedChangeCount": 0,
     "changes": [
       {
         "entity": "note",
@@ -35,7 +117,7 @@
           "contentId": "c:01234567:0:1",
           "note": {
             "index": 5,
-            "atRevision": "r28"
+            "atRevision": "r27"
           }
         },
         "label": "#5 A4 3.50-4.50s",
@@ -51,68 +133,6 @@
     "created": [],
     "removed": [],
     "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "notes": {
-              "before": "n22",
-              "after": "n26"
-            },
-            "pitch": {
-              "before": "p23",
-              "after": "p27"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "revision": "r28",
-          "gridRevision": "g6",
-          "keyRevision": "k17"
-        }
-      ],
-      "placements": []
-    },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:5",
-      "description": "Edit notes",
-      "innerActions": [
-        "setNotes"
-      ],
-      "steps": 1
-    },
-    "dirty": {
-      "before": true,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": null,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "reRenderQueued": {
-        "contentIds": [
-          "c:01234567:0:1"
-        ],
-        "revert": null
-      }
-    },
-    "warnings": [],
-    "job": null,
-    "omittedChangeCount": 0,
     "uiEffects": [
       {
         "surface": "piano roll",
@@ -139,7 +159,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 5,
-              "atRevision": "r28"
+              "atRevision": "r27"
             }
           },
           "fields": [
@@ -154,26 +174,6 @@
       ],
       "omittedChangeCount": 0
     },
-    "lines": [
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:5.",
-        "undoId": "u:01234567:5",
-        "description": "Edit notes"
-      }
-    ],
-    "clip_revision": "cr1.WyJyMjgiLCJnNiIsImsxNyIsImgxMSJd"
+    "clip_revision": "cr1.WyJyMjciLCJnNiIsImsxNiIsImgxMCJd"
   }
 }

@@ -10,7 +10,7 @@
 
 ### Status READY
 
-OpenTune 带着控制接口在运行,并且本服务已验证过它。有多个实例在运行时,给其他工具传 `instance_id`;服务从不自己挑选实例。
+OpenTune 带着控制接口在运行,并且本服务已验证过它。有多个实例在运行时,给其他工具传 `instance_id`;服务从不自己挑选实例。OpenTune 窗口里开着对话框时,所有写操作都会被挡住;这时结果里会带 `blockedBy`,见 [First launch dialog](#first-launch-dialog)。
 
 ### Status NOT_READY
 
@@ -72,7 +72,11 @@ OpenTune 正在关闭。先检查状态,再做别的。
 
 ### Error INVALID_ARGUMENT
 
-参数被拒绝;`detail` 说明原因。原因为 `confirm_required` 时,该操作具有破坏性,需要用户的明确同意。
+参数被拒绝;`detail` 说明原因。原因为 `confirm_required` 时,该操作具有破坏性,需要用户的明确同意。原因为 `option_unavailable`
+(`opentune_set_settings`)时,声码器权重或音高模型不是这套安装提供的值;`detail` 指出是哪一项,且没有任何改动。用
+`opentune_get_settings` 读取可用的值(`processing.options`),再用其中一个重新调用。即使名称等于当前值,只要它已不在列表里
+(例如权重文件被删除),也会被拒绝。`1.0.0-rc.5` 的测试构建完全不认识这些成员,会以原因 `invalid_params` 回答
+(见 [Settings tools and the specification versions](COMPATIBILITY.md#settings-tools-and-the-specification-versions))。
 
 ### Error NOT_FOUND
 
@@ -94,6 +98,11 @@ OpenTune 无法渲染修正后的音频,自动重试一次后仍然失败。
 
 OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`。
 
+修改声码器权重或渲染优先级(`opentune_set_settings`)时有两个原因:OpenTune 用一个任务应用这类修改,并等到声码器重新就绪。
+两种情况下 OpenTune 都会撤回这些改动,结果里会写明。`vocoder_not_ready`(可重试):等待上限到了,声码器仍然忙;稍等片刻再调用,
+若反复出现,运行 `opentune-mcp doctor`。`vocoder_load_failed`(不可重试):声码器无法加载新的权重或后端,例如权重文件损坏或不兼容;
+原来的设置已经恢复,再次发送同一个值没有用。请告诉用户,并用 `opentune-mcp doctor` 检查模型。
+
 ### Error REVISION_CONFLICT
 
 对象在被读取之后又变了。请重新读取,用新的版本号重试。
@@ -104,7 +113,7 @@ OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`�
 
 ### Error UNSAVED_CHANGES
 
-该请求会丢弃未保存的改动。请问用户是保存还是丢弃。
+该请求会丢弃未保存的改动。请问用户是保存还是丢弃。`opentune_quit` 给出这个错误是有意的:OpenTune 窗口的关闭按钮不会询问就直接退出,而这个工具不会。agent 先用 `opentune_save_project` 写一个自动副本(`autosave`;从未保存过的工程没有文件,写不了副本),再问用户:是正式保存(`save`;从未保存过的工程用 `save_as`)后再调用 `opentune_quit`,还是放弃这些改动;只有用户明确同意丢掉改动时,才带 `discard_unsaved: true` 调用。`opentune_open_project` 给出同样的错误,处理方式相同。
 
 ### Error ALREADY_EXISTS
 
@@ -112,7 +121,7 @@ OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`�
 
 ### Error BUSY
 
-OpenTune 正被使用:有对话框开着、用户正在拖动,或有导入、导出、工程操作在进行。请在 OpenTune 里完成它,再重试。原因为 `modal_open` 时有模态对话框开着;第一个通常就是一次性的首次引导对话框,见 [First launch dialog](#first-launch-dialog)。
+OpenTune 正被使用:有对话框开着、用户正在拖动,或有导入、导出、工程操作在进行。请在 OpenTune 里完成它,再重试。原因为 `modal_open` 时有模态对话框开着;第一个通常就是一次性的首次引导对话框,见 [First launch dialog](#first-launch-dialog)。`opentune_manage_ui` 的 `dismiss_dialogs` 可以像按 Esc 一样关掉对话框;关闭时会提交所示取值的对话框(轨道颜色对话框)只有带 `accept_commit: true` 才会关,而这需要用户同意。关掉确认框等于取消它询问的操作,所以关闭任何对话框之前都要先问用户。原因为 `job_in_progress`(来自 `opentune_quit`)时,有任务还没结束(例如设置改动),退出会把它中断:等几秒再调用。
 
 ### Error TIMEOUT
 
@@ -124,11 +133,11 @@ OpenTune 在截止时间之前没有开始处理该请求。没有任何改动;�
 
 ### Error IO_ERROR
 
-某个文件无法读取或写入。不带 `path` 的导出写在源文件旁;该文件夹只读时导出会失败,服务不会另选文件夹。请用一个可写文件夹里的 `path` 再次调用 `opentune_export_audio`。
+某个文件无法读取或写入。不带 `path` 的导出写在源文件旁;该文件夹只读时导出会失败,服务不会另选文件夹。请用一个可写文件夹里的 `path` 再次调用 `opentune_export_audio`。来自 `opentune_save_project` 和 `opentune_save_project_overwrite` 的原因 `backup_failed` 表示:这次保存要替换的文件没能复制进它旁边的 `.oldversion` 文件夹,所以什么都没保存,那个文件也没变;见 [Autosave copies and old versions](#autosave-copies-and-old-versions)。来自 `opentune_save_project`(模式 `autosave`)的原因 `write_failed` 表示 `.autosave` 文件夹建不出来或写不进去。
 
 ### Error UNSUPPORTED
 
-OpenTune 或该构建不提供这个操作。原因为 `capability_missing` 时,`detail` 指出缺少的能力;原因为 `job_not_cancellable` 时,任务会继续,可以用 `opentune_get_job` 跟踪。
+OpenTune 或该构建不提供这个操作。原因为 `capability_missing` 时,`detail` 指出缺少的能力;原因为 `no_editor_window` 时,OpenTune 是在没有编辑器窗口的情况下运行的,带窗口启动 OpenTune Standalone 后再试;原因为 `job_not_cancellable` 时,任务会继续,可以用 `opentune_get_job` 跟踪。`opentune_manage_ui` 的 op `switch_view` 需要能力 `ui.workspace`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请在 OpenTune 窗口里切换视图(走带栏里的编曲视图与钢琴卷帘按钮),或改用较新的测试构建。`opentune_quit` 需要能力 `app.quit`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请先用 `opentune_save_project` 写一个自动副本(`mode: autosave`),问用户是否正式保存工程,再请用户关闭 OpenTune 窗口(窗口关闭时不会询问未保存的改动)。`opentune_save_project` 的 `mode: autosave` 需要能力 `project.copy`,规范 `1.0.0-rc.8` 之前的测试构建没有它:不会写任何副本;请在用户想保住成果时提醒他保存工程,或改用较新的测试构建。
 
 ### Error INTERNAL
 
@@ -159,6 +168,8 @@ OpenTune 或本服务里发生了意外错误。本服务不认识的错误 kind
 ### Error REQUEST_TIMEOUT
 
 OpenTune 没有及时回答。请求可能仍在运行;重试修改之前先重新读取状态。
+
+原因为 `read_too_slow` 时(来自带 `output_path` 的 `opentune_get_notes`),是本服务自己停止了分页读取:下一页可能在客户端放弃之后才结束(调用开始后 40 秒)。OpenTune 里没有任何改动,也没有写文件;请缩小范围(`from`、`to`)分成几个文件读取,或等 OpenTune 不忙时再调用。
 
 ### Error CONFIG_INVALID
 
@@ -215,11 +226,29 @@ OpenTune 宣告运行中实例的目录必须可读。在带控制接口的 Open
 
 ## First launch dialog
 
-OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次引导(onboarding)对话框。需要有人在 OpenTune 窗口里回答一次。它(或任何其他模态对话框)开着时,所有写操作都会失败,返回 [BUSY](#error-busy),原因 `modal_open`。`opentune_get_settings` 会报告首次引导是否已经显示过。请让用户回答该对话框,然后重试。服务从不自己回答对话框。
+OpenTune 在全新数据文件夹下首次启动时,会弹出一次性的首次引导(onboarding)对话框。需要有人在 OpenTune 窗口里回答一次。它(或任何其他模态对话框)开着时,所有写操作都会失败,返回 [BUSY](#error-busy),原因 `modal_open`。`opentune_get_settings` 会报告首次引导是否已经显示过。`opentune_get_status` 与 `opentune_launch` 在实例能报告窗口状态时会读一次窗口,并在结果里加上 `blockedBy`(`kind` 为 `onboarding` 或 `dialog`,另有一句提示),摘要会说明在对话框关闭之前写操作都会被拒绝,而不是说一切就绪。请让用户回答该对话框,然后重试。`opentune_manage_ui` 也能像按 Esc 一样把它关掉:首次引导覆盖层用 `dismiss_onboarding`(它同时把首次引导标记为已显示,这是撤销不了的全局设置,所以要先告诉用户 OpenTune 正显示欢迎页,用户同意后再关),其他对话框用 `dismiss_dialogs`。服务从不按对话框里的按钮。读不到窗口状态时,`blockedBy` 为 null,原因 `unavailable` 写在 `nullReasons` 里,状态仍按就绪报告。实例没有 `ui.bridge` 能力时根本无法报告窗口状态:`blockedBy` 同样为 null,原因为 `capability_missing`,这并不表示没有对话框开着。
+
+## Rendering backend and vocoder
+
+`opentune_get_settings`(`processing` 小节)会显示渲染优先级和 OpenTune 当前使用的后端(`processing.backend`)。`gpuFirst` 下,OpenTune 每次加载声码器都会先尝试 GPU,失败时悄悄退回 CPU,所以 GPU 并不保证可用。优先级是 `gpuFirst`、后端是 `cpu` 且声码器已加载(`processing.vocoderReady` 为 true)时,摘要会指出这一点;声码器没加载时,`backend` 可能还是旧值,所以不据此下结论。想知道原因,请读日志:用 `opentune_get_settings`,`sections` 为 `["log"]`、`log_lines` 为 30,可以看到与后端有关的日志行。Windows 上还可以运行 `opentune-mcp doctor`:它检查测试构建在 `opentune-control.json` 里列出的 Direct3D 12 运行库(见 [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied))。改了渲染优先级之后,`opentune_set_settings` 会在作业结束后读一次后端,放进 `rendering_backend`;等了一小会儿声码器仍在重新加载时,会如实说明,而不是猜测。如果改动时声码器还没就绪(刚启动、还没渲染过),OpenTune 可能在声码器重新加载完成之前就结束了作业,这时读到 `cpu` 并不能证明发生了回退:`rendering_backend.confirmed` 为 `false`,要等下一次加载后才能确定后端,请在渲染过一次之后再读 `opentune_get_settings`。
+
+刚启动 OpenTune 时 `vocoderReady: false` 是预期之中的:声码器在第一次渲染需要它时才加载,`opentune_get_status`、`opentune_launch` 与 `opentune_get_settings` 的摘要都会这么说。摘要不说它「正常」,因为 `session.info` 与 `prefs.get` 里没有哪个成员能分辨「还没加载」与「加载失败」或「卡住」。如果渲染过一次(需要渲染的编辑、导出)之后它仍是 false,请告诉用户,并读日志找原因(`opentune_get_settings`,`sections` 为 `["log"]`)。声码器权重或渲染优先级的修改,在 OpenTune 加载不了新权重或后端时,会以 [MODEL_UNAVAILABLE](#error-model_unavailable)(`vocoder_load_failed`)失败。
 
 ## Hybrid mode
 
-OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 "Hybrid Mode: Small corrections use DSP, large corrections use vocoder")默认开启。修正量中小于 75 音分的部分走 DSP 移调,而不是声码器。这是 OpenTune 自身的设计,在它的窗口里和通过本服务都一样;在真实人声上,这种小修正可能几乎听不出来。如果需要小修正也明显可听,请在 OpenTune 的首选项里关闭该项。当时的设置会如实报告,位置有三处:`opentune_export_audio` 结果里的 `export.processing.hybridMode`;导出作业在调用内没跑完时,`opentune_get_job` 里的 `job.result.processing.hybridMode`;首选项本身在 `opentune_get_settings` 的 `processing` 小节。不要想当然。
+OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 "Hybrid Mode: Small corrections use DSP, large corrections use vocoder")默认开启。修正量中小于 75 音分的部分走 DSP 移调,而不是声码器。这是 OpenTune 自身的设计,在它的窗口里和通过本服务都一样;在真实人声上,这种小修正可能几乎听不出来。如果需要小修正也明显可听,请在 OpenTune 的首选项里关闭该项,或让 agent 用 `opentune_set_settings`(`processing.hybrid_mode`)来关。它是 OpenTune 安装的全局设置而不是工程设置,关掉之后一直保持关闭,直到再把它打开;`opentune_set_settings` 的结果会给出恢复原值的调用。当时的设置会如实报告,位置有三处:`opentune_export_audio` 结果里的 `export.processing.hybridMode`;导出作业在调用内没跑完时,`opentune_get_job` 里的 `job.result.processing.hybridMode`;首选项本身在 `opentune_get_settings` 的 `processing` 小节。不要想当然。
+
+## Autosave copies and old versions
+
+两个文件夹都在工程文件旁边,以去掉 `.otproj` 的工程名命名。`opentune_save_project` 的 `mode: autosave` 写 `<工程名>.autosave/<工程名>-autosave-0001.otproj`、`-0002` 等,保留最新的 50 个;它从不改动工程文件、未保存标记或最近工程列表,只在 `<工程名>.autosave` 里写文件(副本,以及 OpenTune 放进该文件夹自己的 `Project_Media` 的音频:OpenTune 会替换这种文件夹里同名且更旧的音频,所以副本用专用的文件夹,不会替换别的工程的音频)。每次会替换工程文件的保存,都会先把旧文件复制到 `<工程名>.oldversion/<工程名>-<YYYYMMDD-HHMMSS>.otproj`(本地时间,同一秒重名时加 `-2`、`-3`),保留最新的 10 个;如果最新的旧版本已经和要被替换的文件逐字节相同(紧接着一次没有任何改动的保存之后再保存),就不再复制新的一份,结果里会说明(`oldVersion.reused`)。服务只在这两个文件夹里删除名字符合上述模式的普通文件:这样的文件都按副本或旧版本计数,超出最新的 50 个或 10 个就会被删,不论是谁放进去的;文件夹、链接、其他名字的文件、`Project_Media` 文件夹(OpenTune 在 `<工程名>.autosave` 里放的那个,以及本服务在 `<工程名>.oldversion` 里放的那个,见下)和其他工程的文件都不会被动。OpenTune 拒绝保存、或报告没有任何改动(`executed` 为 `false`,或对另一个已有文件的拒绝 `confirm_required`)时,工程文件还是原样,所以刚做的那份旧版本会被删掉(只是沿用的旧版本从不删除)。保存以其他方式失败时,旧版本会保留,因为工程文件可能已经写了一部分:它就是退路。被拒绝的保存之后可能留下一个空的 `<工程名>.oldversion` 文件夹;服务从不删除文件夹。要找回之前的成果,用 `opentune_open_project` 打开想要的那个文件。
+
+自动副本和旧版本里的音频路径是相对它所在文件夹写的,所以只会在它自己文件夹里的 `Project_Media` 文件夹里找音频。`<工程名>.autosave` 里的副本有这样一个文件夹,由 OpenTune 填。旧版本的这个文件夹由本服务填:每次做旧版本(或沿用已有的旧版本)时,在保存开始之前,把被替换文件旁边 `Project_Media` 文件夹里的普通文件复制到 `<工程名>.oldversion/Project_Media`。规则照 OpenTune 自己对这种文件夹的做法:文件只在那里缺失、或比来源旧时才复制;更新的文件从不覆盖,什么都不删,链接和子文件夹跳过。音频到位后,即使原始音频文件(例如下载文件夹里的)被删掉了,旧版本照样能打开。被替换的文件没有 `Project_Media` 文件夹时什么都不做。
+
+复制的是整个 `Project_Media` 文件夹,而不只是这个工程用到的音频:要分辨工程用到哪些文件,就得解析工程文件,本服务不这样做。这个文件夹是同一目录下所有工程文件共用的,所以同目录下其他工程的音频也会被复制进去;而每个工程文件都有自己的 `<工程名>.oldversion/Project_Media`,所以同一目录放多个工程文件时,占用的空间会按工程文件的数量成倍增加。建议一个工程一个文件夹。旧版本的滚动删除从不动这个文件夹,所以它只增不删,里面可能有其他工程的音频;确定不再需要这些旧版本时,可以手动删除。和工程旁边的 `Project_Media` 一样,那里的文件会被同名且更新的来源文件替换,所以更早的旧版本此时找到的是那个名字下更新的音频。
+
+复制有 15 秒的时间上限,免得第一次保存一个音频很多的工程时把保存拖住。时间是在两个文件之间检查的,所以单个特别大的文件仍可能超过。到了上限,还没轮到的文件不再复制,保存照常进行:`oldVersion.media.timedOut` 为 `true`,这些文件列在 `oldVersion.media.notCopied` 里(也计入 `notCopiedCount`),结果里有下面说的那条告警行和摘要里的一句话。这不是失败:下一次替换这个工程文件的保存会接着复制剩下的(只复制缺失或更旧的文件),所以再保存一两次就能把一个大文件夹补齐。在那之前,原始音频文件被删掉之后,这个旧版本可能找不全它的音频。
+
+有些音频没能复制(磁盘已满或只读,或文件被占用)时,保存照常进行;除非时间也用完了,否则 `oldVersion.media.timedOut` 为 `false`。结果里会有一条告警行(代码 `OLD_VERSION_MEDIA_NOT_COPIED`,`source: server`;失败和时间上限用同一条告警行,各有一句话)和摘要里的一句话,`oldVersion.media.notCopied` 列出这些文件(形如 `Project_Media/1.wav` 的路径;整个文件夹读不了或建不出来时是 `Project_Media` 本身;`notCopiedCount` 是完整的数目)。原始音频文件被删掉之后,这个旧版本可能找不到它的音频。排除原因(腾出空间、关掉占用文件的程序)后再保存一次:缺的文件会补上。`oldVersion.media.copied` 是这次保存复制的文件数。
 
 ## Slow process discovery
 

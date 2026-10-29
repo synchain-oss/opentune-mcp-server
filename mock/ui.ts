@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 // The UI bridge of the mock (capability ui.bridge): ui.getState, ui.dismiss and ui.setSelection
-// (spec/otcp/v1/PROTOCOL.md sections 13.2, 14.6, 15.4 rule 4 and 21 rule 3). The window state it
+// (spec/otcp/v1/PROTOCOL.md sections 13.2, 14.6, 15.4 rule 4 and 21 rule 3), and ui.setWorkspace
+// (capability ui.workspace, section 14.6). The window state it
 // reads and changes lives in the model: the dialogs, the first-run overlay, the selection, the
-// workspace and the scale shown in the transport bar.
+// workspace and the scale shown in the transport bar. A switch of the workspace also lets the tempo field
+// of the transport bar round the tempo (sideEffects.tempoRounded, section 14.6).
 
 import { envelope, type Handler, type MethodContext } from './context.js';
 import { refuse } from './errors.js';
@@ -165,6 +167,17 @@ function dismissOnboarding(context: MethodContext) {
     );
   }
   world.onboardingShowing = false;
+  if (world.prefs.onboardingShown) {
+    // OpenTune marks onboarding as shown once the overlay shows its choice: closing it then changes the view only.
+    return envelope(world, {
+      applied: true,
+      noOp: false,
+      diff: EMPTY_DIFF,
+      contents: [],
+      undo: viewOnly,
+      dirtyBefore,
+    });
+  }
   world.prefs.onboardingShown = true;
   return envelope(world, {
     applied: true,
@@ -182,7 +195,6 @@ function dismissOnboarding(context: MethodContext) {
     // A user-global preference that no request of this protocol resets.
     undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
     dirtyBefore,
-    sideEffects: showing ? { onboardingClosed: { revert: null } } : {},
     warnings: [warning('IRREVERSIBLE', { preference: 'onboardingShown' })],
   });
 }
@@ -192,6 +204,44 @@ const dismiss: Handler = (context) => {
   checkBusy(context, true);
   return context.params.target === 'onboarding' ? dismissOnboarding(context) : dismissDialogs(context);
 };
+
+// The tempo field ------------------------------------------------------------------------------------
+
+const TEMPO = { singleton: 'tempo' } as const;
+/** A tempo within this many bpm of its one-decimal value counts as that value: float noise is not a rounding. */
+const TEMPO_TOLERANCE = 1e-9;
+
+/**
+ * What the tempo field of the transport bar does when the window switches view (section 14.6): it shows the tempo
+ * with one decimal, and a switch moves the keyboard focus out of it when it holds the focus, which makes it write the
+ * value it shows back to the project. The mock's window always holds the focus in the field, as a window in the
+ * foreground that has just started does (the vector precondition `keyboardFocus` `tempoField`), so every switch, in
+ * either direction, rounds a tempo that has more than one decimal; null when it has at most one. A tempo that
+ * differs from its rounded value by no more than floating-point noise (120.30000000000001 shows as 120.3) is not
+ * rounded: the field writes back what it shows, which is the same number. The result describes the rounding;
+ * `apply` carries it out, which a dry run does not.
+ */
+function tempoRounding({ world, hasCapability }: MethodContext) {
+  const from = world.transport.bpm;
+  const to = Math.round(from * 10) / 10;
+  if (Math.abs(to - from) < TEMPO_TOLERANCE) return null;
+  // The recipe needs transport.setTempo; an instance without it can restore nothing (section 15.2 rule 2).
+  const revert = hasCapability('transport.v1') ? { method: 'transport.setTempo', params: { bpm: from } } : null;
+  return {
+    change: {
+      entity: 'tempo',
+      ref: TEMPO,
+      label: 'Tempo',
+      fields: { bpm: { before: from, after: to, unit: 'bpm' } },
+    },
+    effect: { fromBpm: from, toBpm: to, revert },
+    warnings: revert === null ? [warning('IRREVERSIBLE', TEMPO)] : [],
+    apply: () => {
+      world.transport.bpm = to;
+      world.markDirty();
+    },
+  };
+}
 
 // ui.setSelection ------------------------------------------------------------------------------------
 
@@ -226,16 +276,13 @@ const setSelection: Handler = (context) => {
   // What selecting makes OpenTune do beyond the selection (section 21 rule 3).
   const generating =
     content !== undefined && world.editingScheme === 'openDyne' && needsGeneratedNotes(content) ? content : undefined;
-  const referenceClip = placement?.reference ?? null;
-  const queued =
-    placement !== undefined && referenceClip !== null && world.prefs.experimentalFeatures
-      ? [placement.content, referenceClip.content]
-      : [];
   const shownKey = content === undefined ? null : keyShown(content);
   const scaleChanged =
     shownKey !== null && (shownKey.root !== world.uiScale.root || shownKey.scale !== world.uiScale.scale);
   const switches = openEditor && world.workspace !== 'pianoRoll';
-  const reopens = openEditor && content !== undefined && world.pianoRollContent !== content;
+  // The piano roll holds the selected clip, also while the window shows the arrangement view; with a track selected
+  // (no clip) it holds none, as ui.setWorkspace shows it.
+  const loads = (content ?? null) !== world.pianoRollContent;
 
   const revert =
     previous.activeTrackId === null
@@ -249,15 +296,10 @@ const setSelection: Handler = (context) => {
         };
   const sideEffects: Record<string, unknown> = {};
   const warnings: unknown[] = [];
-  const subject = placement === undefined ? null : { placementId: placement.id };
   const effect = (count: number) => {
     sideEffects.notesGenerated = { contentId: content?.id ?? '', noteCount: count, revert: null };
     const notes = { contentId: content?.id ?? '' };
     warnings.push(warning('SELECTION_GENERATED_NOTES', notes), warning('IRREVERSIBLE', notes));
-  };
-  const queuedEffect = () => {
-    sideEffects.referenceAnalysisQueued = { contentIds: queued.map((c) => c.id), revert: null };
-    warnings.push(warning('REFERENCE_ANALYSIS_QUEUED', subject));
   };
   const scaleEffect = () => {
     if (shownKey === null) return;
@@ -270,14 +312,20 @@ const setSelection: Handler = (context) => {
   const workspaceEffect = () => {
     sideEffects.workspaceSwitched = { from: world.workspace, to: 'pianoRoll', revert: null };
   };
-  const changes =
+  const changes: unknown[] =
     Object.keys(fields).length === 0 ? [] : [{ entity: 'selection', ref: SELECTION, label: 'Selection', fields }];
+  // The switch moves the keyboard focus out of the tempo field, which rounds the tempo (section 14.6).
+  const rounding = switches ? tempoRounding(context) : null;
+  if (rounding !== null) {
+    changes.push(rounding.change);
+    warnings.push(...rounding.warnings);
+  }
 
   if (dryRun) {
     if (generating !== undefined) effect(predictedNoteCount(generating));
-    if (queued.length > 0) queuedEffect();
     if (scaleChanged) scaleEffect();
     if (switches) workspaceEffect();
+    if (rounding !== null) sideEffects.tempoRounded = rounding.effect;
     return envelope(world, {
       applied: false,
       noOp: false,
@@ -297,18 +345,17 @@ const setSelection: Handler = (context) => {
   world.selectedPlacementIds = targetSelection;
   world.activeTrackId = targetTrack;
   if (generating !== undefined) effect(generateNotes(world, generating));
-  if (queued.length > 0) {
-    queuedEffect();
-    for (const c of queued) world.queueAlignment(c);
-  }
   if (scaleChanged) scaleEffect();
   if (shownKey !== null) world.uiScale = { root: shownKey.root, scale: shownKey.scale };
   if (switches) workspaceEffect();
-  if (openEditor && content !== undefined) {
-    world.workspace = 'pianoRoll';
-    world.pianoRollContent = content;
+  if (rounding !== null) {
+    sideEffects.tempoRounded = rounding.effect;
+    rounding.apply();
   }
-  const noOp = changes.length === 0 && Object.keys(sideEffects).length === 0 && !reopens && !switches;
+  // What the piano roll holds follows the selection, whichever view is shown; openEditor also switches the view.
+  world.pianoRollContent = content ?? null;
+  if (openEditor && content !== undefined) world.workspace = 'pianoRoll';
+  const noOp = changes.length === 0 && Object.keys(sideEffects).length === 0 && !loads && !switches;
   return envelope(world, {
     applied: true,
     noOp,
@@ -322,6 +369,69 @@ const setSelection: Handler = (context) => {
   });
 };
 
+// ui.setWorkspace ------------------------------------------------------------------------------------
+
+/**
+ * Switches the window between the arrangement view and the piano roll, as the two view buttons of the
+ * transport bar do. The workspace is view state: no content, clip or track changes and nothing is generated.
+ * The one thing a switch does besides is the rounding of the tempo: a switch takes the keyboard focus, which the
+ * mock's window holds in the tempo field, out of it, which rounds a tempo with more than one decimal and marks the
+ * project as changed (tempoRounding). Without that rounding the project is not marked as changed. Switching to the
+ * piano roll shows the clip that is selected at that moment, or nothing (`pianoRollContent` null) when no clip is
+ * selected, even if the piano roll showed another clip before. Switching to the arrangement view leaves
+ * `pianoRollContent` as it is, as the editor keeps the content it showed.
+ */
+const setWorkspace: Handler = (context) => {
+  const { world, params } = context;
+  checkBusy(context, false);
+  const target = params.workspace === 'pianoRoll' ? 'pianoRoll' : 'arrangement';
+  const from = world.workspace;
+  const dirtyBefore = world.project.dirty;
+  if (from === target) {
+    return envelope(world, {
+      applied: true,
+      noOp: true,
+      diff: EMPTY_DIFF,
+      contents: [],
+      undo: noOpUndo,
+      dirtyBefore,
+    });
+  }
+  world.workspace = target;
+  if (target === 'pianoRoll') {
+    const shown = world.selectedPlacementIds[0];
+    world.pianoRollContent = shown === undefined ? null : world.placement(shown).content;
+  }
+  const rounding = tempoRounding(context);
+  rounding?.apply();
+  return envelope(world, {
+    applied: true,
+    noOp: false,
+    changes: [
+      {
+        entity: 'ui',
+        ref: { singleton: 'workspace' },
+        label: 'Workspace',
+        fields: { workspace: { before: from, after: target, unit: null } },
+      },
+      ...(rounding === null ? [] : [rounding.change]),
+    ],
+    diff: EMPTY_DIFF,
+    contents: [],
+    undo: {
+      undoable: false,
+      reason: 'not_persisted_state',
+      revert: { method: 'ui.setWorkspace', params: { workspace: from } },
+    },
+    dirtyBefore,
+    sideEffects: {
+      workspaceSwitched: { from, to: target, revert: null },
+      ...(rounding === null ? {} : { tempoRounded: rounding.effect }),
+    },
+    warnings: rounding === null ? [] : rounding.warnings,
+  });
+};
+
 /** The window state shared by the other modules: the dialogs a `given` opens. */
 export function openDialogs(world: World, dialogs: readonly Pick<DialogRec, 'kind' | 'trackId' | 'colour'>[]): void {
   world.dialogs = dialogs.map(({ kind, trackId, colour }) => ({ kind, trackId, colour }));
@@ -331,4 +441,5 @@ export const uiHandlers: Readonly<Record<string, Handler>> = {
   'ui.getState': getState,
   'ui.dismiss': dismiss,
   'ui.setSelection': setSelection,
+  'ui.setWorkspace': setWorkspace,
 };

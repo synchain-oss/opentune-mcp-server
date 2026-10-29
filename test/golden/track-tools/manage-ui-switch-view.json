@@ -1,0 +1,132 @@
+{
+  "description": "Closing the piano roll: back to the arrangement view, with the call that opens it again.",
+  "tool": "opentune_manage_ui",
+  "input": {
+    "op": "switch_view",
+    "view": "arrangement"
+  },
+  "result": {
+    "summary": "opentune_manage_ui: switched the window from the piano roll to the arrangement view, which changes the view only: no clip, note or setting changed and the switch did not mark the project as changed; switch back with switch_view piano_roll.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "not_persisted_state",
+      "revert": {
+        "method": "ui.setWorkspace",
+        "params": {
+          "workspace": "pianoRoll"
+        }
+      }
+    },
+    "lines": [
+      {
+        "kind": "sideEffect",
+        "name": "workspaceSwitched",
+        "text": "The window switched between the arrangement and the piano roll.",
+        "details": {
+          "from": "pianoRoll",
+          "to": "arrangement",
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (the state is not kept in the project). Restore: call opentune_manage_ui with the arguments in restore, as they are.",
+        "revert": {
+          "method": "ui.setWorkspace",
+          "params": {
+            "workspace": "pianoRoll"
+          }
+        },
+        "restore": {
+          "tool": "opentune_manage_ui",
+          "arguments": {
+            "op": "switch_view",
+            "view": "piano_roll"
+          }
+        }
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "workspaceSwitched": {
+        "from": "pianoRoll",
+        "to": "arrangement",
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "changes": [
+      {
+        "entity": "ui",
+        "ref": {
+          "singleton": "workspace"
+        },
+        "label": "Workspace",
+        "fields": {
+          "workspace": {
+            "before": "pianoRoll",
+            "after": "arrangement",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "main window",
+        "effect": "workspace switched",
+        "target": "project",
+        "visibleNow": true
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "ui",
+          "label": "Workspace",
+          "ref": {
+            "singleton": "workspace"
+          },
+          "fields": [
+            {
+              "field": "workspace",
+              "before": "pianoRoll",
+              "after": "arrangement",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
+  }
+}

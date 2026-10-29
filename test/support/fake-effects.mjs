@@ -32,12 +32,58 @@
 // `effects-resynth-detuned` render notes after an edited note again, as a vocoder that re-synthesises
 // a stretch does (see reached() below). Every other mode reports hybrid mode off.
 //
+// Modes about the vocoder weight (prefs.get, prefs.set and the sound of an export): `effects` offers the
+// weights `fake` and `fake-b`, takes the second by a prefsApply job, hands back the revert recipe of the
+// switch, and renders a note with fewer overtones under `fake-b` (the same pitch, another sound).
+// `effects-one-weight` offers one weight only, `effects-no-options` leaves processing.options out of
+// prefs.get as an instance of an earlier release candidate does, `effects-weights-alike` renders both
+// weights as the same sound, `effects-weight-revert-broken` gives a revert recipe that names the weight
+// just set, and `effects-weight-stuck` accepts a switch back to the first weight and keeps the second one.
+//
 // Modes about a damaged export: the export of a clip nothing was corrected in (the first export of the
 // scenario, which should be the source as it is) holds the notes at the wrong pitch, as an instance that
 // shifts or bends what it should leave alone would. `effects-export-offset` renders every note 30
 // cents sharp, `effects-export-glide` bends every note from 20 to 200 cents sharp over its length (its
 // own pitch is not steady), and `effects-export-one-off` renders only the second note 100 cents
 // sharp. Later exports render as `effects` does.
+//
+// Preferences: `prefs.get` and `prefs.set` keep tuningHz and hybridMode of the instance (user-global in
+// OpenTune, here per instance), and `prefs.set` answers with the changes, the warnings, the
+// reRenderQueued side effect of a hybrid mode change and the revert recipe. A note keeps its pitch in
+// Hz; the A4 reference only decides how the API reads and writes it (stored midi + 12 log2(440 /
+// tuningHz)) and what AUTO rounds to, so a changed reference is not retroactive. The render path the
+// instance started with renders as `effects` does; the other hybrid mode state renders every note up to
+// 2 cents off and, when it is hybrid mode on, leaves a correction below 75 cents unapplied, as the
+// lighter path of OpenTune does. `effects-no-prefs` does not report prefs.write.
+//
+// Notes with a pitch trajectory (the truth file holds `contourCents`, see harmonic-tone.ts) are cut
+// where the pitch strays from the running median of the note by more than the split sensitivity (80
+// cents at import; AUTO regenerate takes `params.noteSplitCents`), and render the trajectory
+// scaled by pitchDriftScale * (1 - retuneSpeed) plus a vibrato of 0.91 * vibratoDepth cents at
+// vibratoRateHz (the factor OpenTune showed).
+//
+// Modes about the new notes parameters and preferences; each one gets one effect wrong and nothing
+// else: `effects-split-ignored` cuts at 80 cents whatever AUTO is asked for (and says it used what was
+// asked), `effects-snap-ignored` leaves a note where it is on snapToScale, `effects-vibrato-ignored`
+// stores the vibrato and does not render it, `effects-vibrato-wrong-rate` renders it at half the rate,
+// `effects-drift-ignored` renders the drift whatever pitchDriftScale says, `effects-tuning-ignored` has AUTO
+// round to the semitones of 440 Hz, `effects-hybrid-ignored` changes the preference and renders as before,
+// `effects-pref-stuck` ignores a second change of a preference (so its revert recipe does nothing),
+// `effects-hybrid-export-fails` fails every export while the hybrid mode is not the one it began with (a
+// check that fails half-way must still put the preference back), and `effects-move-ignored` answers
+// moveHandles with a move it did not make.
+//
+// Modes about the revert recipe of prefs.set (the recipe is data the instance returns; the preference
+// must be put back from what prefs.get read at the start when it is not usable): `effects-pref-recipe-missing`
+// gives none, `effects-pref-recipe-foreign` names another method (`prefs.wipe`, which this stand-in does not
+// have), `effects-pref-recipe-extra` carries the other preference with a value it must not set, and
+// `effects-hybrid-export-fails-foreign` is `effects-hybrid-export-fails` with the foreign recipe (the put-back
+// then runs as the cleanup of a check that failed half-way).
+//
+// Modes about the clip after a time-grid move is taken back: once moveHandles was applied, every export
+// of the clip is rendered again in another phase (`effects-undo-rephased`, as OpenTune renders the whole
+// clip again: the same sound at other samples) or, from the grid being identity again, 10 cents sharp
+// (`effects-undo-detuned`).
 
 import fs from 'node:fs';
 
@@ -52,15 +98,132 @@ const NOTE_PARAMS = ['retuneSpeed', 'vibratoDepth', 'vibratoRateHz', 'pitchDrift
 const r4 = (v) => Math.round(v * 1e4) / 1e4;
 const r6 = (v) => Math.round(v * 1e6) / 1e6;
 
+/** Where a note keeps the part of its trajectory it was cut from (not enumerable on the wire: a Symbol). */
+const SRC = Symbol('source');
+const CONTOUR_HOP_SEC = 0.01;
+const DEFAULT_SPLIT_CENTS = 80;
+/** The size of the vibrato OpenTune rendered for a depth, relative to the depth. */
+const VIBRATO_RESPONSE = 0.91;
+/** Below this correction (cents) the lighter path of the other hybrid mode leaves a note as it was. */
+const HYBRID_THRESHOLD_CENTS = 75;
+/** What the lighter path does to the pitch of every note, by the parity of its index (cents). */
+const LIGHTER_DETUNE_CENTS = [0.5, -2];
+const SCALES = {
+  major: [0, 2, 4, 5, 7, 9, 11],
+  minor: [0, 2, 3, 5, 7, 8, 10],
+  chromatic: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11],
+  harmonicMinor: [0, 2, 3, 5, 7, 8, 11],
+  dorian: [0, 2, 3, 5, 7, 9, 10],
+  mixolydian: [0, 2, 4, 5, 7, 9, 10],
+  pentatonicMajor: [0, 2, 4, 7, 9],
+  pentatonicMinor: [0, 3, 5, 7, 10],
+};
+
+/** The pitch of the scale nearest to `midi`; a tie goes up. */
+function nearestInScale(midi, root, scale) {
+  const classes = SCALES[scale] ?? SCALES.chromatic;
+  const base = Math.floor(midi / 12) * 12;
+  let best = Number.NaN;
+  let bestDistance = Number.POSITIVE_INFINITY;
+  for (const octave of [-12, 0, 12]) {
+    for (const pitchClass of classes) {
+      const candidate = base + octave + ((pitchClass + root) % 12);
+      const distance = Math.abs(candidate - midi);
+      if (distance < bestDistance - 1e-9 || (Math.abs(distance - bestDistance) <= 1e-9 && candidate > best)) {
+        best = candidate;
+        bestDistance = distance;
+      }
+    }
+  }
+  return best;
+}
+
+/** The median of the values (the upper one of two). */
+function medianOf(values) {
+  const sorted = [...values].sort((a, b) => a - b);
+  return sorted[Math.floor(sorted.length / 2)] ?? 0;
+}
+
+/** Cuts a trajectory where it strays from the running median of its piece by more than `splitCents`. */
+function segmentContour(contour, splitCents) {
+  const pieces = [];
+  let from = 0;
+  let frames = [];
+  for (const [k, c] of contour.entries()) {
+    if (frames.length > 0 && Math.abs(c - medianOf(frames)) > splitCents) {
+      pieces.push([from, k]);
+      from = k;
+      frames = [];
+    }
+    frames.push(c);
+  }
+  pieces.push([from, contour.length]);
+  return pieces;
+}
+
+/** The notes a clip is cut into, from the truth file of its tone, at a split sensitivity (cents). */
+function notesFromTruth(truthNotes, splitCents) {
+  const notes = [];
+  for (const n of truthNotes) {
+    const make = (start, end, detected, extra = {}) => ({
+      startContentSec: r6(start),
+      endContentSec: r6(end),
+      detectedMidi: r4(detected),
+      targetMidi: r4(detected),
+      offsetCents: 0,
+      ...DEFAULT_PARAMS,
+      voiced: true,
+      corrected: false,
+      ...extra,
+    });
+    if (!Array.isArray(n.contourCents)) {
+      notes.push(make(n.startSec, n.endSec, n.midiExact));
+      continue;
+    }
+    for (const [a, b] of segmentContour(n.contourCents, splitCents)) {
+      const piece = n.contourCents.slice(a, b);
+      const median = medianOf(piece);
+      const end = b >= n.contourCents.length ? n.endSec : n.startSec + b * CONTOUR_HOP_SEC;
+      notes.push(
+        make(n.startSec + a * CONTOUR_HOP_SEC, end, n.midiExact + median / 100, { [SRC]: { contour: piece, median } }),
+      );
+    }
+  }
+  return notes;
+}
+
+/** The trajectory of a piece at `t` seconds into it, in cents from its median. */
+function contourAt(src, t) {
+  if (src === undefined) return 0;
+  const x = Math.max(0, t / CONTOUR_HOP_SEC);
+  const i = Math.min(src.contour.length - 1, Math.floor(x));
+  const j = Math.min(src.contour.length - 1, i + 1);
+  const a = src.contour[i] ?? 0;
+  const b = src.contour[j] ?? a;
+  return a + (b - a) * (x - i) - src.median;
+}
+
 export function effectsCapabilities(mode) {
-  return ['session.v1', 'jobs.v1', 'read.v1', 'import.v1', 'edit.v1', 'export.v1', 'history.v1', 'timing.v1'].filter(
+  return [
+    'session.v1',
+    'jobs.v1',
+    'read.v1',
+    'import.v1',
+    'edit.v1',
+    'export.v1',
+    'history.v1',
+    'timing.v1',
+    'prefs.write',
+  ].filter(
     (c) =>
-      !(mode === 'effects-no-timing' && c === 'timing.v1') && !(mode === 'effects-no-history' && c === 'history.v1'),
+      !(mode === 'effects-no-timing' && c === 'timing.v1') &&
+      !(mode === 'effects-no-history' && c === 'history.v1') &&
+      !(mode === 'effects-no-prefs' && c === 'prefs.write'),
   );
 }
 
 /** The samples of a 16-bit PCM or float32 WAV file, first channel, as numbers in -1..1. */
-function readSamples(file) {
+export function readSamples(file) {
   const bytes = fs.readFileSync(file);
   let at = 12;
   let format = 1;
@@ -146,19 +309,49 @@ function reached(mode, notes, i, hz) {
   return { hz, delaySec: turn / hz };
 }
 
-/** Re-synthesises the notes: a harmonic series at each note's pitch, placed through the time grid. */
-function render(content, notes, pitchShift, handles, mode = '') {
+/**
+ * Re-synthesises the notes: a harmonic series at each note's pitch, placed through the time grid. `path`
+ * is the render path when it is not the one the instance started with ({ lighter, leaveSmall }, see the
+ * header). A note with a trajectory (SRC) renders it scaled by pitchDriftScale * (1 - retuneSpeed), and
+ * every note with a vibrato depth renders the vibrato; those notes are synthesised by phase accumulation.
+ * The overtone k has the amplitude 1 / k ** rolloff: another rolloff is another sound at the same pitch (the other
+ * vocoder weight).
+ */
+function render(content, notes, pitchShift, handles, mode = '', path = {}, rolloff = 1) {
+  const amplitude = (k) => (rolloff === 1 ? k : k ** rolloff);
   const out = new Float64Array(Math.round(content.durationSec * RATE));
   for (const [i, note] of notes.entries()) {
-    const midi = note.targetMidi + pitchShift.semitones + pitchShift.cents / 100;
-    const { hz, delaySec } = reached(mode, notes, i, TUNING_HZ * 2 ** ((midi - 69) / 12));
+    let target = note.targetMidi;
+    if (path.leaveSmall && moved(note) && Math.abs(target - note.detectedMidi) * 100 < HYBRID_THRESHOLD_CENTS) {
+      target = note.detectedMidi;
+    }
+    const detune = path.lighter ? (LIGHTER_DETUNE_CENTS[i % 2] ?? 0) / 100 : 0;
+    const midi = target + pitchShift.semitones + pitchShift.cents / 100 + detune;
+    let { hz, delaySec } = reached(mode, notes, i, TUNING_HZ * 2 ** ((midi - 69) / 12));
+    // effects-undo-rephased: every note in another phase (same pitch and level).
+    if (path.rephase) delaySec = 0.3 / hz;
+    // effects-undo-detuned: every note 10 cents sharp.
+    if (path.detune) hz *= 2 ** (10 / 1200);
+    const src = note[SRC];
+    const driftGain =
+      src === undefined ? 0 : (mode === 'effects-drift-ignored' ? 1 : note.pitchDriftScale) * (1 - note.retuneSpeed);
+    const depth = mode === 'effects-vibrato-ignored' ? 0 : note.vibratoDepth;
+    const rate = mode === 'effects-vibrato-wrong-rate' ? note.vibratoRateHz / 2 : note.vibratoRateHz;
+    const modulated = driftGain !== 0 || depth !== 0;
     const from = Math.round(mapTime(handles, content.durationSec, note.startContentSec) * RATE);
     const to = Math.round(mapTime(handles, content.durationSec, note.endContentSec) * RATE);
     const count = to - from;
+    let phase = 0;
     for (let n = 0; n < count && from + n < out.length; n++) {
       const t = n / RATE;
       let v = 0;
-      for (let k = 1; k <= HARMONICS; k++) v += Math.sin(2 * Math.PI * k * hz * (t + delaySec)) / k;
+      if (modulated) {
+        const cents = driftGain * contourAt(src, t) + VIBRATO_RESPONSE * depth * Math.sin(2 * Math.PI * rate * t);
+        phase += (2 * Math.PI * hz * 2 ** (cents / 1200)) / RATE;
+        for (let k = 1; k <= HARMONICS; k++) v += Math.sin(k * phase) / amplitude(k);
+      } else {
+        for (let k = 1; k <= HARMONICS; k++) v += Math.sin(2 * Math.PI * k * hz * (t + delaySec)) / amplitude(k);
+      }
       const edge = Math.min(1, t / FADE_SEC, (count / RATE - t) / FADE_SEC);
       out[from + n] = 0.2 * v * Math.max(0, edge);
     }
@@ -200,7 +393,28 @@ export function createEffects(mode) {
   let exportLock = null;
   const next = (prefix) => `${prefix}${(++counter).toString(16).padStart(8, '0')}`;
   const writesDuringExport = ['effects-mixed', 'effects-conflict', 'effects-down-misreport'].includes(mode);
-  const hybridMode = mode === 'effects-hybrid';
+  const startHybridMode = mode === 'effects-hybrid';
+  const prefs = { tuningHz: TUNING_HZ, hybridMode: startHybridMode };
+  // The vocoder weights the installation offers and the one in use. Under `fake-b` a note has fewer overtones.
+  const weights = mode === 'effects-one-weight' ? ['fake'] : ['fake', 'fake-b'];
+  let weight = 'fake';
+  const rolloff = () => (weight === 'fake-b' && mode !== 'effects-weights-alike' ? 2 : 1);
+  const changedPrefs = new Set();
+  /** How the API reads a stored midi number: shifted by the A4 reference (stored values are at 440 Hz). */
+  const conv = () => 12 * Math.log2(TUNING_HZ / prefs.tuningHz);
+  const apiMidi = (stored) => r4(stored + conv());
+  const storedMidi = (api) => (conv() === 0 ? r4(api) : api - conv());
+  /** The render path: the one the instance started with, or the other one. */
+  const renderPath = (c) => {
+    const other = mode !== 'effects-hybrid-ignored' && prefs.hybridMode !== startHybridMode;
+    const identity = c.handles.every((h) => h.contentSec === h.outputSec);
+    return {
+      lighter: other,
+      leaveSmall: other && prefs.hybridMode,
+      rephase: mode === 'effects-undo-rephased' && c.regridded === true,
+      detune: mode === 'effects-undo-detuned' && c.regridded === true && identity,
+    };
+  };
 
   const ok = (id, result) => ({ jsonrpc: '2.0', id, result });
   const fail = (id, kind, reason, detail = 'fake') => ({
@@ -232,7 +446,15 @@ export function createEffects(mode) {
     job: null,
     ...extra,
   });
-  const startJob = (kind, run, polls = 1) => {
+  /**
+   * A job runs, lazily, when it is first read with job.get, and has ended by then: `polls` is how many
+   * reads still find it running first. The default is none. A read that finds a job running makes the
+   * scenario wait 100 ms before the next one, which this file's tests do not test (the smoke tests do,
+   * with the stand-in whose jobs take two reads), and which would add 100 ms to each of the 20 to 30
+   * exports of a run. A write that comes after export.start and before the first read still finds the
+   * export job running: the race check depends on that, and the job takes its snapshot at the start.
+   */
+  const startJob = (kind, run, polls = 0) => {
     const jobId = `j:${SHORT}:${String(jobs.size + 1)}`;
     jobs.set(jobId, { kind, run, polls, state: 'running', result: null, error: null });
     return { jobId, kind, state: 'queued' };
@@ -253,7 +475,9 @@ export function createEffects(mode) {
   const noteChange = (c, index, before, after) => {
     const fields = {};
     for (const name of ['targetMidi', 'offsetCents', ...NOTE_PARAMS]) {
-      if (before[name] !== after[name]) fields[name] = { before: before[name], after: after[name], unit: null };
+      if (before[name] === after[name]) continue;
+      const shown = (v) => (name === 'targetMidi' ? apiMidi(v) : v);
+      fields[name] = { before: shown(before[name]), after: shown(after[name]), unit: null };
     }
     return { entity: 'note', ref: { contentId: c.id, note: { index, atRevision: c.revision } }, label: null, fields };
   };
@@ -276,18 +500,7 @@ export function createEffects(mode) {
       gridRevision: next('g'),
       everCorrected: false,
     };
-    if (params.generateNotes === true) {
-      c.notes = truth.notes.map((n) => ({
-        startContentSec: r6(n.startSec),
-        endContentSec: r6(n.endSec),
-        detectedMidi: r4(n.midiExact),
-        targetMidi: r4(n.midiExact),
-        offsetCents: 0,
-        ...DEFAULT_PARAMS,
-        voiced: true,
-        corrected: false,
-      }));
-    }
+    if (params.generateNotes === true) c.notes = notesFromTruth(truth.notes, DEFAULT_SPLIT_CENTS);
     contents.set(c.id, c);
     return {
       ...envelope(c),
@@ -341,7 +554,7 @@ export function createEffects(mode) {
         c.pitchShift,
         c.handles,
       );
-    else samples = render(c, c.notes, c.pitchShift, c.handles, mode);
+    else samples = render(c, c.notes, c.pitchShift, c.handles, mode, renderPath(c), rolloff());
     fs.writeFileSync(job.path, wavBytes(samples));
     return {
       result: {
@@ -353,7 +566,12 @@ export function createEffects(mode) {
         startTimelineSec: 0,
         contents: [{ contentId: c.id, revision: c.revision }],
         dryContents: dry ? [{ contentId: c.id, reason: 'nothingToRender' }] : [],
-        processing: { vocoderWeight: 'fake', hybridMode, backend: 'fake', tuningHz: TUNING_HZ },
+        processing: {
+          vocoderWeight: weight,
+          hybridMode: prefs.hybridMode,
+          backend: 'fake',
+          tuningHz: prefs.tuningHz,
+        },
       },
     };
   }
@@ -366,8 +584,13 @@ export function createEffects(mode) {
       for (const i of indices) {
         const n = c.notes[i];
         if (n === undefined) return fail(id, 'NOT_FOUND', 'unknown_handle');
-        if (op.op === 'setTargetPitch') Object.assign(n, { targetMidi: r4(op.targetMidi), offsetCents: 0 });
-        else if (op.op === 'shiftCents') {
+        if (op.op === 'setTargetPitch') Object.assign(n, { targetMidi: storedMidi(op.targetMidi), offsetCents: 0 });
+        else if (op.op === 'snapToScale') {
+          if (mode !== 'effects-snap-ignored') {
+            const snapped = nearestInScale(apiMidi(n.targetMidi), op.key.root, op.key.scale);
+            Object.assign(n, { targetMidi: storedMidi(snapped), offsetCents: 0 });
+          }
+        } else if (op.op === 'shiftCents') {
           Object.assign(n, {
             targetMidi: r4(n.targetMidi + op.deltaCents / 100),
             offsetCents: r4(n.offsetCents + op.deltaCents),
@@ -379,24 +602,144 @@ export function createEffects(mode) {
     return before;
   }
 
+  /** prefs.set for the vocoder weight, the only member of the weight modes: a prefsApply job applies it, as OpenTune does. */
+  function setVocoderWeight(id, params) {
+    const refused = busy(id);
+    if (refused !== null) return refused;
+    const asked = params.vocoderWeight;
+    if (typeof asked !== 'string' || Object.keys(params).length !== 1) {
+      return fail(id, 'INVALID_ARGUMENT', 'invalid_params');
+    }
+    if (!weights.includes(asked)) return fail(id, 'INVALID_ARGUMENT', 'option_unavailable', 'vocoderWeight');
+    const anyContent = [...contents.values()][0] ?? { id: 'c:0:0:0', revision: 'r0', gridRevision: 'g0' };
+    if (asked === weight) {
+      const undo = { undoable: false, reason: 'no_op', revert: null };
+      return ok(id, envelope(anyContent, { applied: false, noOp: true, undo }));
+    }
+    const before = weight;
+    const job = startJob('prefsApply', () => {
+      // `effects-weight-stuck` accepts a switch back to the first weight and keeps the second one.
+      if (!(mode === 'effects-weight-stuck' && asked === weights[0])) weight = asked;
+      const contentIds = [...contents.keys()];
+      // `effects-weight-revert-broken` hands back a recipe that sets the weight just set.
+      const revertTo = mode === 'effects-weight-revert-broken' ? asked : before;
+      return {
+        result: envelope(anyContent, {
+          changes: [
+            {
+              entity: 'preference',
+              ref: { preference: 'vocoderWeight' },
+              label: 'Vocoder weight',
+              fields: { vocoderWeight: { before, after: asked, unit: null } },
+            },
+          ],
+          undo: {
+            undoable: false,
+            reason: 'ui_parity',
+            revert: { method: 'prefs.set', params: { vocoderWeight: revertTo } },
+          },
+          sideEffects: contentIds.length > 0 ? { reRenderQueued: { contentIds, revert: null } } : {},
+          warnings: [{ code: 'GLOBAL_PREFERENCE', subject: null, data: { preferences: ['vocoderWeight'] } }],
+        }),
+      };
+    });
+    return ok(id, { ...envelope(anyContent, { applied: false, undo: null }), job });
+  }
+
   function reply(request) {
     const { id, method, params } = request;
     if (method === 'session.info') {
       return ok(id, {
         processing: {
-          tuningHz: TUNING_HZ,
+          tuningHz: prefs.tuningHz,
           editingScheme: 'openTune',
-          hybridMode,
-          vocoderWeight: 'fake',
+          hybridMode: prefs.hybridMode,
+          vocoderWeight: weight,
           f0Model: 'fake',
           renderingPriority: null,
           backend: 'fake',
           vocoderReady: true,
           vocoderReconfiguring: false,
           experimentalFeatures: false,
-          referenceAlignMode: null,
         },
       });
+    }
+    if (method === 'prefs.get') {
+      const processing = {
+        tuningHz: prefs.tuningHz,
+        editingScheme: 'openTune',
+        hybridMode: prefs.hybridMode,
+        vocoderWeight: weight,
+        f0Model: 'fake',
+        renderingPriority: 'gpuFirst',
+        experimentalFeatures: false,
+      };
+      // An instance of an earlier release candidate does not report the options.
+      if (mode !== 'effects-no-options') {
+        processing.options = {
+          vocoderWeight: weights,
+          f0Model: ['fake'],
+          renderingPriority: ['gpuFirst', 'cpuFirst'],
+        };
+      }
+      return ok(id, { processing, onboardingShown: true, language: 'en', recentProjects: [] });
+    }
+    if (method === 'prefs.set' && 'vocoderWeight' in params) return setVocoderWeight(id, params);
+    if (method === 'prefs.set') {
+      const changes = [];
+      const revert = {};
+      const warnings = [];
+      for (const key of ['tuningHz', 'hybridMode']) {
+        if (!(key in params)) continue;
+        const before = prefs[key];
+        const wanted = params[key];
+        if (before === wanted) continue;
+        // effects-pref-stuck: a preference that was changed once keeps that value, and says it took the next one.
+        if (!(mode === 'effects-pref-stuck' && changedPrefs.has(key))) prefs[key] = wanted;
+        changedPrefs.add(key);
+        changes.push({
+          entity: 'preference',
+          ref: { preference: key },
+          label: key,
+          fields: { [key]: { before, after: wanted, unit: null } },
+        });
+        revert[key] = before;
+        warnings.push({ code: 'GLOBAL_PREFERENCE', subject: null, data: { preferences: [key] } });
+        if (key === 'tuningHz') {
+          warnings.push({ code: 'NOT_RETROACTIVE', subject: null, data: { preference: key } });
+        }
+      }
+      const idle = changes.length === 0;
+      const queued = changes.some((ch) => ch.ref.preference === 'hybridMode');
+      let recipe = { method: 'prefs.set', params: revert };
+      if (mode === 'effects-pref-recipe-foreign' || mode === 'effects-hybrid-export-fails-foreign') {
+        recipe = { method: 'prefs.wipe', params: revert };
+      }
+      if (mode === 'effects-pref-recipe-extra') {
+        const other = 'tuningHz' in revert ? 'hybridMode' : 'tuningHz';
+        recipe = { method: 'prefs.set', params: { ...revert, [other]: other === 'hybridMode' ? true : 450 } };
+      }
+      return ok(
+        id,
+        envelope(
+          { id: 'c:0:0:0', revision: 'r0', gridRevision: 'g0' },
+          {
+            applied: !idle,
+            noOp: idle,
+            changes,
+            undo: idle
+              ? null
+              : {
+                  undoable: false,
+                  reason: 'ui_parity',
+                  revert: mode === 'effects-pref-recipe-missing' ? null : recipe,
+                },
+            tokens: { arrangementRevision: 'a1', contents: [], placements: [] },
+            sideEffects: queued ? { reRenderQueued: { contentIds: [...contents.keys()], revert: null } } : {},
+            warnings,
+          },
+        ),
+      );
     }
     if (method === 'import.start') {
       if (mode === 'effects-backend') return fail(id, 'MODEL_UNAVAILABLE', 'backend_unavailable');
@@ -436,6 +779,10 @@ export function createEffects(mode) {
     }
     const c = typeof params?.contentId === 'string' ? content(params.contentId) : undefined;
     if (method === 'export.start') {
+      // effects-hybrid-export-fails: no export while the hybrid mode is not the one the instance began with.
+      if (mode.startsWith('effects-hybrid-export-fails') && prefs.hybridMode !== startHybridMode) {
+        return fail(id, 'INTERNAL', 'fake_export_failed');
+      }
       const target = [...contents.values()].find((x) => x.placementId === params.target?.placementId);
       if (target === undefined) return fail(id, 'NOT_FOUND', 'unknown_handle');
       if (exportLock !== null) return fail(id, 'BUSY', 'export_in_progress');
@@ -447,7 +794,7 @@ export function createEffects(mode) {
         notes: target.notes.map((n) => ({ ...n })),
       };
       exportLock = state;
-      const job = startJob('export', () => finishExport(state), 2);
+      const job = startJob('export', () => finishExport(state));
       return ok(id, { ...envelope(target, { applied: false, undo: null }), job });
     }
     if (c === undefined) return fail(id, 'UNSUPPORTED', 'capability_missing');
@@ -485,13 +832,15 @@ export function createEffects(mode) {
         startTimelineSec: null,
         endTimelineSec: null,
         ...n,
+        detectedMidi: apiMidi(n.detectedMidi),
+        targetMidi: apiMidi(n.targetMidi),
       }));
       return ok(id, {
         asOf: asOf(c),
         derived: [],
         contentId: c.id,
         placementId: null,
-        tuningHz: TUNING_HZ,
+        tuningHz: prefs.tuningHz,
         totalCount: all.length,
         notes: all.slice(0, limit),
         nextCursor: null,
@@ -542,9 +891,20 @@ export function createEffects(mode) {
       if (params.expectedRevision !== c.revision) return fail(id, 'REVISION_CONFLICT', 'content_changed');
       const before = snapshot(c);
       const old = c.notes.map((n) => ({ ...n }));
+      const asked = params.params ?? {};
+      const splitCents = typeof asked.noteSplitCents === 'number' ? asked.noteSplitCents : DEFAULT_SPLIT_CENTS;
+      if (params.mode === 'regenerate') {
+        // The notes are cut again (effects-split-ignored: at the default sensitivity, whatever was asked).
+        c.notes = notesFromTruth(c.truth, mode === 'effects-split-ignored' ? DEFAULT_SPLIT_CENTS : splitCents);
+      }
+      // The semitones of the A4 reference (effects-tuning-ignored: those of 440 Hz).
+      const shift = mode === 'effects-tuning-ignored' ? 0 : conv();
       for (const n of c.notes) {
-        const target = Math.round(n.targetMidi);
-        if (params.mode === 'regenerate') Object.assign(n, DEFAULT_PARAMS);
+        const target = Math.round(n.targetMidi + shift) - shift;
+        if (params.mode === 'regenerate') {
+          Object.assign(n, DEFAULT_PARAMS);
+          for (const name of NOTE_PARAMS) if (typeof asked[name] === 'number') n[name] = asked[name];
+        }
         Object.assign(n, {
           offsetCents: r4(n.offsetCents + (target - n.targetMidi) * 100),
           targetMidi: target,
@@ -554,14 +914,25 @@ export function createEffects(mode) {
       c.revision = next('r');
       c.everCorrected = true;
       const changes = c.notes
+        .slice(0, old.length)
         .map((n, i) => noteChange(c, i, old[i], n))
         .filter((ch) => Object.keys(ch.fields).length > 0);
+      const ref = (index) => ({
+        entity: 'note',
+        ref: { contentId: c.id, note: { index, atRevision: c.revision } },
+        label: null,
+      });
       return ok(id, {
-        ...envelope(c, { changes, undo: pushUndo(c, 'auto tune', before) }),
+        ...envelope(c, {
+          changes,
+          created: c.notes.slice(old.length).map((_, k) => ref(old.length + k)),
+          removed: old.slice(c.notes.length).map((_, k) => ref(c.notes.length + k)),
+          undo: pushUndo(c, 'auto tune', before),
+        }),
         mode: params.mode,
         keyUsed: params.key,
-        paramsUsed: params.mode === 'snapNotes' ? null : { ...DEFAULT_PARAMS, noteSplitCents: 80 },
-        noteCount: { before: c.notes.length, after: c.notes.length },
+        paramsUsed: params.mode === 'snapNotes' ? null : { ...DEFAULT_PARAMS, ...asked, noteSplitCents: splitCents },
+        noteCount: { before: old.length, after: c.notes.length },
         omittedCount: { changes: 0, created: 0, removed: 0 },
       });
     }
@@ -578,6 +949,36 @@ export function createEffects(mode) {
         return { result: { ...envelope(c), clamped: [] } };
       });
       return ok(id, { ...envelope(c, { applied: false, undo: null }), job, clamped: [] });
+    }
+    if (method === 'content.editTimeGrid' && params.op === 'moveHandles') {
+      if (params.expectedGridRevision !== c.gridRevision) return fail(id, 'REVISION_CONFLICT', 'grid_changed');
+      const before = snapshot(c);
+      const changes = [];
+      for (const move of params.moves) {
+        const at = c.handles.findIndex((h) => h.handleId === move.handleId);
+        const handle = c.handles[at];
+        if (handle === undefined) return fail(id, 'NOT_FOUND', 'unknown_handle');
+        const outputSec = r6(move.outputSec);
+        // effects-move-ignored: the handle stays where it is, and the result says it moved.
+        if (mode !== 'effects-move-ignored') c.handles[at] = { ...handle, outputSec };
+        changes.push({
+          entity: 'timeHandle',
+          ref: { contentId: c.id, handleId: handle.handleId },
+          label: null,
+          fields: { outputSec: { before: handle.outputSec, after: outputSec, unit: 'sec' } },
+        });
+      }
+      c.gridRevision = next('g');
+      // effects-undo-rephased and effects-undo-detuned: from now on the clip is rendered again.
+      c.regridded = true;
+      return ok(id, {
+        ...envelope(c, {
+          changes,
+          undo: pushUndo(c, 'move handles', before),
+          sideEffects: { reRenderQueued: { contentIds: [c.id], revert: null } },
+        }),
+        clamped: [],
+      });
     }
     if (method === 'content.shiftTiming') {
       if (params.expectedGridRevision !== c.gridRevision) return fail(id, 'REVISION_CONFLICT', 'grid_changed');

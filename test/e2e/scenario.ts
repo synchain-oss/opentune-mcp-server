@@ -24,10 +24,13 @@ export interface ScenarioReport {
   readonly totalMs: number;
   readonly steps: readonly StepReport[];
   /** What the scenario observed that is worth keeping next to the verdict; no paths and no secrets. */
-  readonly facts: Readonly<Record<string, string | number | boolean | null>>;
+  readonly facts: Readonly<Record<string, FactValue>>;
   /** Checks that cannot be automated on this machine, each with the reason. */
   readonly manualChecks: readonly string[];
 }
+
+/** A fact the scenario observed: a scalar, or a list of names (such as the preferences touched). */
+export type FactValue = string | number | boolean | null | readonly string[];
 
 export interface StepOptions {
   /** Clean-up: runs even after a step stopped the scenario. */
@@ -44,7 +47,7 @@ export interface StepOptions {
 /** Runs steps in order; one that fails stops the rest, except those marked `always` (clean-up). */
 export class Scenario {
   readonly steps: StepReport[] = [];
-  readonly facts: Record<string, string | number | boolean | null> = {};
+  readonly facts: Record<string, FactValue> = {};
   readonly manualChecks: string[] = [];
   readonly #started = performance.now();
   readonly #startedAt = new Date().toISOString();

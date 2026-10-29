@@ -24,6 +24,8 @@ interface Where {
   readonly surface: string;
   readonly visible: (ui: Json | null, contentId: string | null, sideEffects: Json) => boolean;
   readonly howToSee: string;
+  /** What the effect is called when it is not "<kind> <entity>"; equal names of one surface list it once. */
+  readonly effect?: string;
 }
 
 const PIANO_ROLL: Where = {
@@ -53,25 +55,27 @@ const BY_ENTITY = table<Where>({
   },
   pitchShift: HIDDEN('clip pitch shift', 'Select the clip and open its pitch-shift dialog.'),
   preference: HIDDEN('preferences', 'Open the preferences.'),
+  audioDevice: HIDDEN('audio settings', 'Open the audio settings page.'),
   project: HIDDEN('window title', 'Look at the window title.'),
   tempo: ALWAYS('transport bar'),
   transport: ALWAYS('transport bar'),
   dialog: ALWAYS('dialog'),
+  // The only change of the entity ui is the workspace the window shows; the side effect workspaceSwitched of
+  // the same call names it the same way, so the two are one entry.
+  ui: { ...ALWAYS('main window'), effect: 'workspace switched' },
 });
 const UNKNOWN = HIDDEN('unknown', 'Look at the OpenTune window.');
 
 const SIDE_EFFECT_WHERE = table<Where & { effect: string }>({
   notesGenerated: { ...HIDDEN('piano roll', 'Open the clip in the piano roll.'), effect: 'notes generated' },
-  referenceAnalysisQueued: {
-    ...HIDDEN('background work', 'The analysis runs in the background.'),
-    effect: 'reference analysis queued',
-  },
   reRenderQueued: {
     ...HIDDEN('background work', 'Playback and export use the new result once rendering is done.'),
     effect: 'rendering queued again',
   },
   uiScaleChanged: { ...ALWAYS('transport bar'), effect: 'scale changed' },
   workspaceSwitched: { ...ALWAYS('main window'), effect: 'workspace switched' },
+  // The change of the entity tempo that comes with it names the same effect, so the two are one entry.
+  tempoRounded: { ...ALWAYS('transport bar'), effect: 'changed tempo' },
   tracksRevealed: { ...ALWAYS('arrangement view'), effect: 'hidden tracks revealed' },
   dialogClosed: { ...ALWAYS('dialog'), effect: 'dialog closed' },
   dialogCommitted: { ...ALWAYS('dialog'), effect: 'dialog value committed' },
@@ -106,7 +110,13 @@ export function uiEffects(envelope: Json): UiEffect[] {
     const where = (entity === null ? undefined : BY_ENTITY[entity]) ?? UNKNOWN;
     const { target, contentId } = targetOf(item.ref);
     const visible = where.visible(ui, contentId, sideEffects);
-    add(where.surface, `${kind} ${entity ?? 'item'}`, target, visible, ui === null ? noEditor : where.howToSee);
+    add(
+      where.surface,
+      where.effect ?? `${kind} ${entity ?? 'item'}`,
+      target,
+      visible,
+      ui === null ? noEditor : where.howToSee,
+    );
   }
 
   const dirty = isObject(envelope.dirty) ? envelope.dirty : {};

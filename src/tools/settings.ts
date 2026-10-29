@@ -12,6 +12,7 @@ import { z } from 'zod';
 import type { Json } from '../otcp/client.js';
 import { serializeResult } from '../sanitize/untrusted.js';
 import { OUTPUT_BUDGET } from './notes.js';
+import { GPU_FIRST_ON_CPU, RENDERING_PRIORITY_NOTES, VOCODER_NOTE, gpuFirstOnCpu } from './processing-text.js';
 import { defineTool, withInstance, type Outcome, type ToolContext } from './registry.js';
 
 const READ_TIMEOUT_MS = 15_000;
@@ -20,7 +21,7 @@ type Section = (typeof SETTINGS_SECTIONS)[number];
 const DEFAULT_SECTIONS: readonly Section[] = ['processing', 'audio_device', 'recent', 'export_caps'];
 export const DEFAULT_LOG_LINES = 100;
 export const MAX_LOG_LINES = 500;
-const SUMMARY_ROOM = 700;
+const SUMMARY_ROOM = 1200;
 
 const isObject = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -33,11 +34,21 @@ const reasonOf = (source: Json | null, member: string): unknown =>
   source !== null && isObject(source.nullReasons) ? source.nullReasons[member] : undefined;
 
 /**
- * Merge the processing settings of session.info and prefs.get. Both schemas list the same eight
+ * Members that an instance of specification 1.0.0-rc.6 still reports and that rc.7 removed with the reference
+ * alignment (`processing.referenceAlignMode` and its entry in `processing.options`). opentune_set_settings refuses
+ * the setting, so this tool does not show it either, whatever the build reports.
+ */
+const RETIRED_MEMBERS: ReadonlySet<string> = new Set(['referenceAlignMode']);
+const withoutRetired = (source: Json): Json =>
+  Object.fromEntries(Object.entries(source).filter(([key]) => !RETIRED_MEMBERS.has(key)));
+
+/**
+ * Merge the processing settings of session.info and prefs.get. Both schemas list the same seven
  * settings; session.info is the instance's live view, so its value is taken first. A member that is
  * null (or missing) there is filled from prefs.get when that has a value; a null never replaces a
  * value. session.info alone has the runtime members (backend, vocoder state); prefs.get alone has
- * onboardingShown. language is in both. nullReasons is rebuilt from the members that are still null,
+ * onboardingShown and options (the values opentune_set_settings accepts; null when the instance does not
+ * report them). language is in both. nullReasons is rebuilt from the members that are still null,
  * so a reason is never attached to a member that has a value.
  */
 function mergeProcessing(
@@ -51,17 +62,29 @@ function mergeProcessing(
   const prefsValues = stripReasons(fromPrefs);
   const merged: Json = {};
   for (const key of new Set([...Object.keys(prefsValues), ...Object.keys(infoValues)])) {
+    if (RETIRED_MEMBERS.has(key)) continue;
     merged[key] = infoValues[key] ?? prefsValues[key] ?? null;
   }
   const language = [info.language, prefs?.language].find((v): v is string => typeof v === 'string');
   merged.language = language ?? null;
   merged.onboardingShown = typeof prefs?.onboardingShown === 'boolean' ? prefs.onboardingShown : null;
+  // The values opentune_set_settings accepts. Only prefs.get has them, and an instance of an earlier release
+  // candidate of the specification does not report them: null with a reason, never an error.
+  merged.options = isObject(prefsValues.options) ? withoutRetired(prefsValues.options) : null;
+  // What each rendering priority listed in options means and when it takes effect, in words of this server: next to
+  // the options, not in the description of opentune_set_settings, which has little room left.
+  const priorities = isObject(merged.options) ? merged.options.renderingPriority : undefined;
+  if (Array.isArray(priorities)) {
+    const notes = Object.entries(RENDERING_PRIORITY_NOTES).filter(([value]) => priorities.includes(value));
+    if (notes.length > 0) merged.optionNotes = { renderingPriority: Object.fromEntries(notes) };
+  }
   const reasons: Json = {};
   for (const [key, value] of Object.entries(merged)) {
     if (value !== null) continue;
     const reason = reasonOf(fromInfo, key) ?? reasonOf(fromPrefs, key);
     if (reason !== undefined) reasons[key] = reason;
-    else if (key === 'onboardingShown' && !hasRead) reasons[key] = 'capability_missing:read.v1';
+    else if ((key === 'onboardingShown' || key === 'options') && !hasRead) reasons[key] = 'capability_missing:read.v1';
+    else if (key === 'options') reasons[key] = 'not_reported';
     else reasons[key] = 'unavailable';
   }
   return { ...merged, ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}) };
@@ -157,6 +180,15 @@ export async function getSettings(ctx: ToolContext, args: GetSettingsArgs): Prom
       }
     }
 
+    // Two things a reader of the processing section tends to take for a fault. Only enumerated values are compared.
+    // The fall back to the CPU is said only while the vocoder is loaded: before that, backend may be an old value.
+    const processing = isObject(body.processing) ? body.processing : null;
+    const processingNotes = [
+      processing !== null && gpuFirstOnCpu(processing.renderingPriority, processing.backend, processing.vocoderReady)
+        ? GPU_FIRST_ON_CPU
+        : null,
+      processing?.vocoderReady === false ? VOCODER_NOTE : null,
+    ].filter((note): note is string => note !== null);
     const returned = SETTINGS_SECTIONS.filter((s) => wanted.has(s) && body[s] !== null && body[s] !== undefined);
     const unavailable = SETTINGS_SECTIONS.filter((s) => wanted.has(s) && body[s] === null);
     const summary =
@@ -171,7 +203,8 @@ export async function getSettings(ctx: ToolContext, args: GetSettingsArgs): Prom
         : '') +
       (logKept === 0 && logTrimmed > 0
         ? ' No log lines fit into the result next to the other sections; ask for the log alone.'
-        : '');
+        : '') +
+      processingNotes.map((note) => ` ${note}`).join('');
     return {
       ok: true,
       body: { summary, ...body, ...(Object.keys(reasons).length > 0 ? { nullReasons: reasons } : {}) },
@@ -183,12 +216,12 @@ export const getSettingsTool = defineTool({
   name: 'opentune_get_settings',
   title: 'Get OpenTune settings',
   description:
-    'OpenTune (audio vocal pitch editor): reads the global settings of the OpenTune installation, not of the ' +
-    'project. sections: processing (A4 tuning in Hz, editing scheme, hybrid mode, models, experimental features, ' +
-    'language, whether onboarding was shown), ' +
-    'audio_device (device, sample rate in Hz, buffer in frames, available values; needs the audio.device ' +
-    'capability), recent (recent project paths), export_caps (import and export formats and limits), log (last ' +
-    'lines of the OpenTune log; only when asked). Default: all but log. Read-only.',
+    'OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. ' +
+    'sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, ' +
+    'pitch model, experimental features, language, onboarding shown, options: the ' +
+    'values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available ' +
+    'values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log ' +
+    '(OpenTune log lines; only when asked). Default: all but log. Read-only.',
   inputSchema: z.strictObject({
     sections: z
       .array(z.enum(SETTINGS_SECTIONS))

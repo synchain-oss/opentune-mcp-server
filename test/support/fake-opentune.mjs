@@ -12,14 +12,21 @@
 // The `smoke*` modes also answer the calls of the end-to-end smoke scenario (import, AUTO, export)
 // with canned results, enough to walk the protocol; no audio is analysed. `smoke-dry` lists the
 // content in dryContents, `smoke-backend` fails the import with an unavailable inference backend,
-// `smoke-no-export` does not report export.v1, `smoke-auto-job` hands AUTO to a job,
+// `smoke-no-export` does not report export.v1,
 // `smoke-open-scale` reports a scale AUTO's closed list does not have, `smoke-busy` refuses the
 // import with BUSY modal_open and answers ui.getState (with ui.bridge reported), `smoke-busy-nobridge`
 // does the same without reporting ui.bridge. Every reply of these modes
 // has the shape the specification gives its result (the unit tests validate them).
 //
 // The `effects*` modes answer the calls of the end-to-end effects scenario with a small model of
-// clips, notes and exports (test/support/fake-effects.mjs).
+// clips, notes and exports (test/support/fake-effects.mjs). The `arrangement*` modes answer the
+// calls of the arrangement effects scenario with a small model of tracks, clips, their gain, fades
+// and mute/solo, and a master mix (test/support/fake-arrangement.mjs).
+//
+// The `quit*` modes report app.quit and answer it as an instance that quits does: the result first, then
+// the connections and the listener are closed and the process ends by itself. `quit` removes its discovery
+// file and exits with status 0, `quit-no-cleanup` leaves the file, `quit-bad-exit` exits with status 5, and
+// `quit-stays` closes everything but does not exit. `launcher-quit` is `quit` started through a launcher.
 //
 // Every copy that keeps running ends by itself once its OPENTUNE_DATA_DIR is gone, so a test that
 // fails cannot leave one behind; with `--marker=<file>` it first writes how it ended to that file.
@@ -31,6 +38,7 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { createArrangement } from './fake-arrangement.mjs';
 import { createEffects } from './fake-effects.mjs';
 
 const option = (name) => process.argv.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
@@ -44,13 +52,33 @@ const dataDir = process.env.OPENTUNE_DATA_DIR;
 
 const smoke = mode.startsWith('smoke');
 const effects = mode.startsWith('effects') ? createEffects(mode) : undefined;
+const arrangement = mode.startsWith('arrangement') ? createArrangement(mode) : undefined;
+const quit = mode.startsWith('quit');
+/** The rest of a valid session.hello result (the limits are fixed by PROTOCOL.md section 3.4). */
+const HELLO_REST = {
+  appVersion: '0.0.0-fake',
+  flavor: 'standalone',
+  limits: {
+    preAuthReadBytes: 8192,
+    helloTimeoutMs: 2000,
+    maxPreAuthConnections: 8,
+    maxSessions: 4,
+    maxLineBytes: 4194304,
+    maxInFlightPerSession: 16,
+    idleTimeoutMs: 600000,
+    dispatchTimeoutMs: 10000,
+    jobWaitMaxMs: 30000,
+    jobRetentionMs: 1800000,
+    jobRetentionCount: 64,
+  },
+};
 
 const endWith = (how, code) => {
   if (marker !== undefined) fs.writeFileSync(marker, how);
   process.exit(code);
 };
 
-const LAUNCHED = { launcher: 'ok', 'launcher-bad-start': 'bad-start' };
+const LAUNCHED = { launcher: 'ok', 'launcher-bad-start': 'bad-start', 'launcher-quit': 'quit' };
 if (mode in LAUNCHED) {
   const args = process.argv.slice(2).filter((a) => !a.startsWith('--mode='));
   const instance = spawn(process.execPath, [fileURLToPath(import.meta.url), `--mode=${LAUNCHED[mode]}`, ...args], {
@@ -197,9 +225,7 @@ function smokeReply(request) {
       });
     }
     let jobResult;
-    if (job.kind === 'referenceAnalysis') {
-      jobResult = autoResult(job.params);
-    } else if (job.kind === 'import') {
+    if (job.kind === 'import') {
       jobResult = {
         ...envelope('r1'),
         items: [
@@ -259,7 +285,6 @@ function smokeReply(request) {
       analysis: { f0State: 'ready', failure: null, hopSec: 0.01 },
       render: { current: true, publishedRevision: 'r1', desiredRevision: 'r1' },
       timeGrid: { seeded: true, identity: true, handles: [], minHandleSpacingSec: 0.05 },
-      reference: { referencePlacementId: null, alignmentReady: false },
       autoModes: {
         editingScheme: 'openDyne',
         uiButtonRuns: 'regenerate',
@@ -270,18 +295,6 @@ function smokeReply(request) {
   if (method === 'content.autoTune') {
     if (mode === 'smoke-open-scale' && params.key?.scale !== 'chromatic') {
       return failure(id, 'INVALID_ARGUMENT', 'bad_params');
-    }
-    if (mode === 'smoke-auto-job') {
-      const jobId = `j:0123abcd:${String(jobs.size + 1)}`;
-      jobs.set(jobId, { kind: 'referenceAnalysis', polls: 0, params });
-      return result({
-        ...envelope('r2', { jobId, kind: 'referenceAnalysis', state: 'queued' }),
-        mode: params.mode,
-        keyUsed: params.key,
-        paramsUsed: null,
-        noteCount: null,
-        omittedCount: { changes: 0, created: 0, removed: 0 },
-      });
     }
     return result(autoResult(params));
   }
@@ -302,32 +315,65 @@ function serve() {
         const ok = request.method === 'session.hello' && request.params?.token === token;
         if (ok) socket.authed = true;
         const later = socket.authed && request.method !== 'session.hello';
-        const reply =
-          smoke && later
+        const quitting = quit && later && request.method === 'app.quit';
+        const reply = quitting
+          ? {
+              jsonrpc: '2.0',
+              id: request.id,
+              result: {
+                quitting: true,
+                discardedUnsavedChanges: false,
+                projectPath: null,
+                nullReasons: { projectPath: 'no_project_path' },
+                exitDeadlineMs: 5000,
+                warnings: [],
+              },
+            }
+          : smoke && later
             ? smokeReply(request)
             : effects !== undefined && later
               ? effects.reply(request)
-              : ok
-                ? {
-                    jsonrpc: '2.0',
-                    id: request.id,
-                    result: {
-                      protocol: '1.0',
-                      instanceId,
-                      pid: process.pid,
-                      serverProof: mode === 'bad-proof' ? randomBytes(16).toString('hex') : serverProof,
-                      capabilities: smoke ? smokeCapabilities() : (effects?.capabilities ?? ['session.v1']),
-                    },
-                  }
-                : { jsonrpc: '2.0', id: request.id, error: { code: -32001, message: 'UNAUTHENTICATED', data: {} } };
+              : arrangement !== undefined && later
+                ? arrangement.reply(request)
+                : ok
+                  ? {
+                      jsonrpc: '2.0',
+                      id: request.id,
+                      result: {
+                        protocol: '1.0',
+                        instanceId,
+                        pid: process.pid,
+                        serverProof: mode === 'bad-proof' ? randomBytes(16).toString('hex') : serverProof,
+                        capabilities: smoke
+                          ? smokeCapabilities()
+                          : (effects?.capabilities ??
+                            arrangement?.capabilities ??
+                            (quit ? ['session.v1', 'app.quit'] : ['session.v1'])),
+                        // A vector validates the whole result; the other modes only need the members the target reads.
+                        ...(quit ? HELLO_REST : {}),
+                      },
+                    }
+                  : { jsonrpc: '2.0', id: request.id, error: { code: -32001, message: 'UNAUTHENTICATED', data: {} } };
         socket.write(`${JSON.stringify(reply)}\n`, () => {
           // Ends by itself, without removing its discovery file, as a crash would.
           if (mode === 'exit-after-hello') process.exit(5);
+          if (quitting) quitNow();
         });
       }
     });
     socket.on('error', () => {});
+    sockets.add(socket);
   });
+  const sockets = new Set();
+  let discoveryFile;
+  // What an instance does once it answered app.quit: no more connections, then the end of the process.
+  const quitNow = () => {
+    server.close();
+    for (const socket of sockets) socket.destroy();
+    if (mode === 'quit-stays') return;
+    if (mode !== 'quit-no-cleanup') fs.rmSync(discoveryFile, { force: true });
+    endWith('quit', mode === 'quit-bad-exit' ? 5 : 0);
+  };
   server.listen({ host: '127.0.0.1', port: 0 }, () => {
     const dir = path.join(dataDir, 'control', 'instances');
     fs.mkdirSync(dir, { recursive: true });
@@ -370,7 +416,7 @@ function serve() {
       startedAtMs: Date.now(),
       flavor: 'standalone',
     };
-    const discoveryFile = path.join(dir, `${process.pid}.json`);
+    discoveryFile = path.join(dir, `${process.pid}.json`);
     fs.writeFileSync(discoveryFile, `${JSON.stringify(discovery)}\n`);
     fs.writeFileSync(`${readyFile}.tmp`, `${JSON.stringify({ pid: process.pid, instanceId })}\n`);
     fs.renameSync(`${readyFile}.tmp`, readyFile);

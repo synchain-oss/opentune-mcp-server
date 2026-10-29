@@ -84,7 +84,14 @@ export function renderReference(
     out.push(tool.description ?? '', '');
     if (declared) {
       const code = (items: readonly string[]) => items.map((i) => `\`${i}\``).join(', ');
-      out.push(`OTCP capabilities: ${code(declared.capabilities)}. OTCP methods: ${code(declared.otcpMethods)}.`, '');
+      const optional =
+        declared.optionalCapabilities === undefined || declared.optionalCapabilities.length === 0
+          ? ''
+          : ` Needed by one mode only: ${code(declared.optionalCapabilities)}.`;
+      out.push(
+        `OTCP capabilities: ${code(declared.capabilities)}.${optional} OTCP methods: ${code(declared.otcpMethods)}.`,
+        '',
+      );
     }
     const props = Object.entries(tool.inputSchema.properties ?? {});
     if (props.length === 0) {

@@ -9,9 +9,14 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-/** Size limits of tools/list, in bytes of compact JSON (UTF-8). */
+/**
+ * Size limits of tools/list, in bytes of compact JSON (UTF-8). The total leaves room for the
+ * arrangement, track, transport, UI and settings tools and for the tools a later version adds,
+ * without letting one tool grow until the whole catalog no longer fits an ordinary context budget;
+ * the per-tool limits keep a single tool from using up that room on its own.
+ */
 export const CATALOG_LIMITS = Object.freeze({
-  total: 46 * 1024,
+  total: 64 * 1024,
   perTool: 4 * 1024,
   /** Tools with a larger allowance. */
   perToolExceptions: Object.freeze({ opentune_edit_notes: 9 * 1024 }),

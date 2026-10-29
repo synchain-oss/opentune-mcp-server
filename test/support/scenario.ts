@@ -20,6 +20,8 @@ export interface Fixture {
   readonly savingJob: string;
   /** A WAV file the mock may import. */
   readonly audioFile: string;
+  /** Ends the save job that runs for ever, so that nothing is unfinished when the instance is asked to quit. */
+  readonly endSavingJob: () => void;
 }
 
 export interface Step {
@@ -55,6 +57,12 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   await run('opentune_get_status', { instance_id: '0'.repeat(32) }, 'error');
   await run('opentune_get_project', { include_history: true });
   await run('opentune_get_notes', { clip: f.placement, clock: 'timeline', from: 2, to: 5, limit: 2 });
+  // The whole clip in one file next to the audio file; the second call finds the name taken and numbers it.
+  const notesFile = f.audioFile.replace(/\.wav$/, '-notes.json');
+  const written = await run('opentune_get_notes', { clip: f.placement, clock: 'content', output_path: notesFile });
+  if ((written.output as { path?: string } | undefined)?.path !== notesFile) throw new Error('notes file not written');
+  await run('opentune_get_notes', { clip: f.placement, clock: 'content', output_path: notesFile });
+  await run('opentune_get_notes', { clip: f.placement, clock: 'content', output_path: 'notes.json' }, 'error');
   await run('opentune_get_clip_details', { clip: f.contentId });
   await run('opentune_get_settings', { log_lines: 20 });
   await run('opentune_analyze_pitch', { clip: f.placement });
@@ -96,6 +104,20 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
     ops: [{ op: 'shift', start_output_sec: 1.5, end_output_sec: 2.5, delta_ms: 100 }],
   });
 
+  const arrangement = async () => (await run('opentune_get_project', {})).arrangement_revision as string;
+  await run('opentune_edit_arrangement', {
+    expected_revision: await arrangement(),
+    ops: [{ op: 'gain', clip: f.placement, gain_db: -1 }],
+  });
+  await run(
+    'opentune_edit_arrangement',
+    {
+      expected_revision: await arrangement(),
+      ops: [{ op: 'delete', clips: [f.placement] }],
+    },
+    'error',
+  );
+
   await run('opentune_open_audio', { path: f.audioFile, wait_seconds: 10 });
   await run('opentune_open_audio', { path: 'relative/take1.wav' }, 'error');
   await run('opentune_export_audio', { kind: 'clip', target: { clip: f.placement }, wait_seconds: 10 });
@@ -104,6 +126,51 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   // executable, which is not configured for the bundle, so nothing starts and the result says why.
   await run('opentune_launch', {});
   await run('opentune_launch', { allow_second_instance: true });
+  await run('opentune_set_settings', { processing: { tuning_hz: 442 }, wait_seconds: 10 });
+  await run('opentune_set_settings', {}, 'error');
+  // The vocoder weight, rendering priority and pitch model, and a weight the
+  // installation does not list, which is refused with nothing changed.
+  await run('opentune_set_settings', {
+    processing: {
+      vocoder_weight: 'hifigan_coulin9.onnx',
+      rendering_priority: 'cpuFirst',
+      f0_model: 'fcpe',
+    },
+    wait_seconds: 10,
+  });
+  await run('opentune_set_settings', { processing: { vocoder_weight: 'not-installed.onnx' } }, 'error');
+  // Tracks, transport and window state. Deleting a track renumbers the later ones, so it comes after
+  // the steps that use track ids.
+  await run('opentune_set_tracks', {
+    ops: [
+      { op: 'mute', track_id: 1, on: true },
+      { op: 'solo', track_id: 1, on: false },
+      { op: 'volume', track_id: 1, db: -3 },
+      { op: 'colour', track_id: 1, colour: '#336699' },
+    ],
+  });
+  await run('opentune_set_tracks', { ops: [{ op: 'mute', track_id: 40, on: true }] }, 'error');
+  const before = (await run('opentune_get_project', {})).arrangement_revision as string;
+  await run('opentune_set_tracks', { ops: [{ op: 'reveal' }, { op: 'duplicate', track_id: 0, mode: 'share' }] });
+  await run('opentune_delete_track', { track_id: 3, expected_revision: before, confirm: true }, 'error');
+  const after = (await run('opentune_get_project', {})).arrangement_revision as string;
+  await run('opentune_delete_track', { track_id: 3, expected_revision: after, confirm: false }, 'error');
+  await run('opentune_delete_track', { track_id: 3, expected_revision: after, confirm: true });
+  await run('opentune_transport', { action: 'seek', position_sec: 1 });
+  await run('opentune_transport', { action: 'play' });
+  await run('opentune_transport', { action: 'pause' });
+  await run('opentune_transport', { action: 'play_from_last_start', bpm: 100, loop: true });
+  await run('opentune_transport', { action: 'return_to_last_start' });
+  await run('opentune_transport', { action: 'stop', time_signature: { numerator: 3, denominator: 4 } });
+  await run('opentune_transport', { action: 'seek' }, 'error');
+  await run('opentune_manage_ui', { op: 'focus_clip', clip: f.placement, dry_run: true });
+  await run('opentune_manage_ui', { op: 'focus_clip', clip: f.placement, open_editor: true });
+  await run('opentune_manage_ui', { op: 'focus_clip' }, 'error');
+  // The piano roll is open now: close it, then ask for a view that does not exist.
+  await run('opentune_manage_ui', { op: 'switch_view', view: 'arrangement' });
+  await run('opentune_manage_ui', { op: 'switch_view', view: 'sideways' }, 'error');
+  await run('opentune_manage_ui', { op: 'dismiss_dialogs' });
+  await run('opentune_manage_ui', { op: 'dismiss_onboarding' });
   // Last: opening a project replaces the clips whose ids the steps above used.
   const project = f.audioFile.replace(/\.wav$/, '.otproj');
   const next = f.audioFile.replace(/\.wav$/, '-02.otproj');
@@ -117,5 +184,11 @@ export async function runAllTools(call: Call, f: Fixture): Promise<Step[]> {
   await run('opentune_save_project_overwrite', { path: project, confirm: true, wait_seconds: 10 });
   await run('opentune_open_project', { path: next, wait_seconds: 10 });
   await run('opentune_open_project', { path: project.replace('.otproj', '-missing.otproj') }, 'error');
+  // Quitting ends the instance, so it is the very last step. The refusals come first: an instance that does not
+  // exist, and the save job that is still unfinished.
+  await run('opentune_quit', { instance_id: '0'.repeat(32) }, 'error');
+  await run('opentune_quit', {}, 'error');
+  f.endSavingJob();
+  await run('opentune_quit', {});
   return steps;
 }

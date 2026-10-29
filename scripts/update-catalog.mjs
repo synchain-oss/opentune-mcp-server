@@ -29,6 +29,9 @@ const result = spawnSync(
     'test/unit/render-golden.test.ts',
     'test/unit/audio-tools.test.ts',
     'test/unit/edit-tools-golden.test.ts',
+    'test/unit/edit-arrangement-golden.test.ts',
+    'test/unit/track-tools-golden.test.ts',
+    'test/unit/project-files-golden.test.ts',
   ],
   {
     cwd: ROOT,

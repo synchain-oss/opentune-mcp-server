@@ -11,20 +11,41 @@
 import { toolError } from '../errors/tool-error.js';
 import type { Json } from '../otcp/client.js';
 import type { Body, Outcome } from '../tools/registry.js';
-import { asList, changeTable, isObject, type ChangeTable } from './changes.js';
+import { asList, capEnvelope, changeTable, isObject, type ChangeTable } from './changes.js';
 import { restoreCall, revertPlan, revertText, type RestoreCall } from './revert.js';
 import { summarize } from './summary.js';
-import { SIDE_EFFECT_TEXT, WARNING_TEXT, token, undoReasonText } from './text.js';
+import {
+  RE_RENDER_TEXT,
+  SIDE_EFFECT_TEXT,
+  WARNING_TEXT,
+  token,
+  undoReasonText,
+  workspaceRevertText,
+  workspaceSwitchBackText,
+  workspaceUnknownBackText,
+  type ReRenderState,
+} from './text.js';
 import { uiEffects, type UiEffect } from './ui-effects.js';
 
 export type { ChangeTable, TableField, TableRow } from './changes.js';
-export { MAX_TABLE_ROWS } from './changes.js';
+export { MAX_LISTED, MAX_TABLE_ROWS, capEnvelope } from './changes.js';
 export type { RestoreCall } from './revert.js';
 export type { UiEffect } from './ui-effects.js';
+export type { ReRenderState } from './text.js';
 
 export interface RenderContext {
   /** The tool that made the call, for example opentune_set_key. */
   readonly tool: string;
+  /**
+   * Set for a result that changed the vocoder weight: whether the new weight has loaded, which decides how the
+   * side effect reRenderQueued reads (ReRenderState). Absent: the generic words.
+   */
+  readonly reRender?: ReRenderState;
+  /**
+   * Whether the instance reports the capability ui.workspace, so that opentune_manage_ui can switch the window
+   * back (op switch_view). It decides how the way back of a switch of the view reads; absent means it cannot.
+   */
+  readonly canSwitchView?: boolean;
 }
 
 /** One line below the summary. Everything but `text` is data from OpenTune, as it came. */
@@ -49,7 +70,11 @@ export type Line =
       readonly text: string;
       /** The recipe exactly as OpenTune sent it, or null when no request can restore the state. */
       readonly revert: unknown;
-      /** The tool call that carries out the recipe, or null when no tool of this server performs it. */
+      /**
+       * The tool call that carries out the recipe, or null when no tool of this server performs it. For the way
+       * back of a switch of the view (side effect workspaceSwitched) there is no recipe from OpenTune: revert is
+       * null and restore is the switch_view call this server derives from the view the window showed before.
+       */
       readonly restore: RestoreCall | null;
     };
 
@@ -78,10 +103,34 @@ function revertLine(revert: unknown, text: (sentence: string) => string): Line {
   return { kind: 'revert', text: text(revertText(plan)), revert, restore: restoreCall(plan) };
 }
 
-function sideEffectLines(envelope: Json): Line[] {
+/**
+ * The way back for a switch of the view (sideEffects.workspaceSwitched, whose own revert OpenTune sends as null):
+ * the switch_view call of opentune_manage_ui when the instance can switch the view and the view the window showed
+ * before is known; when it is not known, the same op with the view the user wants, without a call to carry out;
+ * the user's own click on an instance that cannot switch the view.
+ * `revert` stays null, as OpenTune sent it; the restore call is this server's.
+ */
+function workspaceBackLine(from: unknown, canSwitchView: boolean): Line {
+  const view = from === 'arrangement' || from === 'pianoRoll' ? from : null;
+  if (!canSwitchView) return { kind: 'revert', text: workspaceRevertText(from), revert: null, restore: null };
+  if (view === null) return { kind: 'revert', text: workspaceUnknownBackText, revert: null, restore: null };
+  const restore = restoreCall(revertPlan({ method: 'ui.setWorkspace', params: { workspace: view } }));
+  return {
+    kind: 'revert',
+    text: restore === null ? workspaceRevertText(from) : workspaceSwitchBackText(from),
+    revert: null,
+    restore,
+  };
+}
+
+function sideEffectLines(envelope: Json, reRender?: ReRenderState, canSwitchView = false): Line[] {
   const effects = isObject(envelope.sideEffects) ? envelope.sideEffects : {};
+  // A switch of the view that has its own recipe (ui.setWorkspace, in undo.revert) is given the way back there.
+  const undo = isObject(envelope.undo) ? envelope.undo : {};
+  const switchRecipe = isObject(undo.revert) && undo.revert.method === 'ui.setWorkspace';
   return Object.entries(effects).flatMap(([name, details]) => {
-    const known = SIDE_EFFECT_TEXT[name];
+    const known =
+      name === 'reRenderQueued' && reRender !== undefined ? RE_RENDER_TEXT[reRender] : SIDE_EFFECT_TEXT[name];
     const label = token(name, 'camel');
     const text = known ?? `side effect ${label ?? 'with an unrecognized name'}, which this server does not know`;
     const revert = isObject(details) ? (details.revert ?? null) : null;
@@ -89,6 +138,11 @@ function sideEffectLines(envelope: Json): Line[] {
       { kind: 'sideEffect', name, text: `${text[0]?.toUpperCase() ?? ''}${text.slice(1)}.`, details, revert },
     ];
     if (revert !== null) lines.push(revertLine(revert, (s) => `${s} (reverts side effect ${label ?? 'above'})`));
+    else if (name === 'workspaceSwitched' && !switchRecipe && envelope.dryRun !== true) {
+      // The protocol gives no recipe for the switch, but it can be taken back: say how, so the agent does not
+      // leave the user in a view they did not ask for without a word. A prediction switched nothing.
+      lines.push(workspaceBackLine(isObject(details) ? details.from : undefined, canSwitchView));
+    }
     return lines;
   });
 }
@@ -114,13 +168,21 @@ function undoLines(envelope: Json): Line[] {
   return [revertLine(undo.revert ?? null, (s) => `Not undoable (${undoReasonText(undo.reason)}). ${s}`)];
 }
 
-/** Renders an envelope that has been checked against the OTCP write envelope schema. */
-export function renderWrite(envelope: Json, ctx: RenderContext): Rendering {
+/**
+ * Renders an envelope that has been checked against the OTCP write envelope schema. The lists of the envelope are cut
+ * first (capEnvelope), so that the summary, the table and the counts all speak of the same result.
+ */
+export function renderWrite(whole: Json, ctx: RenderContext): Rendering {
+  const envelope = capEnvelope(whole);
   return {
-    summary: summarize(envelope, ctx.tool),
+    summary: summarize(envelope, ctx.tool, ctx.reRender === undefined ? {} : { reRender: ctx.reRender }),
     uiEffects: uiEffects(envelope),
     changeTable: changeTable(envelope),
-    lines: [...warningLines(envelope), ...sideEffectLines(envelope), ...undoLines(envelope)],
+    lines: [
+      ...warningLines(envelope),
+      ...sideEffectLines(envelope, ctx.reRender, ctx.canSwitchView === true),
+      ...undoLines(envelope),
+    ],
   };
 }
 
@@ -139,17 +201,39 @@ export function isWriteEnvelope(value: unknown): value is Json {
   );
 }
 
+/** The members a reader must still have when the end of a long result is cut off. */
+const FRONT = ['applied', 'noOp', 'dryRun', 'undo'] as const;
+/** The members that grow with the size of the edit; they come last. */
+const BULK = ['changes', 'created', 'removed', 'idMap'] as const;
+const RENDERED = ['summary', 'lines', 'uiEffects', 'changeTable'];
+
+const pick = (from: Json, members: readonly string[]): Json =>
+  Object.fromEntries(members.filter((m) => m in from).map((m) => [m, from[m]]));
+
 /**
- * The body of a write tool's result: summary first, then the whole envelope as OpenTune sent it,
- * then uiEffects, changeTable and lines. Members of the envelope are never changed or dropped.
+ * The body of a write tool's result. The summary comes first, then the state of the call, the undo descriptor and
+ * the lines (which say what undoes or restores the change), so that a host that cuts a long result off takes the
+ * lists and not those; then the other members of the envelope as OpenTune sent them, and last the lists, cut to
+ * MAX_LISTED entries each with the rest counted in omittedCount (capEnvelope), and the table. Nothing else of the
+ * envelope is changed or dropped.
  */
-export function writeBody(envelope: Json, ctx: RenderContext): Body {
+export function writeBody(whole: Json, ctx: RenderContext): Body {
+  const envelope = capEnvelope(whole);
   const rendering = renderWrite(envelope, ctx);
-  // The leading summary keeps it first; the rendering, spread last, wins over a same-named envelope
-  // member. Spreading defines members, so an envelope member named __proto__ stays a data member
-  // instead of replacing the prototype of the body, as Object.assign would.
-  const leading: Json = { summary: rendering.summary, ...envelope };
-  return { ...leading, ...rendering };
+  // The rendering wins over a same-named envelope member. Spreading and fromEntries define members, so an
+  // envelope member named __proto__ stays a data member instead of replacing the prototype of the body, as
+  // Object.assign or an assignment would.
+  const placed = new Set<string>([...FRONT, ...BULK, ...RENDERED]);
+  const rest = Object.fromEntries(Object.entries(envelope).filter(([member]) => !placed.has(member)));
+  return {
+    summary: rendering.summary,
+    ...pick(envelope, FRONT),
+    lines: rendering.lines,
+    ...rest,
+    ...pick(envelope, BULK),
+    uiEffects: rendering.uiEffects,
+    changeTable: rendering.changeTable,
+  };
 }
 
 /** The outcome for the result of a write call: the rendered body, or INTERNAL when it is no write envelope. */

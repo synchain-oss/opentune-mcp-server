@@ -1,0 +1,23 @@
+{
+  "description": "No confirm: nothing is deleted, the user is asked.",
+  "tool": "opentune_delete_track",
+  "input": {
+    "track_id": 1,
+    "confirm": false,
+    "expected_revision": "<arrangement_revision from opentune_get_project>"
+  },
+  "result": {
+    "error": {
+      "kind": "INVALID_ARGUMENT",
+      "reason": "confirm_required",
+      "detail": "deleting a track removes its clips for good, cannot be undone and moves every later track down by one; it needs confirm: true, which only the user may allow",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "user",
+        "message": "Ask the user whether this track and its clips may be deleted, and tell them that later tracks move down by one. Only after the user explicitly agrees, call again with confirm: true."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-invalid_argument"
+    }
+  }
+}

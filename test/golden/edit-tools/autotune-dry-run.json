@@ -13,29 +13,8 @@
     "applied": false,
     "noOp": false,
     "dryRun": true,
-    "changes": [
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 5,
-            "atRevision": "r20"
-          }
-        },
-        "label": "#5 A4 3.50-4.50s",
-        "fields": {
-          "targetMidi": {
-            "before": 69.3,
-            "after": 69,
-            "unit": "midi"
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
+    "undo": null,
+    "lines": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -46,14 +25,13 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r20",
+          "revision": "r19",
           "gridRevision": "g6",
-          "keyRevision": "k17"
+          "keyRevision": "k16"
         }
       ],
       "placements": []
     },
-    "undo": null,
     "dirty": {
       "before": true,
       "after": true
@@ -61,7 +39,7 @@
     "ui": {
       "workspace": "arrangement",
       "pianoRollContentId": null,
-      "activeTrackId": null,
+      "activeTrackId": 0,
       "selectedPlacementIds": [],
       "visibleTrackCount": 4
     },
@@ -83,6 +61,29 @@
       "created": 0,
       "removed": 0
     },
+    "changes": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 5,
+            "atRevision": "r19"
+          }
+        },
+        "label": "#5 A4 3.50-4.50s",
+        "fields": {
+          "targetMidi": {
+            "before": 69.3,
+            "after": 69,
+            "unit": "midi"
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
     "uiEffects": [],
     "changeTable": {
       "rows": [
@@ -94,7 +95,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 5,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           },
           "fields": [
@@ -109,7 +110,6 @@
       ],
       "omittedChangeCount": 0
     },
-    "lines": [],
-    "clip_revision": "cr1.WyJyMjAiLCJnNiIsImsxNyIsImgxMSJd"
+    "clip_revision": "cr1.WyJyMTkiLCJnNiIsImsxNiIsImgxMCJd"
   }
 }

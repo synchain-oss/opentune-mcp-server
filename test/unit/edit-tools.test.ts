@@ -495,34 +495,15 @@ describe('opentune_autotune_range', () => {
     expect(sent(env, 'content.autoTune')).toHaveLength(0);
   });
 
-  it('needs reference.v1 for mode reference and says what to do instead', async () => {
+  it('has no mode reference and no member for a reference clip', async () => {
     const env = await setup();
-    // An instance without the capability: the tool refuses before it sends anything.
-    const capabilities = env.session.hello.capabilities as string[];
-    capabilities.splice(capabilities.indexOf('reference.v1'), 1);
-    const out = failure(await autotune(env.ctx, await args(env, { mode: 'reference' })));
-    expect(out).toMatchObject({ kind: 'UNSUPPORTED', reason: 'capability_missing', executed: false });
-    expect(out.detail).toContain('reference.v1');
-    expect(out.nextStep.message).toContain('regenerate');
-    expect(sent(env, 'content.autoTune')).toHaveLength(0);
-  });
-
-  it('sends mode reference with the placement and nothing else when the build has reference.v1', async () => {
-    const env = await setup();
-    // The clip has no reference binding, so the mock refuses; only the request is checked here.
-    await autotune(env.ctx, await args(env, { mode: 'reference' }));
-    expect(sent(env, 'content.autoTune')[0]?.params).toEqual({
-      contentId: env.contentId,
-      mode: 'reference',
-      placementId: env.placement,
-      expectedRevision: expect.any(String) as string,
-    });
-    const content = failure(
-      await autotune(env.ctx, { ...(await args(env, { mode: 'reference' })), clip: env.contentId }),
-    );
-    expect(content.detail).toContain('placement id');
-    const extra = failure(await autotune(env.ctx, await args(env, { mode: 'reference', dry_run: true })));
-    expect(extra.detail).toContain('not accepted by mode reference');
+    const schema = autotuneTool.inputSchema;
+    const base = { clip: env.placement, expected_revision: await env.revision() };
+    expect(schema.safeParse({ ...base, mode: 'regenerate', scale: 'clip' }).success).toBe(true);
+    expect(schema.safeParse({ ...base, mode: 'reference' }).success).toBe(false);
+    expect(
+      schema.safeParse({ ...base, mode: 'regenerate', scale: 'clip', reference_clip: env.placement }).success,
+    ).toBe(false);
   });
 
   it('does not conflict on an unrelated change with an explicit scale, and conflicts with scale clip when the key changed', async () => {
@@ -1093,6 +1074,33 @@ describe('tool declarations', () => {
     expect(properties(undoTool).force?.description).toContain('explicitly asked');
     expect(properties(redoTool).force?.description).toContain('explicitly asked');
     expect(properties(autotuneTool).replace_edited_notes?.description).toContain('consent');
+  });
+
+  it('explain in the parameters of opentune_edit_notes which one answers a request such as "less vibrato"', () => {
+    interface Node {
+      description?: string;
+      properties?: Record<string, Node & { const?: string }>;
+      oneOf?: Node[];
+      anyOf?: Node[];
+      items?: Node;
+    }
+    const schema = z.toJSONSchema(editNotesTool.inputSchema) as Node;
+    const branches = schema.properties?.ops?.items;
+    const ops = branches?.oneOf ?? branches?.anyOf ?? [];
+    const branch = (name: string) => ops.find((o) => o.properties?.op?.const === name)?.properties ?? {};
+    const params = branch('setParams');
+    // The one that a user's "vibrato" usually means is the voice's own wobble, and the added vibrato is apart.
+    expect(params.pitch_drift_scale?.description).toContain("voice's own pitch wobble");
+    expect(params.pitch_drift_scale?.description).toContain('usual meaning of vibrato');
+    expect(params.pitch_drift_scale?.description).toContain('below 1 weakens it');
+    expect(params.vibrato_depth?.description).toContain('Synthetic vibrato added on top');
+    expect(params.vibrato_depth?.description).toContain('default 0');
+    expect(params.vibrato_rate_hz?.description).toContain('added vibrato');
+    expect(params.retune_speed?.description).toContain('0 keeps the natural movement, 1 sounds mechanical');
+    expect(branch('shiftCents').delta_cents?.description).toContain('Cents to raise (+) or lower (-)');
+    // The ranges that the descriptions speak of are the ones of the schema.
+    expect(params.pitch_drift_scale).toMatchObject({ minimum: -2, maximum: 3 });
+    expect(params.vibrato_depth).toMatchObject({ minimum: 0, maximum: 100 });
   });
 
   it('render a rendered body that the shared output schema accepts', async () => {

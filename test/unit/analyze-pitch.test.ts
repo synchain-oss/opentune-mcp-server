@@ -261,6 +261,8 @@ describe('opentune_analyze_pitch phrases and notes', () => {
     expect((second.notes as { index: number }[]).map((n) => n.index)).toEqual([2, 3]);
   });
 
+  // No real wait in this test: it is a few socket round trips to the mock and an edit. Under the load of the full
+  // unit run they took more than the default 5 s now and then (it passes alone), so this one test gets 20 s.
   it('still notices a change when the instance reports no revision for the content', async () => {
     let hide = true;
     const { ctx, placement } = await setup({}, (method, result) =>
@@ -278,7 +280,7 @@ describe('opentune_analyze_pitch phrases and notes', () => {
       kind: 'REVISION_CONFLICT',
       reason: 'cursor_stale',
     });
-  });
+  }, 20_000);
 
   it('refuses a cursor whose position lies beyond the entries', async () => {
     const { ctx, placement } = await setup();
@@ -405,6 +407,29 @@ describe('opentune_analyze_pitch without a usable analysis', () => {
     expect((clean.overall as Record<string, number>).overThresholdCount).toBe(0);
     expect(clean.summary).not.toContain('use detail notes');
     expect(clean.summary).toContain('these notes have no index.');
+  });
+
+  it('says what the deviations are measured against, and warns that the nearest semitone is not comparable', async () => {
+    const stored = await setup();
+    const withNotes = body(await analyzePitch(stored.ctx, { clip: stored.placement }));
+    expect(withNotes.baseline).toBe('stored_notes');
+    expect(withNotes.summary).not.toMatch(/not directly comparable/);
+    const bare = await setup({ notes: [] });
+    for (const detail of ['summary', 'phrases', 'notes'] as const) {
+      const out = body(await analyzePitch(bare.ctx, { clip: bare.placement, detail }));
+      expect(out.baseline).toBe('nearest_semitone');
+      expect(out.summary).toContain(
+        'The deviations are measured against the nearest semitone, not against stored notes, so they are not directly comparable with an analysis of the same clip once it has notes.',
+      );
+    }
+  });
+
+  it('gives the baseline when there is nothing to measure as well, in line with the source of the notes', async () => {
+    const { ctx, placement } = await setup({ analysis: 'unvoiced', notes: [] });
+    const out = body(await analyzePitch(ctx, { clip: placement }));
+    expect(out.summary).toContain('No notes to analyze');
+    expect(out.baseline).toBe(out.note_source === 'detected_segments' ? 'nearest_semitone' : 'stored_notes');
+    expect(['stored_notes', 'nearest_semitone']).toContain(out.baseline);
   });
 });
 

@@ -10,7 +10,8 @@ export take, see [How long to wait](COMPATIBILITY.md#how-long-to-wait).
 ### Status READY
 
 OpenTune runs with the control API and this server verified it. With several instances running, pass `instance_id` to
-the other tools; the server never picks one on its own.
+the other tools; the server never picks one on its own. A dialog that is open in the OpenTune window blocks every write
+operation; then the result carries `blockedBy`, see [First launch dialog](#first-launch-dialog).
 
 ### Status NOT_READY
 
@@ -113,7 +114,12 @@ OpenTune is closing. Check the status before doing anything else.
 ### Error INVALID_ARGUMENT
 
 The arguments were rejected; `detail` says why. With reason `confirm_required` the operation is destructive and needs
-the user's explicit consent.
+the user's explicit consent. With reason `option_unavailable` (`opentune_set_settings`) the vocoder weight or the pitch
+model is not one this installation offers; `detail` names the member and nothing was changed. Read the offered values
+with `opentune_get_settings` (`processing.options`) and call again with one of them. A name is refused also when it
+equals the current value but is no longer listed, for example when the weight file was removed. A test build of
+`1.0.0-rc.5` does not know these members at all and answers with reason `invalid_params`
+(see [Settings tools and the specification versions](COMPATIBILITY.md#settings-tools-and-the-specification-versions)).
 
 ### Error NOT_FOUND
 
@@ -137,6 +143,14 @@ OpenTune could not render the corrected audio, also after one automatic retry.
 
 A model or inference backend OpenTune needs is missing. Run `opentune-mcp doctor`.
 
+Two reasons come from a change of the vocoder weight or the rendering priority (`opentune_set_settings`), which
+OpenTune applies by a job that waits until the vocoder is ready again. In both cases OpenTune takes the changes back,
+and the result says so. `vocoder_not_ready` (retryable): the vocoder was still busy when OpenTune's wait limit passed;
+wait a little, then call again, and run `opentune-mcp doctor` if it keeps happening. `vocoder_load_failed` (not
+retryable): the vocoder could not load the new weight or backend, for example because the weight file is corrupt or
+incompatible; the previous settings are back, so sending the same value again does not help. Tell the user and check the
+models with `opentune-mcp doctor`.
+
 ### Error REVISION_CONFLICT
 
 The object changed since it was read. Read it again and retry with the new revision.
@@ -147,7 +161,12 @@ The undo history does not have the expected entry on top. Ask the user how to pr
 
 ### Error UNSAVED_CHANGES
 
-The request would discard unsaved changes. Ask the user whether to save or discard them.
+The request would discard unsaved changes. Ask the user whether to save or discard them. From `opentune_quit` the
+refusal is deliberate: the close button of the OpenTune window quits without asking, this tool does not. The agent writes a copy first with
+`opentune_save_project` (mode `autosave`; a project that was never saved has no file for a copy) and then asks the user:
+save the project file (mode `save`, or `save_as` for a project that was never saved) and call `opentune_quit` again, or
+give the changes up. Only when the user explicitly agrees to lose the changes, call it with `discard_unsaved: true`.
+`opentune_open_project` gives the same error and the same way out.
 
 ### Error ALREADY_EXISTS
 
@@ -157,7 +176,11 @@ The target exists and replacing it was not allowed.
 
 OpenTune is in use: a dialog is open, the user is dragging, or an import, export or project operation runs. Finish it
 in OpenTune, then retry. With reason `modal_open` a modal dialog is open; the first one is usually the one-time welcome
-dialog, see [First launch dialog](#first-launch-dialog).
+dialog, see [First launch dialog](#first-launch-dialog). `opentune_manage_ui` with op `dismiss_dialogs` closes
+dialogs like the Escape key; a dialog that commits its value when closed (the track-colour dialog) is closed only
+with `accept_commit: true`, which needs the user's agreement. Closing a confirmation box cancels the action it asked
+about, so ask the user before closing any dialog. With reason `job_in_progress` (from `opentune_quit`) a job that has
+not finished, for example a settings change, would be ended by quitting: wait a few seconds and call again.
 
 ### Error TIMEOUT
 
@@ -171,12 +194,16 @@ The job was cancelled. Its result lists any work it committed before it stopped.
 
 A file could not be read or written. An export without `path` is written next to its source file; when that folder is
 read-only the export fails and the server does not choose another folder. Call `opentune_export_audio` again with a
-`path` in a folder you can write to.
+`path` in a folder you can write to. With reason `backup_failed` (from `opentune_save_project` and
+`opentune_save_project_overwrite`) the file that the save would have replaced could not be copied into its
+`.oldversion` folder, so nothing was saved and that file is unchanged; see
+[Autosave copies and old versions](#autosave-copies-and-old-versions). With reason `write_failed` from
+`opentune_save_project` (mode `autosave`) the `.autosave` folder could not be made or written.
 
 ### Error UNSUPPORTED
 
 OpenTune or this build does not offer the operation. With reason `capability_missing`, `detail` names the missing
-capability; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`.
+capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`. `opentune_manage_ui` with op `switch_view` needs the capability `ui.workspace`, which test builds before `1.0.0-rc.7` of the specification lack: switch the view in the OpenTune window (the arrangement view and piano roll buttons of the transport bar), or use a newer test build. `opentune_quit` needs the capability `app.quit`, which test builds before `1.0.0-rc.7` of the specification lack: write a copy with `opentune_save_project` (mode `autosave`), ask the user whether to save the project file, then ask the user to close the OpenTune window (the window closes without asking about unsaved changes). `opentune_save_project` with `mode: autosave` needs the capability `project.copy`, which test builds before `1.0.0-rc.8` of the specification lack: no copy is written; remind the user to save the project when they want to keep their work, or use a newer test build.
 
 ### Error INTERNAL
 
@@ -215,6 +242,10 @@ retrying a change.
 ### Error REQUEST_TIMEOUT
 
 OpenTune did not answer in time. The request may still run; re-read the state before retrying a change.
+
+With reason `read_too_slow` (from `opentune_get_notes` with `output_path`) this server stopped reading pages because
+the next one could end after a client has given up (40 seconds into the call). Nothing in OpenTune changed and no file
+was written; read a narrower range (`from` and `to`) into several files, or call again when OpenTune is less busy.
 
 ### Error CONFIG_INVALID
 
@@ -309,8 +340,40 @@ hexadecimal characters, so nothing could be checked: unpack the test build again
 
 The first time OpenTune starts with a fresh data folder it shows a one-time welcome (onboarding) dialog. A person has to
 answer it once in the OpenTune window. While it, or any other modal dialog, is open, every write operation fails with
-[BUSY](#error-busy) and reason `modal_open`. `opentune_get_settings` reports whether onboarding was shown. Ask the user
-to answer the dialog, then retry. The server never answers a dialog itself.
+[BUSY](#error-busy) and reason `modal_open`. `opentune_get_status` and `opentune_launch` read the window once when the
+instance can report it and add `blockedBy` (`kind` `onboarding` or `dialog`, and a hint) to the result, with a summary
+that says writes are refused until the dialog is closed; they do not say that everything is ready. `opentune_get_settings`
+also reports whether onboarding was shown. Ask the user to answer the dialog, then retry. `opentune_manage_ui` can close
+it like the Escape key: op `dismiss_onboarding` for the onboarding overlay (it also marks onboarding as shown, a global
+setting that cannot be undone, so tell the user that OpenTune shows the welcome page and close it only after the user
+agrees), op `dismiss_dialogs` for any other dialog. The server never presses a button of a dialog. If the window cannot
+be read, `blockedBy` is null with the reason `unavailable` in `nullReasons`, and the status is still reported as ready.
+An instance without the capability `ui.bridge` cannot report its window at all: `blockedBy` is null there with the
+reason `capability_missing`, which does not mean that no dialog is open.
+
+## Rendering backend and vocoder
+
+`opentune_get_settings` (section `processing`) shows the rendering priority and the backend OpenTune uses now
+(`processing.backend`). With `gpuFirst` OpenTune tries the GPU each time the vocoder loads and falls back to the CPU
+without a word when that fails, so the GPU is not guaranteed. When the priority is `gpuFirst`, the backend is `cpu` and
+the vocoder is loaded (`processing.vocoderReady` is true), the summary says so; a vocoder that is not loaded can still
+report the backend from before, so nothing is concluded from it. To see why, read the log: `opentune_get_settings` with
+sections `["log"]` and `log_lines` 30 shows
+the lines about the backend. On Windows also run `opentune-mcp doctor`: it checks the Direct3D 12 runtime that a test
+build lists in `opentune-control.json` (see [OT_D3D12_NOT_COPIED](#doctor-ot_d3d12_not_copied)). After a change of the
+rendering priority, `opentune_set_settings` reads the backend once the job has ended and reports it in
+`rendering_backend`; if the vocoder is still reloading after a short wait, it says so instead of guessing. If the vocoder
+was not ready when the setting changed (right after the start, before the first render), OpenTune can finish the job
+before the vocoder has loaded again, so a `cpu` read then is not proof of a fall back: `rendering_backend.confirmed` is
+`false`, and the backend is only known after the next load. Read `opentune_get_settings` again once a render has run.
+
+`vocoderReady: false` just after OpenTune starts is expected: the vocoder loads when the first render needs it, and the
+summaries of `opentune_get_status`, `opentune_launch` and `opentune_get_settings` say so. They do not call it normal,
+because `session.info` and `prefs.get` have no member that tells a vocoder that has not loaded yet from one that could
+not load or is stuck. If it is still false after a render has run (an edit that has to be rendered, an export), tell the
+user, and read the log (`opentune_get_settings` with sections `["log"]`) for the reason. A change of the vocoder weight
+or the rendering priority fails with [MODEL_UNAVAILABLE](#error-model_unavailable) `vocoder_load_failed` when OpenTune
+cannot load the new weight or backend.
 
 ## Hybrid mode
 
@@ -318,9 +381,68 @@ OpenTune's preference "Hybrid Mode: Small corrections use DSP, large corrections
 "混合模式:小修用dsp,大修用声码器") is on by default. The part of a correction smaller than 75 cents is applied by DSP pitch
 shifting instead of the vocoder. That is OpenTune's own design, in its window as well as through this server, and on
 real voices such a small correction can be barely audible. If small corrections must be clearly audible, switch the
-preference off in OpenTune's preferences. The setting is reported as it was, in three places: `export.processing.hybridMode` in the result of
+preference off in OpenTune's preferences, or ask the agent to do it with `opentune_set_settings`
+(`processing.hybrid_mode`). It is a global setting of the OpenTune installation, not of the project, so it stays off
+until it is switched on again; the result of `opentune_set_settings` gives the call that restores the previous value.
+The setting is reported as it was, in three places: `export.processing.hybridMode` in the result of
 `opentune_export_audio`; `job.result.processing.hybridMode` in `opentune_get_job` when the export job has not finished
 within the call; and the preference itself in the `processing` section of `opentune_get_settings`. Do not assume it.
+
+## Autosave copies and old versions
+
+Both folders sit next to the project file and are named after it without `.otproj`. `opentune_save_project` with
+`mode: autosave` writes `<name>.autosave/<name>-autosave-0001.otproj`, `-0002` and so on, and keeps the newest 50; it
+never touches the project file, the unsaved-changes mark or the list of recent projects, and writes only inside `<name>.autosave` (the copy and the
+`Project_Media` folder with its audio: OpenTune replaces an older audio file of the same name in such a folder, which is
+why the copies get a folder of their own and cannot replace the audio of another project). Every save that replaces a
+project file first copies the old file into `<name>.oldversion/<name>-<YYYYMMDD-HHMMSS>.otproj` (local time, `-2`, `-3`
+when the second is taken) and keeps the newest 10; when the newest old version already holds exactly the bytes of the
+file to be replaced (a save right after a save that changed nothing), no new copy is made and the result says so
+(`oldVersion.reused`). The server deletes only regular files in these two folders whose names match these patterns:
+such a file counts as a copy or an old version and is deleted once it is beyond the newest 50 or 10, whoever put it
+there. Folders, links, files with any other name, the `Project_Media` folders (the one that OpenTune fills inside
+`<name>.autosave`, and the one this server fills inside `<name>.oldversion`, see below) and the files of other projects
+are never touched. If OpenTune refuses the save, or reports that it changed nothing (`executed` is `false`, or the
+refusal `confirm_required` of a different existing file), the project file is as it was, so the old version that was
+just made is deleted again (an old version that was only reused is never deleted). When the save fails in any other way,
+the old version is kept, because the project file may already have been partly written: it is then the way back. An
+empty `<name>.oldversion` folder can remain after a refused save; the server never deletes folders. To get earlier work
+back, open the wanted file with `opentune_open_project`.
+
+An autosave copy or an old version names its audio relative to the folder it is in, so it finds the audio only in the
+`Project_Media` folder inside its own folder. A copy in `<name>.autosave` has one, which OpenTune fills. For an old
+version, the server fills it: whenever an old version is made (or an existing one is reused), and before the save runs,
+it copies the regular files of the `Project_Media` folder next to the file being replaced into
+`<name>.oldversion/Project_Media`. It follows OpenTune's own rule for that folder: a file is copied only when it is
+missing there or older than its source; a newer file is never overwritten, nothing is deleted, and links and
+sub-folders are skipped. With the audio there, an old version still opens after the original audio files (for example in
+a downloads folder) were deleted. If the file being replaced has no `Project_Media` folder, nothing is done.
+
+What is copied is the whole `Project_Media` folder, not only the audio that this project uses: telling which files a
+project uses would mean reading the project file, which this server does not do. That folder is shared by all the
+project files in the same directory, so the audio of the other projects there is copied too, and each project file has
+an `<name>.oldversion/Project_Media` of its own: with several project files in one directory, the space taken multiplies
+by their number. Keep one project per folder to avoid that. The rolling of old versions never touches this folder, so it
+only grows, and it can hold audio of other projects; delete it by hand if the old versions are no longer needed. As in
+the `Project_Media` folder next to the project, a file there is replaced by a newer source file of the same name, so an
+older old version then finds the newer audio under that name.
+
+The copy has a time limit of 15 seconds, so that the first save of a project with a lot of audio does not hold the save
+up. The time is checked between files, so a single very large file can still take longer. When the limit is reached, the
+files not tried yet are not copied and the save still happens: `oldVersion.media.timedOut` is `true`, those files are in
+`oldVersion.media.notCopied` (and in `notCopiedCount`), and the result carries the warning line below and a sentence in
+the summary. This is not a failure: the next save that replaces this project file copies the rest (only files that are
+missing or older are copied), so saving once or twice more completes a large folder. Until then, that old version may
+not find all of its audio once the original audio files are gone.
+
+If some audio could not be copied (a full or read-only disk, or a file that is in use), the save still happens, and
+`oldVersion.media.timedOut` is `false` unless the time ran out as well. The result then carries a warning line (code
+`OLD_VERSION_MEDIA_NOT_COPIED`, `source: server`; it is the same line for a failure and for the time limit, with one
+sentence for each) and a sentence in the summary, and `oldVersion.media.notCopied` lists the files (paths such as
+`Project_Media/1.wav`; `Project_Media` itself when the whole folder could not be read or made; `notCopiedCount` has the
+full count). That old version may not find its audio once the original audio files are gone. Fix the cause (free space,
+close the program that holds the file) and save again: the missing files are copied then. `oldVersion.media.copied`
+counts the files that were copied by this save.
 
 ## Slow process discovery
 

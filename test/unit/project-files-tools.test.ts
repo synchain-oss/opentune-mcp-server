@@ -7,6 +7,7 @@
 // capability, a job that outlives the wait, and the coverage of the project methods of the spec.
 
 import fs from 'node:fs';
+import path from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -15,8 +16,8 @@ import { startMock } from '../../mock/server.js';
 import { getJob } from '../../src/tools/jobs.js';
 import { TOOLS } from '../../src/tools/index.js';
 import {
+  mediaFolderMembers,
   openProject,
-  openedSentences,
   openProjectTool,
   overwriteProject,
   overwriteProjectTool,
@@ -62,6 +63,11 @@ const FILES = [
 ] as const;
 
 const wait = { wait_seconds: 10 };
+
+/** What OpenTune does with the media of the project at every save; a fixed sentence, never built from the result. */
+const MEDIA_COPY =
+  'OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.';
+const mediaFolderOf = (file: string) => path.join(path.dirname(file), 'Project_Media');
 const save = (ctx: ToolContext, args: Parameters<typeof saveProject>[1]) => saveProject(ctx, { ...wait, ...args });
 
 describe('opentune_save_project', () => {
@@ -69,7 +75,23 @@ describe('opentune_save_project', () => {
     const { ctx, mock } = await setup();
     const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true });
     const first = body(await save(ctx, { mode: 'save_as', path: need(ids, 'fresh') }));
-    expect(first.summary).toMatch(/^opentune_save_project: saved the project to the file given/);
+    // A new file replaced nothing: the first sentence says what was written, and not that it cannot be restored.
+    expect(first.summary).toMatch(
+      /^opentune_save_project: wrote a new project file \(path in path\); no existing file was replaced, and from now on it is the project's file\./,
+    );
+    expect(first.summary).not.toMatch(/cannot be restored|irreversible|IRREVERSIBLE/i);
+    // A first save to a new place says at once that the audio is copied next to the file, and where.
+    expect(first.summary).toContain(
+      `from now on it is the project's file. ${MEDIA_COPY} The project is no longer marked as changed`,
+    );
+    expect(first.mediaFolder).toBe(mediaFolderOf(need(ids, 'fresh')));
+    expect(first.summary).not.toContain('Project_Media/');
+    expect(first.summary).not.toContain(need(ids, 'fresh'));
+    // The warnings keep the facts that the protocol states: the write has no undo, and some state is not stored.
+    expect((first.warnings as { code: string }[]).map((w) => w.code)).toEqual(['IRREVERSIBLE', 'NOT_SAVED_IN_PROJECT']);
+    expect(
+      (first.lines as { kind: string; code?: string; text: string }[]).filter((l) => l.kind === 'warning').length,
+    ).toBe(2);
     expect(first.summary).toMatch(/no longer marked as changed/);
     expect(first.summary).toMatch(/Not stored in the project file: which tracks are shown, the undo and redo history/);
     expect(first.summary).not.toContain(need(ids, 'fresh'));
@@ -81,11 +103,60 @@ describe('opentune_save_project', () => {
     });
     expect(fs.existsSync(need(ids, 'fresh'))).toBe(true);
 
+    // Nothing was replaced, so no old version was kept, and the result says why there is none.
+    expect(first.oldVersion).toBeNull();
+    expect(first.nullReasons).toMatchObject({ oldVersion: 'no_previous_file' });
+
     const again = body(await save(ctx, { mode: 'save' }));
     expect(again.summary).toMatch(
-      /^opentune_save_project: saved the project to its file \(path in path\); the previous/,
+      /^opentune_save_project: saved the project to its file \(path in path\), replacing its previous content; a copy of the replaced content was kept in the oldversion folder/,
     );
     expect(again.path).toBe(need(ids, 'fresh'));
+    expect((again.oldVersion as { path: string }).path).toMatch(/\.oldversion[\\/].*-\d{8}-\d{6}\.otproj$/);
+    // A later save repeats it after the facts of the save, and does not know the folder (the file is OpenTune's).
+    expect(again.summary.endsWith(MEDIA_COPY)).toBe(true);
+    expect(again.summary.indexOf(MEDIA_COPY)).toBeGreaterThan(again.summary.indexOf('oldVersion.path'));
+    expect(again.mediaFolder).toBeNull();
+    expect(again.nullReasons).toMatchObject({ mediaFolder: 'project_path_not_given' });
+  });
+
+  it('keeps the reasons the write envelope gives for its own null members next to the one for mediaFolder', () => {
+    // A save to the project's own file: the folder is unknown, and the envelope has reasons of its own.
+    const rendered = { nullReasons: { ui: 'no_editor_window', history: 'capability_missing' } };
+    expect(mediaFolderMembers(rendered, null)).toEqual({
+      mediaFolder: null,
+      nullReasons: { ui: 'no_editor_window', history: 'capability_missing', mediaFolder: 'project_path_not_given' },
+    });
+    // Without reasons of the envelope, the reason of mediaFolder is the only one.
+    expect(mediaFolderMembers({}, null)).toEqual({
+      mediaFolder: null,
+      nullReasons: { mediaFolder: 'project_path_not_given' },
+    });
+    // A nullReasons that is not an object is not spread into the result.
+    for (const odd of ['text', 7, null, ['a']]) {
+      expect(mediaFolderMembers({ nullReasons: odd }, null)).toEqual({
+        mediaFolder: null,
+        nullReasons: { mediaFolder: 'project_path_not_given' },
+      });
+    }
+    // With a folder there is nothing to explain, and the envelope's reasons are left as they are.
+    expect(mediaFolderMembers(rendered, 'C:\\Music\\Project_Media')).toEqual({
+      mediaFolder: 'C:\\Music\\Project_Media',
+    });
+  });
+
+  it('does not call a save_as onto the file the project already has a new file', async () => {
+    const { ctx, mock } = await setup();
+    const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true });
+    body(await save(ctx, { mode: 'save_as', path: need(ids, 'fresh') }));
+    // The same file again: the project's path does not change, so nothing proves that a file is new.
+    const again = body(await save(ctx, { mode: 'save_as', path: need(ids, 'fresh') }));
+    expect(again.summary).toMatch(/^opentune_save_project: saved the project to the file given \(path in path\)/);
+    expect(again.summary).not.toContain('wrote a new project file');
+    // Another path writes another new file, and the project's file moves to it.
+    const other = body(await save(ctx, { mode: 'save_as', path: need(ids, 'other') }));
+    expect(other.summary).toMatch(/^opentune_save_project: wrote a new project file/);
+    expect(other.path).toBe(need(ids, 'other'));
   });
 
   it('says what to do when the project has no file yet', async () => {
@@ -144,15 +215,21 @@ describe('opentune_save_project', () => {
     expect(JSON.stringify(done)).toContain('succeeded');
   });
 
-  it('declares itself non-destructive and idempotent, with the project methods it calls', () => {
+  it('declares itself non-destructive and not idempotent (each autosave is a new copy), with the project methods it calls', () => {
     expect(saveProjectTool.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: false,
-      idempotentHint: true,
+      idempotentHint: false,
       openWorldHint: false,
     });
     expect(saveProjectTool.capabilities).toContain('project.io');
-    expect(saveProjectTool.otcpMethods).toEqual(['project.save', 'project.saveAs', 'job.get']);
+    expect(saveProjectTool.otcpMethods).toEqual([
+      'project.save',
+      'project.saveAs',
+      'project.saveCopy',
+      'project.get',
+      'job.get',
+    ]);
   });
 });
 
@@ -178,6 +255,9 @@ describe('opentune_save_project_overwrite', () => {
       /^opentune_save_project_overwrite: OVERWROTE another existing project file at the user's request/,
     );
     expect(result.summary).not.toContain(need(ids, 'existing'));
+    expect(result.summary).toContain(`goes back to it. ${MEDIA_COPY}`);
+    expect(result.summary).not.toContain('cannot be restored');
+    expect(result.mediaFolder).toBe(mediaFolderOf(need(ids, 'existing')));
     expect(result.path).toBe(need(ids, 'existing'));
     expect(fs.readFileSync(need(ids, 'existing'), 'utf8')).not.toBe(before);
   });
@@ -223,24 +303,23 @@ describe('opentune_open_project', () => {
     expect(discarded.summary).toMatch(/which cannot be undone or restored/);
   });
 
-  it('says how many reference bindings were not restored', () => {
-    // The mock cannot make a project with reference bindings, so the rendering is checked on a result built by hand.
-    const sentences = openedSentences({ skipped: { media: [], placementCount: 0, referenceBindingCount: 2 } }).join(
-      ' ',
-    );
-    expect(sentences).toMatch(/2 reference bindings could not be restored/);
-    expect(
-      openedSentences({ skipped: { media: [], placementCount: 0, referenceBindingCount: 0 } }).join(' '),
-    ).not.toMatch(/reference binding/);
-  });
-
   it('fails with UNSAVED_CHANGES and never saves; discard_unsaved opens and says it discarded', async () => {
     const { ctx, mock } = await setup();
     const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true });
     const error = failure(await openProject(ctx, { path: need(ids, 'existing'), ...wait }));
     expect(error).toMatchObject({ kind: 'UNSAVED_CHANGES', reason: 'project_dirty' });
-    expect(error.nextStep).toMatchObject({ actor: 'agent', tool: 'opentune_save_project' });
+    // The agent writes a copy and asks; it is not sent to save the project file.
+    expect(error.nextStep).toMatchObject({
+      actor: 'agent',
+      tool: 'opentune_save_project',
+      args: { mode: 'autosave' },
+    });
+    expect(error.nextStep.message).toMatch(/mode autosave/);
+    expect(error.nextStep.message).toMatch(/ask the user whether to save the project/);
+    expect(error.nextStep.message).toMatch(/do neither without an answer/);
     expect(error.nextStep.message).toMatch(/discard_unsaved: true/);
+    expect(JSON.stringify(error.nextStep.args)).not.toContain('"save"');
+    expect(error.nextStep.message).not.toMatch(/save the project (first|with)/i);
     expect(mock.snapshot().placements.length).toBe(1);
 
     const result = body(await openProject(ctx, { path: need(ids, 'existing'), discard_unsaved: true, ...wait }));
@@ -282,16 +361,15 @@ describe('opentune_open_project', () => {
 });
 
 describe('coverage of the project methods', () => {
-  // Methods of the spec that no tool calls, with the reason.
-  const NOT_EXPOSED: Readonly<Record<string, string>> = {
-    'project.clearRecent':
-      'Clearing the recent-projects list is a global preference change that no editing workflow needs; the window offers it in a menu.',
-  };
+  // Methods of the spec that no tool calls, with the reason. None right now: project.clearRecent is
+  // exposed through opentune_set_settings.
+  const NOT_EXPOSED: Readonly<Record<string, string>> = {};
 
   it('has a tool or a reason for every project.* method', () => {
     const exposed = new Set(TOOLS.flatMap((t) => t.otcpMethods));
     const methods = [...otcpSpec().methods.keys()].filter((m) => m.startsWith('project.') && m !== 'project.get');
     expect(methods).toEqual(expect.arrayContaining(['project.save', 'project.saveAs', 'project.open']));
+    expect(exposed.has('project.clearRecent')).toBe(true);
     for (const method of methods) {
       expect(exposed.has(method) || method in NOT_EXPOSED, method).toBe(true);
     }

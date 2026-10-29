@@ -26,9 +26,9 @@ export const EMPTY_DIFF: RevisionDiff = { arrangement: null, trackState: null, c
 /** Section 11: a content write waits for the pitch analysis; reads are never gated. */
 export function requireReady(content: ContentRec): void {
   const state = {
-    running: { reason: 'f0_not_ready', retryable: true, detail: 'pitch analysis of the content is still running' },
-    failed: { reason: 'f0_failed', retryable: false, detail: 'pitch analysis of the content failed' },
-    unvoiced: { reason: 'f0_empty', retryable: false, detail: 'pitch analysis found no voiced frame in the content' },
+    running: { reason: 'f0_not_ready', detail: 'pitch analysis of the content is still running' },
+    failed: { reason: 'f0_failed', detail: 'pitch analysis of the content failed' },
+    unvoiced: { reason: 'f0_empty', detail: 'pitch analysis found no voiced frame in the content' },
     ready: undefined,
   }[content.analysis];
   if (state === undefined) return;
@@ -36,13 +36,12 @@ export function requireReady(content: ContentRec): void {
     kind: 'NOT_READY',
     reason: state.reason,
     detail: state.detail,
-    retryable: state.retryable,
-    ...(state.retryable ? { retryAfterMs: NOT_READY_RETRY_MS } : {}),
+    // Only a pitch analysis that is still running becomes ready by waiting.
+    ...(content.analysis === 'running' ? { retryAfterMs: NOT_READY_RETRY_MS } : {}),
   });
 }
 
-const conflict = (reason: string, detail: string) =>
-  new MockError({ kind: 'REVISION_CONFLICT', reason, detail, retryable: false });
+const conflict = (reason: string, detail: string) => new MockError({ kind: 'REVISION_CONFLICT', reason, detail });
 
 /** Section 10 rule 3: an expected token that is not the current one fails with the reason of its aspect. */
 export function expectRevision(content: ContentRec, expected: unknown): void {

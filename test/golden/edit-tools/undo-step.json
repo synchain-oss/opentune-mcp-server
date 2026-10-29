@@ -5,60 +5,10 @@
     "undo_id": "u:01234567:5"
   },
   "result": {
-    "summary": "opentune_undo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_redo, see the revert line; side effects: rendering of one or more contents was queued again).",
+    "summary": "opentune_undo: changed 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_redo, see the revert line; side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [
-      {
-        "entity": "content",
-        "ref": {
-          "contentId": "c:01234567:0:1"
-        },
-        "label": "Content 1",
-        "fields": {
-          "revision": {
-            "before": "r28",
-            "after": "r32",
-            "unit": null
-          }
-        }
-      }
-    ],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "notes": {
-              "before": "n26",
-              "after": "n30"
-            },
-            "pitch": {
-              "before": "p27",
-              "after": "p31"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "revision": "r32",
-          "gridRevision": "g6",
-          "keyRevision": "k17"
-        }
-      ],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "ui_parity",
@@ -68,71 +18,6 @@
           "expectedUndoId": "u:01234567:5"
         }
       }
-    },
-    "dirty": {
-      "before": true,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": null,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "reRenderQueued": {
-        "contentIds": [
-          "c:01234567:0:1"
-        ],
-        "revert": null
-      }
-    },
-    "warnings": [],
-    "job": null,
-    "entry": {
-      "undoId": "u:01234567:5",
-      "description": "Edit notes",
-      "origin": "control",
-      "possiblyStale": false,
-      "unsafe": false
-    },
-    "uiEffects": [
-      {
-        "surface": "piano roll",
-        "effect": "changed content",
-        "target": "c:01234567:0:1",
-        "visibleNow": false,
-        "howToSee": "Open the clip in the piano roll."
-      },
-      {
-        "surface": "background work",
-        "effect": "rendering queued again",
-        "target": "project",
-        "visibleNow": false,
-        "howToSee": "Playback and export use the new result once rendering is done."
-      }
-    ],
-    "changeTable": {
-      "rows": [
-        {
-          "kind": "changed",
-          "entity": "content",
-          "label": "Content 1",
-          "ref": {
-            "contentId": "c:01234567:0:1"
-          },
-          "fields": [
-            {
-              "field": "revision",
-              "before": "r28",
-              "after": "r32",
-              "unit": null
-            }
-          ]
-        }
-      ],
-      "omittedChangeCount": 0
     },
     "lines": [
       {
@@ -163,6 +48,121 @@
           }
         }
       }
-    ]
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n25",
+              "after": "n29"
+            },
+            "pitch": {
+              "before": "p26",
+              "after": "p30"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r31",
+          "gridRevision": "g6",
+          "keyRevision": "k16"
+        }
+      ],
+      "placements": []
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [],
+    "job": null,
+    "entry": {
+      "undoId": "u:01234567:5",
+      "description": "Edit notes",
+      "origin": "control",
+      "possiblyStale": false,
+      "unsafe": false
+    },
+    "changes": [
+      {
+        "entity": "content",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1",
+        "fields": {
+          "revision": {
+            "before": "r27",
+            "after": "r31",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "piano roll",
+        "effect": "changed content",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      },
+      {
+        "surface": "background work",
+        "effect": "rendering queued again",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Playback and export use the new result once rendering is done."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "content",
+          "label": "Content 1",
+          "ref": {
+            "contentId": "c:01234567:0:1"
+          },
+          "fields": [
+            {
+              "field": "revision",
+              "before": "r27",
+              "after": "r31",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
   }
 }

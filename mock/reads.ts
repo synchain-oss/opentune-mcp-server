@@ -12,7 +12,7 @@ import type { Handler } from './context.js';
 import { refuse } from './errors.js';
 import { historyView } from './history.js';
 import type { ContentRec, NoteRec, PlacementRec, World } from './model.js';
-import { round6 } from './model.js';
+import { OPTION_LIST_MAX, carries, round6 } from './model.js';
 import { MIN_HANDLE_SPACING_SEC } from './timing.js';
 import {
   DEFAULT_NOTE_SPLIT_CENTS,
@@ -144,6 +144,7 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
     const contents = [...world.contents.values()];
     const placements = [...world.placements.values()];
     const hasHistory = hasCapability('history.v1');
+    world.settleTransport();
     return {
       ...readMeta(world, contents, ['tracks[].label']),
       ...(hasHistory ? {} : { nullReasons: { history: 'capability_missing' } }),
@@ -181,7 +182,6 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
         gainLinear: p.gainLinear,
         fadeInSec: p.fadeInSec,
         fadeOutSec: p.fadeOutSec,
-        referencePlacementId: p.reference?.id ?? null,
         sourcePath: p.content.sourcePath,
         geometryHash: p.geometryHash,
         ...(p.content.sourcePath === null ? { nullReasons: { sourcePath: 'unavailable' } } : {}),
@@ -312,15 +312,13 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
     };
   },
 
-  'content.getDetails': ({ world, params, hasCapability }) => {
+  'content.getDetails': ({ world, params }) => {
     const { content, placement } = target(world, params);
     const shown = world.placementsOf(content);
     const via = placement ?? shown[0];
     if (via === undefined) throw refuse('NOT_FOUND', 'unknown_handle', 'no placement shows this content');
-    const referenceBound = via.reference !== null && hasCapability('reference.v1');
     const ready = content.analysis === 'ready';
     const available = ready ? ['regenerate', 'notesOnly', ...(content.notes.length > 0 ? ['snapNotes'] : [])] : [];
-    if (ready && referenceBound) available.push('reference');
     return {
       ...readMeta(world, [content]),
       ...(content.key === null ? { nullReasons: { key: 'not_analyzed' } } : {}),
@@ -350,38 +348,39 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
         })),
         minHandleSpacingSec: MIN_HANDLE_SPACING_SEC,
       },
-      reference: {
-        referencePlacementId: via.reference?.id ?? null,
-        alignmentReady: content.alignmentReady,
-      },
       autoModes: {
         editingScheme: world.editingScheme,
-        uiButtonRuns: referenceBound ? 'reference' : world.editingScheme === 'openDyne' ? 'snapNotes' : 'regenerate',
+        uiButtonRuns: world.editingScheme === 'openDyne' ? 'snapNotes' : 'regenerate',
         available,
       },
     };
   },
 
-  'transport.get': ({ world }) => ({
-    ...readMeta(world, []),
-    transport: { ...world.transport, timeSignature: { ...world.transport.timeSignature } },
-  }),
+  'transport.get': ({ world }) => {
+    world.settleTransport();
+    return {
+      ...readMeta(world, []),
+      transport: { ...world.transport, timeSignature: { ...world.transport.timeSignature } },
+    };
+  },
 
   'prefs.get': ({ world }) => ({
     processing: {
       tuningHz: world.prefs.tuningHz,
       editingScheme: world.editingScheme,
       hybridMode: world.prefs.hybridMode,
-      vocoderWeight: null,
-      f0Model: null,
-      renderingPriority: null,
+      // A weight whose name the wire cannot carry is reported as null.
+      vocoderWeight: carries(world.prefs.vocoderWeight) ? world.prefs.vocoderWeight : null,
+      f0Model: world.prefs.f0Model,
+      renderingPriority: world.prefs.renderingPriority,
       experimentalFeatures: world.prefs.experimentalFeatures,
-      referenceAlignMode: null,
-      nullReasons: {
-        vocoderWeight: 'unavailable',
-        f0Model: 'unavailable',
-        renderingPriority: 'unavailable',
-        referenceAlignMode: 'unavailable',
+      ...(carries(world.prefs.vocoderWeight) ? {} : { nullReasons: { vocoderWeight: 'unavailable' } }),
+      // The values prefs.set accepts; session.info does not report them. The state of the vocoder is not part of
+      // prefs.get either (session.info reports it).
+      options: {
+        vocoderWeight: world.prefs.options.vocoderWeight.filter(carries).slice(0, OPTION_LIST_MAX),
+        f0Model: world.prefs.options.f0Model.filter(carries).slice(0, OPTION_LIST_MAX),
+        renderingPriority: ['gpuFirst', 'cpuFirst'],
       },
     },
     onboardingShown: world.prefs.onboardingShown,

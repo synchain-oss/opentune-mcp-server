@@ -4,9 +4,13 @@
 // The mock's UI bridge beyond what the contract vectors show: revert recipes applied as given, what
 // a dialog's closing commits, the busy rules around dialogs, and the effects of selecting a clip.
 
+import os from 'node:os';
+import path from 'node:path';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
+import { otcpSpec } from '../support/otcp-spec.js';
 
 const sessions = new Sessions();
 afterEach(async () => {
@@ -42,13 +46,17 @@ describe('ui.setSelection', () => {
       {
         entity: 'selection',
         fields: {
-          activeTrackId: { before: null, after: 1 },
+          activeTrackId: { before: 0, after: 1 },
           selectedPlacementIds: { before: [], after: [expect.any(String)] },
         },
       },
     ]);
-    // No track was active, so there is nothing to select again.
-    expect(first.undo).toMatchObject({ undoable: false, reason: 'not_persisted_state', revert: null });
+    // Track 0 was active and no clip was selected: the recipe selects the track again.
+    expect(first.undo).toMatchObject({
+      undoable: false,
+      reason: 'not_persisted_state',
+      revert: { method: 'ui.setSelection', params: { trackId: 0 } },
+    });
     const second = await ok('ui.setSelection', { placementId: ids['b.placementId'] });
     expect(await state(session)).toMatchObject({ activeTrackId: 2, selectedPlacementIds: [ids['b.placementId']] });
 
@@ -118,24 +126,506 @@ describe('ui.setSelection', () => {
     expect((await ok('project.get')).selection).toMatchObject({ pianoRollContentId: ids['clip.contentId'] });
   });
 
-  it('queues the reference analysis of a bound clip only while experimental features are on', async () => {
+  it('loads the selected clip into the piano roll while the window keeps showing the arrangement view', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;
     const ids = mock.given({
-      preferences: { experimentalFeatures: true },
-      clips: [
-        clip({ bind: 'ref', startTimelineSec: 0 }),
-        clip({ bind: 'clip', startTimelineSec: 0, referenceClip: 'ref' }),
-      ],
+      clips: [clip({ bind: 'a', trackId: 1 }), clip({ bind: 'b', trackId: 2, startTimelineSec: 10 })],
     });
-    const selected = await ok('ui.setSelection', { placementId: ids['clip.placementId'] });
-    expect(selected.sideEffects).toMatchObject({
-      referenceAnalysisQueued: { contentIds: [ids['clip.contentId'], ids['ref.contentId']], revert: null },
+    const selected = await ok('ui.setSelection', { placementId: ids['a.placementId'] });
+    // The view is not switched (no workspaceSwitched), but the piano roll holds the clip, as in a running window.
+    expect(selected.ui).toMatchObject({ workspace: 'arrangement', pianoRollContentId: ids['a.contentId'] });
+    expect(selected.sideEffects).toEqual({});
+    expect((await ok('project.get')).selection).toMatchObject({ pianoRollContentId: ids['a.contentId'] });
+
+    // A dry run selects nothing and loads nothing.
+    await ok('ui.setSelection', { placementId: ids['b.placementId'], dryRun: true });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement', pianoRollContentId: ids['a.contentId'] });
+
+    // Another clip takes its place; selecting that clip again changes nothing.
+    await ok('ui.setSelection', { placementId: ids['b.placementId'] });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement', pianoRollContentId: ids['b.contentId'] });
+    expect(await ok('ui.setSelection', { placementId: ids['b.placementId'] })).toMatchObject({
+      noOp: true,
+      changes: [],
+      sideEffects: {},
     });
-    expect((selected.warnings as { code: string }[]).map((w) => w.code)).toEqual(['REFERENCE_ANALYSIS_QUEUED']);
+  });
+
+  it('queues no background work and warns about no experimental feature, whatever the preference says', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ preferences: { experimentalFeatures: true }, clips: [clip({ bind: 'clip' })] });
+    const on = await ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+    expect(on.sideEffects).toEqual({});
+    expect(on.warnings).toEqual([]);
     await ok('prefs.set', { experimentalFeatures: false });
-    const off = await ok('ui.setSelection', { placementId: ids['ref.placementId'] });
-    expect(off.sideEffects).toEqual({});
+    const off = await ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+    expect(off).toMatchObject({ noOp: true, sideEffects: {}, warnings: [] });
+  });
+});
+
+describe('ui.setWorkspace', () => {
+  const codes = (result: Record<string, unknown>) => (result.warnings as { code: string }[]).map((w) => w.code);
+
+  it('switches to the piano roll and back, reports the switch, and its revert recipe switches back', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: false, clips: [clip()] });
+    const before = mock.snapshot();
+
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({
+      applied: true,
+      noOp: false,
+      dryRun: false,
+      changes: [
+        {
+          entity: 'ui',
+          ref: { singleton: 'workspace' },
+          label: expect.any(String) as string,
+          fields: { workspace: { before: 'arrangement', after: 'pianoRoll', unit: null } },
+        },
+      ],
+      revisionDiff: { arrangement: null, trackState: null, contents: [] },
+      undo: {
+        undoable: false,
+        reason: 'not_persisted_state',
+        revert: { method: 'ui.setWorkspace', params: { workspace: 'arrangement' } },
+      },
+      dirty: { before: false, after: false },
+      ui: { workspace: 'pianoRoll' },
+      sideEffects: { workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null } },
+      warnings: [],
+      job: null,
+    });
+    // The view state is what the reads show, and nothing of the project changed.
+    expect(await state(session)).toMatchObject({ workspace: 'pianoRoll' });
+    expect((await ok('project.get')).selection).toMatchObject({ pianoRollContentId: null });
+    expect(mock.snapshot()).toEqual(before);
+
+    // The recipe, sent as it is, closes the piano roll; its own recipe opens it again.
+    const closed = await revert(session, opened);
+    expect(closed).toMatchObject({
+      noOp: false,
+      changes: [{ fields: { workspace: { before: 'pianoRoll', after: 'arrangement' } } }],
+      ui: { workspace: 'arrangement' },
+      sideEffects: { workspaceSwitched: { from: 'pianoRoll', to: 'arrangement', revert: null } },
+      undo: { revert: { method: 'ui.setWorkspace', params: { workspace: 'pianoRoll' } } },
+    });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+    await revert(session, closed);
+    expect(await state(session)).toMatchObject({ workspace: 'pianoRoll' });
+    expect(mock.snapshot()).toEqual(before);
+  });
+
+  it('is a no-op when the window already shows the workspace, in both directions', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: false, clips: [clip()] });
+    const noOp = {
+      applied: true,
+      noOp: true,
+      changes: [],
+      sideEffects: {},
+      warnings: [],
+      undo: { undoable: false, reason: 'no_op', revert: null },
+      revisionDiff: { arrangement: null, trackState: null, contents: [] },
+      dirty: { before: false, after: false },
+    };
+    expect(await ok('ui.setWorkspace', { workspace: 'arrangement' })).toMatchObject({
+      ...noOp,
+      ui: { workspace: 'arrangement' },
+    });
+    await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).toMatchObject({
+      ...noOp,
+      ui: { workspace: 'pianoRoll' },
+    });
+  });
+
+  it('switches back after ui.setSelection opened the editor, and the clip stays selected', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    await ok('ui.setSelection', { placementId: ids['clip.placementId'], openEditor: true });
+    expect(await state(session)).toMatchObject({ workspace: 'pianoRoll', pianoRollContentId: ids['clip.contentId'] });
+
+    const back = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(back).toMatchObject({
+      changes: [{ fields: { workspace: { before: 'pianoRoll', after: 'arrangement' } } }],
+      ui: { workspace: 'arrangement', selectedPlacementIds: [ids['clip.placementId']] },
+      dirty: { before: false, after: false },
+      revisionDiff: { contents: [] },
+    });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+    expect((await ok('project.get')).selection).toMatchObject({ selectedPlacementIds: [ids['clip.placementId']] });
+    // Opening the piano roll again shows the selected clip.
+    const again = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(again.ui).toMatchObject({ workspace: 'pianoRoll', pianoRollContentId: ids['clip.contentId'] });
+  });
+
+  it('shows the selected clip in the piano roll, or none when no clip is selected', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ clips: [clip({ bind: 'a', trackId: 1 }), clip({ bind: 'b', trackId: 2 })] });
+    // Nothing selected: the piano roll is empty, which is not an error.
+    expect((await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).ui).toMatchObject({
+      workspace: 'pianoRoll',
+      pianoRollContentId: null,
+    });
+    await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    await ok('ui.setSelection', { placementId: ids['b.placementId'] });
+    expect((await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).ui).toMatchObject({
+      pianoRollContentId: ids['b.contentId'],
+    });
+    // Another clip is selected while the arrangement view shows: the piano roll shows that one when it opens.
+    await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    await ok('ui.setSelection', { placementId: ids['a.placementId'] });
+    expect((await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).ui).toMatchObject({
+      pianoRollContentId: ids['a.contentId'],
+    });
+    // A track selects no clip, so the piano roll shows none.
+    await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    await ok('ui.setSelection', { trackId: 3 });
+    expect((await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).ui).toMatchObject({ pianoRollContentId: null });
+  });
+
+  it('generates nothing in the openDyne scheme and does not mark the project as changed', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({
+      editingScheme: 'openDyne',
+      dirty: false,
+      clips: [{ bind: 'clip', trackId: 0, startTimelineSec: 0, durationSec: 6, analysis: 'running' }],
+    });
+    // The clip is selected while its analysis runs, so selecting it generated nothing; the analysis finishes
+    // afterwards, which leaves a selected clip whose notes were never generated (the case in which selecting it
+    // would generate them).
+    await ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+    mock.setAnalysis(ids['clip.contentId'] ?? '', 'ready');
+    mock.given({ dirty: false });
+    const before = mock.snapshot();
+    expect(before.contents[0]?.notes).toHaveLength(0);
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({ dirty: { before: false, after: false }, revisionDiff: { contents: [] } });
+    expect(Object.keys(opened.sideEffects as object)).toEqual(['workspaceSwitched']);
+    expect(codes(opened)).toEqual([]);
+    expect(mock.snapshot()).toEqual(before);
+  });
+
+  it('keeps a dirty project dirty and a clean one clean', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: true });
+    expect(await ok('ui.setWorkspace', { workspace: 'pianoRoll' })).toMatchObject({
+      dirty: { before: true, after: true },
+    });
+    mock.given({ dirty: false });
+    expect(await ok('ui.setWorkspace', { workspace: 'arrangement' })).toMatchObject({
+      dirty: { before: false, after: false },
+    });
+  });
+
+  it.each([
+    [{ pointerDown: true }, 'pointer_down'],
+    [{ modalOpen: true }, 'modal_open'],
+    [{ importInProgress: true }, 'import_in_progress'],
+    [{ projectOperation: true }, 'project_operation'],
+  ] as const)('is refused with BUSY while the UI is busy (%j) and changes nothing', async (busy, reason) => {
+    const session = await sessions.open();
+    const { mock, fails } = session;
+    mock.given({ clips: [clip()] });
+    mock.setBusy(busy);
+    const error = await fails('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(error).toMatchObject({
+      message: 'BUSY',
+      data: { kind: 'BUSY', reason, retryable: true, executed: false, retryAfterMs: 1000 },
+    });
+    mock.setBusy({ pointerDown: false, modalOpen: false, importInProgress: false, projectOperation: false });
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+  });
+
+  it('is refused while a dialog is open, and while an export holds the export lock', async () => {
+    const dialog = await sessions.open();
+    dialog.mock.given({ dialogs: [{ kind: 'message' }] });
+    expect((await dialog.fails('ui.setWorkspace', { workspace: 'pianoRoll' })).data).toMatchObject({
+      kind: 'BUSY',
+      reason: 'modal_open',
+      executed: false,
+    });
+    // Unlike ui.dismiss, nothing about a dialog lets the switch through; closing the dialog does.
+    await dialog.ok('ui.dismiss', { target: 'dialogs' });
+    expect(await dialog.ok('ui.setWorkspace', { workspace: 'pianoRoll' })).toMatchObject({ noOp: false });
+
+    const exporting = await sessions.open();
+    exporting.mock.given({
+      clips: [clip()],
+      jobs: [{ bind: 'export', kind: 'export', state: 'running', cancellable: true }],
+    });
+    expect((await exporting.fails('ui.setWorkspace', { workspace: 'pianoRoll' })).data).toMatchObject({
+      kind: 'BUSY',
+      reason: 'export_in_progress',
+      executed: false,
+    });
+    expect(await state(exporting)).toMatchObject({ workspace: 'arrangement' });
+  });
+
+  it('refuses a missing, unknown or additional member as invalid params', async () => {
+    const session = await sessions.open();
+    const { mock, fails } = session;
+    mock.given({ clips: [clip()] });
+    for (const params of [
+      {},
+      { workspace: 'mixer' },
+      { workspace: 'piano_roll' },
+      { workspace: 1 },
+      { workspace: 'pianoRoll', dryRun: true },
+    ]) {
+      expect((await fails('ui.setWorkspace', params)).data, JSON.stringify(params)).toMatchObject({
+        kind: 'INVALID_ARGUMENT',
+        reason: 'invalid_params',
+        executed: false,
+      });
+    }
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+  });
+
+  it('is capability_missing on an instance without ui.workspace, which still has the rest of the UI bridge', async () => {
+    const session = await sessions.open();
+    const { mock, ok, fails } = session;
+    mock.given({ clips: [clip()], withoutCapabilities: ['ui.workspace'] });
+    expect(mock.capabilities).not.toContain('ui.workspace');
+    expect((await fails('ui.setWorkspace', { workspace: 'pianoRoll' })).data).toMatchObject({
+      kind: 'UNSUPPORTED',
+      reason: 'capability_missing',
+    });
+    expect(await ok('ui.getState')).toHaveProperty('ui');
+    expect(await ok('ui.dismiss', { target: 'dialogs' })).toMatchObject({ noOp: true });
+  });
+});
+
+describe('the tempo field when the window switches view', () => {
+  const warningCodes = (result: Record<string, unknown>) => (result.warnings as { code: string }[]).map((w) => w.code);
+
+  /** Whether the project tempo is now `bpm`: asking for the tempo it has changes nothing. */
+  async function tempoIs(session: TestSession, bpm: number): Promise<boolean> {
+    const result = await session.ok('transport.setTempo', { bpm });
+    return result.noOp === true;
+  }
+
+  it('rounds a tempo with two decimals when ui.setWorkspace switches, and reports it as setTempo does', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: false });
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({
+      applied: true,
+      noOp: false,
+      changes: [
+        { entity: 'ui', ref: { singleton: 'workspace' } },
+        {
+          entity: 'tempo',
+          ref: { singleton: 'tempo' },
+          fields: { bpm: { before: 120.27, after: 120.3, unit: 'bpm' } },
+        },
+      ],
+      revisionDiff: { arrangement: null, trackState: null, contents: [] },
+      // The undo descriptor describes the switch alone; the tempo has its recipe in the side effect.
+      undo: { undoable: false, reason: 'not_persisted_state', revert: { method: 'ui.setWorkspace' } },
+      sideEffects: {
+        workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null },
+        tempoRounded: {
+          fromBpm: 120.27,
+          toBpm: 120.3,
+          revert: { method: 'transport.setTempo', params: { bpm: 120.27 } },
+        },
+      },
+      warnings: [],
+    });
+    expect(await tempoIs(session, 120.3)).toBe(true);
+  });
+
+  it('establishes the keyboard focus in the tempo field, which the mock always has, and rounds as before', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    expect(mock.given({ dirty: false, keyboardFocus: 'tempoField' })).toEqual({});
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(field(opened, 'sideEffects', 'tempoRounded')).toMatchObject({ fromBpm: 120.27, toBpm: 120.3 });
+  });
+
+  it('keeps the time signature, and marks a clean project as changed', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    // The tempo is set with transport.setTempo, which marks the project; clear the mark to see the switch's own.
+    await ok('transport.setTempo', { bpm: 99.04, timeSignature: { numerator: 3, denominator: 4 } });
+    mock.given({ dirty: false });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({ dirty: { before: false, after: true } });
+    expect(opened.changes as unknown[]).toHaveLength(2);
+    const sameTime = await ok('transport.setTempo', { bpm: 99, timeSignature: { numerator: 3, denominator: 4 } });
+    expect(sameTime).toMatchObject({ noOp: true, tempo: { bpm: 99, timeSignature: { numerator: 3, denominator: 4 } } });
+  });
+
+  it('sends a revert recipe that sets the previous tempo back', async () => {
+    const session = await sessions.open();
+    const { ok } = session;
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    const recipe = field(opened, 'sideEffects', 'tempoRounded', 'revert') as Revert;
+    const restored = await ok(recipe.method, recipe.params);
+    expect(restored).toMatchObject({
+      changes: [{ entity: 'tempo', fields: { bpm: { before: 120.3, after: 120.27 } } }],
+      tempo: { bpm: 120.27 },
+    });
+  });
+
+  it.each([120, 133.5, 120.3, 99.9])('leaves a tempo with at most one decimal (%d) as it is', async (bpm) => {
+    const session = await sessions.open();
+    const { ok } = session;
+    await ok('transport.setTempo', { bpm });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened.sideEffects).toEqual({
+      workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null },
+    });
+    expect(opened.changes as unknown[]).toHaveLength(1);
+    expect(await tempoIs(session, bpm)).toBe(true);
+  });
+
+  it('rounds the tempo at every switch, in both directions, and not otherwise', async () => {
+    const session = await sessions.open();
+    const { ok } = session;
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const toRoll = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(field(toRoll, 'sideEffects', 'tempoRounded')).toMatchObject({ fromBpm: 120.27, toBpm: 120.3 });
+    // The tempo has one decimal now: the way back finds nothing to round, and the project is left as it was.
+    const back = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(back.sideEffects).toEqual({ workspaceSwitched: { from: 'pianoRoll', to: 'arrangement', revert: null } });
+    expect(back.changes as unknown[]).toHaveLength(1);
+    // A tempo with two decimals set while the piano roll is shown is rounded by the switch back.
+    await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    await ok('transport.setTempo', { bpm: 99.04 });
+    const rounded = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(rounded).toMatchObject({
+      sideEffects: {
+        workspaceSwitched: { from: 'pianoRoll', to: 'arrangement' },
+        tempoRounded: { fromBpm: 99.04, toBpm: 99 },
+      },
+      dirty: { after: true },
+    });
+    expect(await tempoIs(session, 99)).toBe(true);
+  });
+
+  it('leaves dirty as it was when the tempo has one decimal', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    await ok('transport.setTempo', { bpm: 120.3 });
+    mock.given({ dirty: false });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened).toMatchObject({ dirty: { before: false, after: false } });
+    expect(opened.sideEffects).toEqual({ workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null } });
+  });
+
+  it('does not count floating-point noise as a rounding', async () => {
+    // 120.30000000000001 is not the same double as 120.3, yet the tempo field shows 120.3 and writes back the same number.
+    const noisy = 120.30000000000001;
+    expect(noisy).not.toBe(120.3);
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    await ok('transport.setTempo', { bpm: noisy });
+    mock.given({ dirty: false });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened.sideEffects).toEqual({ workspaceSwitched: { from: 'arrangement', to: 'pianoRoll', revert: null } });
+    expect(opened.changes as unknown[]).toHaveLength(1);
+    expect(opened).toMatchObject({ dirty: { before: false, after: false } });
+    expect(warningCodes(opened)).toEqual([]);
+    // The tempo is untouched: asking for it again changes nothing.
+    expect(await tempoIs(session, noisy)).toBe(true);
+    // The same holds when the switch is made by ui.setSelection with openEditor, and for a dry run.
+    await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    const placementId = ids['clip.placementId'];
+    const dry = await ok('ui.setSelection', { placementId, openEditor: true, dryRun: true });
+    expect(Object.keys(dry.sideEffects as object)).not.toContain('tempoRounded');
+    expect(dry.changes as unknown[]).toHaveLength(1);
+    const real = await ok('ui.setSelection', { placementId, openEditor: true });
+    expect(Object.keys(real.sideEffects as object)).not.toContain('tempoRounded');
+    expect((real.changes as { entity: string }[]).map((c) => c.entity)).toEqual(['selection']);
+    expect(await tempoIs(session, noisy)).toBe(true);
+    // A tempo that differs by more than the noise is still rounded: 120.3000001 shows as 120.3.
+    await ok('transport.setTempo', { bpm: 120.3000001 });
+    const back = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(field(back, 'sideEffects', 'tempoRounded')).toMatchObject({ fromBpm: 120.3000001, toBpm: 120.3 });
+  });
+
+  it('does nothing to the tempo when the window already shows the view asked for', async () => {
+    const session = await sessions.open();
+    const { ok } = session;
+    await ok('transport.setTempo', { bpm: 120.27 });
+    const same = await ok('ui.setWorkspace', { workspace: 'arrangement' });
+    expect(same).toMatchObject({ noOp: true, changes: [], sideEffects: {} });
+    expect(await tempoIs(session, 120.27)).toBe(true);
+  });
+
+  it('rounds the tempo when ui.setSelection really switches the view, and only then', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    await ok('transport.setTempo', { bpm: 120.27 });
+    // Selecting without openEditor switches nothing.
+    const selected = await ok('ui.setSelection', { placementId: ids['clip.placementId'] });
+    expect(selected.sideEffects).toEqual({});
+    expect(await tempoIs(session, 120.27)).toBe(true);
+    const opened = await ok('ui.setSelection', { placementId: ids['clip.placementId'], openEditor: true });
+    // The clip was selected by the call before, so the selection is not listed again.
+    expect(opened).toMatchObject({
+      changes: [{ entity: 'tempo', fields: { bpm: { before: 120.27, after: 120.3, unit: 'bpm' } } }],
+      sideEffects: {
+        workspaceSwitched: { from: 'arrangement', to: 'pianoRoll' },
+        tempoRounded: { fromBpm: 120.27, toBpm: 120.3, revert: { method: 'transport.setTempo' } },
+      },
+      dirty: { after: true },
+    });
+    expect(await tempoIs(session, 120.3)).toBe(true);
+    // The piano roll is shown now: opening the clip again switches nothing, so the tempo is not touched again.
+    await ok('transport.setTempo', { bpm: 88.88 });
+    const again = await ok('ui.setSelection', { placementId: ids['clip.placementId'], openEditor: true });
+    expect(again.sideEffects).toEqual({});
+    expect(await tempoIs(session, 88.88)).toBe(true);
+  });
+
+  it('predicts the rounding in a dry run and changes nothing', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ dirty: false, clips: [clip()] });
+    await ok('transport.setTempo', { bpm: 120.27 });
+    mock.given({ dirty: false });
+    const predicted = await ok('ui.setSelection', {
+      placementId: ids['clip.placementId'],
+      openEditor: true,
+      dryRun: true,
+    });
+    expect(predicted).toMatchObject({
+      applied: false,
+      dryRun: true,
+      changes: [{ entity: 'selection' }, { entity: 'tempo' }],
+      sideEffects: { tempoRounded: { fromBpm: 120.27, toBpm: 120.3 } },
+      dirty: { before: false, after: false },
+    });
+    expect(await tempoIs(session, 120.27)).toBe(true);
+    expect(await state(session)).toMatchObject({ workspace: 'arrangement' });
+  });
+
+  it('gives no revert recipe, and warns IRREVERSIBLE, on an instance without transport.v1', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    await ok('transport.setTempo', { bpm: 120.27 });
+    mock.given({ withoutCapabilities: ['transport.v1'] });
+    const opened = await ok('ui.setWorkspace', { workspace: 'pianoRoll' });
+    expect(opened.sideEffects).toMatchObject({ tempoRounded: { fromBpm: 120.27, toBpm: 120.3, revert: null } });
+    expect(warningCodes(opened)).toEqual(['IRREVERSIBLE']);
   });
 });
 
@@ -207,6 +697,164 @@ describe('ui.dismiss', () => {
     mock.given({ onboarding: 'showing', withoutCapabilities: ['ui.onboardingClose'] });
     expect((await fails('ui.dismiss', { target: 'onboarding' })).data).toMatchObject({ reason: 'capability_missing' });
     expect((await ok('ui.getState')).onboarding).toEqual({ shown: false, showing: true });
+  });
+
+  it('closes an overlay that has shown its choice as a change of the view only', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ dirty: false, onboarding: 'notShown' });
+    // OpenTune marks onboarding as shown once the overlay shows its choice.
+    mock.showOnboarding(true);
+    expect((await ok('ui.getState')).onboarding).toEqual({ shown: true, showing: true });
+    const closed = await ok('ui.dismiss', { target: 'onboarding' });
+    expect(closed).toMatchObject({
+      applied: true,
+      noOp: false,
+      changes: [],
+      warnings: [],
+      undo: { undoable: false, reason: 'not_persisted_state', revert: null },
+      dirty: { before: false, after: false },
+    });
+    expect((await ok('ui.getState')).onboarding).toEqual({ shown: true, showing: false });
+    // Closed and shown before: a no-op.
+    expect(await ok('ui.dismiss', { target: 'onboarding' })).toMatchObject({ noOp: true });
+
+    // An overlay that has not shown its choice yet: closing it marks onboarding as shown, which no request resets.
+    mock.given({ onboarding: 'notShown' });
+    mock.showOnboarding(false);
+    const marked = await ok('ui.dismiss', { target: 'onboarding' });
+    expect(marked).toMatchObject({
+      changes: [{ entity: 'preference', fields: { onboardingShown: { before: false, after: true } } }],
+      undo: { reason: 'no_upstream_undo', revert: null },
+    });
+    expect((marked.warnings as { code: string }[]).map((w) => w.code)).toEqual(['IRREVERSIBLE']);
+  });
+});
+
+describe('showOnboarding', () => {
+  it('without the choice clears the first-run flag, since the overlay has not marked onboarding as shown', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ onboarding: 'shown' });
+    expect((await ok('ui.getState')).onboarding).toEqual({ shown: true, showing: false });
+    mock.showOnboarding(false);
+    expect((await ok('ui.getState')).onboarding).toEqual({ shown: false, showing: true });
+    expect((await ok('prefs.get')).onboardingShown).toBe(false);
+  });
+});
+
+describe('a window-less run (no editor window)', () => {
+  // The twelve methods that act through the editor window (PROTOCOL.md section 7 rule 6; NO_EDITOR_METHODS of the mock).
+  const NO_EDITOR_METHODS = [
+    'ui.getState',
+    'ui.dismiss',
+    'ui.setSelection',
+    'ui.setWorkspace',
+    'track.add',
+    'track.duplicate',
+    'track.delete',
+    'project.save',
+    'project.saveAs',
+    'project.saveCopy',
+    'project.open',
+    'audio.set',
+  ] as const;
+  const projectFile = path.join(os.tmpdir(), 'ot-no-editor', 'song.otproj');
+  const copyFile = path.join(os.tmpdir(), 'ot-no-editor', 'song-copy.otproj');
+
+  /** Valid params for every method of the rule, so that only the missing window can make a call fail. */
+  const paramsFor = (
+    ids: Record<string, string>,
+    arrangementRevision: string,
+  ): Record<string, Record<string, unknown>> => ({
+    'ui.getState': {},
+    'ui.dismiss': { target: 'dialogs' },
+    'ui.setSelection': { placementId: ids['a.placementId'] },
+    'ui.setWorkspace': { workspace: 'pianoRoll' },
+    'track.add': {},
+    'track.duplicate': { trackId: 1, mode: 'clone' },
+    'track.delete': { trackId: 1, expectedArrangementRevision: arrangementRevision, confirm: true },
+    'project.save': {},
+    'project.saveAs': { path: projectFile },
+    'project.saveCopy': { path: copyFile },
+    'project.open': { path: projectFile },
+    'audio.set': { bufferSizeFrame: 256 },
+  });
+
+  /** What a call could change: the data of the mock, the state of the interface, the audio setup and the project. */
+  async function observed(session: TestSession) {
+    const { mock, ok } = session;
+    return {
+      data: mock.snapshot(),
+      audio: await ok('audio.get'),
+      project: await ok('project.get'),
+    };
+  }
+
+  it('lists exactly the methods that the specification names, and gives each one valid params', async () => {
+    const session = await sessions.open();
+    const ids = session.mock.given({ clips: [clip({ bind: 'a', trackId: 1 })] });
+    const arrangementRevision = field(await session.ok('project.get'), 'asOf', 'arrangementRevision') as string;
+    const params = paramsFor(ids, arrangementRevision);
+    expect(Object.keys(params).sort()).toEqual([...NO_EDITOR_METHODS].sort());
+    for (const method of NO_EDITOR_METHODS) {
+      expect(otcpSpec().validate(`methods/${method}.schema.json#/$defs/params`, params[method]), method).toEqual([]);
+    }
+  });
+
+  it.each(NO_EDITOR_METHODS)('refuses %s with UNSUPPORTED(no_editor_window) and changes nothing', async (method) => {
+    const session = await sessions.open();
+    const { mock, ok, fails } = session;
+    const ids = mock.given({
+      dirty: false,
+      visibleTrackCount: 3,
+      clips: [clip({ bind: 'a', trackId: 1 })],
+      dialogs: [{ kind: 'message' }],
+      audio: { running: true },
+    });
+    const arrangementRevision = field(await ok('project.get'), 'asOf', 'arrangementRevision') as string;
+    const params = paramsFor(ids, arrangementRevision)[method] ?? {};
+    const interfaceBefore = await state(session);
+    const before = await observed(session);
+
+    mock.setNoEditor(true);
+    expect(await fails(method, params)).toMatchObject({
+      data: { kind: 'UNSUPPORTED', reason: 'no_editor_window', executed: false },
+    });
+    // The refusal changed nothing, in the data of the mock or in what the methods that still work report.
+    expect(await observed(session)).toEqual(before);
+    mock.setNoEditor(false);
+    expect(await state(session)).toEqual(interfaceBefore);
+  });
+
+  it('lets a method that works without the editor window run, track.set among them, and the preferences answer', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ visibleTrackCount: 2, clips: [clip({ bind: 'a', trackId: 0 })] });
+    const muted = async () => (field(await ok('project.get'), 'tracks') as { muted: boolean }[])[0]?.muted;
+    expect(await muted()).toBe(false);
+    mock.setNoEditor(true);
+    // The rule names track.set as one of the methods that work without a window; it is not in the list of refusals.
+    expect(NO_EDITOR_METHODS).not.toContain('track.set');
+    expect(await ok('prefs.get')).toHaveProperty('onboardingShown');
+    expect(await ok('track.set', { tracks: [{ trackId: 0, muted: true }] })).toMatchObject({
+      applied: true,
+      noOp: false,
+    });
+    expect(await muted()).toBe(true);
+  });
+
+  it('works again with an editor window: the same selection that was refused is applied', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ clips: [clip({ bind: 'a', trackId: 1 })] });
+    mock.setNoEditor(true);
+    expect(await session.fails('ui.setSelection', { placementId: ids['a.placementId'] })).toMatchObject({
+      data: { reason: 'no_editor_window' },
+    });
+    mock.setNoEditor(false);
+    await ok('ui.setSelection', { placementId: ids['a.placementId'] });
+    expect(await state(session)).toMatchObject({ selectedPlacementIds: [ids['a.placementId']] });
   });
 });
 
