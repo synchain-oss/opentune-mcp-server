@@ -89,6 +89,6 @@ lint · 格式检查 · 类型检查 · 单测与覆盖率 · 构建 · 协议�
 
 - 版本号真源是 `package.json`;遵循 SemVer;`CHANGELOG.md` 采用 Keep a Changelog 格式。
 - `dev` → `prod` 经维护者审核批准。在 `prod` 上推 `vX.Y.Z` tag 触发 `release.yml`:先由 gate job 跑全套 CI → 再由 build job 校验 tag 与 `package.json` 一致且位于 `prod` → bundle、`npm pack`、sha256、MCPB 包、插件与 skills zip → 草稿 Release;转正与 npm 发布目前由维护者按 `docs/RELEASE.md` 手工进行(规划中:从 0.2.0 起由 CI 经 OIDC 发布并生成 `server.json`)。
-- 首个 npm 版本由维护者在本地发布 CI 构建、核对过 sha256 的 tarball(npm 无法经 OIDC 创建新包);从 0.2.0 起(规划中)经 CI 的 npm trusted publishing 发布;在此之前按 `docs/RELEASE.md` 手工发布。
+- 首个 npm 版本由维护者在本地发布 CI 构建、核对过 sha256 的 tarball(npm 无法经 OIDC 创建新包);之后的版本目前也按 `docs/RELEASE.md` 手工发布;改由 CI 经 npm trusted publishing 发布还在规划中。
 - OTCP 规范单独打 `spec-vMAJOR.MINOR.PATCH` tag(预发布为 `-rc.N`),与服务的版本号相互独立。
 - MCP Registry 等目录:等 OpenTune 官方发布版内置控制接口之后再上架。
