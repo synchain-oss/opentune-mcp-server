@@ -242,6 +242,7 @@ OpenTune Standalone with the control API  (synchain-oss/OpenTune, AGPL-3.0)
 ## Documentation
 
 - [docs/install.md](docs/install.md): setup for MCP clients, including the MCPB package
+- [docs/features.md](docs/features.md) ([中文](docs/features.zh-CN.md)): what an agent can do with OpenTune, by purpose, with the tool behind each item, what can be undone, the companion skills and the known limits
 - [docs/reference.md](docs/reference.md): tool reference, generated from the server
 - [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md): which OpenTune versions, test builds and protocol versions work together, which capabilities each tool needs, and how long operations take
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) ([中文](docs/TROUBLESHOOTING.zh-CN.md)): errors, states and doctor checks, with fixes
