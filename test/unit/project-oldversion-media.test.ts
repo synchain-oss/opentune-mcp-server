@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { startMock } from '../../mock/server.js';
 import {
   MAX_MEDIA_NAMED,
+  MEDIA_COPY_BUDGET_MS,
   ProjectFolders,
   copyMediaToOldVersions,
   nodeProjectFs,
@@ -68,12 +69,12 @@ const denied = (): Promise<never> => Promise.reject(Object.assign(new Error('den
 const full = (): Promise<never> => Promise.reject(Object.assign(new Error('full'), { code: 'ENOSPC' }));
 const isMedia = (file: string): boolean => path.basename(path.dirname(file)) === 'Project_Media';
 
-async function setup(files?: ProjectFs) {
+async function setup(files?: ProjectFs, now: number | (() => number) = NOW) {
   const t = tempDir();
   cleanup.push(t.remove);
   const mock = await startMock({ discoveryDir: t.dir });
   cleanup.push(() => mock.stop());
-  const ctx = testContext(t.dir, { now: NOW, ...(files === undefined ? {} : { files }) });
+  const ctx = testContext(t.dir, { now, ...(files === undefined ? {} : { files }) });
   cleanup.push(() => {
     ctx.instances.close();
   });
@@ -123,7 +124,7 @@ function put(dir: string, files: Record<string, string>, mtime?: Date) {
   }
 }
 
-const NOTHING = { copied: 0, notCopied: [], notCopiedCount: 0 };
+const NOTHING = { copied: 0, notCopied: [], notCopiedCount: 0, timedOut: false };
 
 describe('the audio is copied beside the old version', () => {
   it('copies the files of Project_Media next to the project file into <name>.oldversion/Project_Media', async () => {
@@ -133,7 +134,7 @@ describe('the audio is copied beside the old version', () => {
     expect(names(s.oldMediaDir)).toEqual(['1.wav', '2.mp3']);
     expect(read(path.join(s.oldMediaDir, '1.wav'))).toBe('audio one');
     expect(read(path.join(s.oldMediaDir, '2.mp3'))).toBe('audio two');
-    expect(media(result)).toEqual({ copied: 2, notCopied: [], notCopiedCount: 0 });
+    expect(media(result)).toEqual({ copied: 2, notCopied: [], notCopiedCount: 0, timedOut: false });
     // Said once, as data; a copy that worked adds nothing to the summary and no warning.
     expect(mediaWarnings(result)).toEqual([]);
     expect(result.summary).not.toMatch(/could not be copied/);
@@ -186,7 +187,7 @@ describe('the audio is copied beside the old version', () => {
     put(s.mediaDir, { '1.wav': 'new source' });
     const result = body(await save(s.ctx));
     expect(read(path.join(s.oldMediaDir, '1.wav'))).toBe('new source');
-    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0 });
+    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0, timedOut: false });
     expect(calls.filter((c) => c.op === 'copyReplace')).toHaveLength(1);
     expect(names(s.oldMediaDir)).toEqual(['1.wav']);
     // Nothing was deleted to make room.
@@ -208,7 +209,7 @@ describe('the audio is copied beside the old version', () => {
     put(path.join(s.mediaDir, 'sub'), { 'inner.wav': 'inside a sub-folder' });
     const result = body(await save(s.ctx));
     expect(names(s.oldMediaDir)).toEqual(['1.wav']);
-    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0 });
+    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0, timedOut: false });
     // Not even looked at: no stat, no copy, and the sub-folder is not listed.
     const touched = calls.flatMap((c) => c.args).filter((a) => /(\/|\\)(link\.wav|sub)(\/|\\|$)/.test(a));
     expect(touched).toEqual([]);
@@ -236,6 +237,7 @@ describe('the audio is copied beside the old version', () => {
       copied: 1,
       notCopied: ['Project_Media/1.wav', 'Project_Media/3.wav'],
       notCopiedCount: 2,
+      timedOut: false,
     });
     expect(mediaWarnings(result)).toHaveLength(1);
   });
@@ -274,14 +276,14 @@ describe('the audio is copied beside the old version', () => {
     // No new copy of the project file, and the audio that was missing is there now.
     expect(calls.filter((c) => c.op === 'copyNew' && !isMedia(c.args[0] ?? ''))).toEqual([]);
     expect(names(s.oldMediaDir)).toEqual(['1.wav', '2.wav']);
-    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0 });
+    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0, timedOut: false });
   });
 
   it('is part of the result of a save that has not finished within the call', async () => {
     const s = await setup();
     put(s.mediaDir, { '1.wav': 'audio' });
     const started = body(await saveProject(s.ctx, { mode: 'save', wait_seconds: 0 }));
-    expect(media(started)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0 });
+    expect(media(started)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0, timedOut: false });
     expect(names(s.oldMediaDir)).toEqual(['1.wav']);
   });
 
@@ -301,7 +303,7 @@ describe('the audio is copied beside the old version', () => {
     const s = await setup();
     put(s.mediaDir, { '1.wav': 'audio' });
     const result = body(await saveProject(s.ctx, { mode: 'save_as', path: s.proj, ...wait }));
-    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0 });
+    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0, timedOut: false });
     expect(names(s.oldMediaDir)).toEqual(['1.wav']);
   });
 });
@@ -313,7 +315,7 @@ describe('the audio of the file that opentune_save_project_overwrite replaces', 
     put(s.mediaDir, { 'project-audio.wav': 'audio of the project' });
     put(s.otherMediaDir, { 'replaced-audio.wav': 'audio of the replaced file' });
     const result = body(await overwriteProject(s.ctx, { path: s.other, confirm: true, ...wait }));
-    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0 });
+    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0, timedOut: false });
     expect(names(s.otherOldMediaDir)).toEqual(['replaced-audio.wav']);
     expect(read(path.join(s.otherOldMediaDir, 'replaced-audio.wav'))).toBe('audio of the replaced file');
     // Nothing of the project's own audio or old versions was touched.
@@ -369,19 +371,26 @@ describe('a failure to copy the audio does not stop the save', () => {
     expect(names(s.oldMediaDir)).toEqual(['1.wav']);
     expect(calls.filter((c) => c.op === 'remove').map((c) => c.args[0])).toEqual([path.join(s.oldMediaDir, '2.wav')]);
     // The result says which file it was, as data, and the summary says only that some audio was not copied.
-    expect(media(result)).toEqual({ copied: 1, notCopied: ['Project_Media/2.wav'], notCopiedCount: 1 });
+    expect(media(result)).toEqual({
+      copied: 1,
+      notCopied: ['Project_Media/2.wav'],
+      notCopiedCount: 1,
+      timedOut: false,
+    });
     expect(mediaWarnings(result)).toEqual([
       expect.objectContaining({
         kind: 'warning',
         source: 'server',
         subject: null,
-        data: { notCopied: ['Project_Media/2.wav'], notCopiedCount: 1 },
+        data: { notCopied: ['Project_Media/2.wav'], notCopiedCount: 1, timedOut: false },
         text: expect.stringContaining('may not find its audio') as unknown,
       }),
     ]);
     expect(result.summary).toContain('could not be copied completely into the Project_Media folder');
     expect(result.summary).toContain('oldVersion.media.notCopied');
     expect(result.summary).not.toContain('2.wav');
+    // A failure is not the end of the time: that sentence is not there.
+    expect(result.summary).not.toContain('stopped after');
     expect(result.summary).toMatch(/^opentune_save_project: saved the project to its file/);
     // The warnings of OpenTune stay where they were.
     expect(warningLines(result).some((l) => l.code === 'NOT_SAVED_IN_PROJECT')).toBe(true);
@@ -406,7 +415,7 @@ describe('a failure to copy the audio does not stop the save', () => {
     // The project is changed again so that this save has something to do; the old version is made again.
     fs.writeFileSync(s.proj, 'changed');
     const second = body(await save(s.ctx));
-    expect(media(second)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0 });
+    expect(media(second)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0, timedOut: false });
     expect(read(path.join(s.oldMediaDir, '1.wav'))).toBe('audio one');
   });
 
@@ -418,7 +427,12 @@ describe('a failure to copy the audio does not stop the save', () => {
     const result = body(await save(s.ctx));
     expect(result.applied).toBe(true);
     expect(read(path.join(s.oldMediaDir, '1.wav'))).toBe('older copy');
-    expect(media(result)).toEqual({ copied: 0, notCopied: ['Project_Media/1.wav'], notCopiedCount: 1 });
+    expect(media(result)).toEqual({
+      copied: 0,
+      notCopied: ['Project_Media/1.wav'],
+      notCopiedCount: 1,
+      timedOut: false,
+    });
   });
 
   it('reports the folder when the audio cannot be listed, or its folder cannot be made', async () => {
@@ -434,7 +448,12 @@ describe('a failure to copy the audio does not stop the save', () => {
       const original = fs.readFileSync(s.proj);
       const result = body(await save(s.ctx));
       expect(result.applied, fault).toBe(true);
-      expect(media(result), fault).toEqual({ copied: 0, notCopied: ['Project_Media'], notCopiedCount: 1 });
+      expect(media(result), fault).toEqual({
+        copied: 0,
+        notCopied: ['Project_Media'],
+        notCopiedCount: 1,
+        timedOut: false,
+      });
       expect(mediaWarnings(result), fault).toHaveLength(1);
       expect(fs.readFileSync(path.join(s.oldDir, `${s.stem}-${STAMP}.otproj`)).equals(original), fault).toBe(true);
     }
@@ -448,7 +467,12 @@ describe('a failure to copy the audio does not stop the save', () => {
     put(s.mediaDir, { '1.wav': 'audio' });
     const result = body(await save(s.ctx));
     expect(result.oldVersion).toMatchObject({ reused: true });
-    expect(media(result)).toEqual({ copied: 0, notCopied: ['Project_Media/1.wav'], notCopiedCount: 1 });
+    expect(media(result)).toEqual({
+      copied: 0,
+      notCopied: ['Project_Media/1.wav'],
+      notCopiedCount: 1,
+      timedOut: false,
+    });
     expect(mediaWarnings(result)).toHaveLength(1);
   });
 
@@ -457,7 +481,12 @@ describe('a failure to copy the audio does not stop the save', () => {
     const s = await setup(ops);
     put(s.mediaDir, { '1.wav': 'audio' });
     const started = body(await saveProject(s.ctx, { mode: 'save', wait_seconds: 0 }));
-    expect(media(started)).toEqual({ copied: 0, notCopied: ['Project_Media/1.wav'], notCopiedCount: 1 });
+    expect(media(started)).toEqual({
+      copied: 0,
+      notCopied: ['Project_Media/1.wav'],
+      notCopiedCount: 1,
+      timedOut: false,
+    });
     expect(mediaWarnings(started)).toHaveLength(1);
     expect(started.summary).toContain('could not be copied completely');
   });
@@ -469,7 +498,12 @@ describe('a failure to copy the audio does not stop the save', () => {
     const result = body(await overwriteProject(s.ctx, { path: s.other, confirm: true, ...wait }));
     expect(result.applied).toBe(true);
     expect(result.summary).toMatch(/^opentune_save_project_overwrite: OVERWROTE another existing project file/);
-    expect(media(result)).toEqual({ copied: 0, notCopied: ['Project_Media/1.wav'], notCopiedCount: 1 });
+    expect(media(result)).toEqual({
+      copied: 0,
+      notCopied: ['Project_Media/1.wav'],
+      notCopiedCount: 1,
+      timedOut: false,
+    });
     expect(mediaWarnings(result)).toHaveLength(1);
   });
 
@@ -479,7 +513,188 @@ describe('a failure to copy the audio does not stop the save', () => {
     put(s.mediaDir, { '1.wav': 'audio' });
     const result = body(await save(s.ctx));
     expect(result.applied).toBe(true);
-    expect(media(result)).toEqual({ copied: 0, notCopied: ['Project_Media/1.wav'], notCopiedCount: 1 });
+    expect(media(result)).toEqual({
+      copied: 0,
+      notCopied: ['Project_Media/1.wav'],
+      notCopiedCount: 1,
+      timedOut: false,
+    });
+  });
+});
+
+describe('the copy of the audio stops when its time is used up', () => {
+  /** A clock that the test moves by hand: no real waiting. */
+  function handClock() {
+    let time = NOW;
+    return {
+      now: () => time,
+      advance: (ms: number) => {
+        time += ms;
+      },
+    };
+  }
+
+  /** A file system on which copying the file `slowAfter` takes `taken` milliseconds on the clock. */
+  function slowCopy(
+    clock: ReturnType<typeof handClock>,
+    slowAfter: string,
+    taken: number,
+    fail: readonly string[] = [],
+  ) {
+    return recorded({
+      copyNew: (from, to) => {
+        if (!isMedia(from)) return nodeProjectFs.copyNew(from, to);
+        if (fail.includes(path.basename(from))) return denied();
+        return nodeProjectFs.copyNew(from, to).then(() => {
+          if (path.basename(from) === slowAfter) clock.advance(taken);
+        });
+      },
+    });
+  }
+
+  const FIVE = { 'a.wav': 'a', 'b.wav': 'b', 'c.wav': 'c', 'd.wav': 'd', 'e.wav': 'e' };
+
+  it('copies the files up to the one that used the time up, lists the rest, and saves as usual', async () => {
+    const clock = handClock();
+    const { ops, calls } = slowCopy(clock, 'b.wav', MEDIA_COPY_BUDGET_MS);
+    const s = await setup(ops, clock.now);
+    put(s.mediaDir, FIVE);
+    const original = fs.readFileSync(s.proj);
+    const result = body(await save(s.ctx));
+    // The save ran, and the old version of the project file is there.
+    expect(result.applied).toBe(true);
+    expect(result.job).toMatchObject({ state: 'succeeded' });
+    expect(fs.readFileSync(path.join(s.oldDir, `${s.stem}-${STAMP}.otproj`)).equals(original)).toBe(true);
+    expect(s.mock.snapshot().dirty).toBe(false);
+    // The first two were copied; the other three were not even tried, and nothing was deleted.
+    expect(names(s.oldMediaDir)).toEqual(['a.wav', 'b.wav']);
+    expect(
+      calls.filter((c) => c.op === 'copyNew' && isMedia(c.args[0] ?? '')).map((c) => path.basename(c.args[0] ?? '')),
+    ).toEqual(['a.wav', 'b.wav']);
+    expect(calls.filter((c) => c.op === 'remove')).toEqual([]);
+    expect(media(result)).toEqual({
+      copied: 2,
+      notCopied: ['Project_Media/c.wav', 'Project_Media/d.wav', 'Project_Media/e.wav'],
+      notCopiedCount: 3,
+      timedOut: true,
+    });
+    // One fixed sentence for the time, none for a failure; the warning line says the same, with the files as data.
+    expect(result.summary).toContain('stopped after 15 seconds');
+    expect(result.summary).toContain('The next save that replaces this project file copies the rest.');
+    expect(result.summary).not.toContain('could not be copied completely');
+    expect(result.summary).not.toMatch(/\b[a-e]\.wav\b/);
+    expect(mediaWarnings(result)).toEqual([
+      expect.objectContaining({
+        kind: 'warning',
+        source: 'server',
+        subject: null,
+        data: {
+          notCopied: ['Project_Media/c.wav', 'Project_Media/d.wav', 'Project_Media/e.wav'],
+          notCopiedCount: 3,
+          timedOut: true,
+        },
+        text: expect.stringMatching(/stopped after 15 seconds.*The next save .* copies the rest\.$/) as unknown,
+      }),
+    ]);
+    expect((mediaWarnings(result)[0] as unknown as { text: string }).text).not.toContain('not copied completely');
+  });
+
+  it('copies what is left at the next save, and that save is not timed out', async () => {
+    const clock = handClock();
+    let slow = true;
+    const { ops } = recorded({
+      copyNew: (from, to) =>
+        nodeProjectFs.copyNew(from, to).then(() => {
+          if (slow && isMedia(from) && path.basename(from) === 'b.wav') clock.advance(MEDIA_COPY_BUDGET_MS);
+        }),
+    });
+    const s = await setup(ops, clock.now);
+    put(s.mediaDir, FIVE);
+    const first = body(await save(s.ctx));
+    expect(media(first)).toMatchObject({ copied: 2, notCopiedCount: 3, timedOut: true });
+    slow = false;
+    // The project is changed again so that this save has something to do; only the files that are missing are copied.
+    fs.writeFileSync(s.proj, 'changed');
+    const second = body(await save(s.ctx));
+    expect(media(second)).toEqual({ copied: 3, notCopied: [], notCopiedCount: 0, timedOut: false });
+    expect(names(s.oldMediaDir)).toEqual(['a.wav', 'b.wav', 'c.wav', 'd.wav', 'e.wav']);
+    expect(mediaWarnings(second)).toEqual([]);
+    expect(second.summary).not.toContain('stopped after');
+  });
+
+  it('does not stop before the time is used up: a copy that ends a millisecond short of the budget goes on', async () => {
+    const clock = handClock();
+    const { ops } = slowCopy(clock, 'b.wav', MEDIA_COPY_BUDGET_MS - 1);
+    const s = await setup(ops, clock.now);
+    put(s.mediaDir, FIVE);
+    const result = body(await save(s.ctx));
+    expect(media(result)).toEqual({ copied: 5, notCopied: [], notCopiedCount: 0, timedOut: false });
+    expect(mediaWarnings(result)).toEqual([]);
+  });
+
+  it('is not timed out when the time runs out after the last file: nothing is left', async () => {
+    const clock = handClock();
+    const { ops } = slowCopy(clock, 'e.wav', MEDIA_COPY_BUDGET_MS * 3);
+    const s = await setup(ops, clock.now);
+    put(s.mediaDir, FIVE);
+    const result = body(await save(s.ctx));
+    expect(media(result)).toEqual({ copied: 5, notCopied: [], notCopiedCount: 0, timedOut: false });
+    expect(mediaWarnings(result)).toEqual([]);
+  });
+
+  it('gives both sentences when a file failed and the time ran out, and lists both kinds', async () => {
+    const clock = handClock();
+    const { ops } = slowCopy(clock, 'b.wav', MEDIA_COPY_BUDGET_MS, ['a.wav']);
+    const s = await setup(ops, clock.now);
+    put(s.mediaDir, FIVE);
+    const result = body(await save(s.ctx));
+    expect(result.applied).toBe(true);
+    expect(names(s.oldMediaDir)).toEqual(['b.wav']);
+    expect(media(result)).toEqual({
+      copied: 1,
+      notCopied: ['Project_Media/a.wav', 'Project_Media/c.wav', 'Project_Media/d.wav', 'Project_Media/e.wav'],
+      notCopiedCount: 4,
+      timedOut: true,
+    });
+    expect(result.summary).toContain('could not be copied completely');
+    expect(result.summary).toContain('stopped after 15 seconds');
+    const [warning] = mediaWarnings(result) as unknown as { text: string }[];
+    expect(mediaWarnings(result)).toHaveLength(1);
+    expect(warning?.text).toContain('not copied completely');
+    expect(warning?.text).toContain('stopped after 15 seconds');
+  });
+
+  it('says nothing about the time when only a file failed', async () => {
+    const clock = handClock();
+    const { ops } = slowCopy(clock, 'none.wav', 0, ['a.wav']);
+    const s = await setup(ops, clock.now);
+    put(s.mediaDir, { 'a.wav': 'a', 'b.wav': 'b' });
+    const result = body(await save(s.ctx));
+    expect(media(result)).toEqual({
+      copied: 1,
+      notCopied: ['Project_Media/a.wav'],
+      notCopiedCount: 1,
+      timedOut: false,
+    });
+    expect(result.summary).toContain('could not be copied completely');
+    expect(result.summary).not.toContain('stopped after');
+    expect((mediaWarnings(result)[0] as unknown as { text: string }).text).not.toContain('stopped after');
+  });
+
+  it('applies to the file that opentune_save_project_overwrite replaces, too', async () => {
+    const clock = handClock();
+    const { ops } = slowCopy(clock, 'a.wav', MEDIA_COPY_BUDGET_MS);
+    const s = await setup(ops, clock.now);
+    put(s.otherMediaDir, { 'a.wav': 'a', 'b.wav': 'b' });
+    const result = body(await overwriteProject(s.ctx, { path: s.other, confirm: true, ...wait }));
+    expect(result.applied).toBe(true);
+    expect(media(result)).toEqual({
+      copied: 1,
+      notCopied: ['Project_Media/b.wav'],
+      notCopiedCount: 1,
+      timedOut: true,
+    });
+    expect(mediaWarnings(result)).toHaveLength(1);
   });
 });
 
@@ -509,18 +724,67 @@ describe('copyMediaToOldVersions', () => {
     expect(result.notCopied[0]).toBe('Project_Media/a00.wav');
   });
 
+  it('names at most MAX_MEDIA_NAMED of the files left when the time ran out, and counts all of them', async () => {
+    const t = tempDir();
+    cleanup.push(t.remove);
+    const f = folders(path.join(t.dir, 'song.otproj'));
+    const many = Object.fromEntries(
+      Array.from({ length: MAX_MEDIA_NAMED + 6 }, (_, i) => [`a${String(i).padStart(2, '0')}.wav`, 'x']),
+    );
+    put(f.mediaDir, many);
+    let time = 0;
+    // The first file takes the whole budget.
+    const { ops } = recorded({
+      copyNew: (from, to) =>
+        nodeProjectFs.copyNew(from, to).then(() => {
+          time += MEDIA_COPY_BUDGET_MS;
+        }),
+    });
+    const result = await copyMediaToOldVersions(ops, f, () => time);
+    expect(result.copied).toBe(1);
+    expect(result.timedOut).toBe(true);
+    expect(result.failedCount).toBe(0);
+    expect(result.notCopiedCount).toBe(MAX_MEDIA_NAMED + 5);
+    expect(result.notCopied).toHaveLength(MAX_MEDIA_NAMED);
+    expect(result.notCopied[0]).toBe('Project_Media/a01.wav');
+    expect(names(f.oldversionMediaDir)).toEqual(['a00.wav']);
+  });
+
+  it('counts the files that failed apart from those left, and lists the failed ones first', async () => {
+    const t = tempDir();
+    cleanup.push(t.remove);
+    const f = folders(path.join(t.dir, 'song.otproj'));
+    put(f.mediaDir, { 'a.wav': 'a', 'b.wav': 'b', 'c.wav': 'c' });
+    let time = 0;
+    const { ops } = recorded({
+      copyNew: (from, to) => {
+        if (path.basename(from) === 'a.wav') return denied();
+        return nodeProjectFs.copyNew(from, to).then(() => {
+          time += MEDIA_COPY_BUDGET_MS;
+        });
+      },
+    });
+    expect(await copyMediaToOldVersions(ops, f, () => time)).toEqual({
+      copied: 1,
+      notCopied: ['Project_Media/a.wav', 'Project_Media/c.wav'],
+      notCopiedCount: 2,
+      timedOut: true,
+      failedCount: 1,
+    });
+  });
+
   it('copies every file once, in name order, and a second call copies nothing', async () => {
     const t = tempDir();
     cleanup.push(t.remove);
     const f = folders(path.join(t.dir, 'song.otproj'));
     put(f.mediaDir, { 'b.wav': 'b', 'a.wav': 'a' });
     const { ops, calls } = recorded();
-    expect(await copyMediaToOldVersions(ops, f)).toEqual({ copied: 2, notCopied: [], notCopiedCount: 0 });
+    expect(await copyMediaToOldVersions(ops, f)).toEqual({ ...NOTHING, copied: 2, failedCount: 0 });
     expect(calls.filter((c) => c.op === 'copyNew').map((c) => path.basename(c.args[0] ?? ''))).toEqual([
       'a.wav',
       'b.wav',
     ]);
-    expect(await copyMediaToOldVersions(ops, f)).toEqual(NOTHING);
+    expect(await copyMediaToOldVersions(ops, f)).toEqual({ ...NOTHING, failedCount: 0 });
     expect(names(f.oldversionMediaDir)).toEqual(['a.wav', 'b.wav']);
   });
 
@@ -535,7 +799,7 @@ describe('copyMediaToOldVersions', () => {
     });
     put(f.oldversionMediaDir, { '1.wav': 'written by someone else' });
     const result = await copyMediaToOldVersions(ops, f);
-    expect(result).toEqual(NOTHING);
+    expect(result).toEqual({ ...NOTHING, failedCount: 0 });
     expect(read(path.join(f.oldversionMediaDir, '1.wav'))).toBe('written by someone else');
     expect(calls.filter((c) => c.op === 'remove')).toEqual([]);
   });

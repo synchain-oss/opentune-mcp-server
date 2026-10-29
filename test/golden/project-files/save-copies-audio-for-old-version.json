@@ -120,7 +120,8 @@
       "media": {
         "copied": 1,
         "notCopied": [],
-        "notCopiedCount": 0
+        "notCopiedCount": 0,
+        "timedOut": false
       },
       "removedOlder": 0,
       "couldNotRemove": 0

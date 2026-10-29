@@ -7,18 +7,19 @@
 // autosave of its own, so this tool provides one: mode autosave writes a numbered copy of the project
 // into <name>.autosave next to the project file and never touches the project file, its unsaved-changes
 // flag or the recent-projects list. Replacing the project file (mode save, save_as, the overwrite tool)
-// first copies the old content into <name>.oldversion, together with the audio the old content uses (the files of
-// the Project_Media folder next to that file, into <name>.oldversion/Project_Media, where an old version looks for
-// its audio; a failure to copy the audio does not stop the save and comes back as a warning); replacing another
-// project file and discarding unsaved changes are separate, explicit steps that need the user's consent. The file
-// system work is in src/files/project-folders.ts. File names and paths come back only as data inside the result,
-// never in the summary.
+// first copies the old content into <name>.oldversion, together with the audio next to it (all the files of the
+// Project_Media folder next to that file, which every project file of the directory shares, into
+// <name>.oldversion/Project_Media, where an old version looks for its audio; a failure to copy the audio, or the end
+// of the time given to it, does not stop the save and comes back as a warning); replacing another project file and
+// discarding unsaved changes are separate, explicit steps that need the user's consent. The file system work is in
+// src/files/project-folders.ts. File names and paths come back only as data inside the result, never in the summary.
 
 import { z } from 'zod';
 
 import { OtcpError, fromOtcpError, toolError, type NextStep } from '../errors/tool-error.js';
 import {
   AUTOSAVE_KEEP,
+  MEDIA_COPY_BUDGET_MS,
   OLDVERSION_KEEP,
   ProjectFolders,
   copyToOldVersions,
@@ -332,7 +333,7 @@ async function keepOldVersion(ctx: ToolContext, session: OtcpSession, save: Save
     };
   }
   try {
-    return { ok: true, backup: await copyToOldVersions(ops, folders, ctx.now()), folders };
+    return { ok: true, backup: await copyToOldVersions(ops, folders, ctx.now(), ctx.now), folders };
   } catch (error) {
     return {
       ok: false,
@@ -362,37 +363,69 @@ const KEPT =
  */
 const MEDIA_NOT_COPIED = 'OLD_VERSION_MEDIA_NOT_COPIED';
 
-/** The sentence of the summary for audio that was not copied. Fixed: the names are data in oldVersion.media. */
+/** The sentence of the summary for audio that failed to be copied. Fixed: the names are data in oldVersion.media. */
 const MEDIA_NOT_COPIED_SENTENCE =
   ' The audio of the replaced project could not be copied completely into the Project_Media folder inside the ' +
   'oldversion folder (listed in oldVersion.media.notCopied), so that old version may not find its audio when it is ' +
   'opened after the original audio files are gone.';
 
-/** `oldVersion.media`: how many audio files were copied, and which were not (`notCopied`, relative paths, as data). */
+/** The seconds of the time budget of the copy, as the sentences below say them. */
+const MEDIA_BUDGET_SECONDS = String(MEDIA_COPY_BUDGET_MS / 1000);
+
+/**
+ * The sentence of the summary for audio that was left when the time ran out (`oldVersion.media.timedOut`). Fixed, too.
+ * Unlike a failure, it needs no fix: the next save that replaces this project file copies the rest.
+ */
+const MEDIA_TIMED_OUT_SENTENCE =
+  ' Copying the audio of the replaced project into the Project_Media folder inside the oldversion folder stopped ' +
+  `after ${MEDIA_BUDGET_SECONDS} seconds, so that the save is not held up; the files not copied yet are listed in ` +
+  'oldVersion.media.notCopied, and that old version may not find all of its audio when it is opened after the ' +
+  'original audio files are gone. The next save that replaces this project file copies the rest.';
+
+/** `oldVersion.media`: how many audio files were copied, which were not (`notCopied`, relative paths, as data), and why. */
 const mediaMember = (media: MediaCopy): Json => ({
   copied: media.copied,
   notCopied: [...media.notCopied],
   notCopiedCount: media.notCopiedCount,
+  timedOut: media.timedOut,
 });
 
-/** The sentence about audio that was not copied, or nothing when all of it was (or there was none). */
+/**
+ * The sentences about audio that was not copied, or nothing when all of it was (or there was none): one for the files
+ * that failed, one for the files left when the time ran out, both when both happened.
+ */
 const mediaSentence = (backup: OldVersion | null): string =>
-  backup === null || backup.media.notCopiedCount === 0 ? '' : MEDIA_NOT_COPIED_SENTENCE;
+  backup === null
+    ? ''
+    : (backup.media.failedCount > 0 ? MEDIA_NOT_COPIED_SENTENCE : '') +
+      (backup.media.timedOut ? MEDIA_TIMED_OUT_SENTENCE : '');
+
+/** The text of the warning line for audio that failed to be copied. */
+const MEDIA_WARNING_FAILED =
+  'The audio of the replaced project was not copied completely into the Project_Media folder inside the oldversion ' +
+  'folder, so that old version may not find its audio when it is opened after the original audio files are gone (the ' +
+  'files are in data.notCopied).';
+/** The text of the warning line for audio that was left when the time ran out. */
+const MEDIA_WARNING_TIMED_OUT =
+  'Copying the audio of the replaced project into the Project_Media folder inside the oldversion folder stopped ' +
+  `after ${MEDIA_BUDGET_SECONDS} seconds, so that the save is not held up (the files not copied yet are in ` +
+  'data.notCopied), and that old version may not find all of its audio when it is opened after the original audio ' +
+  'files are gone. The next save that replaces this project file copies the rest.';
 
 /** The lines of a result, and the warning line about audio that was not copied when some was not. */
 function linesWithMedia(lines: unknown, backup: OldVersion | null): unknown[] {
   const own = Array.isArray(lines) ? (lines as unknown[]) : [];
   if (backup === null || backup.media.notCopiedCount === 0) return own;
+  const { media } = backup;
   const warning: Json = {
     kind: 'warning',
     code: MEDIA_NOT_COPIED,
     source: 'server',
-    text:
-      'The audio of the replaced project was not copied completely into the Project_Media folder inside the ' +
-      'oldversion folder, so that old version may not find its audio when it is opened after the original audio ' +
-      'files are gone (the files are in data.notCopied).',
+    text: [media.failedCount > 0 ? MEDIA_WARNING_FAILED : '', media.timedOut ? MEDIA_WARNING_TIMED_OUT : '']
+      .filter((part) => part !== '')
+      .join(' '),
     subject: null,
-    data: { notCopied: [...backup.media.notCopied], notCopiedCount: backup.media.notCopiedCount },
+    data: { notCopied: [...media.notCopied], notCopiedCount: media.notCopiedCount, timedOut: media.timedOut },
   };
   return [...own, warning];
 }

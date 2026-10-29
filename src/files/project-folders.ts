@@ -21,9 +21,17 @@
 // audio only in `<name>.oldversion/Project_Media`. Whenever an old version is made (or reused), the regular files
 // of the `Project_Media` folder next to the project file that is being copied are copied there, by the rules of
 // OpenTune's own copy of its audio: a file is written only when it is missing there or older than its source,
-// never deleted, never overwritten when newer, and links and sub-folders are not followed. The roll of the old
-// versions never touches that folder, so it only grows, by the audio the project has used. The only file there
-// that is ever deleted is the part of a copy that failed while this attempt wrote it.
+// never deleted, never overwritten when newer, and links and sub-folders are not followed. Which files a project
+// file uses can only be told by reading the project file, and this module does not depend on the structure of
+// OpenTune's files, so it copies the whole folder. That folder is shared by every project file in the same directory:
+// the audio of the other projects in it is copied too, and every project file has an oldversion folder of its own, so
+// the space taken grows with the number of project files in one directory (one folder per project avoids that). The
+// roll of the old versions never touches that folder, so it only grows. The only file there that is ever deleted
+// is the part of a copy that failed while this attempt wrote it.
+//
+// The copy has a time budget (MEDIA_COPY_BUDGET_MS), checked between files: when it is used up, the files that are
+// left are not copied and are reported as not copied (`timedOut`); the next save copies them, because only files that
+// are missing or older are copied.
 
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
@@ -368,15 +376,34 @@ export interface MediaCopy {
   /**
    * Paths, relative to the project file's folder and written with `/`, of the files that should have been copied and
    * were not (`Project_Media/<file name>`), or `Project_Media` itself when the folder could not be read or the
-   * folder for the copies could not be made. At most MAX_MEDIA_NAMED are listed.
+   * folder for the copies could not be made. At most MAX_MEDIA_NAMED are listed. The files that were left when the
+   * time budget ran out are among them.
    */
   readonly notCopied: readonly string[];
   /** How many things were not copied: `notCopied.length`, or more when the list was cut. */
   readonly notCopiedCount: number;
+  /**
+   * true: the time budget (MEDIA_COPY_BUDGET_MS) ran out with files left, which were not tried; the next save copies
+   * them. false: every file was tried, and those in `notCopied` failed.
+   */
+  readonly timedOut: boolean;
+  /**
+   * How many of `notCopiedCount` failed, as opposed to being left when the time ran out. Not a member of a tool
+   * result: it lets the summary say whether failures come on top of the time.
+   */
+  readonly failedCount: number;
 }
 
 /** The most files that `MediaCopy.notCopied` names. */
 export const MAX_MEDIA_NAMED = 20;
+
+/**
+ * The longest the copy of the audio of one project file into the oldversion folder runs, in milliseconds. A call of a
+ * tool lasts 45 seconds at most, and the save itself, which follows the copy, may wait up to 30 seconds for its job:
+ * that leaves 15 seconds for the copy. The time is read after each file, so a single very large file can take
+ * longer; the files that are left when the time is used up are copied by the next save.
+ */
+export const MEDIA_COPY_BUDGET_MS = 15_000;
 
 export interface OldVersion {
   /** The copy of the file that was written, or the existing one that already held the content (`reused`). */
@@ -462,13 +489,26 @@ async function copyOneMedia(ops: ProjectFs, from: string, to: string): Promise<M
  * nothing, and reports nothing, when that folder does not exist (a project that never had audio). It never deletes
  * anything, and never throws: the old version of the project file is what a save needs, and a failure here is reported in
  * the result instead (`notCopied`) and does not stop the save. The oldversion folder must exist already.
+ *
+ * The copy stops once MEDIA_COPY_BUDGET_MS have passed on `clock` (milliseconds, read after each file): the files
+ * that were not tried are reported as not copied, with `timedOut`, and the next save copies them.
  */
-export async function copyMediaToOldVersions(ops: ProjectFs, folders: ProjectFolders): Promise<MediaCopy> {
-  const result = (copied: number, failed: readonly string[]): MediaCopy => ({
-    copied,
-    notCopied: failed.slice(0, MAX_MEDIA_NAMED),
-    notCopiedCount: failed.length,
-  });
+export async function copyMediaToOldVersions(
+  ops: ProjectFs,
+  folders: ProjectFolders,
+  clock: () => number = () => Date.now(),
+): Promise<MediaCopy> {
+  const result = (copied: number, failed: readonly string[], unfinished: readonly string[] = []): MediaCopy => {
+    const notCopied = [...failed, ...unfinished];
+    return {
+      copied,
+      notCopied: notCopied.slice(0, MAX_MEDIA_NAMED),
+      notCopiedCount: notCopied.length,
+      timedOut: unfinished.length > 0,
+      failedCount: failed.length,
+    };
+  };
+  const started = clock();
   let names: string[];
   try {
     const entries = await ops.list(folders.mediaDir);
@@ -488,7 +528,7 @@ export async function copyMediaToOldVersions(ops: ProjectFs, folders: ProjectFol
   }
   let copied = 0;
   const failed: string[] = [];
-  for (const name of names) {
+  for (const [index, name] of names.entries()) {
     const step = await copyOneMedia(
       ops,
       `${folders.mediaDir}${folders.sep}${name}`,
@@ -496,6 +536,10 @@ export async function copyMediaToOldVersions(ops: ProjectFs, folders: ProjectFol
     );
     if (step === 'copied') copied += 1;
     else if (step === 'failed') failed.push(mediaLabel(name));
+    // Out of time: what is left is not tried (the next save does it). Nothing left means nothing timed out.
+    if (clock() - started >= MEDIA_COPY_BUDGET_MS) {
+      return result(copied, failed, names.slice(index + 1).map(mediaLabel));
+    }
   }
   return result(copied, failed);
 }
@@ -510,11 +554,17 @@ export async function copyMediaToOldVersions(ops: ProjectFs, folders: ProjectFol
  *
  * Once the old version exists (made now, or reused), the audio of the project file is copied next to it
  * (copyMediaToOldVersions), so that the old version still finds its audio when the original audio files are gone. That
- * is done also for a reused old version, which may have been made before this was done. It does not throw.
+ * is done also for a reused old version, which may have been made before this was done. It does not throw. `clock`
+ * times the copy of the audio (see MEDIA_COPY_BUDGET_MS).
  */
-export async function copyToOldVersions(ops: ProjectFs, folders: ProjectFolders, epochMs: number): Promise<OldVersion> {
+export async function copyToOldVersions(
+  ops: ProjectFs,
+  folders: ProjectFolders,
+  epochMs: number,
+  clock: () => number = () => Date.now(),
+): Promise<OldVersion> {
   const kept = await keepProjectFile(ops, folders, epochMs);
-  return { ...kept, media: await copyMediaToOldVersions(ops, folders) };
+  return { ...kept, media: await copyMediaToOldVersions(ops, folders, clock) };
 }
 
 async function keepProjectFile(ops: ProjectFs, folders: ProjectFolders, epochMs: number): Promise<OldVersionFile> {

@@ -54,7 +54,8 @@
           "notCopied": [
             "Project_Media/2.wav"
           ],
-          "notCopiedCount": 1
+          "notCopiedCount": 1,
+          "timedOut": false
         }
       }
     ],
@@ -135,7 +136,8 @@
         "notCopied": [
           "Project_Media/2.wav"
         ],
-        "notCopiedCount": 1
+        "notCopiedCount": 1,
+        "timedOut": false
       },
       "removedOlder": 0,
       "couldNotRemove": 0

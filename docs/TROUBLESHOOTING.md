@@ -416,18 +416,33 @@ it copies the regular files of the `Project_Media` folder next to the file being
 `<name>.oldversion/Project_Media`. It follows OpenTune's own rule for that folder: a file is copied only when it is
 missing there or older than its source; a newer file is never overwritten, nothing is deleted, and links and
 sub-folders are skipped. With the audio there, an old version still opens after the original audio files (for example in
-a downloads folder) were deleted. If the file being replaced has no `Project_Media` folder, nothing is done. The
-rolling of old versions never touches this folder, so it only grows, and the space it takes is that of the audio the
-project has used; delete it by hand if the old versions are no longer needed. As in the `Project_Media` folder next to
-the project, a file there is replaced by a newer source file of the same name, so an older old version then finds the
-newer audio under that name.
+a downloads folder) were deleted. If the file being replaced has no `Project_Media` folder, nothing is done.
 
-If some audio could not be copied (a full or read-only disk, or a file that is in use), the save still happens. The result
-then carries a warning line (code `OLD_VERSION_MEDIA_NOT_COPIED`, `source: server`) and a sentence in the summary, and
-`oldVersion.media.notCopied` lists the files (paths such as `Project_Media/1.wav`; `Project_Media` itself when the whole
-folder could not be read or made; `notCopiedCount` has the full count). That old version may not find its audio once the
-original audio files are gone. Fix the cause (free space, close the program that holds the file) and save again: the
-missing files are copied then. `oldVersion.media.copied` counts the files that were copied by this save.
+What is copied is the whole `Project_Media` folder, not only the audio that this project uses: telling which files a
+project uses would mean reading the project file, which this server does not do. That folder is shared by all the
+project files in the same directory, so the audio of the other projects there is copied too, and each project file has
+an `<name>.oldversion/Project_Media` of its own: with several project files in one directory, the space taken multiplies
+by their number. Keep one project per folder to avoid that. The rolling of old versions never touches this folder, so it
+only grows, and it can hold audio of other projects; delete it by hand if the old versions are no longer needed. As in
+the `Project_Media` folder next to the project, a file there is replaced by a newer source file of the same name, so an
+older old version then finds the newer audio under that name.
+
+The copy has a time limit of 15 seconds, so that the first save of a project with a lot of audio does not hold the save
+up. The time is checked between files, so a single very large file can still take longer. When the limit is reached, the
+files not tried yet are not copied and the save still happens: `oldVersion.media.timedOut` is `true`, those files are in
+`oldVersion.media.notCopied` (and in `notCopiedCount`), and the result carries the warning line below and a sentence in
+the summary. This is not a failure: the next save that replaces this project file copies the rest (only files that are
+missing or older are copied), so saving once or twice more completes a large folder. Until then, that old version may
+not find all of its audio once the original audio files are gone.
+
+If some audio could not be copied (a full or read-only disk, or a file that is in use), the save still happens, and
+`oldVersion.media.timedOut` is `false` unless the time ran out as well. The result then carries a warning line (code
+`OLD_VERSION_MEDIA_NOT_COPIED`, `source: server`; it is the same line for a failure and for the time limit, with one
+sentence for each) and a sentence in the summary, and `oldVersion.media.notCopied` lists the files (paths such as
+`Project_Media/1.wav`; `Project_Media` itself when the whole folder could not be read or made; `notCopiedCount` has the
+full count). That old version may not find its audio once the original audio files are gone. Fix the cause (free space,
+close the program that holds the file) and save again: the missing files are copied then. `oldVersion.media.copied`
+counts the files that were copied by this save.
 
 ## Slow process discovery
 

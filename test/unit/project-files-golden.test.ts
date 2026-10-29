@@ -14,7 +14,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { startMock } from '../../mock/server.js';
-import { nodeProjectFs, type ProjectFs } from '../../src/files/project-folders.js';
+import { MEDIA_COPY_BUDGET_MS, nodeProjectFs, type ProjectFs } from '../../src/files/project-folders.js';
 import { TOOLS } from '../../src/tools/index.js';
 import { render, type ToolContext, type ToolDefinition } from '../../src/tools/registry.js';
 import { tempDir, testContext } from '../support/context.js';
@@ -93,6 +93,19 @@ async function scenarios(): Promise<Record<string, Scenario>> {
   cleanup.push(() => {
     failing.instances.close();
   });
+  // A file system on which copying audio takes the whole time budget of the copy, for the scenario in which the time runs out.
+  let late = 0;
+  const slowAudioCopy: ProjectFs = {
+    ...nodeProjectFs,
+    copyNew: async (from, to) => {
+      await nodeProjectFs.copyNew(from, to);
+      if (path.basename(path.dirname(from)) === 'Project_Media') late += MEDIA_COPY_BUDGET_MS;
+    },
+  };
+  const slow = testContext(t.dir, { now: () => NOW + late, files: slowAudioCopy });
+  cleanup.push(() => {
+    slow.instances.close();
+  });
   const run = async (
     id: string,
     description: string,
@@ -149,6 +162,14 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     'opentune_save_project',
     { mode: 'save', wait_seconds: 10 },
     failing,
+  );
+  writeFileSync(path.join(media, '3.wav'), 'audio');
+  await run(
+    'save-audio-time-ran-out',
+    'A save when the copy of the audio used up its time: the files copied so far are kept, the files left are listed in oldVersion.media with timedOut true and a warning line made by this server, and the next save copies them.',
+    'opentune_save_project',
+    { mode: 'save', wait_seconds: 10 },
+    slow,
   );
   return out;
 }
