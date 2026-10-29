@@ -242,6 +242,7 @@ opentune-mcp  (本仓库,Node.js,MIT)
 ## 文档
 
 - [docs/install.md](docs/install.md):MCP 客户端的安装配置,含 MCPB 包
+- [docs/features.zh-CN.md](docs/features.zh-CN.md)([English](docs/features.md)):agent 能用 OpenTune 做什么,按用途分组,写明每一项对应的工具、能否撤销,以及附带技能与已知限制
 - [docs/reference.md](docs/reference.md):工具参考,由服务生成
 - [docs/COMPATIBILITY.md](docs/COMPATIBILITY.md):哪些 OpenTune 版本、测试版与协议版本可以一起用,各工具需要哪些能力,以及各操作要等多久
 - [docs/TROUBLESHOOTING.zh-CN.md](docs/TROUBLESHOOTING.zh-CN.md)([English](docs/TROUBLESHOOTING.md)):错误、状态与 doctor 检查及处理办法
