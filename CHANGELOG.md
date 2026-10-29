@@ -304,7 +304,7 @@ MCPB package, the Claude Code plugin `opentune` and the skills zip.
   `ENABLE_PR_AGENT` switch already existed and are unchanged. (#63)
 - Documentation: the READMEs (English and Chinese) list all 28 tools by group, say which ones are marked destructive and
   which arguments need the user's agreement, add example prompts for moving and fading a clip, muting a track and saving
-  a project under a new name, and give the known limits of undo, saving and the reference analysis. The DAW and WSL
+  a project under a new name, and give the known limits of undo and saving. The DAW and WSL
   sections agree on how paths are written and reported. `docs/real-opentune-testing.md` explains how to run the whole
   real-OpenTune set and how to judge it (what counts as a pass, the settings guard, the known upstream defect),
   `docs/COMPATIBILITY.md` lists the capabilities each tool needs, `docs/install.md` has a WSL section, and the
