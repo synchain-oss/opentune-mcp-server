@@ -302,7 +302,7 @@ MCPB package, the Claude Code plugin `opentune` and the skills zip.
   v0.39.0 does not implement `config.max_output_tokens`, so the output cap comes from
   `DEFAULT_ANTHROPIC_CHAT_MAX_TOKENS` instead. The `base == 'dev'` gate and the
   `ENABLE_PR_AGENT` switch already existed and are unchanged. (#63)
-- Documentation: the READMEs (English and Chinese) list all 27 tools by group, say which ones are marked destructive and
+- Documentation: the READMEs (English and Chinese) list all 28 tools by group, say which ones are marked destructive and
   which arguments need the user's agreement, add example prompts for moving and fading a clip, muting a track and saving
   a project under a new name, and give the known limits of undo, saving and the reference analysis. The DAW and WSL
   sections agree on how paths are written and reported. `docs/real-opentune-testing.md` explains how to run the whole
