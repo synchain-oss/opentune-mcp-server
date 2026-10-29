@@ -36,7 +36,7 @@
     "ui": {
       "workspace": "arrangement",
       "pianoRollContentId": null,
-      "activeTrackId": null,
+      "activeTrackId": 0,
       "selectedPlacementIds": [],
       "visibleTrackCount": 4
     },
@@ -62,20 +62,6 @@
     "applied": true,
     "noOp": true,
     "dryRun": false,
-    "changes": [],
-    "created": [],
-    "removed": [],
-    "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": []
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [],
-      "placements": []
-    },
     "undo": {
       "undoable": false,
       "reason": "ui_parity",
@@ -85,46 +71,6 @@
           "expectedUndoId": "u:01234567:1"
         }
       }
-    },
-    "dirty": {
-      "before": false,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": null,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {},
-    "warnings": [
-      {
-        "code": "UNDO_NO_EFFECT",
-        "subject": null,
-        "data": null
-      }
-    ],
-    "job": null,
-    "entry": {
-      "undoId": "u:01234567:1",
-      "description": "Move clip",
-      "origin": "control",
-      "possiblyStale": false,
-      "unsafe": false
-    },
-    "uiEffects": [
-      {
-        "surface": "window title",
-        "effect": "unsaved-changes mark set",
-        "target": "project",
-        "visibleNow": false,
-        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
-      }
-    ],
-    "changeTable": {
-      "rows": [],
-      "omittedChangeCount": 0
     },
     "lines": [
       {
@@ -150,6 +96,60 @@
           }
         }
       }
-    ]
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "UNDO_NO_EFFECT",
+        "subject": null,
+        "data": null
+      }
+    ],
+    "job": null,
+    "entry": {
+      "undoId": "u:01234567:1",
+      "description": "Move clip",
+      "origin": "control",
+      "possiblyStale": false,
+      "unsafe": false
+    },
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "window title",
+        "effect": "unsaved-changes mark set",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "The asterisk in the window title may not refresh until the window is redrawn; dirty states the project state."
+      }
+    ],
+    "changeTable": {
+      "rows": [],
+      "omittedChangeCount": 0
+    }
   }
 }

@@ -179,6 +179,53 @@ describe('arrangement.edit', () => {
     expect(mock.snapshot().placements[0]).toMatchObject({ fadeInSec: 3, fadeOutSec: 0.6 });
   });
 
+  it('gives no merge recipe and warns of an irreversible merge when the former boundary is not on an analysis frame', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ clips: [clip({ startTimelineSec: 0, durationSec: 4 })] });
+    const split = await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'split', placementId: ids['clip.placementId'], atTimelineSec: 1 }],
+    });
+    const [left, right] = (field(split, 'idMap') as { to: { placementId: string }[] }[])[0]?.to ?? [];
+    const merge = async () => ({
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'merge', leadingPlacementId: left?.placementId, trailingPlacementId: right?.placementId }],
+    });
+    // Move the boundary off the frame grid: the right part starts later, the left part reaches there.
+    await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'trim', placementId: right?.placementId, edge: 'start', toTimelineSec: 1.003 }],
+    });
+    await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'trim', placementId: left?.placementId, edge: 'end', toTimelineSec: 1.003 }],
+    });
+    const merged = await ok('arrangement.edit', await merge());
+    expect(codes(merged)).toEqual(['UPSTREAM_UNDO_DEFECT', 'IRREVERSIBLE']);
+    expect(merged.undo).toEqual({ undoable: false, reason: 'upstream_undo_defect', revert: null });
+    expect(mock.snapshot().placements).toHaveLength(1);
+  });
+
+  it('moves only the visible tracks behind a deleted track and leaves hidden slots in place', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({
+      visibleTrackCount: 3,
+      clips: [clip({ bind: 'a', trackId: 1 }), clip({ bind: 'b', trackId: 2 }), clip({ bind: 'hidden', trackId: 5 })],
+    });
+    const deleted = await ok('track.delete', {
+      trackId: 1,
+      expectedArrangementRevision: await arrangementRevision(session),
+      confirm: true,
+    });
+    expect(deleted.trackIdMap).toEqual([
+      { before: 1, after: null },
+      { before: 2, after: 1 },
+    ]);
+    expect(mock.snapshot().placements.map((p) => p.trackId)).toEqual([1, 5]);
+  });
+
   it('does not give the fades of a split back when a part was trimmed since', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;
@@ -204,13 +251,13 @@ describe('arrangement.edit', () => {
     expect(mock.snapshot().placements).toMatchObject([{ durationSec: 3.5, fadeInSec: 0.9, fadeOutSec: 1.5 }]);
   });
 
-  it('needs confirm for a delete, drops the references to deleted clips, and gives no revert', async () => {
+  it('needs confirm for a delete and gives no revert', async () => {
     const session = await sessions.open();
     const { mock, ok, fails } = session;
     const ids = mock.given({
       clips: [
         clip({ bind: 'a', startTimelineSec: 0, durationSec: 4 }),
-        clip({ bind: 'b', trackId: 1, startTimelineSec: 1, durationSec: 4, referenceClip: 'a' }),
+        clip({ bind: 'b', trackId: 1, startTimelineSec: 1, durationSec: 4 }),
       ],
     });
     const request = {
@@ -221,44 +268,8 @@ describe('arrangement.edit', () => {
     expect(await ok('arrangement.edit', { ...request, dryRun: true })).toMatchObject({ dryRun: true });
     const deleted = await ok('arrangement.edit', { ...request, confirm: true });
     expect(deleted.undo).toEqual({ undoable: false, reason: 'upstream_undo_defect', revert: null });
-    expect(deleted.changes).toMatchObject([{ fields: { referencePlacementId: { after: null } } }]);
     expect(deleted.warnings).toMatchObject([{ code: 'UPSTREAM_UNDO_DEFECT' }, { code: 'IRREVERSIBLE' }]);
     expect(mock.snapshot().contents).toHaveLength(1);
-  });
-
-  it('binds a clip to an overlapping clip only, and takes the binding back with the revert recipe', async () => {
-    const session = await sessions.open();
-    const { mock, ok, fails } = session;
-    const ids = mock.given({
-      clips: [
-        clip({ bind: 'a', startTimelineSec: 0, durationSec: 4 }),
-        clip({ bind: 'b', trackId: 1, startTimelineSec: 2, durationSec: 4 }),
-        clip({ bind: 'c', trackId: 2, startTimelineSec: 20, durationSec: 2 }),
-      ],
-    });
-    const bind = (placement: string, reference: string | null) => async () =>
-      session.call('arrangement.edit', {
-        expectedArrangementRevision: await arrangementRevision(session),
-        ops: [{ op: 'setReference', placementId: ids[`${placement}.placementId`], referencePlacementId: reference }],
-      });
-    const far = await bind('a', ids['c.placementId'] ?? null)();
-    expect(far.error?.data).toMatchObject({ reason: 'reference_ineligible' });
-    const first = await ok('arrangement.edit', {
-      expectedArrangementRevision: await arrangementRevision(session),
-      ops: [{ op: 'setReference', placementId: ids['a.placementId'], referencePlacementId: ids['b.placementId'] }],
-    });
-    expect(first.warnings).toMatchObject([{ code: 'EXPERIMENTAL_FEATURE' }]);
-    // b would refer back to a: a cycle.
-    expect((await bind('b', ids['a.placementId'] ?? null)()).error?.data).toMatchObject({
-      reason: 'reference_ineligible',
-    });
-    const before = mock.snapshot();
-    const undoId = field(first, 'undo', 'undoId');
-    await ok('edit.undo', { expectedUndoId: undoId });
-    expect(mock.snapshot().placements.find((p) => p.reference !== null)).toBeUndefined();
-    await ok('edit.redo', { expectedUndoId: undoId });
-    expect(mock.snapshot()).toEqual(before);
-    expect((await fails('arrangement.edit', { expectedArrangementRevision: 'stale', ops: [] })).code).toBeDefined();
   });
 });
 
@@ -495,6 +506,44 @@ describe('transport', () => {
     const stopped = await ok('transport.control', { action: 'stop' });
     expect(stopped.transport).toMatchObject({ playing: false, positionTimelineSec: 8 });
     expect((await ok('transport.get')).transport).toEqual(stopped.transport);
+  });
+
+  it('moves the position on only while it plays on a running device at the rate the test sets', async () => {
+    const { mock, ok } = await sessions.open();
+    const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+    const position = async (): Promise<number> =>
+      Number(field(await ok('transport.get'), 'transport', 'positionTimelineSec'));
+    // The default rate is 0: the position stays where it is, whatever the time.
+    mock.given({ audio: { running: true } });
+    await ok('transport.control', { action: 'seek', positionTimelineSec: 2 });
+    await ok('transport.control', { action: 'play' });
+    await wait(30);
+    expect(await position()).toBe(2);
+    await ok('transport.control', { action: 'stop' });
+
+    mock.setTransportRate(1000);
+    await ok('transport.control', { action: 'seek', positionTimelineSec: 2 });
+    await ok('transport.control', { action: 'play' });
+    await wait(30);
+    const moved = await position();
+    expect(moved).toBeGreaterThan(2);
+    // A pause keeps the position it reached; pausing at the last start goes back to where the play began.
+    const paused = await ok('transport.control', { action: 'pause' });
+    expect(paused.transport).toMatchObject({ playing: false, playStartTimelineSec: 2 });
+    const kept = Number((paused.transport as Record<string, unknown>).positionTimelineSec);
+    expect(kept).toBeGreaterThanOrEqual(moved);
+    await wait(30);
+    expect(await position()).toBe(kept);
+    const restart = await ok('transport.control', { action: 'playFromLastStart' });
+    expect(Number((restart.transport as Record<string, unknown>).positionTimelineSec)).toBeLessThan(kept);
+    const back = await ok('transport.control', { action: 'pauseAtLastStart' });
+    expect(back.transport).toMatchObject({ playing: false, positionTimelineSec: 2 });
+
+    // A device that does not run plays nowhere, however fast the rate.
+    mock.given({ audio: { running: false } });
+    await ok('transport.control', { action: 'play' });
+    await wait(30);
+    expect(await position()).toBe(2);
   });
 
   it('does not warn about the audio device when one runs', async () => {

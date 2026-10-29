@@ -6,6 +6,7 @@
 // differs from the kind's default. Unit tests check that every kind, status and doctor check has
 // a step and an anchor.
 
+import { REASON_RETRYABLE } from './reason-retryable.js';
 import type { NextStep } from './tool-error.js';
 
 const DOCS = 'https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md';
@@ -92,8 +93,71 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'INVALID_ARGUMENT/target_is_loaded_media': agent(
     'The export path is a source or project media file, which an export never overwrites. Choose another file name.',
   ),
+  'INVALID_ARGUMENT/audio_setting_unavailable': agent(
+    'The instance does not offer this audio value (audio.get lists what it offers as available). Call ' +
+      'opentune_get_settings with sections audio_device to read audio_device.available, then call again with one of its values.',
+  ),
+  'INVALID_ARGUMENT/option_unavailable': {
+    actor: 'agent',
+    tool: 'opentune_get_settings',
+    args: { sections: ['processing'] },
+    message:
+      'The vocoder weight or pitch model is not one this installation offers (the detail names the member), and ' +
+      'nothing was changed. Read the offered values with opentune_get_settings (processing.options), then call ' +
+      'again with one of them.',
+  },
+  'MODEL_UNAVAILABLE/vocoder_not_ready': agent(
+    'OpenTune was still loading its vocoder when the wait ended, so the job took its changes back (the detail ' +
+      'names a setting that another change kept, if any). Wait a little, then call again. If it keeps happening, ' +
+      'ask the user to check the models with "opentune-mcp doctor".',
+  ),
+  'MODEL_UNAVAILABLE/vocoder_load_failed': user(
+    'OpenTune could not load the new vocoder weight or backend and put the previous settings back, so retrying ' +
+      'the same value does not help. Tell the user; the weight file may be corrupt or incompatible. Ask them to ' +
+      'check the models with "opentune-mcp doctor".',
+  ),
+  'IO_ERROR/device_open_failed': user(
+    'OpenTune could not open the audio device with the new setup and restored the previous one, so nothing changed. ' +
+      'Ask the user to choose another output device or sample rate, or to close the program that holds the device, then retry.',
+  ),
   'INVALID_ARGUMENT/track_capacity': agent(
     'There are not enough free tracks for this layout. Use fewer files, another layout or a track that has room.',
+  ),
+  'INVALID_ARGUMENT/dialog_commits_on_close': user(
+    'Closing a dialog that is open would commit the value it shows (the track-colour dialog commits its colour). ' +
+      'Ask the user whether to accept that; only after the user agrees, call opentune_manage_ui again with ' +
+      'accept_commit: true. Otherwise the user can cancel the dialog in the OpenTune window.',
+  ),
+  'INVALID_ARGUMENT/target_track_occupied': agent(
+    'The first hidden track slot already holds clips, so the copy has nowhere to go. Show that slot first with ' +
+      'opentune_set_tracks (op reveal); a shown track keeps its clips. Then duplicate again: the copy goes to the ' +
+      'next hidden slot.',
+  ),
+  'INVALID_ARGUMENT/track_limit': user(
+    'Every track slot is already visible, so no track can be added or duplicated. Tell the user; a track the user ' +
+      'no longer needs can be deleted with opentune_delete_track, only with explicit consent from the user.',
+  ),
+  'INVALID_ARGUMENT/last_track': agent('The only visible track cannot be deleted. Choose another track.'),
+  'INVALID_ARGUMENT/track_hidden': {
+    actor: 'agent',
+    tool: 'opentune_get_project',
+    message:
+      'The track is hidden. Only visible tracks can be deleted; read the project for the visible track ids ' +
+      '(track ids are positions and shift when a track is deleted).',
+  },
+  'REVISION_CONFLICT/arrangement_changed': {
+    actor: 'agent',
+    tool: 'opentune_get_project',
+    message:
+      'The arrangement changed since the arrangement_revision was read (clips or tracks moved, were added or ' +
+      'removed). Nothing was deleted. Read the project again, check that the track id still names the track ' +
+      'meant, then call again with the new arrangement_revision.',
+  },
+  'BUSY/modal_open': user(
+    'A dialog is open in OpenTune. Ask the user to close it in OpenTune themselves, or to agree explicitly that you ' +
+      'close it with opentune_manage_ui (op dismiss_dialogs). Closing a dialog can commit the value it shows (the ' +
+      'track-colour dialog commits its colour), and closing a confirmation box cancels the action it asked about. ' +
+      'Set accept_commit: true only after the user agrees.',
   ),
   'NOT_READY/export_wait_timeout': agent(
     'Analysis or rendering did not settle in time and nothing was written. Wait for OpenTune to finish, then export again.',
@@ -110,6 +174,10 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'NOT_FOUND/job_not_found': agent('The job is unknown or expired (finished jobs are kept for 30 minutes).'),
   'NOT_READY/f0_failed': user('Pitch analysis of this clip failed, so it cannot be edited. Tell the user.'),
   'NOT_READY/f0_empty': user('OpenTune found no singing in this clip, so it cannot be edited. Tell the user.'),
+  'BUSY/job_in_progress': agent(
+    'A job in OpenTune has not finished (for example a settings change or a time-grid job), and quitting would end ' +
+      'it. Wait a few seconds and call again; if it does not clear, ask the user to look at the OpenTune window.',
+  ),
   'BUSY/request_limit': agent('Too many requests at once. Wait for the pending ones, then retry.'),
   'BUSY/job_limit': agent('Too many jobs are running. Wait for one to finish (opentune_get_job), then retry.'),
   'BUSY/session_limit': user(
@@ -117,6 +185,9 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   ),
   'UNSUPPORTED/capability_missing': user(
     'This OpenTune build lacks the feature (see detail). Ask the user to update to a build that has it.',
+  ),
+  'UNSUPPORTED/no_editor_window': user(
+    'OpenTune is running without an editor window. Ask the user to start OpenTune Standalone with its window and try again.',
   ),
   'UNDO_CONFLICT/history_empty': user('There is nothing to undo or redo here. Tell the user.'),
   'UNSUPPORTED/undo_unsafe_build': user(
@@ -145,7 +216,8 @@ export function kindStep(
   const known = Object.hasOwn(KINDS, kind);
   const entry = (known ? KINDS[kind] : undefined) ?? INTERNAL;
   const refined = reason === null ? undefined : REASONS[`${kind}/${reason}`];
-  return { nextStep: refined ?? entry.step, retryable: entry.retryable, anchorKind: known ? kind : 'INTERNAL' };
+  const retryable = (reason === null ? undefined : REASON_RETRYABLE[`${kind}/${reason}`]) ?? entry.retryable;
+  return { nextStep: refined ?? entry.step, retryable, anchorKind: known ? kind : 'INTERNAL' };
 }
 
 /** Kinds with a default step: the OTCP kinds and this server's own. */

@@ -439,6 +439,8 @@ export async function analyzePitch(
       f0State,
       hybrid_mode: typeof hybrid === 'boolean' ? hybrid : null,
       note_source: source,
+      // What the deviations are measured against: the stored notes, or the nearest semitone of the detected pitch.
+      baseline: source === 'detected_segments' ? 'nearest_semitone' : 'stored_notes',
       threshold_cents: threshold,
       range,
       detail,
@@ -446,7 +448,8 @@ export async function analyzePitch(
     const segmentsNote = (flaggedWithoutIndex: boolean): string =>
       source === 'detected_segments'
         ? ' The clip has no stored notes, so OpenTune segmentation of the detected pitch was used with the nearest semitone as target; these notes have no index' +
-          (flaggedWithoutIndex ? ', so for the ones beyond the threshold use detail notes for their times.' : '.')
+          (flaggedWithoutIndex ? ', so for the ones beyond the threshold use detail notes for their times.' : '.') +
+          ' The deviations are measured against the nearest semitone, not against stored notes, so they are not directly comparable with an analysis of the same clip once it has notes.'
         : '';
     const sourceNote = segmentsNote(false);
     const tail: Json = {
@@ -542,12 +545,12 @@ export const analyzePitchTool = defineTool({
   name: 'opentune_analyze_pitch',
   title: 'Analyze OpenTune pitch',
   description:
-    'OpenTune (audio vocal pitch editor): measures the pitch of a clip against its notes, in cents (positive = ' +
-    'sharp). Plain fields are before the corrections (detected minus target); corrected* fields are after them ' +
-    '(corrected minus target). Per note: median deviation, stability, onset, release; notes beyond ' +
-    'threshold_cents (default 25) are flagged, before and after. Phrases split at silences over 0.4 s. detail ' +
-    'summary (default): totals, worst notes, flagged note indexes (as in opentune_get_notes), ' +
-    'clip_revision; phrases and notes are paged. from and to: seconds of the source audio. Read-only.',
+    "OpenTune (audio vocal pitch editor): measures a clip's pitch against its notes, in cents (positive = " +
+    'sharp). Plain fields: detected minus target; corrected*: corrected minus target. Per note: median deviation, ' +
+    'stability, onset, release; notes beyond threshold_cents (default 25) are flagged, before and after. Phrases ' +
+    'split at silences over 0.4 s. detail summary (default): totals, worst notes, flagged note indexes (as in ' +
+    'opentune_get_notes); phrases and notes are paged. from and to: source-audio seconds. baseline: stored_notes ' +
+    'or nearest_semitone (no notes: not comparable later). Read-only.',
   inputSchema: z.strictObject({
     clip: z
       .string()

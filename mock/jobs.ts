@@ -18,13 +18,7 @@ export type JobState = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelle
 const TERMINAL: ReadonlySet<JobState> = new Set(['succeeded', 'failed', 'cancelled']);
 
 /** Kinds whose jobs can be cancelled when they start (the table of section 12.3). */
-const CANCELLABLE_KINDS: ReadonlySet<string> = new Set([
-  'import',
-  'export',
-  'referenceAnalysis',
-  'timeGridSeed',
-  'projectOpen',
-]);
+const CANCELLABLE_KINDS: ReadonlySet<string> = new Set(['import', 'export', 'timeGridSeed', 'projectOpen']);
 
 export interface JobProgress {
   readonly fraction: number | null;
@@ -309,6 +303,24 @@ export class JobStore {
   /** A job of this kind exists that has not finished: for kind `export`, the export lock is held (section 13.2). */
   hasActive(kind: string): boolean {
     return [...this.#jobs.values()].some((r) => r.view.kind === kind && r.view.finishedAtMs === null);
+  }
+
+  /** The kinds of the jobs that have not finished, oldest job first, each kind once. */
+  activeKinds(): string[] {
+    const kinds = [...this.#jobs.values()].filter((r) => r.view.finishedAtMs === null).map((r) => r.view.kind);
+    return [...new Set(kinds)];
+  }
+
+  /**
+   * Ends a job that `given` made and that nothing drives, as cancelled: the work it stands for is over. False
+   * for an unknown job, one that has ended already, and one the store drives itself.
+   */
+  end(jobId: string): boolean {
+    const record = this.#jobs.get(jobId);
+    // finishedAtMs is null exactly while the job runs, so an unknown job (undefined) falls out here too.
+    if (record?.view.finishedAtMs !== null || record.driver !== undefined) return false;
+    this.#finish(record, { state: 'cancelled' });
+    return true;
   }
 
   get(jobId: string): JobView | undefined {

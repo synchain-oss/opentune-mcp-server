@@ -13,6 +13,7 @@ import { PassThrough } from 'node:stream';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 
 import type { ProcessInfo, ProcessProbe } from '../../src/discovery/process.js';
+import type { ProjectFs } from '../../src/files/project-folders.js';
 import type { LaunchDeps } from '../../src/launch/start.js';
 import { createLogger } from '../../src/log.js';
 import { Instances, type InstanceDeps } from '../../src/otcp/instances.js';
@@ -68,11 +69,18 @@ export const TEST_LAUNCH: LaunchDeps = {
 
 /**
  * A tool context whose discovery directory is `dir`; nothing resolves to a real OpenTune folder.
- * The clock is real unless `now` fixes it.
+ * The clock is real unless `now` fixes it (a number) or supplies it (a function). `files` replaces the file system
+ * operations of the autosave and old-version folders.
  */
 export function testContext(
   dir: string,
-  options: { env?: NodeJS.ProcessEnv; now?: number; open?: InstanceDeps['open']; launch?: Partial<LaunchDeps> } = {},
+  options: {
+    env?: NodeJS.ProcessEnv;
+    now?: number | (() => number);
+    files?: ProjectFs;
+    open?: InstanceDeps['open'];
+    launch?: Partial<LaunchDeps>;
+  } = {},
 ): TestContext {
   const env = { OPENTUNE_MCP_DISCOVERY_DIR: dir, ...options.env };
   const probe = fakeProbe();
@@ -91,7 +99,8 @@ export function testContext(
     probe,
     logger: createLogger({ sink: (line) => logLines.push(line), level: 'debug' }),
     logLines,
-    now: now === undefined ? () => Date.now() : () => now,
+    now: now === undefined ? () => Date.now() : typeof now === 'function' ? now : () => now,
+    ...(options.files ? { files: options.files } : {}),
     launch: { ...TEST_LAUNCH, ...options.launch },
   };
 }

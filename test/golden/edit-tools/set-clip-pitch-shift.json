@@ -10,10 +10,104 @@
     "expected_revision": "<clip_revision of the clip>"
   },
   "result": {
-    "summary": "opentune_set_clip: changed 1 pitchShift (side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:1. Warnings: KEY_NOT_TRANSPOSED.",
+    "summary": "opentune_set_clip: changed 1 pitchShift (side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:1. Warnings: KEY_NOT_TRANSPOSED.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:1",
+      "description": "Pitch shift",
+      "innerActions": [
+        "setPitchShift"
+      ],
+      "steps": 1
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "KEY_NOT_TRANSPOSED",
+        "text": "The clip's pitch shift changed but its key was not transposed with it.",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
+        },
+        "revert": null
+      },
+      {
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
+        "undoId": "u:01234567:1",
+        "description": "Pitch shift"
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "pitchShift": {
+              "before": "s8",
+              "after": "p11"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "revision": "r9",
+          "gridRevision": "g6",
+          "keyRevision": "k7"
+        }
+      ],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {
+      "reRenderQueued": {
+        "contentIds": [
+          "c:01234567:0:1"
+        ],
+        "revert": null
+      }
+    },
+    "warnings": [
+      {
+        "code": "KEY_NOT_TRANSPOSED",
+        "subject": {
+          "contentId": "c:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
     "changes": [
       {
         "entity": "pitchShift",
@@ -38,71 +132,6 @@
     "created": [],
     "removed": [],
     "idMap": [],
-    "revisionDiff": {
-      "arrangement": null,
-      "trackState": null,
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "changed": {
-            "pitchShift": {
-              "before": "s8",
-              "after": "p12"
-            }
-          }
-        }
-      ]
-    },
-    "tokens": {
-      "arrangementRevision": "a1",
-      "contents": [
-        {
-          "contentId": "c:01234567:0:1",
-          "revision": "r10",
-          "gridRevision": "g6",
-          "keyRevision": "k7"
-        }
-      ],
-      "placements": []
-    },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:1",
-      "description": "Pitch shift",
-      "innerActions": [
-        "setPitchShift"
-      ],
-      "steps": 1
-    },
-    "dirty": {
-      "before": false,
-      "after": true
-    },
-    "ui": {
-      "workspace": "arrangement",
-      "pianoRollContentId": null,
-      "activeTrackId": null,
-      "selectedPlacementIds": [],
-      "visibleTrackCount": 4
-    },
-    "sideEffects": {
-      "reRenderQueued": {
-        "contentIds": [
-          "c:01234567:0:1"
-        ],
-        "revert": null
-      }
-    },
-    "warnings": [
-      {
-        "code": "KEY_NOT_TRANSPOSED",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      }
-    ],
-    "job": null,
     "uiEffects": [
       {
         "surface": "clip pitch shift",
@@ -153,35 +182,6 @@
       ],
       "omittedChangeCount": 0
     },
-    "lines": [
-      {
-        "kind": "warning",
-        "code": "KEY_NOT_TRANSPOSED",
-        "text": "The clip's pitch shift changed but its key was not transposed with it.",
-        "subject": {
-          "contentId": "c:01234567:0:1"
-        },
-        "data": null
-      },
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:1.",
-        "undoId": "u:01234567:1",
-        "description": "Pitch shift"
-      }
-    ],
-    "clip_revision": "cr1.WyJyMTAiLCJnNiIsIms3IiwiaDExIl0"
+    "clip_revision": "cr1.WyJyOSIsImc2IiwiazciLCJoMTAiXQ"
   }
 }

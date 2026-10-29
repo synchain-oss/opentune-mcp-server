@@ -12,6 +12,7 @@ import { describe, it } from 'vitest';
 import { runBoundary, SCENARIO_NAME as BOUNDARY } from './boundary.js';
 import { runInstances, SCENARIO_NAME as INSTANCES } from './instances.js';
 import { runLaunchReal, SCENARIO_NAME as LAUNCH } from './launch-real.js';
+import { withUserSettingsWatch } from './settings-guard.js';
 import { formatScenarioTable, scenarioReportPath, writeScenarioReport, type ScenarioReport } from './scenario.js';
 import { smokeSetupFromEnv, type SmokeConfig } from './smoke.js';
 
@@ -50,7 +51,7 @@ describe('boundary scenarios against the exe', () => {
   // One after the other: they share the machine, and a test must not see another's OpenTune.
   for (const { name, title, run } of scenarios) {
     it(title, async (ctx) => {
-      const report = await run(config);
+      const report = await withUserSettingsWatch(() => run(config));
       process.stderr.write(`\n${formatScenarioTable(report)}\n`);
       const file = scenarioReportPath(config.reportPath, name);
       if (file !== undefined) writeScenarioReport(file, report);

@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 // The project file methods of the mock (capability project.io): project.save, project.saveAs,
-// project.open and project.clearRecent (spec/otcp/v1/PROTOCOL.md sections 12.3, 20 and 22). The
-// files are really written and read, in the places the caller names; the tests name directories
-// below the mock's work directory. Saving and opening are jobs: opening reads and prepares the
-// file first (a cancellation point) and then replaces the project in one step.
+// project.open and project.clearRecent, and project.saveCopy (capability project.copy;
+// spec/otcp/v1/PROTOCOL.md sections 12.3, 20 and 22). The files are really written and read, in the
+// places the caller names; the tests name directories below the mock's work directory. Saving,
+// copying and opening are jobs: opening reads and prepares the file first (a cancellation point)
+// and then replaces the project in one step.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -197,6 +198,83 @@ export class ProjectService {
     return jobStartedResult(world, job);
   };
 
+  // project.saveCopy -------------------------------------------------------------------------------
+
+  /**
+   * A copy job: it writes what the project holds now through a temporary file and a rename that never replaces
+   * (section 20.4), and changes nothing in the project: the project's file, the unsaved-changes flag, the recent
+   * projects and the history stay as they are. The mock's project files name their media by path, so unlike
+   * OpenTune it copies no media into a Project_Media folder.
+   */
+  #startCopy(target: string) {
+    const { world } = this;
+    const data = projectBytes(projectOf(world));
+    let temp: string | undefined;
+    const dropTemp = () => {
+      if (temp !== undefined) fs.rmSync(temp, { force: true });
+      temp = undefined;
+    };
+    // A copy is a project operation like a save: the other writes are refused while it runs (section 13.2).
+    world.busy.projectOperation = true;
+    const finish = (outcome: JobStep & { done: unknown }): JobStep => {
+      dropTemp();
+      world.busy.projectOperation = false;
+      return outcome;
+    };
+    const driver: JobDriver = () => {
+      try {
+        const directory = path.dirname(target);
+        const temporary = path.join(directory, `.${path.basename(target)}.${String(++this.#seq)}.tmp`);
+        try {
+          fs.writeFileSync(temporary, data, { flag: 'wx' });
+          temp = temporary;
+        } catch {
+          fs.rmSync(temporary, { force: true });
+          throw refuse('IO_ERROR', 'write_failed', 'the project copy could not be written');
+        }
+        if (renameNoReplace(temporary, target) === 'exists') {
+          throw refuse('ALREADY_EXISTS', 'target_exists', 'a file appeared at the target while the copy was written');
+        }
+        temp = undefined;
+        const { path: projectPath, dirty } = world.project;
+        return finish({
+          done: {
+            state: 'succeeded',
+            result: {
+              path: target,
+              sizeBytes: Buffer.byteLength(data),
+              projectPath,
+              projectDirty: dirty,
+              warnings: [warning('NOT_SAVED_IN_PROJECT', null, { items: [...NOT_SAVED] })],
+              ...(projectPath === null ? { nullReasons: { projectPath: 'no_project_path' } } : {}),
+            },
+          },
+        });
+      } catch (error) {
+        const failure = error instanceof MockError ? error : unexpected('projectCopy', error);
+        return finish({ done: { state: 'failed', error: failure.init } });
+      }
+    };
+    return this.jobs.start({ kind: 'projectCopy' }, driver, () => {
+      dropTemp();
+      world.busy.projectOperation = false;
+    });
+  }
+
+  readonly saveCopy: Handler = (context) => {
+    const { world, params } = context;
+    const target = String(params.path);
+    const bad = checkPath(target, EXTENSIONS, 'path');
+    if (bad !== undefined) throw bad;
+    checkNotBusy(context);
+    // Anything at the path, a dangling link included, makes the copy refuse; whether something is there must be
+    // determinable (section 20.3 rule 4).
+    if (identityOf(target, this.#denied) !== null || exists(target)) {
+      throw refuse('ALREADY_EXISTS', 'target_exists', 'a file already exists at the path; a copy never replaces one');
+    }
+    return jobStartedResult(world, this.#startCopy(target));
+  };
+
   // project.open ---------------------------------------------------------------------------------------
 
   /** Reads the project file; the failure of this step ends the job and leaves the current project untouched. */
@@ -248,7 +326,7 @@ export class ProjectService {
     const missing: string[] = [];
     const contentOf = new Map<number, ReturnType<World['addContent']>>();
     const voicedOf = new Map<number, boolean>();
-    const restored: { placement: PlacementRec; index: number }[] = [];
+    const restored: PlacementRec[] = [];
     const skippedClips: number[] = [];
     project.clips.forEach((clip, index) => {
       const source = project.contents[clip.contentIndex];
@@ -285,17 +363,8 @@ export class ProjectService {
         fadeInSec: clip.fadeInSec,
         fadeOutSec: clip.fadeOutSec,
       });
-      restored.push({ placement, index });
+      restored.push(placement);
     });
-    // Reference bindings between clips that were both restored.
-    let droppedBindings = 0;
-    for (const { placement, index } of restored) {
-      const wanted = project.clips[index]?.referenceClipIndex ?? null;
-      if (wanted === null) continue;
-      const other = restored.find((r) => r.index === wanted);
-      if (other === undefined) droppedBindings++;
-      else placement.reference = other.placement;
-    }
     for (const content of contentOf.values()) {
       const voiced = voicedOf.get(content.objectId) === true;
       world.after(IMPORT_ANALYSIS_MS, () => {
@@ -309,7 +378,7 @@ export class ProjectService {
     this.#remember(file);
 
     const created = [
-      ...restored.map(({ placement: p }) => ({
+      ...restored.map((p) => ({
         entity: 'placement',
         ref: { placementId: p.id },
         label: clipLabel(p.serial, p.trackId),
@@ -342,7 +411,7 @@ export class ProjectService {
       removed: removedListed,
       diff: { ...diff, contents: diff.contents.filter((c) => listedContents.has(c.contentId)) },
       contents: [...contentOf.values()].slice(0, LISTED_MAX),
-      placements: restored.map((r) => r.placement).slice(0, LISTED_MAX),
+      placements: restored.slice(0, LISTED_MAX),
       undo: { undoable: false, reason: 'no_upstream_undo', revert },
       dirtyBefore,
       warnings,
@@ -368,7 +437,6 @@ export class ProjectService {
         skipped: {
           media: missing.map((p) => ({ path: p, reason: 'missing' })),
           placementCount: skippedClips.length,
-          referenceBindingCount: droppedBindings,
         },
         historyCleared,
         omittedCount: {
@@ -464,6 +532,7 @@ export class ProjectService {
     return {
       'project.save': this.save,
       'project.saveAs': this.saveAs,
+      'project.saveCopy': this.saveCopy,
       'project.open': this.open,
       'project.clearRecent': this.clearRecent,
     };

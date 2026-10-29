@@ -1,0 +1,253 @@
+{
+  "description": "A copy: the way back is the deletion of the copy.",
+  "tool": "opentune_set_tracks",
+  "input": {
+    "ops": [
+      {
+        "op": "duplicate",
+        "track_id": 0
+      }
+    ]
+  },
+  "result": {
+    "summary": "opentune_set_tracks: changed 1 track, created 1 placement, 1 content (revealed the hidden track 5; the colour of track 5 changed from #4DB6AC to #E57373; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_delete_track only after the user explicitly agrees).",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "track.delete",
+        "params": {
+          "trackId": 5,
+          "expectedArrangementRevision": "a23"
+        },
+        "requiresConsent": true
+      }
+    },
+    "lines": [
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Only after the user explicitly agrees to restore it: call opentune_delete_track with the arguments in restore, adding expected_revision: the latest arrangement_revision of opentune_get_project, adding confirm: true.",
+        "revert": {
+          "method": "track.delete",
+          "params": {
+            "trackId": 5,
+            "expectedArrangementRevision": "a23"
+          },
+          "requiresConsent": true
+        },
+        "restore": {
+          "tool": "opentune_delete_track",
+          "arguments": {
+            "track_id": 5
+          }
+        }
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a1",
+        "after": "a23"
+      },
+      "trackState": {
+        "before": "t13",
+        "after": "t14"
+      },
+      "contents": [
+        {
+          "contentId": "c:01234567:0:2",
+          "changed": {
+            "notes": {
+              "before": null,
+              "after": "n15"
+            },
+            "pitch": {
+              "before": null,
+              "after": "p16"
+            },
+            "content": {
+              "before": null,
+              "after": "c17"
+            },
+            "grid": {
+              "before": null,
+              "after": "g18"
+            },
+            "key": {
+              "before": null,
+              "after": "k19"
+            },
+            "pitchShift": {
+              "before": null,
+              "after": "s20"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a23",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:2",
+          "revision": "r21",
+          "gridRevision": "g18",
+          "keyRevision": "k19"
+        }
+      ],
+      "placements": [
+        {
+          "placementId": "p:01234567:0:2",
+          "geometryHash": "h22"
+        }
+      ]
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 6
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": null,
+    "newTrackId": 5,
+    "changes": [
+      {
+        "entity": "track",
+        "ref": {
+          "trackId": 5
+        },
+        "label": "Track 6",
+        "fields": {
+          "visible": {
+            "before": false,
+            "after": true,
+            "unit": null
+          },
+          "solo": {
+            "before": false,
+            "after": true,
+            "unit": null
+          },
+          "colour": {
+            "before": "#4DB6AC",
+            "after": "#E57373",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:2"
+        },
+        "label": "Clip 2 on Track 6"
+      },
+      {
+        "entity": "content",
+        "ref": {
+          "contentId": "c:01234567:0:2"
+        },
+        "label": "Content 2"
+      }
+    ],
+    "removed": [],
+    "idMap": [
+      {
+        "entity": "placement",
+        "relation": "copy",
+        "from": [
+          {
+            "placementId": "p:01234567:0:1"
+          }
+        ],
+        "to": [
+          {
+            "placementId": "p:01234567:0:2"
+          }
+        ]
+      }
+    ],
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "changed track",
+        "target": "track 5",
+        "visibleNow": true
+      },
+      {
+        "surface": "arrangement view",
+        "effect": "created placement",
+        "target": "p:01234567:0:2",
+        "visibleNow": true
+      },
+      {
+        "surface": "piano roll",
+        "effect": "created content",
+        "target": "c:01234567:0:2",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "track",
+          "label": "Track 6",
+          "ref": {
+            "trackId": 5
+          },
+          "fields": [
+            {
+              "field": "visible",
+              "before": false,
+              "after": true,
+              "unit": null
+            },
+            {
+              "field": "solo",
+              "before": false,
+              "after": true,
+              "unit": null
+            },
+            {
+              "field": "colour",
+              "before": "#4DB6AC",
+              "after": "#E57373",
+              "unit": null
+            }
+          ]
+        },
+        {
+          "kind": "created",
+          "entity": "placement",
+          "label": "Clip 2 on Track 6",
+          "ref": {
+            "placementId": "p:01234567:0:2"
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "content",
+          "label": "Content 2",
+          "ref": {
+            "contentId": "c:01234567:0:2"
+          }
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "arrangement_revision": "ar1.YTIz"
+  }
+}

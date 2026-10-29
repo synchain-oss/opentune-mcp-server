@@ -13,7 +13,7 @@ import path from 'node:path';
 import { afterAll, describe, it } from 'vitest';
 
 import { MOCK_CAPABILITIES } from '../../mock/server.js';
-import { registerExeVectors } from './exe-vectors.js';
+import { registerExeVectors, vectorRow } from './exe-vectors.js';
 import { mockTarget } from './mock-target.js';
 import { runVector, type Outcome } from './runner.js';
 import { loadVectors, type Vector } from './vectors.js';
@@ -57,6 +57,9 @@ describe('contract vectors against the mock', () => {
     if (file !== undefined && file !== '') {
       mkdirSync(path.dirname(file), { recursive: true });
       const summary = {
+        runner: 'mock',
+        commit: process.env.OTCP_MOCK_COMMIT ?? 'unknown',
+        vectors: outcomes.map(vectorRow),
         total: outcomes.length,
         pass: count('PASS'),
         fail: count('FAIL'),

@@ -1,0 +1,27 @@
+{
+  "description": "A split outside the clip: an error with a next step.",
+  "input": {
+    "ops": [
+      {
+        "op": "split",
+        "clip": "p:01234567:0:1",
+        "at_timeline_sec": 30
+      }
+    ],
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "error": {
+      "kind": "INVALID_ARGUMENT",
+      "reason": "split_out_of_range",
+      "detail": "the position must lie strictly inside the clip",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "agent",
+        "message": "The split position must lie strictly inside the clip on the timeline clock, and OpenTune moves it to the nearest analysis frame, which must not be an edge. Read the clip start and end with opentune_get_project and choose a position well inside."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-invalid_argument"
+    }
+  }
+}

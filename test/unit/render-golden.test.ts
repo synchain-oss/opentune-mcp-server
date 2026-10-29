@@ -13,8 +13,9 @@ import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { afterEach, describe, expect, it } from 'vitest';
 
 import type { Json } from '../../src/otcp/client.js';
-import { writeBody } from '../../src/render/index.js';
+import { writeBody, type ReRenderState } from '../../src/render/index.js';
 import { WRITE_RESULT_OUTPUT } from '../../src/tools/registry.js';
+import { settingsLead } from '../../src/tools/set-settings.js';
 import { Sessions, clip, type TestSession } from '../support/mock-client.js';
 import { otcpSpec } from '../support/otcp-spec.js';
 
@@ -31,6 +32,8 @@ interface Scenario {
   readonly description: string;
   readonly tool: string;
   readonly envelope: Json;
+  /** How the side effect reRenderQueued of a vocoder-weight change reads; absent: the generic words. */
+  readonly reRender?: ReRenderState;
 }
 
 const CONTENT = 'c:01234567:0:1';
@@ -146,6 +149,116 @@ async function fromMock(): Promise<Record<string, Scenario>> {
     description: 'Setting the key the clip already has: a success that changed nothing.',
     tool: 'opentune_set_clip',
     envelope: same,
+  };
+
+  // The user-global settings of the installation: no undo entry, the warning GLOBAL_PREFERENCE and
+  // the previous value as a call of opentune_set_settings.
+  out['settings-preference-revert'] = {
+    description:
+      'A processing preference of the installation: the first sentence says the change is global, and the revert recipe is an opentune_set_settings call with the previous value.',
+    tool: 'opentune_set_settings',
+    envelope: await ok('prefs.set', { tuningHz: 442 }),
+  };
+  const audioSession = await sessions.open({ instanceId: INSTANCE });
+  audioSession.mock.given({ audio: { running: true } });
+  out['settings-audio-device-revert'] = {
+    description:
+      'An audio device setup of the installation: the previous setup comes back as an opentune_set_settings call with audio_device.',
+    tool: 'opentune_set_settings',
+    envelope: await audioSession.ok('audio.set', { sampleRateHz: 48000 }),
+  };
+
+  // Clearing the recent-projects list and switching to openDyne: nothing takes either back, and the
+  // first sentence says so before any mention of a way back.
+  const recent = await sessions.open({ instanceId: INSTANCE });
+  recent.mock.given({
+    files: [{ bind: 'proj', kind: 'project', extension: '.otproj', durationSec: 3 }],
+    preferences: { recentProjects: ['proj'] },
+  });
+  out['settings-clear-recent-irreversible'] = {
+    description:
+      'Clearing the recent-projects list: no request can fill it again, so the first sentence says the previous values cannot be restored.',
+    tool: 'opentune_set_settings',
+    // The mock keeps the project in a temporary directory; the snapshot names a neutral path instead.
+    envelope: JSON.parse(
+      JSON.stringify(await recent.ok('project.clearRecent', {})).replace(
+        /"[^"]*ot-mock-files-[^"]*\.otproj"/g,
+        JSON.stringify('C:\\Music\\song.otproj'),
+      ),
+    ) as Json,
+  };
+  const scheme = await sessions.open({ instanceId: INSTANCE });
+  const schemeIds = scheme.mock.given({
+    clips: [{ bind: 'clip', trackId: 0, startTimelineSec: 0, durationSec: 6, analysis: 'ready' }],
+  });
+  await scheme.ok('ui.setSelection', { placementId: schemeIds['clip.placementId'], openEditor: true });
+  const schemeStarted = await scheme.ok('prefs.set', { editingScheme: 'openDyne' });
+  const schemeJob = (await scheme.ok('job.get', { jobId: (schemeStarted.job as Json).jobId, waitMs: 30_000 }))
+    .job as Json;
+  out['settings-scheme-generated-notes'] = {
+    description:
+      'The result of the prefsApply job after a switch to openDyne: the generated notes cannot be undone or reverted, and the first sentence says so before the revert line.',
+    tool: 'opentune_set_settings',
+    envelope: schemeJob.result as Json,
+  };
+
+  // The vocoder weight, the rendering priority and the pitch model. A weight change
+  // renders every content again once it has loaded, and the wording follows what the vocoder reported.
+  const vocoder = await sessions.open({ instanceId: INSTANCE });
+  vocoder.mock.given({ clips: [clip()], preferences: { options: { f0Model: ['fcpe', 'rmvpe'] } } });
+  const jobResult = async (params: Json): Promise<Json> => {
+    const started = await vocoder.ok('prefs.set', params);
+    const job = (await vocoder.ok('job.get', { jobId: (started.job as Json).jobId, waitMs: 30_000 })).job as Json;
+    return job.result as Json;
+  };
+  const weightChanged = await jobResult({ vocoderWeight: 'hifigan_coulin9.onnx' });
+  out['settings-vocoder-weight-loaded'] = {
+    description:
+      'The result of the prefsApply job after a vocoder weight change, read after the vocoder reported the new weight loaded: every content will be rendered again, and the revert recipe is an opentune_set_settings call with the previous weight.',
+    tool: 'opentune_set_settings',
+    envelope: weightChanged,
+    reRender: 'loaded',
+  };
+  out['settings-vocoder-weight-after-load'] = {
+    description:
+      'The same result when the vocoder was not ready afterwards: the render starts only after the new weight has finished loading, and not at all if it cannot be loaded.',
+    tool: 'opentune_set_settings',
+    envelope: weightChanged,
+    reRender: 'afterLoad',
+  };
+  out['settings-rendering-priority'] = {
+    description:
+      'The result of the prefsApply job after a rendering priority change: no render follows, and the revert recipe carries the previous priority.',
+    tool: 'opentune_set_settings',
+    envelope: await jobResult({ renderingPriority: 'cpuFirst' }),
+  };
+  out['settings-pitch-model'] = {
+    description:
+      'A pitch model set in one call, which finishes inside the call: no job is followed, and the revert recipe restores the previous model.',
+    tool: 'opentune_set_settings',
+    envelope: await vocoder.ok('prefs.set', { f0Model: 'rmvpe' }),
+  };
+
+  // A switch of the view during which the tempo field of the transport bar rounded the tempo (PROTOCOL.md section 14.6).
+  const rounded = await sessions.open({ instanceId: INSTANCE });
+  rounded.mock.given({ dirty: false, clips: [clip()] });
+  await rounded.ok('transport.setTempo', { bpm: 120.27 });
+  rounded.mock.given({ dirty: false });
+  out['tempo-rounded'] = {
+    description:
+      'A switch of the view during which the tempo field rounded the tempo from 120.27 to 120.3: nobody asked for it, so the first sentence says it with both values, and the revert line gives the call that sets the tempo back.',
+    tool: 'opentune_manage_ui',
+    envelope: await rounded.ok('ui.setWorkspace', { workspace: 'pianoRoll' }),
+  };
+  const unrestorable = await sessions.open({ instanceId: INSTANCE });
+  unrestorable.mock.given({ dirty: false, clips: [clip()] });
+  await unrestorable.ok('transport.setTempo', { bpm: 120.27 });
+  unrestorable.mock.given({ dirty: false, withoutCapabilities: ['transport.v1'] });
+  out['tempo-rounded-irreversible'] = {
+    description:
+      'The same on an instance that does not report transport.v1: no request can set the tempo back, so the revert is null, the warning IRREVERSIBLE is carried and the result is destructive.',
+    tool: 'opentune_manage_ui',
+    envelope: await unrestorable.ok('ui.setWorkspace', { workspace: 'pianoRoll' }),
   };
 
   const replaced = await ok('content.autoTune', {
@@ -339,6 +452,15 @@ export async function scenarios(): Promise<Record<string, Scenario>> {
   return { ...(await fromMock()), ...written() };
 }
 
+/** The body of a scenario; the settings tool puts its own lead sentence in front of the renderer's summary. */
+const renderedOf = (s: Scenario) => {
+  const body = writeBody(
+    s.envelope,
+    s.reRender === undefined ? { tool: s.tool } : { tool: s.tool, reRender: s.reRender },
+  );
+  return s.tool === 'opentune_set_settings' ? settingsLead(body) : body;
+};
+
 const text = (value: unknown) => `${JSON.stringify(value, null, 2)}\n`;
 
 describe('write result rendering golden snapshots', () => {
@@ -346,7 +468,7 @@ describe('write result rendering golden snapshots', () => {
     const all = await scenarios();
     const files = Object.fromEntries(
       Object.entries(all).map(([id, s]) => {
-        const rendered = writeBody(s.envelope, { tool: s.tool });
+        const rendered = renderedOf(s);
         return [`${id}.json`, text({ description: s.description, tool: s.tool, input: s.envelope, rendered })];
       }),
     );
@@ -373,7 +495,7 @@ describe('write result rendering golden snapshots', () => {
         problems.filter((p) => !p.includes('unevaluated')),
         id,
       ).toEqual([]);
-      expect(WRITE_RESULT_OUTPUT.safeParse(writeBody(s.envelope, { tool: s.tool })).success, id).toBe(true);
+      expect(WRITE_RESULT_OUTPUT.safeParse(renderedOf(s)).success, id).toBe(true);
     }
   });
 

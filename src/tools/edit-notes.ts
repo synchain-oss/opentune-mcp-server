@@ -305,15 +305,40 @@ const SELECT_DOC =
 
 const OP = z.discriminatedUnion('op', [
   z.strictObject({ op: z.literal('setTargetPitch'), select: SELECT, target_midi: z.number().min(0).max(127) }),
-  z.strictObject({ op: z.literal('shiftCents'), select: SELECT, delta_cents: z.number().min(-1200).max(1200) }),
+  z.strictObject({
+    op: z.literal('shiftCents'),
+    select: SELECT,
+    delta_cents: z
+      .number()
+      .min(-1200)
+      .max(1200)
+      .describe('Cents to raise (+) or lower (-) the target pitch; 100 = a semitone.'),
+  }),
   z.strictObject({ op: z.literal('snapToScale'), select: SELECT, scale: z.union([z.literal('clip'), KEY_FIELD]) }),
   z.strictObject({
     op: z.literal('setParams'),
     select: SELECT,
-    retune_speed: z.number().min(0).max(1).optional(),
-    vibrato_depth: z.number().min(0).max(100).optional(),
-    vibrato_rate_hz: z.number().min(3).max(12).optional(),
-    pitch_drift_scale: z.number().min(-2).max(3).optional(),
+    retune_speed: z
+      .number()
+      .min(0)
+      .max(1)
+      .optional()
+      .describe('How far the pitch is pulled to the target note: 0 keeps the natural movement, 1 sounds mechanical.'),
+    vibrato_depth: z
+      .number()
+      .min(0)
+      .max(100)
+      .optional()
+      .describe('Synthetic vibrato added on top, 100 = plus or minus a semitone; default 0.'),
+    vibrato_rate_hz: z.number().min(3).max(12).optional().describe('Speed of the added vibrato, Hz.'),
+    pitch_drift_scale: z
+      .number()
+      .min(-2)
+      .max(3)
+      .optional()
+      .describe(
+        "Scales the voice's own pitch wobble (the usual meaning of vibrato in a request): 1 keeps it, below 1 weakens it, 0 removes it.",
+      ),
   }),
 ]);
 

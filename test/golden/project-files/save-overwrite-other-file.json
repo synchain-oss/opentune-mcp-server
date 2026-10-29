@@ -1,0 +1,189 @@
+{
+  "description": "Replacing another project file: destructive, the replaced file is kept as an old version next to it, and the audio is copied next to it too.",
+  "tool": "opentune_save_project_overwrite",
+  "input": {
+    "path": "<tmp-2>/existing.otproj",
+    "confirm": true,
+    "wait_seconds": 10
+  },
+  "result": {
+    "summary": "opentune_save_project_overwrite: OVERWROTE another existing project file at the user's request (path in path); a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. OpenTune also copies the audio the project uses into the Project_Media folder next to the project file. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "OVERWROTE_OTHER_PROJECT",
+        "text": "An existing project file was overwritten.",
+        "subject": {
+          "path": "<tmp-2>/existing.otproj"
+        },
+        "data": {
+          "path": "<tmp-2>/existing.otproj"
+        }
+      },
+      {
+        "kind": "warning",
+        "code": "NOT_SAVED_IN_PROJECT",
+        "text": "The change is not saved in the project file.",
+        "subject": null,
+        "data": {
+          "items": [
+            "visibleTrackCount",
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      },
+      {
+        "code": "OVERWROTE_OTHER_PROJECT",
+        "subject": {
+          "path": "<tmp-2>/existing.otproj"
+        },
+        "data": {
+          "path": "<tmp-2>/existing.otproj"
+        }
+      },
+      {
+        "code": "NOT_SAVED_IN_PROJECT",
+        "subject": null,
+        "data": {
+          "items": [
+            "visibleTrackCount",
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      }
+    ],
+    "job": {
+      "jobId": "j:01234567:4",
+      "kind": "projectSave",
+      "state": "succeeded"
+    },
+    "path": "<tmp-2>/existing.otproj",
+    "sizeBytes": "<size>",
+    "changes": [
+      {
+        "entity": "project",
+        "ref": {
+          "singleton": "project"
+        },
+        "label": "Project",
+        "fields": {
+          "path": {
+            "before": "<tmp-1>/fresh.otproj",
+            "after": "<tmp-2>/existing.otproj",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "window title",
+        "effect": "changed project",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Look at the window title."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "project",
+          "label": "Project",
+          "ref": {
+            "singleton": "project"
+          },
+          "fields": [
+            {
+              "field": "path",
+              "before": "<tmp-1>/fresh.otproj",
+              "after": "<tmp-2>/existing.otproj",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "notSavedInProject": [
+      "visibleTrackCount",
+      "undoHistory",
+      "preferences"
+    ],
+    "mediaFolder": "<tmp-2>/Project_Media",
+    "oldVersion": {
+      "path": "<tmp-2>/existing.oldversion/existing-20261028-140509.otproj",
+      "folder": "<tmp-2>/existing.oldversion",
+      "keep": 10,
+      "reused": false,
+      "media": {
+        "copied": 0,
+        "notCopied": [],
+        "notCopiedCount": 0,
+        "timedOut": false
+      },
+      "removedOlder": 0,
+      "couldNotRemove": 0
+    },
+    "requestedPath": "<tmp-2>/existing.otproj"
+  }
+}

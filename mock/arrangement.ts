@@ -37,7 +37,6 @@ const ENTRY_NAMES: Readonly<Record<string, { description: string; innerActions: 
   trim: { description: 'Trim clip', innerActions: ['setFade', 'trimClip'] },
   setGain: { description: 'Set clip gain', innerActions: ['setClipGain'] },
   setFade: { description: 'Set clip fade', innerActions: ['setFade'] },
-  setReference: { description: 'Set reference clip', innerActions: ['setReference'] },
 };
 
 const warning = (code: string, subject: unknown, data: unknown = null) => ({ code, subject, data });
@@ -50,8 +49,6 @@ interface Draft {
   after: PlacementState;
   /** Properties an undo step puts back besides those that changed (a trim records the fades). */
   readonly recorded: Set<keyof PlacementState>;
-  referenceBefore: PlacementRec | null;
-  referenceAfter: PlacementRec | null;
 }
 
 function trackSlot(world: World, trackId: unknown): void {
@@ -67,9 +64,6 @@ function resolveHandles(world: World, ops: readonly Op[]): void {
       if (typeof op[key] === 'string') world.placement(op[key]);
     }
     if (op.op === 'delete') for (const id of op.placementIds as string[]) world.placement(id);
-    if (op.op === 'setReference' && typeof op.referencePlacementId === 'string') {
-      world.placement(op.referencePlacementId);
-    }
     trackSlot(world, op.toTrackId);
   }
 }
@@ -96,23 +90,12 @@ const clampFades = (fadeIn: number, fadeOut: number, durationSec: number) => {
   return { fadeInSec: kept, fadeOutSec: round6(clampFade(fadeOut, room - kept)) };
 };
 
-/** The placement a reference chain from `start` ends at, or the placements it passes through. */
-function referenceChain(start: PlacementRec | null, drafts: ReadonlyMap<number, Draft>): PlacementRec[] {
-  const chain: PlacementRec[] = [];
-  for (let current = start; current !== null && !chain.includes(current);) {
-    chain.push(current);
-    const draft = drafts.get(current.serial);
-    current = draft === undefined ? current.reference : draft.referenceAfter;
-  }
-  return chain;
-}
-
 interface Plan {
   readonly drafts: Map<number, Draft>;
   readonly warnings: unknown[];
 }
 
-/** Plans the ops move, trim, setGain, setFade and setReference on working copies of the clips. */
+/** Plans the ops move, trim, setGain and setFade on working copies of the clips. */
 function planEdits(world: World, ops: readonly Op[]): Plan {
   const drafts = new Map<number, Draft>();
   const warnings: unknown[] = [];
@@ -125,8 +108,6 @@ function planEdits(world: World, ops: readonly Op[]): Plan {
         before: stateOf(placement),
         after: stateOf(placement),
         recorded: new Set(),
-        referenceBefore: placement.reference,
-        referenceAfter: placement.reference,
       };
       drafts.set(placement.serial, draft);
     }
@@ -221,25 +202,6 @@ function planEdits(world: World, ops: readonly Op[]): Plan {
         }
         break;
       }
-      case 'setReference': {
-        const target = typeof op.referencePlacementId === 'string' ? world.placement(op.referencePlacementId) : null;
-        if (target !== null) {
-          const targetState = drafts.get(target.serial)?.after ?? stateOf(target);
-          const overlapping =
-            targetState.startTimelineSec < after.startTimelineSec + after.durationSec - TOLERANCE &&
-            targetState.startTimelineSec + targetState.durationSec > after.startTimelineSec + TOLERANCE;
-          if (target === placement || !overlapping || referenceChain(target, drafts).includes(placement)) {
-            throw refuse(
-              'INVALID_ARGUMENT',
-              'reference_ineligible',
-              'a clip can only refer to another clip that overlaps it in time and does not lead back to it',
-            );
-          }
-        }
-        draft.referenceAfter = target;
-        warnings.push(warning('EXPERIMENTAL_FEATURE', subjectOf(placement)));
-        break;
-      }
       default:
         throw refuse('INVALID_ARGUMENT', 'invalid_params', `the op ${op.op} is not planned here`);
     }
@@ -248,23 +210,14 @@ function planEdits(world: World, ops: readonly Op[]): Plan {
 }
 
 const changedKeys = (draft: Draft) => differing(draft.before, draft.after);
-const referenceChanged = (draft: Draft): boolean => draft.referenceBefore !== draft.referenceAfter;
-const hasEffect = (draft: Draft): boolean => changedKeys(draft).length > 0 || referenceChanged(draft);
+const hasEffect = (draft: Draft): boolean => changedKeys(draft).length > 0;
 
 function changeOf(draft: Draft) {
-  const fields: Record<string, unknown> = fieldChanges(draft.before, draft.after);
-  if (referenceChanged(draft)) {
-    fields.referencePlacementId = {
-      before: draft.referenceBefore?.id ?? null,
-      after: draft.referenceAfter?.id ?? null,
-      unit: null,
-    };
-  }
   return {
     entity: 'placement',
     ref: { placementId: draft.placement.id },
     label: clipLabel(draft.placement.serial, draft.after.trackId),
-    fields,
+    fields: fieldChanges(draft.before, draft.after),
   };
 }
 
@@ -363,22 +316,15 @@ function editClips(context: MethodContext, ops: readonly Op[], dryRun: boolean) 
   const beforeStates = effective.map((d) => ({ draft: d, keys: new Set([...changedKeys(d), ...d.recorded]) }));
   for (const draft of effective) {
     applyState(world, draft.placement, draft.after);
-    if (referenceChanged(draft)) {
-      draft.placement.reference = draft.referenceAfter;
-      world.touchArrangement();
-    }
   }
   const { description, innerActions } = entryFor(ops);
   const { seq, undoId } = world.nextUndoId();
   const stateKeys = (side: 'before' | 'after') =>
     beforeStates
-      .filter(({ draft, keys }) => keys.size > 0 || referenceChanged(draft))
+      .filter(({ keys }) => keys.size > 0)
       .map(({ draft, keys }) => ({
         serial: draft.placement.serial,
         state: pick(draft[side], [...keys]),
-        ...(referenceChanged(draft)
-          ? { reference: (side === 'before' ? draft.referenceBefore : draft.referenceAfter)?.serial ?? null }
-          : {}),
       }));
   const entry: HistoryEntry = {
     seq,
@@ -522,7 +468,6 @@ function split(context: MethodContext, op: Op, dryRun: boolean) {
     content: placement.content,
     name: placement.name,
     gainLinear: placement.gainLinear,
-    reference: placement.reference,
   };
   const left = world.addPlacement({
     ...common,
@@ -549,7 +494,6 @@ function split(context: MethodContext, op: Op, dryRun: boolean) {
   });
   const original = clipItem(placement);
   world.removePlacement(placement);
-  for (const other of world.placements.values()) if (other.reference === placement) other.reference = left;
   world.touchArrangement();
   pushUnsafeEntry(world, 'clipSplit', 'Split clip', 'splitClip', [placement.trackId]);
   world.markDirty();
@@ -622,6 +566,10 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
     ? clampFades(origin.fadeInSec, origin.fadeOutSec, duration)
     : { fadeInSec: leading.fadeInSec, fadeOutSec: trailing.fadeOutSec };
   const boundary = trailing.startTimelineSec;
+  // A split lands on an analysis frame, so the recipe cuts the merged clip back at the former boundary only
+  // where that boundary lies on one (PROTOCOL.md section 15.2 rule 8).
+  const boundaryFrames = trailing.clipInContentSec / HOP_SEC;
+  const splitsBack = Math.abs(boundaryFrames - Math.round(boundaryFrames)) < 1e-6;
   const dirtyBefore = world.project.dirty;
   if (dryRun) {
     return envelope(world, {
@@ -662,14 +610,10 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
     gainLinear: leading.gainLinear,
     fadeInSec: mergedFades.fadeInSec,
     fadeOutSec: mergedFades.fadeOutSec,
-    reference: leading.reference,
   });
   const removed = [clipItem(leading), clipItem(trailing)];
   world.removePlacement(leading);
   world.removePlacement(trailing);
-  for (const other of world.placements.values()) {
-    if (other.reference === leading || other.reference === trailing) other.reference = merged;
-  }
   world.touchArrangement();
   pushUnsafeEntry(world, 'clipMerge', 'Merge clips', 'mergeClips', [merged.trackId]);
   world.markDirty();
@@ -693,16 +637,21 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
     undo: {
       undoable: false,
       reason: 'upstream_undo_defect',
-      revert: {
-        method: 'arrangement.edit',
-        params: {
-          expectedArrangementRevision: world.arrangement,
-          ops: [{ op: 'split', placementId: merged.id, atTimelineSec: boundary }],
-        },
-      },
+      revert: splitsBack
+        ? {
+            method: 'arrangement.edit',
+            params: {
+              expectedArrangementRevision: world.arrangement,
+              ops: [{ op: 'split', placementId: merged.id, atTimelineSec: boundary }],
+            },
+          }
+        : null,
     },
     dirtyBefore,
-    warnings: [warning('UPSTREAM_UNDO_DEFECT', subjectOf(leading))],
+    warnings: [
+      warning('UPSTREAM_UNDO_DEFECT', subjectOf(leading)),
+      ...(splitsBack ? [] : [warning('IRREVERSIBLE', subjectOf(leading))]),
+    ],
   });
 }
 
@@ -719,15 +668,6 @@ function deleteClips(context: MethodContext, op: Op, params: Readonly<Record<str
       'deleting clips cannot be undone; the end user must agree, then the call carries confirm true',
     );
   }
-  const unlinked = [...world.placements.values()].filter(
-    (p) => !doomed.includes(p) && p.reference !== null && doomed.includes(p.reference),
-  );
-  const changes = unlinked.map((p) => ({
-    entity: 'placement',
-    ref: { placementId: p.id },
-    label: clipLabel(p.serial, p.trackId),
-    fields: { referencePlacementId: { before: p.reference?.id ?? null, after: null, unit: null } },
-  }));
   // A content that no other clip shows leaves the project with the clips (section 14.4 rule 6).
   const removed = [...doomed.map(clipItem), ...leavingContents(world, doomed)];
   const dirtyBefore = world.project.dirty;
@@ -736,11 +676,9 @@ function deleteClips(context: MethodContext, op: Op, params: Readonly<Record<str
       applied: false,
       noOp: false,
       dryRun: true,
-      changes,
       removed,
       diff: EMPTY_DIFF,
       contents: [],
-      placements: unlinked,
       undo: null,
       dirtyBefore,
     });
@@ -748,7 +686,6 @@ function deleteClips(context: MethodContext, op: Op, params: Readonly<Record<str
   const before = world.capture();
   const tracks = [...new Set(doomed.map((p) => p.trackId))];
   for (const placement of doomed) world.removePlacement(placement);
-  for (const placement of unlinked) placement.reference = null;
   world.touchArrangement();
   pushUnsafeEntry(world, 'clipDelete', 'Delete clips', 'deleteClips', tracks);
   world.markDirty();
@@ -756,11 +693,9 @@ function deleteClips(context: MethodContext, op: Op, params: Readonly<Record<str
   return envelope(world, {
     applied: true,
     noOp: false,
-    changes,
     removed,
     diff,
     contents: [],
-    placements: unlinked,
     undo: { undoable: false, reason: 'upstream_undo_defect', revert: null },
     dirtyBefore,
     warnings: [

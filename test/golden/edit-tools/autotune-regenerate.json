@@ -18,93 +18,39 @@
     "expected_revision": "<clip_revision of the clip>"
   },
   "result": {
-    "summary": "opentune_autotune_range: created 5 notes, removed 2 notes (destructive; side effects: rendering of one or more contents was queued again). Undo it as one step with undoId u:01234567:3.",
+    "summary": "opentune_autotune_range: created 5 notes, removed 2 notes (destructive; side effects: rendering of one or more contents was queued again). OpenTune is rendering again: playback can still sound the old way until render.current of opentune_get_clip_details is true, and an export waits for the render by itself. Undo it as one step with undoId u:01234567:3.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
-    "changes": [],
-    "created": [
+    "undo": {
+      "undoable": true,
+      "undoId": "u:01234567:3",
+      "description": "Auto tune",
+      "innerActions": [
+        "setNotes"
+      ],
+      "steps": 1
+    },
+    "lines": [
       {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 0,
-            "atRevision": "r20"
-          }
+        "kind": "sideEffect",
+        "name": "reRenderQueued",
+        "text": "Rendering of one or more contents was queued again.",
+        "details": {
+          "contentIds": [
+            "c:01234567:0:1"
+          ],
+          "revert": null
         },
-        "label": "#0 E4 0.00-0.70s"
+        "revert": null
       },
       {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 1,
-            "atRevision": "r20"
-          }
-        },
-        "label": "#1 G4 0.80-1.15s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 2,
-            "atRevision": "r20"
-          }
-        },
-        "label": "#2 A4 1.18-1.50s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 3,
-            "atRevision": "r20"
-          }
-        },
-        "label": "#3 A4 1.60-2.30s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 4,
-            "atRevision": "r20"
-          }
-        },
-        "label": "#4 G4 2.40-2.76s"
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
+        "undoId": "u:01234567:3",
+        "description": "Auto tune"
       }
     ],
-    "removed": [
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 0,
-            "atRevision": "r10"
-          }
-        },
-        "label": "#0 E4 0.50-1.50s"
-      },
-      {
-        "entity": "note",
-        "ref": {
-          "contentId": "c:01234567:0:1",
-          "note": {
-            "index": 1,
-            "atRevision": "r10"
-          }
-        },
-        "label": "#1 A4 2.00-3.00s"
-      }
-    ],
-    "idMap": [],
     "revisionDiff": {
       "arrangement": null,
       "trackState": null,
@@ -114,11 +60,11 @@
           "changed": {
             "notes": {
               "before": "n3",
-              "after": "n18"
+              "after": "n17"
             },
             "pitch": {
               "before": "p4",
-              "after": "p19"
+              "after": "p18"
             }
           }
         }
@@ -129,21 +75,12 @@
       "contents": [
         {
           "contentId": "c:01234567:0:1",
-          "revision": "r20",
+          "revision": "r19",
           "gridRevision": "g6",
-          "keyRevision": "k17"
+          "keyRevision": "k16"
         }
       ],
       "placements": []
-    },
-    "undo": {
-      "undoable": true,
-      "undoId": "u:01234567:3",
-      "description": "Auto tune",
-      "innerActions": [
-        "setNotes"
-      ],
-      "steps": 1
     },
     "dirty": {
       "before": true,
@@ -152,7 +89,7 @@
     "ui": {
       "workspace": "arrangement",
       "pianoRollContentId": null,
-      "activeTrackId": null,
+      "activeTrackId": 0,
       "selectedPlacementIds": [],
       "visibleTrackCount": 4
     },
@@ -186,6 +123,89 @@
       "created": 0,
       "removed": 0
     },
+    "changes": [],
+    "created": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r19"
+          }
+        },
+        "label": "#0 E4 0.00-0.70s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r19"
+          }
+        },
+        "label": "#1 G4 0.80-1.15s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 2,
+            "atRevision": "r19"
+          }
+        },
+        "label": "#2 A4 1.18-1.50s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 3,
+            "atRevision": "r19"
+          }
+        },
+        "label": "#3 A4 1.60-2.30s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 4,
+            "atRevision": "r19"
+          }
+        },
+        "label": "#4 G4 2.40-2.76s"
+      }
+    ],
+    "removed": [
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 0,
+            "atRevision": "r9"
+          }
+        },
+        "label": "#0 E4 0.50-1.50s"
+      },
+      {
+        "entity": "note",
+        "ref": {
+          "contentId": "c:01234567:0:1",
+          "note": {
+            "index": 1,
+            "atRevision": "r9"
+          }
+        },
+        "label": "#1 A4 2.00-3.00s"
+      }
+    ],
+    "idMap": [],
     "uiEffects": [
       {
         "surface": "piano roll",
@@ -219,7 +239,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 0,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -231,7 +251,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 1,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -243,7 +263,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 2,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -255,7 +275,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 3,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -267,7 +287,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 4,
-              "atRevision": "r20"
+              "atRevision": "r19"
             }
           }
         },
@@ -279,7 +299,7 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 0,
-              "atRevision": "r10"
+              "atRevision": "r9"
             }
           }
         },
@@ -291,33 +311,13 @@
             "contentId": "c:01234567:0:1",
             "note": {
               "index": 1,
-              "atRevision": "r10"
+              "atRevision": "r9"
             }
           }
         }
       ],
       "omittedChangeCount": 0
     },
-    "lines": [
-      {
-        "kind": "sideEffect",
-        "name": "reRenderQueued",
-        "text": "Rendering of one or more contents was queued again.",
-        "details": {
-          "contentIds": [
-            "c:01234567:0:1"
-          ],
-          "revert": null
-        },
-        "revert": null
-      },
-      {
-        "kind": "undo",
-        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
-        "undoId": "u:01234567:3",
-        "description": "Auto tune"
-      }
-    ],
-    "clip_revision": "cr1.WyJyMjAiLCJnNiIsImsxNyIsImgxMSJd"
+    "clip_revision": "cr1.WyJyMTkiLCJnNiIsImsxNiIsImgxMCJd"
   }
 }

@@ -1,0 +1,186 @@
+{
+  "description": "A delete with consent: cannot be undone or restored, said first.",
+  "input": {
+    "ops": [
+      {
+        "op": "delete",
+        "clips": [
+          "p:01234567:0:1"
+        ]
+      }
+    ],
+    "confirm": true,
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "summary": "opentune_edit_arrangement: this delete cannot be undone: OpenTune frees objects its own undo entry needs, so undoing a delete does nothing; opentune_undo refuses it, and the user should not undo it in the OpenTune window either; no request can restore it either. Removed 1 placement, 1 content (destructive; not undoable: OpenTune cannot undo this reliably; cannot be restored by any request). Warnings: UPSTREAM_UNDO_DEFECT, IRREVERSIBLE.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "upstream_undo_defect",
+      "revert": null
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "UPSTREAM_UNDO_DEFECT",
+        "text": "OpenTune cannot undo this change reliably: it frees objects its own undo entry needs.",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune cannot undo this reliably). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a45",
+        "after": "a46"
+      },
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:1",
+          "changed": {
+            "notes": {
+              "before": "n3",
+              "after": null
+            },
+            "pitch": {
+              "before": "p4",
+              "after": null
+            },
+            "content": {
+              "before": "c5",
+              "after": null
+            },
+            "grid": {
+              "before": "g6",
+              "after": null
+            },
+            "key": {
+              "before": "k7",
+              "after": null
+            },
+            "pitchShift": {
+              "before": "s8",
+              "after": null
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a46",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 6
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "UPSTREAM_UNDO_DEFECT",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      },
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "placementId": "p:01234567:0:1"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "changes": [],
+    "created": [],
+    "removed": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:1"
+        },
+        "label": "Clip 1 on Track 1"
+      },
+      {
+        "entity": "content",
+        "ref": {
+          "contentId": "c:01234567:0:1"
+        },
+        "label": "Content 1"
+      }
+    ],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "removed placement",
+        "target": "p:01234567:0:1",
+        "visibleNow": true
+      },
+      {
+        "surface": "piano roll",
+        "effect": "removed content",
+        "target": "c:01234567:0:1",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "removed",
+          "entity": "placement",
+          "label": "Clip 1 on Track 1",
+          "ref": {
+            "placementId": "p:01234567:0:1"
+          }
+        },
+        {
+          "kind": "removed",
+          "entity": "content",
+          "label": "Content 1",
+          "ref": {
+            "contentId": "c:01234567:0:1"
+          }
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "arrangement_revision": "ar1.YTQ2",
+    "clip_ids": {
+      "created": [],
+      "removed": [
+        "p:01234567:0:1"
+      ]
+    }
+  }
+}

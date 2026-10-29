@@ -3,16 +3,19 @@
 
 // The `given` preconditions of a contract vector (spec/otcp/v1/vectors/README.md, "Preconditions")
 // that concern project and window state: the editing scheme, the unsaved-changes flag, clips, files,
-// the undo and redo histories, dialogs, the first-run onboarding, preferences and the audio device. A test sets them up directly on the model, never through OTCP. Jobs and
-// capabilities belong to the server and are handled there.
+// the undo and redo histories, dialogs, the first-run onboarding, the keyboard focus (which the mock's window
+// always holds in the tempo field, so there is nothing to set), preferences and the audio device. A test sets them
+// up directly on the model, never through OTCP. Jobs and capabilities belong to the server and are handled there.
 
 import type { WorkFiles, GivenFile } from './files.js';
 import { snapOf } from './history.js';
 import { openDialogs } from './ui.js';
 import {
+  AUDIO_AVAILABLE,
   DEFAULT_NOTE_PARAMS,
   DETECTED_KEY,
   TRACK_SLOTS,
+  outputDevicesOf,
   type Analysis,
   type ContentRec,
   type ContentSnap,
@@ -33,7 +36,6 @@ export interface GivenClip {
   readonly key?: { root: number; scale: string };
   readonly pitchShift?: PitchShiftRec;
   readonly timeGrid?: readonly { bind: string; contentSec: number }[];
-  readonly referenceClip?: string;
   readonly fadeInSec?: number;
   readonly fadeOutSec?: number;
 }
@@ -58,14 +60,30 @@ export interface GivenState {
   readonly history?: { readonly undo: readonly GivenHistoryEntry[]; readonly redo: readonly GivenHistoryEntry[] };
   /** The number of track slots shown, counted from track 0, or `all` for every slot. */
   readonly visibleTrackCount?: number | 'all';
-  readonly audio?: { readonly running: boolean; readonly failsToOpen?: boolean };
+  readonly audio?: {
+    readonly running: boolean;
+    readonly failsToOpen?: boolean;
+    /** The machine also offers another device type and another output device; their names are bound. */
+    readonly alternatives?: boolean;
+  };
   /** The dialogs open, from the bottom of the stack to the top. */
   readonly dialogs?: readonly GivenDialog[];
   readonly onboarding?: 'notShown' | 'shown' | 'showing';
+  /**
+   * Where the keyboard focus is: `tempoField`, the tempo field of the transport bar. The mock's window always holds
+   * the focus there (mock/ui.ts, tempoRounding), so there is nothing to set; it is a member of the mock's own so that
+   * the vector that depends on it runs.
+   */
+  readonly keyboardFocus?: 'tempoField';
   readonly preferences?: {
     readonly tuningHz?: number;
     readonly hybridMode?: boolean;
     readonly experimentalFeatures?: boolean;
+    readonly vocoderWeight?: string;
+    readonly renderingPriority?: string;
+    readonly f0Model?: string;
+    /** The weight files and the pitch models the installation offers (prefs.get, processing.options). */
+    readonly options?: { readonly vocoderWeight?: readonly string[]; readonly f0Model?: readonly string[] };
     /** The binds of given files, the most recent first. */
     readonly recentProjects?: readonly string[];
   };
@@ -91,6 +109,7 @@ export const WORLD_GIVEN_MEMBERS = [
   'audio',
   'dialogs',
   'onboarding',
+  'keyboardFocus',
   'preferences',
   'projectFile',
 ] as const;
@@ -260,19 +279,11 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
   if (given.editingScheme !== undefined) world.editingScheme = given.editingScheme;
   const byBind = new Map<string, PlacementRec>();
   for (const clip of given.clips ?? []) byBind.set(clip.bind, createClip(world, files, clip, bindings));
-  for (const clip of given.clips ?? []) {
-    const reference = clip.referenceClip === undefined ? undefined : byBind.get(clip.referenceClip);
-    if (clip.referenceClip !== undefined && reference === undefined) {
-      throw new Error(`clip ${clip.bind} refers to the reference clip ${clip.referenceClip}, which no clip binds`);
-    }
-    const placement = byBind.get(clip.bind);
-    if (placement !== undefined && reference !== undefined) placement.reference = reference;
-  }
   if (given.clipOnEveryTrack === true) {
     const used = new Set([...world.placements.values()].map((p) => p.trackId));
     for (let trackId = 0; trackId < TRACK_SLOTS; trackId++) {
       if (used.has(trackId)) continue;
-      // No name binds these clips, so their bindings go nowhere.
+      // No name binds these clips.
       const filler = {
         bind: `track${String(trackId)}Filler`,
         trackId,
@@ -291,6 +302,21 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
     world.audio.running = given.audio.running;
     world.audio.failsToOpen = given.audio.failsToOpen === true;
     world.transport.audioDeviceRunning = given.audio.running;
+    if (given.audio.alternatives === true) {
+      if (!given.audio.running) throw new Error('given.audio.alternatives needs running');
+      const { audio } = world;
+      const otherType = AUDIO_AVAILABLE.deviceTypes.find((type) => type !== audio.deviceType);
+      const otherDevice = outputDevicesOf(audio.deviceType).find((device) => device !== audio.outputDevice);
+      if (otherType === undefined || otherDevice === undefined) {
+        throw new Error('the mock offers no other device type or output device');
+      }
+      Object.assign(bindings, {
+        'audio.deviceType': audio.deviceType,
+        'audio.outputDevice': audio.outputDevice,
+        'audio.otherDeviceType': otherType,
+        'audio.otherOutputDevice': otherDevice,
+      });
+    }
   }
   if (given.dialogs !== undefined) {
     openDialogs(
@@ -303,10 +329,17 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
     world.onboardingShowing = given.onboarding === 'showing';
   }
   if (given.preferences !== undefined) {
-    const { tuningHz, hybridMode, experimentalFeatures, recentProjects } = given.preferences;
+    const { tuningHz, hybridMode, experimentalFeatures, recentProjects, options } = given.preferences;
     if (tuningHz !== undefined) world.prefs.tuningHz = tuningHz;
     if (hybridMode !== undefined) world.prefs.hybridMode = hybridMode;
     if (experimentalFeatures !== undefined) world.prefs.experimentalFeatures = experimentalFeatures;
+    if (given.preferences.vocoderWeight !== undefined) world.prefs.vocoderWeight = given.preferences.vocoderWeight;
+    if (given.preferences.renderingPriority !== undefined) {
+      world.prefs.renderingPriority = given.preferences.renderingPriority;
+    }
+    if (given.preferences.f0Model !== undefined) world.prefs.f0Model = given.preferences.f0Model;
+    if (options?.vocoderWeight !== undefined) world.prefs.options.vocoderWeight = [...options.vocoderWeight];
+    if (options?.f0Model !== undefined) world.prefs.options.f0Model = [...options.f0Model];
     if (recentProjects !== undefined) {
       world.prefs.recentProjects = recentProjects.map((bind) => {
         const file = bindings[bind];

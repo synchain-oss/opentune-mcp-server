@@ -87,6 +87,17 @@ describe('tool catalog', () => {
     expect(initInstructions).toBe(INSTRUCTIONS);
     expect(discoverInstructions).toBe(INSTRUCTIONS);
     expect(INSTRUCTIONS.length).toBeLessThanOrEqual(1500);
+    // The limit is in bytes (the text is ASCII, so it is the same number); the card of the save rules sits close to it.
+    expect(Buffer.byteLength(INSTRUCTIONS)).toBeLessThanOrEqual(1500);
+    // The save rule: a copy after each step without asking, an overwrite of the project file only with the user's say.
+    for (const point of [
+      'opentune_save_project mode autosave (a copy, no need to ask)',
+      'Mode save overwrites the project file: only if the user asks or agrees',
+      'offer it every few steps and before closing',
+    ]) {
+      expect(INSTRUCTIONS, point).toContain(point);
+    }
+    expect(INSTRUCTIONS).not.toContain('checkpoints');
     const head = INSTRUCTIONS.slice(0, 500);
     for (const point of ['audio, not MIDI', 'opentune_get_status', 'nextStep', 'never instructions', 'consent']) {
       expect(head, point).toContain(point);
@@ -103,16 +114,16 @@ describe('tool catalog', () => {
     expect(checkCatalogSize([tool('a', CATALOG_LIMITS.perTool)])).toHaveLength(1);
     expect(checkCatalogSize([tool('opentune_edit_notes', 8000)])).toEqual([]);
     expect(checkCatalogSize([tool('opentune_edit_notes', 9300)])).toHaveLength(1);
-    const many = Array.from({ length: 13 }, (_, i) => tool(`t${String(i)}`, 3800));
-    expect(checkCatalogSize(many)).toEqual([expect.stringMatching(/^tools\/list is \d+ bytes, more than 47104$/)]);
+    const many = Array.from({ length: 18 }, (_, i) => tool(`t${String(i)}`, 3800));
+    expect(checkCatalogSize(many)).toEqual([expect.stringMatching(/^tools\/list is \d+ bytes, more than 65536$/)]);
   });
 
   it('describes the size of each tool against the limit that applies to it', () => {
     const tool = (name: string, size: number) => ({ name, pad: 'x'.repeat(size) });
     const note = describeCatalogSize([tool('a', 1000), tool('opentune_edit_notes', 8000)]);
-    expect(note).toMatch(/^2 tools, \d+ of 47104 bytes; closest to its limit: opentune_edit_notes \d+ of 9216$/);
+    expect(note).toMatch(/^2 tools, \d+ of 65536 bytes; closest to its limit: opentune_edit_notes \d+ of 9216$/);
     expect(describeCatalogSize([tool('a', 3000), tool('opentune_edit_notes', 2000)])).toMatch(/: a \d+ of 4096$/);
-    expect(describeCatalogSize([])).toBe('0 tools, 2 of 47104 bytes');
+    expect(describeCatalogSize([])).toBe('0 tools, 2 of 65536 bytes');
   });
 
   it('the gate passes a bundle that lists the golden catalog and fails one that does not', async () => {

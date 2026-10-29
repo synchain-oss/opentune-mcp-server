@@ -26,10 +26,15 @@ import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 import { resolveDiscoveryDir } from '../../mock/discovery.js';
+import { WorkFiles } from '../../mock/files.js';
+import { parseDiscoveryFile } from '../../src/discovery/file.js';
 import { pidAlive, systemProbe, type ProcessInfo } from '../../src/discovery/process.js';
+import { OtcpSession } from '../../src/otcp/client.js';
 import { otcpSpec } from '../support/otcp-spec.js';
+import { guardDataDir, type SettingsGuard } from '../support/settings-guard.js';
 import { RunnerConnection } from './connection.js';
-import { PreconditionUnavailable, type ContractTarget } from './target.js';
+import { establishExeGiven, readRunnerValues, type Rpc } from './exe-given.js';
+import type { ContractTarget } from './target.js';
 
 export interface ExeTargetOptions {
   /** Absolute path of the executable. */
@@ -63,7 +68,9 @@ export interface ExeCleanupStats {
   verified: number;
   /** Ended by force; whether the instance cleans up after itself was not verified. */
   forced: number;
-  /** Had already ended by itself before the vector was over. */
+  /** Ended by itself as a vector that ends the instance (endsSession) asked, and cleaned up: discovery file removed. */
+  endedAsAsked: number;
+  /** Had already ended by itself before the vector was over, where the vector did not ask for that. */
   exitedEarly: number;
   /** Exited after a normal stop request but left its discovery file behind. */
   leftDiscoveryFile: number;
@@ -90,6 +97,14 @@ const HELLO_ID = 'otcp-exe-hello';
 /** How far two readings of one process's start time may differ (PROTOCOL.md section 5.4 rule 2). */
 const START_TOLERANCE_MS = 2000;
 const PROBE_ATTEMPTS = 3;
+/**
+ * How long to wait after closing a preparatory session. OTCP has no call that reports how many sessions
+ * are open (only the limit, `maxSessions`, is specified), so the release cannot be polled; the server
+ * handles the close on its next turn, which takes a few milliseconds, and 200 ms is a generous margin. If
+ * it were too short, the vector's own connection would meet the session limit and the vector would fail
+ * with BUSY(session_limit) instead of passing.
+ */
+const SESSION_CLOSE_SETTLE_MS = 200;
 /** The ready file's name in the data folder, and the discovery folder below it: paths this runner itself uses. */
 const READY_FILE_NAME = 'ready.json';
 const DISCOVERY_DIR_PARTS = ['control', 'instances'] as const;
@@ -181,7 +196,7 @@ export function isRunnerPath(rel: readonly string[], platform: NodeJS.Platform =
  * The paths this runner uses itself (isRunnerPath: the ready file at the top, the discovery folder)
  * are not copied: a stale one would be taken for the new instance's. Returns whether any was skipped.
  */
-async function copyTemplate(from: string, to: string, rel: readonly string[] = []): Promise<boolean> {
+export async function copyTemplate(from: string, to: string, rel: readonly string[] = []): Promise<boolean> {
   let skipped = false;
   for (const entry of await readdir(from, { withFileTypes: true })) {
     const here = [...rel, entry.name];
@@ -357,6 +372,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
   const stats: ExeCleanupStats = {
     verified: 0,
     forced: 0,
+    endedAsAsked: 0,
     exitedEarly: 0,
     leftDiscoveryFile: 0,
     notEnded: 0,
@@ -457,6 +473,10 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       let instancePid: number | undefined = undefined;
       let owned: Owned | undefined;
       let unconfirmed: string | undefined;
+      /** Whether the runner sent the call that makes the instance end by itself (endRequested was called). */
+      let endAsked = false;
+      /** The snapshot of the settings files of the data folder, taken before the start. */
+      let settings: SettingsGuard | undefined;
 
       const redacted = (text: string) => {
         let out = text.replace(/[0-9a-fA-F]{32,}/g, '[redacted]');
@@ -514,6 +534,15 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
             : 'the temporary data folder could not be removed';
         }
       };
+      /** Compares the settings files with the snapshot and puts them back; what differed or stayed wrong. */
+      const settingsProblems = async (): Promise<readonly string[]> => {
+        try {
+          return (await settings?.finish()) ?? [];
+        } catch (error) {
+          const why = error instanceof Error ? error.message : String(error);
+          return [`the settings of the data folder could not be checked: ${why}`];
+        }
+      };
       const fail = async (problem: string): Promise<never> => {
         const notes = [problem];
         try {
@@ -525,6 +554,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
         } catch (error) {
           notes.push(`stopping it failed: ${error instanceof Error ? error.message : String(error)}`);
         }
+        notes.push(...(await settingsProblems()));
         const removal = await removeDataDir();
         if (removal !== undefined) notes.push(removal);
         throw new Error(describe(notes.join('; ')));
@@ -537,6 +567,7 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
         if (options.dataTemplate !== undefined && (await copyTemplate(options.dataTemplate, dataDir))) {
           stats.templateSkipped++;
         }
+        settings = await guardDataDir(dataDir);
         child = spawn(
           options.exe,
           [
@@ -587,6 +618,8 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
         await sleep(POLL_MS);
       }
       const readyAtMs = Date.now();
+      const files = new WorkFiles();
+      let runnerValues: Readonly<Record<string, string | number>> = {};
       const readyProblems = otcpSpec().validate(READY_FILE_REF, ready);
       if (readyProblems.length > 0 || !isObject(ready)) {
         return fail(`the ready file is not valid: ${readyProblems.join('; ')}`);
@@ -615,23 +648,78 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
       if (unconfirmed !== undefined)
         return fail(`the ready file names pid ${String(readyPid)}, not the started process`);
 
+      /** A session for the preparatory calls of one precondition or reading, closed afterwards. */
+      const withRpc = async <T>(use: (rpc: Rpc) => Promise<T>): Promise<T> => {
+        const parsed = parseDiscoveryFile(`${String(readyPid)}.json`, await readFile(discoveryFile));
+        if (!parsed.ok) throw new Error(`the discovery file is not valid: ${parsed.problem}`);
+        const session = await OtcpSession.open(parsed.entry, timeoutMs);
+        try {
+          return await use(session);
+        } finally {
+          session.close();
+          // The server notices the close on its own turn; the vector needs to be the only connection.
+          await sleep(SESSION_CLOSE_SETTLE_MS);
+        }
+      };
       // The capabilities come from a session.hello of this target's own; the runner opens its own connections.
       const hello = await ownHello(discovery, timeoutMs);
       if ('problem' in hello) return fail(hello.problem);
+      await settings.settle();
 
       return {
         discovery,
         protocol: hello.protocol,
         capabilities: hello.capabilities,
-        establish(given) {
-          // No preparatory calls yet: only vectors without preconditions run on a real instance.
-          const members = Object.keys(given);
-          if (members.length === 0) return Promise.resolve({});
-          return Promise.reject(
-            new PreconditionUnavailable(`the exe target cannot establish given.${members.join(', given.')}`),
-          );
+        // Preparatory calls of a session of its own, closed before the vector connects: the runner makes
+        // sure its connections are the only ones. What cannot be made stays a skipped precondition.
+        establish: (given) =>
+          Object.keys(given).length === 0
+            ? Promise.resolve({})
+            : withRpc((rpc) =>
+                establishExeGiven(given, {
+                  rpc,
+                  files,
+                  capabilities: hello.capabilities,
+                  saveTarget: () => files.provide({ bind: 'saved', kind: 'absent', extension: '.otproj' }).saved ?? '',
+                }),
+              ),
+        runnerValue: (name) => runnerValues[name],
+        async prepareRunnerValues() {
+          runnerValues = await withRpc((rpc) => readRunnerValues(rpc, String(discovery.instanceId)));
         },
-        runnerValue: () => undefined,
+        // The runner is about to send the call that makes the instance quit (a vector with endsSession): the end
+        // that follows is asked for, also when the vector fails before expectEnded() runs.
+        endRequested() {
+          endAsked = true;
+        },
+        // The instance quits by itself (a vector with endsSession): its exit, when the target started the
+        // process; the removal of its discovery file. Never ends the instance (close() does that, if it is
+        // still there).
+        async expectEnded(waitMs) {
+          const found: string[] = [];
+          const notChecked: string[] = [];
+          const waitUntil = Date.now() + waitMs;
+          const remaining = () => Math.max(0, waitUntil - Date.now());
+          if (instancePid === child.pid) {
+            if (await within(exitEvent, remaining())) {
+              const status = exitState();
+              if (status?.code !== 0)
+                found.push(`the process exited by itself with ${exitText()}, expected exit code 0`);
+            } else {
+              found.push(`the process did not exit within ${String(waitMs)} ms after the instance was to end`);
+            }
+          } else {
+            // A launcher started the instance: the process is not the one this target started, so only that it
+            // is gone can be seen, not how it exited.
+            if (!(await gone(instancePid, remaining()))) {
+              found.push(`the process did not exit within ${String(waitMs)} ms after the instance was to end`);
+            }
+            notChecked.push('the exit status of the instance (started by a launcher, not by this target)');
+          }
+          if (existsSync(discoveryFile)) found.push('the instance left its discovery file behind');
+          if (found.length === 0) stats.endedAsAsked++;
+          return { problems: found.map(redacted), notChecked };
+        },
         // Never throws: the runner's result for the vector must survive. What goes wrong here is
         // left for takeProblems(), which makes the vector FAIL.
         async close() {
@@ -649,8 +737,12 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
               // Ended by force: the clean-up on exit was not verified.
               stats.forced++;
             } else if (ending.how === 'exited') {
-              stats.exitedEarly++;
-              found.push(`the instance ended by itself before the vector was over (${ending.detail})`);
+              // The runner sent the call that makes the instance end: the checks are in expectEnded, or the vector
+              // failed first and says why; it is no early end.
+              if (!endAsked) {
+                stats.exitedEarly++;
+                found.push(`the instance ended by itself before the vector was over (${ending.detail})`);
+              }
             } else {
               stats.notEnded++;
               found.push(ending.detail);
@@ -658,6 +750,8 @@ export function exeTarget(options: ExeTargetOptions): ExeTarget {
           } catch (error) {
             found.push(`stopping the instance failed: ${error instanceof Error ? error.message : String(error)}`);
           }
+          found.push(...(await settingsProblems()));
+          files.dispose();
           const removal = await removeDataDir();
           if (removal !== undefined) found.push(removal);
           problems.push(...found.map(redacted));

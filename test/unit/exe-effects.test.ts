@@ -9,7 +9,7 @@
 // a child process show that it is skipped without OTCP_TARGET_EXE and runs the scenario with it.
 
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -17,12 +17,15 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import {
+  EFFECT_CHECK_NAMES,
   HYBRID_MODE_NOTICE,
   PHRASE_GAP_SEC,
   PITCH_TOLERANCE_CENTS,
   RESYNTH_EDGE_MAX_RESIDUAL_DB,
   RESYNTH_MAX_RESIDUAL_DB,
   RESYNTH_PRE_ROLL_SEC,
+  WEIGHT_MIN_ABS_DIFF,
+  WEIGHT_STEP,
   alignedResidualDb,
   awayWindow,
   compareSamples,
@@ -30,6 +33,7 @@ import {
   edgeResidualOf,
   effectsSetupFromEnv,
   noteDelta,
+  pitchProblems,
   resynthesisReach,
   runEffects,
   scrubText,
@@ -37,6 +41,7 @@ import {
   type EffectsConfig,
   type EffectsReport,
 } from '../e2e/effects.js';
+import { fakeUserSettingsEnv } from '../support/fake-user-settings.js';
 import { generateTone, writeToneFiles } from '../support/harmonic-tone.js';
 import { decodeWav } from '../support/wav-decode.js';
 import { wavFile } from '../support/wav-file.js';
@@ -44,7 +49,15 @@ import { wavFile } from '../support/wav-file.js';
 const FAKE = fileURLToPath(new URL('../support/fake-opentune.mjs', import.meta.url));
 const ROOT = fileURLToPath(new URL('../..', import.meta.url));
 const VITEST = path.join(ROOT, 'node_modules', 'vitest', 'vitest.mjs');
-const SLOW = 120_000;
+/**
+ * Timeout of a test that runs the whole scenario against the stand-in, once or several times. Measured on a
+ * developer machine: a run takes 3.4 s, and 18 s with coverage as in the CI job; the slowest test is that
+ * full run, 19 s with coverage; the file takes 30 s, and 120 s with coverage (433 s before the tests ran only
+ * the checks they are about; the CI runners took 840 s then, 1.9 times as long as this machine with
+ * coverage, so the slowest test takes about 36 s there). 150 s is 4 times that, and still 2.7 times if the
+ * runners were 3 times slower than this machine; a test that hangs still fails.
+ */
+const SCENARIO_TIMEOUT_MS = 150_000;
 
 const config = (mode: string, extra: Partial<EffectsConfig> = {}): EffectsConfig => ({
   exe: { exe: process.execPath, args: [FAKE, `--mode=${mode}`], timeoutMs: 15_000 },
@@ -57,6 +70,39 @@ const config = (mode: string, extra: Partial<EffectsConfig> = {}): EffectsConfig
 
 const results = (report: EffectsReport) => Object.fromEntries(report.steps.map((s) => [s.name, s.result]));
 const noteOf = (report: EffectsReport, name: string) => report.steps.find((s) => s.name === name)?.note ?? '';
+
+// The checks by step name. A test that is about one or two of them runs only those (EffectsConfig.onlyChecks),
+// with the set-up steps they need; a run of the whole scenario takes 3.4 s here and 18 s with coverage.
+const EXPORT_BEFORE = 'export before any edit';
+const TARGET = 'setTargetPitch +100 cents';
+const SHIFT = 'shiftCents +100 cents';
+const PITCH_SHIFT = 'setPitchShift +2 semitones';
+const AUTO_REGEN = 'AUTO regenerate pulls the sharp note back';
+const AUTO_SNAP = 'AUTO snapNotes pulls the sharp note back';
+const RETUNE_1 = 'setParams retuneSpeed 1';
+const SNAP = 'snapToScale returns an off-scale note to the scale';
+const TUNING = 'prefs.set tuningHz 442';
+const RACE = 'race: +100 cents, export, -100 cents';
+const SHIFT_TIMING = 'shiftTiming +30 ms';
+const MOVE = 'moveHandles +30 ms';
+const EXTRA_CLIPS = 'extra clips for the note-split, vibrato and drift checks';
+const SPLIT = 'AUTO regenerate noteSplitCents';
+const VIBRATO = 'setParams vibratoDepth and vibratoRateHz';
+const DRIFT = 'setParams pitchDriftScale 0';
+const HYBRID = 'prefs.set hybridMode';
+/** The steps of a run that are not checks (the timing step of length 3 s is a check, but not in the registry). */
+const NOT_REGISTRY_CHECKS = [
+  'prepare audio',
+  'launch',
+  'hello',
+  'import and analysis',
+  'fixed note parameters',
+  'baseline and noise floor',
+  'timing 3 s',
+  'shutdown',
+];
+/** The configuration of a run limited to the given checks and without the timing steps. */
+const only = (...checks: string[]): Partial<EffectsConfig> => ({ onlyChecks: checks, timingLengthsSec: [] });
 
 const scratch: string[] = [];
 async function tmp(): Promise<string> {
@@ -87,12 +133,26 @@ describe('effects scenario against the stand-in', () => {
         'AUTO regenerate pulls the sharp note back': 'PASS',
         'AUTO snapNotes pulls the sharp note back': 'PASS',
         'setParams retuneSpeed 1': 'PASS',
+        [WEIGHT_STEP]: 'PASS',
+        'snapToScale returns an off-scale note to the scale': 'PASS',
+        'prefs.set tuningHz 442': 'PASS',
         'race: +100 cents, export, -100 cents': 'PASS',
         'shiftTiming +30 ms': 'PASS',
+        'moveHandles +30 ms': 'PASS',
+        'extra clips for the note-split, vibrato and drift checks': 'PASS',
+        'AUTO regenerate noteSplitCents': 'PASS',
+        'setParams vibratoDepth and vibratoRateHz': 'PASS',
+        'setParams pitchDriftScale 0': 'PASS',
+        'prefs.set hybridMode': 'PASS',
         'timing 3 s': 'PASS',
         shutdown: 'PASS',
       });
       expect(report).toMatchObject({ schema: 'opentune-mcp-e2e-effects/1', result: 'PASS' });
+      // Without onlyChecks nothing is left out: every check of the registry runs, in its order.
+      expect(report).not.toHaveProperty('onlyChecks');
+      expect(report.steps.map((st) => st.name).filter((n) => !NOT_REGISTRY_CHECKS.includes(n))).toEqual([
+        ...EFFECT_CHECK_NAMES,
+      ]);
       expect(noteOf(report, 'export before any edit')).toContain('listed in dryContents');
       expect(noteOf(report, 'race: +100 cents, export, -100 cents')).toContain('BUSY(export_in_progress)');
       expect(report.backend).toEqual({
@@ -139,68 +199,164 @@ describe('effects scenario against the stand-in', () => {
       expect(report.noiseFloor).toMatchObject({ repeatExport: { bitIdentical: true } });
       expect(report.timings).toMatchObject({ lengths: [{ autoMode: 'regenerate' }] });
       expect(report.tolerances.pitchCents).toBe(PITCH_TOLERANCE_CENTS);
+      expect(report.tolerances).toMatchObject({
+        splitBoundarySec: 0.1,
+        tuningCents: 3,
+        vibratoRateHz: 0.25,
+        driftZeroMaxFraction: 0.35,
+        sameSoundPitchCents: 2,
+      });
+
+      // The checks of the notes, the scale, the preferences and the time grid.
+      type Measured = { index: number; expectedCents: number; medianCents: number }[];
+      const snap = report.checks['snapToScale returns an off-scale note to the scale'] as {
+        note: number;
+        targetMidi: { before: number; shifted: number; snapped: number };
+        shifted: { notes: Measured };
+        snapped: { notes: Measured };
+      };
+      // Note 3 (62) is shifted by 70 cents, to 62.7, and snapped to the nearest pitch of C major.
+      expect(snap.targetMidi).toEqual({ before: 62, shifted: 62.7, snapped: 62 });
+      expect(snap.shifted.notes.find((n) => n.index === snap.note)?.medianCents).toBeCloseTo(70, 0);
+      expect(snap.snapped.notes.find((n) => n.index === snap.note)?.medianCents).toBeCloseTo(0, 0);
+
+      const tuning = report.checks['prefs.set tuningHz 442'] as {
+        tuningHz: { before: number; set: number };
+        expectedShiftCents: number;
+        notRetroactive: { notes: Measured };
+        auto: { notes: Measured };
+      };
+      expect(tuning.tuningHz).toEqual({ before: 440, set: 442 });
+      expect(tuning.expectedShiftCents).toBeCloseTo(7.85, 2);
+      // Before AUTO nothing moved; after it the notes lie 7.85 cents up, the sharp one 32.15 down.
+      expect(tuning.notRetroactive.notes.every((n) => n.medianCents === 0)).toBe(true);
+      expect(tuning.auto.notes.filter((n) => n.index !== 2).every((n) => Math.abs(n.medianCents - 7.85) < 0.3)).toBe(
+        true,
+      );
+      expect(tuning.auto.notes.find((n) => n.index === 2)?.medianCents).toBeCloseTo(-32.15, 0);
+
+      const split = report.checks['AUTO regenerate noteSplitCents'] as {
+        runs: { noteSplitCents: number; notes: number; paramsUsed: { noteSplitCents: number } }[];
+      };
+      expect(split.runs.map((r) => r.noteSplitCents)).toEqual([30, 160]);
+      expect(split.runs.map((r) => r.paramsUsed.noteSplitCents)).toEqual([30, 160]);
+      expect(split.runs[0]?.notes ?? 0).toBeGreaterThan(split.runs[1]?.notes ?? 99);
+      expect(split.runs[1]?.notes).toBe(2);
+
+      const vibrato = report.checks['setParams vibratoDepth and vibratoRateHz'] as {
+        baseline: { amplitudeCents: number };
+        vibrato: { amplitudeCents: number; rateHz: number };
+      };
+      expect(vibrato.baseline.amplitudeCents).toBeLessThan(1);
+      expect(vibrato.vibrato.rateHz).toBeCloseTo(6, 1);
+      expect(vibrato.vibrato.amplitudeCents).toBeCloseTo(45.5, -1);
+
+      const drift = report.checks['setParams pitchDriftScale 0'] as {
+        baseline: { stdCents: number };
+        driftScale0: { stdCents: number };
+      };
+      expect(drift.baseline.stdCents).toBeGreaterThan(8);
+      expect(drift.driftScale0.stdCents).toBeLessThan(1);
+
+      const moved = report.checks['moveHandles +30 ms'] as {
+        measuredShiftMs: number;
+        handle: { outputSecBefore: number; outputSecAfter: number };
+        notesAway: { index: number; shiftMs: number }[];
+        exportAfterUndo: { bitIdentical: number };
+      };
+      expect(Math.abs(moved.measuredShiftMs - 30)).toBeLessThan(2);
+      expect(moved.handle.outputSecAfter - moved.handle.outputSecBefore).toBeCloseTo(0.03, 6);
+      expect(moved.notesAway.map((n) => n.index)).toEqual([0, 4]);
+      expect(moved.notesAway.every((n) => n.shiftMs === 0)).toBe(true);
+      expect(moved.exportAfterUndo.bitIdentical).toBe(1);
+
+      // Hybrid mode: the scenario switched it on itself, and that stays out of the notice at the top
+      // (checked above: hybridMode false, no notices). The corrections are judged where they should be.
+      const hybrid = report.checks['prefs.set hybridMode'] as {
+        hybridMode: { began: boolean; set: boolean };
+        began: { index: number; medianCents: number }[];
+        flipped: { index: number; medianCents: number }[];
+        differ: { maxAbsDiff: number };
+        putBack: { notes: { bitIdentical: boolean }[] };
+        processing: { hybridMode: boolean }[];
+      };
+      expect(hybrid.hybridMode).toEqual({ began: false, set: true });
+      expect(hybrid.began.find((n) => n.index === 1)?.medianCents).toBeCloseTo(30, 0);
+      expect(hybrid.began.find((n) => n.index === 3)?.medianCents).toBeCloseTo(200, 0);
+      // The lighter path leaves the small correction as it was and the large one applied.
+      expect(hybrid.flipped.find((n) => n.index === 1)?.medianCents ?? 99).toBeLessThan(5);
+      expect(hybrid.flipped.find((n) => n.index === 3)?.medianCents).toBeCloseTo(200, -1);
+      expect(hybrid.differ.maxAbsDiff).toBeGreaterThan(1e-3);
+      expect(hybrid.putBack.notes.every((n) => n.bitIdentical)).toBe(true);
+      expect(hybrid.processing.map((p) => p.hybridMode)).toEqual([false, true, false, false]);
       // Nothing in the report names a file or holds a secret.
       expect(JSON.stringify(report)).not.toMatch(/ot-tone-|\.wav|[0-9a-f]{32}[0-9a-f]{32}/);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'fails every effect check, and runs them all, when the export holds the notes as they were imported',
     async () => {
-      const report = await runEffects(config('effects-stale', { timingLengthsSec: [] }));
+      const effectChecks = [
+        TARGET,
+        SHIFT,
+        PITCH_SHIFT,
+        AUTO_REGEN,
+        AUTO_SNAP,
+        WEIGHT_STEP,
+        SNAP,
+        TUNING,
+        RACE,
+        SHIFT_TIMING,
+        MOVE,
+        HYBRID,
+      ];
+      const report = await runEffects(config('effects-stale', only(...effectChecks)));
       expect(report.result).toBe('FAIL');
       const r = results(report);
-      for (const name of [
-        'setTargetPitch +100 cents',
-        'shiftCents +100 cents',
-        'setPitchShift +2 semitones',
-        'AUTO regenerate pulls the sharp note back',
-        'AUTO snapNotes pulls the sharp note back',
-        'race: +100 cents, export, -100 cents',
-        'shiftTiming +30 ms',
-      ]) {
+      for (const name of effectChecks) {
         expect(r[name], name).toBe('FAIL');
       }
       expect(r['baseline and noise floor']).toBe('PASS');
       expect(noteOf(report, 'setTargetPitch +100 cents')).toMatch(/note 1: 0 cents, expected 100/);
       expect(r.shutdown).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'fails the export before any edit when the render of an uncorrected clip never settles, and goes on',
     async () => {
-      const report = await runEffects(config('effects-unsettled', { timingLengthsSec: [] }));
+      const report = await runEffects(config('effects-unsettled', only(EXPORT_BEFORE, TARGET, SHIFT_TIMING)));
       const r = results(report);
       expect(r['export before any edit']).toBe('FAIL');
       expect(noteOf(report, 'export before any edit')).toContain('export_wait_timeout');
       expect(r['setTargetPitch +100 cents']).toBe('PASS');
       expect(r['shiftTiming +30 ms']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'fails the race when the export holds one note of each version; passes it on a changed_during_export conflict',
     async () => {
-      const mixed = await runEffects(config('effects-mixed', { timingLengthsSec: [] }));
+      const mixed = await runEffects(config('effects-mixed', only(RACE)));
       expect(results(mixed)['race: +100 cents, export, -100 cents']).toBe('FAIL');
       expect(noteOf(mixed, 'race: +100 cents, export, -100 cents')).toContain('not one version: up, down');
-      const conflict = await runEffects(config('effects-conflict', { timingLengthsSec: [] }));
+      const conflict = await runEffects(config('effects-conflict', only(RACE)));
       expect(results(conflict)['race: +100 cents, export, -100 cents']).toBe('PASS');
       expect(noteOf(conflict, 'race: +100 cents, export, -100 cents')).toContain(
         'REVISION_CONFLICT(changed_during_export), target untouched',
       );
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'stops the checks when an undo does not put the clip back',
     async () => {
-      const report = await runEffects(config('effects-undo-broken', { timingLengthsSec: [] }));
+      const report = await runEffects(config('effects-undo-broken', only(TARGET, SHIFT)));
       const r = results(report);
       expect(r['setTargetPitch +100 cents']).toBe('FAIL');
       expect(noteOf(report, 'setTargetPitch +100 cents')).toContain('after edit.undo the clip is not as it was');
@@ -208,7 +364,7 @@ describe('effects scenario against the stand-in', () => {
       expect(noteOf(report, 'shiftCents +100 cents')).toBe('not run: setTargetPitch +100 cents ended with FAIL');
       expect(r.shutdown).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -218,7 +374,7 @@ describe('effects scenario against the stand-in', () => {
         ['effects-undo-missing', 'its result says it cannot be undone (ui_parity)'],
         ['effects-undo-garbled', 'its undo block has no undoId'],
       ] as const) {
-        const report = await runEffects(config(mode, { timingLengthsSec: [] }));
+        const report = await runEffects(config(mode, only(TARGET, SHIFT, RACE)));
         const r = results(report);
         expect(r['setTargetPitch +100 cents'], mode).toBe('FAIL');
         expect(noteOf(report, 'setTargetPitch +100 cents')).toBe(
@@ -232,13 +388,13 @@ describe('effects scenario against the stand-in', () => {
         expect(r.shutdown).toBe('PASS');
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'takes a write back when its result cannot be read after it took effect, and goes on',
     async () => {
-      const report = await runEffects(config('effects-tokens-missing', { timingLengthsSec: [] }));
+      const report = await runEffects(config('effects-tokens-missing', only(TARGET, SHIFT, RACE, SHIFT_TIMING)));
       const r = results(report);
       expect(r['setTargetPitch +100 cents']).toBe('FAIL');
       expect(noteOf(report, 'setTargetPitch +100 cents')).toBe('the result has no tokens');
@@ -248,13 +404,13 @@ describe('effects scenario against the stand-in', () => {
       expect(r['race: +100 cents, export, -100 cents']).toBe('PASS');
       expect(r['shiftTiming +30 ms']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'stops the checks when a write fails after it took effect and left the clip changed',
     async () => {
-      const report = await runEffects(config('effects-reply-lost', { timingLengthsSec: [] }));
+      const report = await runEffects(config('effects-reply-lost', only(TARGET, SHIFT)));
       const r = results(report);
       expect(r['setTargetPitch +100 cents']).toBe('FAIL');
       expect(noteOf(report, 'setTargetPitch +100 cents')).toMatch(
@@ -263,13 +419,13 @@ describe('effects scenario against the stand-in', () => {
       expect(r['shiftCents +100 cents']).toBe('SKIP');
       expect(r.shutdown).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'checks the report of the second write of the race when it is applied',
     async () => {
-      const report = await runEffects(config('effects-down-misreport', { timingLengthsSec: [] }));
+      const report = await runEffects(config('effects-down-misreport', only(RACE, SHIFT_TIMING)));
       const name = 'race: +100 cents, export, -100 cents';
       expect(results(report)[name]).toBe('FAIL');
       expect(noteOf(report, name)).toBe(
@@ -280,13 +436,13 @@ describe('effects scenario against the stand-in', () => {
       expect(String((report.checks[name] as { outcome?: string }).outcome)).toContain('-100 cents version in full');
       expect(results(report)['shiftTiming +30 ms']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'counts the reported fields it does not read back instead of failing on them',
     async () => {
-      const report = await runEffects(config('effects-extra-fields', { timingLengthsSec: [] }));
+      const report = await runEffects(config('effects-extra-fields', only(TARGET, PITCH_SHIFT, RACE)));
       expect(report.result).toBe('PASS');
       expect(noteOf(report, 'setTargetPitch +100 cents')).toMatch(
         /; 1 reported field\(s\) not compared, as the scenario does not read them$/,
@@ -299,7 +455,7 @@ describe('effects scenario against the stand-in', () => {
       // Results that report no such field have none in the report.
       expect(report.checks['setPitchShift +2 semitones']).not.toHaveProperty('unreadFields');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   // Hybrid mode on (the notice at the top of the report) is run through the real test file below.
@@ -307,7 +463,12 @@ describe('effects scenario against the stand-in', () => {
   it(
     'accepts a note after an edit that is rendered again in another phase, and nothing further away',
     async () => {
-      const resynth = await runEffects(config('effects-resynth', { timingLengthsSec: [] }));
+      const resynth = await runEffects(
+        config(
+          'effects-resynth',
+          only(TARGET, SHIFT, PITCH_SHIFT, AUTO_REGEN, AUTO_SNAP, RETUNE_1, RACE, SHIFT_TIMING),
+        ),
+      );
       expect(resynth.result).toBe('PASS');
       const shift = resynth.checks['shiftCents +100 cents'] as {
         unedited: {
@@ -323,7 +484,7 @@ describe('effects scenario against the stand-in', () => {
         /\(note 4 rendered again in another phase, -[0-9.]+ dB\)/,
       );
       // The note two after the edit is away from it: a change there fails, and says where.
-      const far = await runEffects(config('effects-resynth-far', { timingLengthsSec: [] }));
+      const far = await runEffects(config('effects-resynth-far', only(TARGET, SHIFT)));
       const r = results(far);
       expect(r['setTargetPitch +100 cents']).toBe('FAIL');
       expect(noteOf(far, 'setTargetPitch +100 cents')).toMatch(
@@ -332,7 +493,7 @@ describe('effects scenario against the stand-in', () => {
       // Note 3 is the last note: nothing is two after it.
       expect(r['shiftCents +100 cents']).toBe('PASS');
       // Rendered again 10 cents sharp is within the pitch tolerance, but not the same sound.
-      const detuned = await runEffects(config('effects-resynth-detuned', { timingLengthsSec: [] }));
+      const detuned = await runEffects(config('effects-resynth-detuned', only(TARGET, SHIFT)));
       for (const [name, index] of [
         ['setTargetPitch +100 cents', 2],
         ['shiftCents +100 cents', 4],
@@ -345,7 +506,7 @@ describe('effects scenario against the stand-in', () => {
         );
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -357,12 +518,12 @@ describe('effects scenario against the stand-in', () => {
       const history = await runEffects(config('effects-no-history', { timingLengthsSec: [] }));
       expect(results(history).hello).toBe('SKIP');
       expect(noteOf(history, 'hello')).toContain('history.v1');
-      const timing = await runEffects(config('effects-no-timing', { timingLengthsSec: [] }));
+      const timing = await runEffects(config('effects-no-timing', only(SHIFT_TIMING, RACE)));
       expect(timing.result).toBe('SKIP');
       expect(results(timing)['shiftTiming +30 ms']).toBe('SKIP');
       expect(results(timing)['race: +100 cents, export, -100 cents']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -378,7 +539,9 @@ describe('effects scenario against the stand-in', () => {
       });
       const files = await writeToneFiles(tone, 'external-take');
       try {
-        const report = await runEffects(config('effects', { audioPath: files.wavPath, timingLengthsSec: [] }));
+        const report = await runEffects(
+          config('effects', { audioPath: files.wavPath, ...only(AUTO_REGEN, AUTO_SNAP, TARGET, RACE) }),
+        );
         const r = results(report);
         expect(r['AUTO regenerate pulls the sharp note back']).toBe('SKIP');
         expect(noteOf(report, 'AUTO snapNotes pulls the sharp note back')).toContain('external audio');
@@ -391,7 +554,7 @@ describe('effects scenario against the stand-in', () => {
         await files.cleanup();
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   // External audio: which notes of the unedited export are compared is decided on the source, and the
@@ -401,10 +564,11 @@ describe('effects scenario against the stand-in', () => {
   const externalRun = async (
     mode: string,
     notes: Parameters<typeof generateTone>[0]['notes'],
+    checks: string[],
   ): Promise<EffectsReport> => {
     const files = await writeToneFiles(generateTone({ seed: 5, notes, leadSec: 0.6 }), 'external-take');
     try {
-      return await runEffects(config(mode, { audioPath: files.wavPath, timingLengthsSec: [] }));
+      return await runEffects(config(mode, { audioPath: files.wavPath, ...only(...checks) }));
     } finally {
       await files.cleanup();
     }
@@ -424,7 +588,7 @@ describe('effects scenario against the stand-in', () => {
     'leaves a note with a +-50 cent vibrato in the source out of the unedited export check, and passes the rest',
     async () => {
       const notes = FIVE.map((n, i) => (i === 2 ? { ...n, vibrato: WOBBLE } : n));
-      const report = await externalRun('effects', notes);
+      const report = await externalRun('effects', notes, [EXPORT_BEFORE, SHIFT_TIMING]);
       expect(results(report)['export before any edit']).toBe('PASS');
       const { external } = exportCheck(report);
       expect(external.leftOut.unsteadyPitch).toEqual([2]);
@@ -442,25 +606,25 @@ describe('effects scenario against the stand-in', () => {
         expect(Math.abs(n.pitchCents as number)).toBeLessThanOrEqual(PITCH_TOLERANCE_CENTS);
       }
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'fails the unedited export of external audio that is off, however it is off, instead of skipping it',
     async () => {
       // Every note 30 cents sharp.
-      const offset = await externalRun('effects-export-offset', FIVE);
+      const offset = await externalRun('effects-export-offset', FIVE, [EXPORT_BEFORE]);
       expect(results(offset)['export before any edit']).toBe('FAIL');
       expect(noteOf(offset, 'export before any edit')).toBe(
         'notes 0, 1, 2, 3, 4 are not at the detected pitch (5 of 5 steady notes, 0 allowed)',
       );
       // Every note bent over 180 cents: its own pitch is not steady, which must not take it out of the check.
-      const glide = await externalRun('effects-export-glide', FIVE);
+      const glide = await externalRun('effects-export-glide', FIVE, [EXPORT_BEFORE]);
       expect(results(glide)['export before any edit']).toBe('FAIL');
       expect(exportCheck(glide).external.steadyNotes).toBe(5);
       expect(exportCheck(glide).external.leftOut.unsteadyPitch).toEqual([]);
       // One of five steady notes (20 %) beyond the tolerance: more than the 5 % allowed.
-      const one = await externalRun('effects-export-one-off', FIVE);
+      const one = await externalRun('effects-export-one-off', FIVE, [EXPORT_BEFORE, TARGET]);
       expect(results(one)['export before any edit']).toBe('FAIL');
       expect(noteOf(one, 'export before any edit')).toBe(
         'notes 1 are not at the detected pitch (1 of 5 steady notes, 0 allowed)',
@@ -469,21 +633,21 @@ describe('effects scenario against the stand-in', () => {
       // The checks that follow still run on the same instance.
       expect(results(one)['setTargetPitch +100 cents']).toBe('PASS');
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
     'skips the unedited export check of external audio with fewer than 3 steady notes in the source',
     async () => {
       const notes = [55, 58, 60, 62].map((m, i) => (i < 2 ? { ...steadyNote(m), vibrato: WOBBLE } : steadyNote(m)));
-      const report = await externalRun('effects', notes);
+      const report = await externalRun('effects', notes, [EXPORT_BEFORE]);
       expect(results(report)['export before any edit']).toBe('SKIP');
       expect(noteOf(report, 'export before any edit')).toBe(
         'external audio: only 2 of 4 notes have a steady pitch (2 with vibrato or glides, 0 too short)',
       );
       expect(exportCheck(report).external.steadyNotes).toBe(2);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -491,15 +655,318 @@ describe('effects scenario against the stand-in', () => {
     async () => {
       const lengths = [0.6, 1.1, 0.6, 1.0, 0.6];
       const notes = FIVE.map((n, i) => ({ ...n, durationSec: lengths[i] ?? 0.6 }));
-      const report = await externalRun('effects-resynth', notes);
+      const report = await externalRun('effects-resynth', notes, [TARGET, SHIFT]);
       expect(report.steps.filter((s) => s.result === 'FAIL')).toEqual([]);
       const shift = report.checks['shiftCents +100 cents'] as {
         unedited: { reach: { bitIdentical: boolean; edgeResidualDb: number | null }[] };
       };
       expect(shift.unedited.reach.some((r) => !r.bitIdentical && typeof r.edgeResidualDb === 'number')).toBe(true);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
+
+  // The export after moveHandles is taken back: the clip is rendered again, so with external audio it is
+  // the same sound in another phase and not the same samples; generated audio stays sample by sample.
+  interface AfterUndo {
+    maxAbsDiff: number;
+    sameSound?: { notes: { bitIdentical: boolean; pitchCents: number }[] };
+  }
+  const afterUndoOf = (report: EffectsReport) =>
+    (report.checks[MOVE] as { exportAfterUndo: AfterUndo }).exportAfterUndo;
+
+  it(
+    'passes the export after the undo of moveHandles on external audio that comes back in another phase',
+    async () => {
+      const report = await externalRun('effects-undo-rephased', FIVE, [MOVE]);
+      expect(results(report)[MOVE]).toBe('PASS');
+      expect(report.steps.filter((s) => s.result === 'FAIL')).toEqual([]);
+      const again = afterUndoOf(report);
+      // Sample by sample against the baseline this export would have failed (the tolerance is 1e-3 ...)
+      expect(again.maxAbsDiff).toBeGreaterThan(0.01);
+      // ... it is judged as the same sound: no note has the baseline's samples, every one its pitch.
+      expect(again.sameSound?.notes.length).toBeGreaterThan(0);
+      expect(again.sameSound?.notes.some((n) => !n.bitIdentical)).toBe(true);
+      for (const n of again.sameSound?.notes ?? []) expect(Math.abs(n.pitchCents)).toBeLessThanOrEqual(0.5);
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'fails the export after the undo of moveHandles on external audio that comes back at another pitch',
+    async () => {
+      const report = await externalRun('effects-undo-detuned', FIVE, [MOVE]);
+      expect(results(report)[MOVE]).toBe('FAIL');
+      expect(noteOf(report, MOVE)).toMatch(/after the undo: note \d+ is 10(\.\d+)? cents from where it was/);
+      expect(report.steps.filter((s) => s.result === 'FAIL').map((s) => s.name)).toEqual([MOVE]);
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'times the clips after the checks that external audio skips',
+    async () => {
+      const files = await writeToneFiles(generateTone({ seed: 5, notes: FIVE, leadSec: 0.6 }), 'external-take');
+      try {
+        const report = await runEffects(
+          config('effects', {
+            audioPath: files.wavPath,
+            timingLengthsSec: [3],
+            onlyChecks: [EXTRA_CLIPS, HYBRID, 'timing 3 s'],
+          }),
+        );
+        const r = results(report);
+        expect(r['extra clips for the note-split, vibrato and drift checks']).toBe('SKIP');
+        expect(r['prefs.set hybridMode']).toBe('SKIP');
+        expect(noteOf(report, 'prefs.set hybridMode')).toContain('external audio');
+        expect(r['timing 3 s']).toBe('PASS');
+        expect(r.shutdown).toBe('PASS');
+        expect(report.steps.filter((s) => s.result === 'FAIL')).toEqual([]);
+      } finally {
+        await files.cleanup();
+      }
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'still compares the generated audio sample by sample after the undo of moveHandles',
+    async () => {
+      const report = await runEffects(config('effects-undo-detuned', only(MOVE, HYBRID)));
+      expect(results(report)[MOVE]).toBe('FAIL');
+      expect(noteOf(report, MOVE)).toContain('after the undo the export differs from the baseline by up to');
+      expect(afterUndoOf(report).sameSound).toBeUndefined();
+      // The clip stays detuned, so the hybrid mode check, which compares with the baseline at the end, fails too.
+      expect(report.steps.filter((s) => s.result === 'FAIL').map((s) => s.name)).toEqual([
+        MOVE,
+        'prefs.set hybridMode',
+      ]);
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+});
+
+describe('running only some of the checks (EffectsConfig.onlyChecks, for the tests against the stand-in)', () => {
+  const SET_UP = [
+    'prepare audio',
+    'launch',
+    'hello',
+    'import and analysis',
+    'fixed note parameters',
+    'baseline and noise floor',
+  ];
+  const stepNames = (report: EffectsReport) => report.steps.map((st) => st.name);
+
+  it(
+    'runs the set-up steps and the checks asked for, in the order of the scenario, and no other check',
+    async () => {
+      const report = await runEffects(config('effects', { onlyChecks: [RACE, TARGET], timingLengthsSec: [3] }));
+      expect(stepNames(report)).toEqual([...SET_UP, TARGET, RACE, 'shutdown']);
+      expect(report.result).toBe('PASS');
+      // The report says it is not a full run, and holds the measurements of the checks that ran only.
+      expect(report.onlyChecks).toEqual([RACE, TARGET]);
+      expect(Object.keys(report.checks).sort()).toEqual(
+        ['baseline and noise floor', 'fixed note parameters', RACE, TARGET].sort(),
+      );
+      // The timing step of 3 s was configured and not asked for: it did not run.
+      expect(report.timings).toMatchObject({ lengths: [] });
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'judges a check that runs as in a full run: a defect fails it, and the checks after it go on or stop as they do',
+    async () => {
+      const report = await runEffects(config('effects-undo-broken', only(TARGET, SHIFT, RACE)));
+      expect(results(report)).toMatchObject({ [TARGET]: 'FAIL', [SHIFT]: 'SKIP', [RACE]: 'SKIP', shutdown: 'PASS' });
+      expect(report.result).toBe('FAIL');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'makes the extra clips for the checks on them, and only for them, and runs a timing step when it is asked for by name',
+    async () => {
+      const report = await runEffects(
+        config('effects', { onlyChecks: [VIBRATO, 'timing 3 s'], timingLengthsSec: [3] }),
+      );
+      expect(stepNames(report)).toEqual([...SET_UP, EXTRA_CLIPS, VIBRATO, 'timing 3 s', 'shutdown']);
+      expect(report.result).toBe('PASS');
+      const two = await runEffects(config('effects', only(SPLIT, DRIFT)));
+      expect(stepNames(two)).toEqual([...SET_UP, EXTRA_CLIPS, SPLIT, DRIFT, 'shutdown']);
+      expect(two.result).toBe('PASS');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it('names every check of the registry once, and refuses a name that is none, an empty list, and a timing step that is not configured', async () => {
+    expect(new Set(EFFECT_CHECK_NAMES).size).toBe(EFFECT_CHECK_NAMES.length);
+    // Refused before anything is started, naming what is wrong: a typo cannot run zero checks and pass.
+    await expect(runEffects(config('effects', { onlyChecks: ['setTargetPitch +100 cent'] }))).rejects.toThrow(
+      'onlyChecks names no check: "setTargetPitch +100 cent"',
+    );
+    await expect(
+      runEffects(config('effects', { onlyChecks: [TARGET, 'timing 7 s'], timingLengthsSec: [3] })),
+    ).rejects.toThrow('onlyChecks names no check: "timing 7 s"');
+    await expect(runEffects(config('effects', { onlyChecks: [] }))).rejects.toThrow('onlyChecks is empty');
+  });
+
+  it('is never set by a run against a real instance: no variable reaches it, and no real-instance test file names it', async () => {
+    const setup = effectsSetupFromEnv({
+      OTCP_TARGET_EXE: process.execPath,
+      OTCP_E2E_EFFECTS_ONLY_CHECKS: TARGET,
+      OTCP_E2E_ONLY_CHECKS: TARGET,
+      ONLY_CHECKS: TARGET,
+    });
+    if ('skip' in setup) throw new Error(setup.skip);
+    expect(setup.config).not.toHaveProperty('onlyChecks');
+    const dir = path.join(ROOT, 'test', 'e2e');
+    for (const name of (await readdir(dir)).filter((n) => n.endsWith('.ts') && n !== 'effects.ts')) {
+      expect(await readFile(path.join(dir, name), 'utf8'), name).not.toContain('onlyChecks');
+    }
+  });
+});
+
+describe('the vocoder weight step of the effects scenario', () => {
+  const run = (mode: string) => runEffects(config(mode, only(WEIGHT_STEP, RACE, SHIFT_TIMING)));
+  const laterSteps = [RACE, SHIFT_TIMING];
+
+  it(
+    'exports the same +30 cents correction under both weights, which differ, and returns to the first result',
+    async () => {
+      const report = await run('effects');
+      expect(results(report)[WEIGHT_STEP]).toBe('PASS');
+      expect(noteOf(report, WEIGHT_STEP)).toMatch(
+        /^\+30 cents rendered under two vocoder weights \(differ by up to [0-9.e+-]+\), the revert recipe brought the first weight back/,
+      );
+      const check = report.checks[WEIGHT_STEP] as {
+        correctionCents: number;
+        note: number;
+        reportedWeightOfExport: { first: string; second: string };
+        underFirstWeight: { notes: { index: number; medianCents: number }[] };
+        underSecondWeight: { notes: { index: number; medianCents: number }[] };
+        betweenWeights: { bitIdentical: number; spans: number; maxAbsDiff: number };
+        backUnderFirstWeight: { notes: { index: number; medianCents: number }[] };
+        backToFirst: { maxAbsDiff: number; allowedMaxAbsDiff: number };
+        processing: { export: string; hybridMode: boolean }[];
+      };
+      expect(check.correctionCents).toBe(30);
+      expect(check.reportedWeightOfExport).toEqual({ first: 'fake', second: 'fake-b' });
+      // The notes are at the corrected pitch under each weight, the others did not move.
+      for (const notes of [
+        check.underFirstWeight.notes,
+        check.underSecondWeight.notes,
+        check.backUnderFirstWeight.notes,
+      ]) {
+        expect(notes.find((n) => n.index === check.note)?.medianCents).toBeCloseTo(30, 0);
+      }
+      // The baseline was made under the first weight: its other notes read as before, under the second one
+      // within the tolerance of the estimator (the sound is another, the pitch is the same).
+      for (const notes of [check.underFirstWeight.notes, check.backUnderFirstWeight.notes]) {
+        expect(notes.filter((n) => n.index !== check.note).every((n) => n.medianCents === 0)).toBe(true);
+      }
+      const others = check.underSecondWeight.notes.filter((n) => n.index !== check.note);
+      expect(others).toHaveLength(4);
+      expect(others.every((n) => Math.abs(n.medianCents) <= PITCH_TOLERANCE_CENTS)).toBe(true);
+      // The two weights sound different; after the revert the export is the first one again.
+      expect(check.betweenWeights.bitIdentical).toBe(0);
+      expect(check.betweenWeights.maxAbsDiff).toBeGreaterThan(WEIGHT_MIN_ABS_DIFF);
+      expect(check.backToFirst.maxAbsDiff).toBeLessThanOrEqual(check.backToFirst.allowedMaxAbsDiff);
+      // The three exports of the step, each with the processing it reported.
+      expect(check.processing.map((p) => p.export)).toEqual(['weight A', 'weight B', 'weight A again']);
+      // The clip is back as it was, and the checks after the step run on the first weight.
+      for (const name of laterSteps) expect(results(report)[name], name).toBe('PASS');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'is a SKIP, with its reason, where there is nothing to switch to, and the other checks still pass',
+    async () => {
+      const cases = [
+        ['effects-one-weight', 'only one vocoder weight is installed, so there is nothing to switch to'],
+        [
+          'effects-no-options',
+          'prefs.get reports no processing.options, so the instance does not take the vocoder weight of 1.0.0-rc.6',
+        ],
+        ['effects-no-prefs', 'the instance does not report prefs.write'],
+      ] as const;
+      for (const [mode, reason] of cases) {
+        const report = await run(mode);
+        expect(results(report)[WEIGHT_STEP], mode).toBe('SKIP');
+        expect(noteOf(report, WEIGHT_STEP), mode).toBe(reason);
+        expect(report.result, mode).toBe('SKIP');
+        expect(
+          report.steps.filter((s) => s.result === 'FAIL'),
+          mode,
+        ).toEqual([]);
+        for (const name of laterSteps) expect(results(report)[name], `${mode}: ${name}`).toBe('PASS');
+        expect(results(report).shutdown, mode).toBe('PASS');
+      }
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'fails the step when the two weights render the same sound, and leaves the first weight in use',
+    async () => {
+      const report = await run('effects-weights-alike');
+      expect(results(report)[WEIGHT_STEP]).toBe('FAIL');
+      expect(noteOf(report, WEIGHT_STEP)).toMatch(
+        /^the exports under the two weights are the same sound \(differ by up to 0\.00e\+0, at least 1e-4 expected\): the weight was not applied to the render$/,
+      );
+      // The revert worked, so the checks after the step run on the first weight and pass.
+      for (const name of laterSteps) expect(results(report)[name], name).toBe('PASS');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'fails the step when the revert recipe does not bring the first weight back, puts it back anyway, and goes on',
+    async () => {
+      const report = await run('effects-weight-revert-broken');
+      expect(results(report)[WEIGHT_STEP]).toBe('FAIL');
+      const note = noteOf(report, WEIGHT_STEP);
+      expect(note).toContain('after the revert recipe, prefs.get does not report the first weight');
+      expect(note).toContain('the vocoder weight had to be put back by sending the first weight');
+      // Put back: the clip and the weight are as they were, so the checks after the step pass.
+      for (const name of laterSteps) expect(results(report)[name], name).toBe('PASS');
+      expect(results(report).shutdown).toBe('PASS');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it(
+    'stops the checks when the first weight cannot be put back, and says so',
+    async () => {
+      const report = await run('effects-weight-stuck');
+      expect(results(report)[WEIGHT_STEP]).toBe('FAIL');
+      expect(noteOf(report, WEIGHT_STEP)).toContain(
+        'the vocoder weight could not be put back: prefs.get still reports another weight',
+      );
+      // Not run under a weight that was not the one the baseline was made with.
+      for (const name of laterSteps) {
+        expect(results(report)[name], name).toBe('SKIP');
+        expect(noteOf(report, name)).toBe(`not run: ${WEIGHT_STEP} ended with FAIL`);
+      }
+      expect(results(report).shutdown).toBe('PASS');
+    },
+    SCENARIO_TIMEOUT_MS,
+  );
+
+  it('judges a pitch change by the expected cents, and a note that cannot be measured', () => {
+    const delta = (index: number, medianCents: number | null, expectedCents: number, frames = 90) => ({
+      index,
+      expectedCents,
+      medianCents,
+      frames,
+      perFrame: [],
+    });
+    expect(pitchProblems([delta(1, 30.4, 30), delta(2, 0, 0)])).toEqual([]);
+    expect(pitchProblems([delta(1, 0, 30)])).toEqual([
+      `note 1: 0 cents, expected 30 +- ${String(PITCH_TOLERANCE_CENTS)}`,
+    ]);
+    expect(pitchProblems([delta(3, null, 0, 4)])).toEqual(['note 3: only 4 frames voiced in both files']);
+  });
 });
 
 describe('effects measurements', () => {
@@ -900,7 +1367,7 @@ function runTestFile(env: Record<string, string>) {
   return spawnSync(
     process.execPath,
     [VITEST, 'run', '--project', 'e2e', '--reporter=verbose', 'test/e2e/exe-effects.test.ts'],
-    { cwd: ROOT, env: { ...clean, ...env }, encoding: 'utf8', timeout: 110_000 },
+    { cwd: ROOT, env: { ...clean, ...env }, encoding: 'utf8', timeout: SCENARIO_TIMEOUT_MS - 30_000 },
   );
 }
 
@@ -915,7 +1382,7 @@ describe('the effects scenario as a test file', () => {
       expect(output).toMatch(/1 skipped/);
       expect(output).not.toMatch(/passed/);
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 
   it(
@@ -924,6 +1391,7 @@ describe('the effects scenario as a test file', () => {
       const dir = await tmp();
       const template = await tmp();
       const run = runTestFile({
+        ...(await fakeUserSettingsEnv(dir)),
         OTCP_TARGET_EXE: process.execPath,
         OTCP_TARGET_ARGS: JSON.stringify([FAKE, '--mode=effects-hybrid']),
         OTCP_E2E_REPORT: path.join(dir, 'report.json'),
@@ -934,23 +1402,31 @@ describe('the effects scenario as a test file', () => {
       const output = `${run.stdout}\n${run.stderr}`;
       expect(run.status, output).toBe(0);
       expect(output).toMatch(/\| shiftTiming \+30 ms \| PASS \|/);
+      // The run through OTCP_TARGET_EXE sets no onlyChecks: every check of the registry is in its table.
+      for (const name of EFFECT_CHECK_NAMES) expect(output, name).toContain(`| ${name} |`);
+      expect(output).toMatch(/real user settings untouched \| PASS \|.*watched 1 files/);
       // The notice comes before the table.
       expect(output).toContain(`NOTE: ${HYBRID_MODE_NOTICE}\n| step | result | time | note |`);
       const written = JSON.parse(await readFile(path.join(dir, 'effects.json'), 'utf8')) as EffectsReport;
-      // Hybrid mode on is said at the top of the report, and the checks are judged as usual.
+      // Hybrid mode on is said at the top of the report, and the checks are judged as usual. The one about the
+      // vocoder weight is skipped: a small correction is not rendered by the vocoder, so the weight changes nothing.
       expect(written).toMatchObject({
         schema: 'opentune-mcp-e2e-effects/1',
-        result: 'PASS',
+        result: 'SKIP',
         notices: [HYBRID_MODE_NOTICE],
         hybridMode: true,
         dataTemplateFrom: 'OTCP_E2E_EFFECTS_DATA_TEMPLATE',
       });
+      expect(written.steps.filter((s) => s.result !== 'PASS').map((s) => [s.name, s.result])).toEqual([
+        [WEIGHT_STEP, 'SKIP'],
+      ]);
+      expect(noteOf(written, WEIGHT_STEP)).toMatch(/^hybrid mode is on: .*the weight changes nothing$/);
       expect(Object.keys(written).slice(0, 4)).toEqual(['schema', 'result', 'counts', 'notices']);
       expect(written.steps.find((s) => s.name === 'hello')?.note).toContain('hybrid mode on');
       expect(written.checks['shiftCents +100 cents']).toMatchObject({
         processing: [{ export: 'shiftCents +100 cents', hybridMode: true, backend: 'fake' }],
       });
     },
-    SLOW,
+    SCENARIO_TIMEOUT_MS,
   );
 });

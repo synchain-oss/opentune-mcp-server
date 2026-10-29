@@ -71,6 +71,31 @@ const stepIndex = (steps: string[], header: RegExp) => steps.findIndex((s) => he
 /** The trimmed lines of a step's text. */
 const linesOf = (step: string) => step.split('\n').map((line) => line.trim());
 
+/**
+ * The top-level `permissions:` of a workflow as text: `{}` for the declared empty map, else the
+ * lines under the key. `undefined` when the file does not declare exactly one top-level key.
+ */
+function topLevelPermissions(text: string): string | undefined {
+  const header = text.split('\n').filter((line) => line.startsWith('permissions:'));
+  if (header.length !== 1) return undefined;
+  if (header[0]?.trimEnd() === 'permissions: {}') return '{}';
+  // An inline value other than `{}` (`write-all`, `read-all`, ...) is not a bare header: return the line itself,
+  // which then matches neither accepted grant.
+  if (!/^permissions:\s*$/.test(header[0] ?? '')) return header[0];
+  return blockUnder(text, /^permissions:\s*$/).join('\n');
+}
+
+/**
+ * Top-level grant is either nothing (`{}`) or exactly read-only contents; write access is per job.
+ * A bare `permissions:` (YAML null) grants nothing as well, but it does not say so: it is neither
+ * the declared empty map nor the read-only grant, so it is rejected here — the file has to write
+ * down what it grants. A workflow without any top-level `permissions:` key is rejected for the same reason.
+ */
+const isAllowedTopLevel = (text: string) => {
+  const granted = topLevelPermissions(text);
+  return granted !== undefined && ['{}', '  contents: read'].includes(granted);
+};
+
 describe('every workflow', () => {
   it('exists (sanity check of the file list)', () => {
     expect(WORKFLOWS.map((w) => w.name)).toEqual(
@@ -113,10 +138,24 @@ describe('every workflow', () => {
   // A stub that only calls a shared workflow needs nothing at the top level (`permissions: {}`);
   // every other workflow defaults to read-only contents. Write access is granted per job only.
   it.each(WORKFLOWS)('$name grants at most read-only contents permission at the top level', ({ text }) => {
-    const header = text.split('\n').filter((line) => line.startsWith('permissions:'));
-    expect(header).toHaveLength(1);
-    const granted = header[0] === 'permissions: {}' ? [] : blockUnder(text, /^permissions:\s*$/);
-    expect([[], ['  contents: read']]).toContainEqual(granted);
+    expect(isAllowedTopLevel(text)).toBe(true);
+  });
+
+  // The rule is documented on isAllowedTopLevel; these cases pin both sides of it.
+  it('accepts a top-level permissions: key that is `{}` (trailing spaces aside) or exactly `contents: read`', () => {
+    expect(isAllowedTopLevel('name: x\npermissions: {}\non: push\n')).toBe(true);
+    expect(isAllowedTopLevel('name: x\npermissions: {}   \non: push\n')).toBe(true);
+    expect(isAllowedTopLevel('name: x\npermissions:\n  contents: read\non: push\n')).toBe(true);
+  });
+
+  it('rejects any other top-level permissions: key, an inline grant included, and a workflow without one', () => {
+    expect(isAllowedTopLevel('name: x\npermissions: write-all\non: push\n')).toBe(false);
+    expect(isAllowedTopLevel('name: x\npermissions: read-all\non: push\n')).toBe(false);
+    expect(isAllowedTopLevel('name: x\npermissions:\non: push\n')).toBe(false);
+    expect(isAllowedTopLevel('name: x\npermissions:\n  contents: write\non: push\n')).toBe(false);
+    expect(isAllowedTopLevel('name: x\npermissions:\n  contents: read\n  issues: write\non: push\n')).toBe(false);
+    expect(isAllowedTopLevel('name: x\non: push\n')).toBe(false);
+    expect(isAllowedTopLevel('name: x\npermissions: {}\npermissions: {}\non: push\n')).toBe(false);
   });
 
   // Secrets reach a called workflow only when named one by one: `inherit` would hand it every
@@ -207,6 +246,20 @@ describe('ci.yml', () => {
     const light = jobs.get('light') ?? '';
     expect(light).toMatch(/^ {4}name: light \(.*\bgitleaks\b.*\)$/m);
     expect(light).toMatch(/^\s+--no-skip \\$/m);
+  });
+
+  // A pull request into a feature/* trunk leaves the commits already on the default branch out of
+  // the attribution check (commitCheckScope). That needs the default branch's name and a clone that
+  // has origin/<default branch>, and the range the scope step computes has to reach the gates.
+  it('gives the light tier the default branch and the full history, and passes the excluded refs to the gates', () => {
+    const light = jobs.get('light') ?? '';
+    const [checkout] = stepsOf(light).filter((s) => s.includes('uses: actions/checkout@'));
+    expect(checkout).toMatch(/^\s+fetch-depth: 0$/m);
+    const scope = stepsOf(light).find((s) => /id: scope$/m.test(s)) ?? '';
+    expect(scope).toMatch(/^\s+DEFAULT_BRANCH: \$\{\{ github\.event\.repository\.default_branch \}\}$/m);
+    const gates = stepsOf(light).find((s) => s.includes('node scripts/gates.mjs')) ?? '';
+    expect(gates).toMatch(/^\s+EXCLUDE: \$\{\{ steps\.scope\.outputs\.exclude \}\}$/m);
+    expect(gates).toMatch(/--exclude "\$ref"/);
   });
 
   // Runs queued in one concurrency group replace each other even without cancel-in-progress, so a
@@ -554,38 +607,43 @@ describe('review-dispatch.yml gives the review of claude-review.yml behind a she
       'Read',
       'mcp__github_inline_comment__create_inline_comment',
     ]);
-    expect(flags.get('--disallowedTools')?.split(',')).toEqual(
-      expect.arrayContaining([
-        'Bash',
-        'Edit',
-        'MultiEdit',
-        'Write',
-        'NotebookEdit',
-        'WebFetch',
-        'WebSearch',
-        'Agent',
-        'Task',
-        'RemoteTrigger',
-        'CronCreate',
-        'PushNotification',
-        'SendMessage',
-        'Workflow',
-        'Skill',
-        'Read(./.git/**)',
-        'Read(//home/runner/work/**/.git/**)',
-        'Read(//proc/**)',
-        'Read(//sys/**)',
-        'Read(//run/**)',
-        'Read(//var/run/**)',
-        'Read(//tmp/**)',
-        'Read(//etc/**)',
-        'Read(//home/runner/work/_temp/**)',
-        'Read(//home/runner/actions-runner/**)',
-        'Read(//home/runner/.*/**)',
-        'Read(//home/runner/.*)',
-        'Read(//github/**)',
-      ]),
-    );
+    // The deny list is a copy of the one of the central claude-review.yml (the workflow says so in
+    // its header), so the whole table is pinned here: a tool that vanishes from the copy or one
+    // that appears in it unnoticed both turn this red. The order in the file does not matter.
+    expect(flags.get('--disallowedTools')?.split(',').sort()).toEqual([
+      'Agent',
+      'Bash',
+      'CronCreate',
+      'CronDelete',
+      'CronList',
+      'Edit',
+      'Monitor',
+      'MultiEdit',
+      'NotebookEdit',
+      'PushNotification',
+      'Read(./.git/**)',
+      'Read(//etc/**)',
+      'Read(//github/**)',
+      'Read(//home/runner/.*)',
+      'Read(//home/runner/.*/**)',
+      'Read(//home/runner/actions-runner/**)',
+      'Read(//home/runner/work/**/.git/**)',
+      'Read(//home/runner/work/_temp/**)',
+      'Read(//proc/**)',
+      'Read(//run/**)',
+      'Read(//sys/**)',
+      'Read(//tmp/**)',
+      'Read(//var/run/**)',
+      'RemoteTrigger',
+      'ScheduleWakeup',
+      'SendMessage',
+      'Skill',
+      'Task',
+      'WebFetch',
+      'WebSearch',
+      'Workflow',
+      'Write',
+    ]);
   });
 
   it('runs with read-only contents and no id-token', () => {

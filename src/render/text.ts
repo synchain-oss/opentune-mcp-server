@@ -18,6 +18,8 @@ export const FORMS = {
   jobId: /^j:[0-9a-f]{8}:[1-9][0-9]*$/,
   contentId: /^c:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/,
   placementId: /^p:[0-9a-f]{8}:(0|[1-9][0-9]*):(0|[1-9][0-9]*)$/,
+  /** An OTCP revision token (common.schema.json, revisionToken). */
+  revision: /^[A-Za-z0-9._:-]{1,128}$/,
 } as const;
 
 export const token = (value: unknown, form: keyof typeof FORMS): string | null => trustedToken(value, FORMS[form]);
@@ -76,14 +78,100 @@ export const WARNING_TEXT = table<string>({
 /** Side-effect names of PROTOCOL.md section 14.6. */
 export const SIDE_EFFECT_TEXT = table<string>({
   notesGenerated: 'OpenTune generated notes for a content',
-  referenceAnalysisQueued: 'reference alignment analysis was queued',
   reRenderQueued: 'rendering of one or more contents was queued again',
   uiScaleChanged: 'the scale shown in the transport bar changed',
   workspaceSwitched: 'the window switched between the arrangement and the piano roll',
+  tempoRounded:
+    'the tempo field of the transport bar wrote the tempo it shows, rounded to one decimal, back to the project',
   tracksRevealed: 'hidden tracks became visible',
   dialogClosed: 'a dialog was closed',
   dialogCommitted: 'closing a dialog committed its value',
 });
+
+/** A tempo in bpm as the sentence writes it: a finite number in the range of a tempo, else null (never a string from OpenTune). */
+const bpmText = (value: unknown): string | null =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0 && value < 10_000 ? String(value) : null;
+
+/**
+ * What OpenTune did to the tempo when the window switched view (sideEffects.tempoRounded, PROTOCOL.md section 14.6),
+ * for the first sentence of a summary: its tempo field wrote the tempo it shows, rounded to one decimal, back to the
+ * project. Nobody asked for it. `effect` is the side effect as OpenTune sent it; the two tempi are checked numbers,
+ * and a value that is not one is left out of the sentence. `dryRun`: the result predicts it.
+ */
+export function tempoRoundedWords(effect: unknown, dryRun: boolean): string {
+  const e = typeof effect === 'object' && effect !== null ? (effect as Record<string, unknown>) : {};
+  const from = bpmText(e.fromBpm);
+  const to = bpmText(e.toBpm);
+  const tempo = from !== null && to !== null ? `the tempo from ${from} to ${to} bpm` : 'the tempo';
+  return (
+    `OpenTune ${dryRun ? 'would change' : 'changed'} ${tempo}, because its tempo field rounds it to one decimal ` +
+    'when the window switches view'
+  );
+}
+
+/** The views of the OpenTune window, as workspaceSwitched names them. */
+const VIEW_NAME = table<string>({ arrangement: 'the arrangement view', pianoRoll: 'the piano roll' });
+
+/** A view of the window in words; a name this server does not know is "another view", never repeated. */
+export function viewName(value: unknown): string {
+  const name = token(value, 'camel');
+  return (name === null ? undefined : VIEW_NAME[name]) ?? 'another view';
+}
+
+/**
+ * The way back for a switch of the view (sideEffects.workspaceSwitched, whose own revert is null) on an instance
+ * that does not report ui.workspace: no tool can switch the window there, so the user does it with the view
+ * buttons of the transport bar.
+ */
+export const workspaceRevertText = (from: unknown): string =>
+  `No tool of this server can switch the window back to ${viewName(from)} yet; the user can click the view buttons in ` +
+  'the transport bar (reverts side effect workspaceSwitched).';
+
+/**
+ * The way back for a switch of the view on an instance that reports ui.workspace: opentune_manage_ui, op
+ * switch_view, with the arguments of the restore member of the same line.
+ */
+export const workspaceSwitchBackText = (from: unknown): string =>
+  `Switch the window back to ${viewName(from)} with the op switch_view of opentune_manage_ui: call it with the ` +
+  'arguments in restore, as they are (reverts side effect workspaceSwitched).';
+
+/**
+ * The way back for a switch of the view on an instance that reports ui.workspace, when the view the window showed
+ * before is not known (the result names none this server knows): the op exists, but there is no call to hand out, so
+ * the line says to show the view the user wants.
+ */
+export const workspaceUnknownBackText =
+  'The view the window showed before is not known; with the op switch_view of opentune_manage_ui, show the view the ' +
+  'user wants (arrangement or piano_roll) (reverts side effect workspaceSwitched).';
+
+/**
+ * What a change of the vocoder weight says about rendering again. OpenTune renders every content again once the
+ * new weight has loaded; a job that did not wait for the vocoder (it was not ready before the call) can end before
+ * that, and when the weight cannot be loaded nothing is rendered again (PROTOCOL.md section 12.7 rule 4).
+ * `loaded`: the vocoder is ready, so the render happens. `afterLoad`: the vocoder is not ready (yet), so it
+ * happens only if the weight loads.
+ */
+export type ReRenderState = 'loaded' | 'afterLoad';
+
+export const RE_RENDER_TEXT: Readonly<Record<ReRenderState, string>> = {
+  loaded: 'rendering of one or more contents will be done again with the new vocoder weight, which has loaded',
+  afterLoad:
+    'rendering of one or more contents starts again only after the new vocoder weight has finished loading, and ' +
+    'not at all if it cannot be loaded',
+};
+
+/**
+ * What a queued render means for what the user hears, for the sentence after the first one: playback keeps the
+ * old sound until the render is current (opentune_get_clip_details, section render), and an export waits for it
+ * by itself (warning RENDER_NOT_CURRENT). `afterLoad` is the vocoder weight that has not loaded yet.
+ */
+export function reRenderNote(reRender?: ReRenderState): string {
+  return reRender === 'afterLoad'
+    ? 'OpenTune renders again only once the new vocoder weight has loaded: until render.current of ' +
+        'opentune_get_clip_details is true, playback can still sound the old way, and an export waits for the render by itself.'
+    : 'OpenTune is rendering again: playback can still sound the old way until render.current of ' +
+        'opentune_get_clip_details is true, and an export waits for the render by itself.';
+}
 
 /** Not-undoable reasons (`undo` scope of registry/reasons.json). */
 export const UNDO_REASON_TEXT = table<string>({

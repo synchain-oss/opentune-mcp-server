@@ -9,14 +9,16 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
-import { cp, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 
 import { pidAlive, systemProbe } from '../../src/discovery/process.js';
+import { copyTemplate } from '../contract/exe-target.js';
 import { LineClient } from '../support/jsonrpc-lines.js';
+import { guardDataDir, type SettingsGuard } from '../support/settings-guard.js';
 import { isObject } from './smoke.js';
 
 const BUNDLE = fileURLToPath(new URL('../../dist/opentune-mcp.mjs', import.meta.url));
@@ -181,6 +183,11 @@ export interface RealInstance {
   readonly instanceId: string;
   /** Its discovery file. */
   readonly discoveryFile: string;
+  /**
+   * The snapshot of this instance's settings files, taken before it started (absent for a test double).
+   * Call finish() once the process has ended: it compares, puts the files back and returns the problems.
+   */
+  readonly settings?: SettingsGuard;
   /** Ends it (by force; Windows has no normal stop request) and resolves false if it had ended already. */
   end(): Promise<boolean>;
 }
@@ -203,7 +210,9 @@ export interface RealInstanceOptions {
  */
 export async function startRealInstance(options: RealInstanceOptions): Promise<RealInstance> {
   const dataDir = await mkdtemp(path.join(options.dataDirParent, 'inst-'));
-  if (options.dataTemplate !== undefined) await cp(options.dataTemplate, dataDir, { recursive: true });
+  // Same rules as the contract runner: the ready file and the discovery folder of the template are not copied.
+  if (options.dataTemplate !== undefined) await copyTemplate(options.dataTemplate, dataDir);
+  const settings = await guardDataDir(dataDir);
   await mkdir(options.discoveryDir, { recursive: true });
   const readyFile = path.join(dataDir, 'ready.json');
   const nonce = randomBytes(24).toString('base64url');
@@ -257,10 +266,12 @@ export async function startRealInstance(options: RealInstanceOptions): Promise<R
     if (!isObject(discovery) || discovery.launchNonce !== nonce || discovery.pid !== child.pid) {
       throw new Error('the discovery file does not carry the launch nonce of this start');
     }
+    await settings.settle();
     return {
       pid: child.pid ?? 0,
       instanceId: ready.instanceId,
       discoveryFile,
+      settings,
       async end() {
         if (state.exited) return false;
         await kill();
@@ -269,8 +280,26 @@ export async function startRealInstance(options: RealInstanceOptions): Promise<R
     };
   } catch (error) {
     await kill();
-    throw error;
+    // The guard is finished here as well: the data folder is compared and put back, and what it found goes into the error.
+    let problems: readonly string[];
+    try {
+      problems = await settings.finish();
+    } catch (finishError) {
+      problems = [
+        `the settings could not be checked: ${finishError instanceof Error ? finishError.message : String(finishError)}`,
+      ];
+    }
+    if (problems.length === 0) throw error;
+    const why = error instanceof Error ? error.message : String(error);
+    throw new Error(`${why}; ${problems.join('; ')}`, { cause: error });
   }
+}
+
+/** The settings problems of every instance (their processes must have ended): what each run changed or left wrong. */
+export async function instanceSettingsProblems(instances: readonly (RealInstance | undefined)[]): Promise<string[]> {
+  const problems: string[] = [];
+  for (const instance of instances) problems.push(...((await instance?.settings?.finish()) ?? []));
+  return problems;
 }
 
 /** Removes a scratch folder, retrying while a just-ended process still holds a file in it. */

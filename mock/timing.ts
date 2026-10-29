@@ -36,7 +36,6 @@ const notSeeded = () =>
     kind: 'NOT_READY',
     reason: 'grid_not_seeded',
     detail: 'the time grid has no handles; seed it with content.editTimeGrid first',
-    retryable: false,
   });
 
 /** The common start of a time-grid write: handle, busy state and readiness gate (section 13.1 rule 4). */
@@ -181,9 +180,10 @@ const shiftTiming: Handler = (context) => {
       ? [world.contentToOutput(content, range.startContentSec), world.contentToOutput(content, range.endContentSec)]
       : [range.startOutputSec, range.endOutputSec];
   const delta = params.deltaSec as number;
+  // The range is closed: a handle exactly on either end moves, as it does in OpenTune.
   const requests = new Map(
     content.handles
-      .filter((h) => h.outputSec >= start && h.outputSec < end)
+      .filter((h) => h.outputSec >= start && h.outputSec <= end)
       .map((h) => [h.handleId, h.outputSec + delta]),
   );
   return moveHandles(context, content, requests, params.dryRun === true);

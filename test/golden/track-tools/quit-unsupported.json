@@ -1,0 +1,19 @@
+{
+  "description": "A build without app.quit: nothing is sent; the user closes the window after the project is saved.",
+  "tool": "opentune_quit",
+  "input": {},
+  "result": {
+    "error": {
+      "kind": "UNSUPPORTED",
+      "reason": "capability_missing",
+      "detail": "this OpenTune build does not report the capability app.quit",
+      "retryable": false,
+      "executed": false,
+      "nextStep": {
+        "actor": "user",
+        "message": "This OpenTune build cannot be closed by request. If the project has a file, write a copy first with opentune_save_project (mode autosave) and ask the user whether to save the project file before they close the OpenTune window themselves. Closing the window does not ask about unsaved changes."
+      },
+      "url": "https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/TROUBLESHOOTING.md#error-unsupported"
+    }
+  }
+}

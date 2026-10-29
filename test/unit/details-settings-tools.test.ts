@@ -3,8 +3,7 @@
 
 // opentune_get_clip_details and opentune_get_settings against the mock: every section, a missing
 // capability, a stale handle, the clip_revision that agrees with get_notes and works as the
-// expected_revision of a write tool, the residual reference binding, untrusted strings and the
-// output budget.
+// expected_revision of a write tool, untrusted strings and the output budget.
 
 import { afterEach, describe, expect, it } from 'vitest';
 
@@ -83,9 +82,9 @@ describe('opentune_get_clip_details', () => {
       analysis: { f0State: 'ready', failure: null },
       render: { current: true },
       timeGrid: { seeded: false, handleCount: 0, handles: [] },
-      reference: { referencePlacementId: null },
       autoModes: { uiButtonRuns: 'regenerate' },
     });
+    expect(out).not.toHaveProperty('reference');
     expect(out).not.toHaveProperty('asOf');
     expect(out).not.toHaveProperty('notices');
     expect(decodeClipRevision(out.clip_revision as string)).toEqual({
@@ -166,41 +165,6 @@ describe('opentune_get_clip_details', () => {
     expect(error).toMatchObject({ kind: 'UNSUPPORTED', reason: 'capability_missing' });
   });
 
-  it('lists the reference mode when AUTO would run it, and names no warning', async () => {
-    const { mock, ctx } = await withMock();
-    const ids = mock.given({
-      clips: [clip({ bind: 'ref', startTimelineSec: 10 }), clip({ referenceClip: 'ref', startTimelineSec: 0 })],
-    });
-    const out = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') }));
-    expect(out.reference).toMatchObject({ referencePlacementId: ids['ref.placementId'] });
-    expect(out.autoModes).toMatchObject({ uiButtonRuns: 'reference' });
-    expect(out).not.toHaveProperty('notices');
-  });
-
-  it('warns about a residual reference binding when the instance does not report reference.v1', async () => {
-    const { mock, ctx } = await withMock();
-    const ids = mock.given({
-      clips: [clip({ bind: 'ref', startTimelineSec: 10 }), clip({ referenceClip: 'ref', startTimelineSec: 0 })],
-      withoutCapabilities: ['reference.v1'],
-    });
-    const out = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') }));
-    expect(out.reference).toMatchObject({ referencePlacementId: ids['ref.placementId'] });
-    expect(out.autoModes).toMatchObject({ uiButtonRuns: 'regenerate' });
-    const [notice] = out.notices as { code: string; message: string }[];
-    expect(notice?.code).toBe('RESIDUAL_REFERENCE_BINDING');
-    expect(notice?.message).toContain('AUTO Ref');
-    expect(out).not.toHaveProperty('warnings');
-    // The first sentence says the AUTO button may run AUTO Ref; it does not state the mode as a fact.
-    expect(out.summary).toMatch(
-      /^Read the details of the clip\. Caution: a reference binding is left over, so the AUTO button may run AUTO Ref and autoModes\.uiButtonRuns cannot be relied on/,
-    );
-    expect(out.summary).not.toContain('would run regenerate');
-    // Not asking for the sections that would show it leaves the warning out.
-    expect(
-      body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId'), sections: ['key'] })),
-    ).not.toHaveProperty('notices');
-  });
-
   it.each(HOSTILE)('keeps an untrusted f0State, failure and uiButtonRuns out of the summary: %j', async (hostile) => {
     const { mock, ctx } = await withMock();
     const ids = mock.given({ clips: [clip()] });
@@ -217,6 +181,8 @@ describe('opentune_get_clip_details', () => {
     expect(out.summary).not.toContain('\n');
     expect(out.summary).not.toContain('the pitch analysis state is');
     expect(out.summary).not.toContain('the AUTO button would run');
+    // The value is a mode this server does not know: the sentence says so with a fixed label.
+    expect(out.summary).toContain('would now run a mode this server does not know; this server cannot run that mode');
     // The value is still in the structured result, as a JSON string value only.
     expect((out.analysis as { f0State: string }).f0State).toBe(hostile);
     expect((out.analysis as { failure: string }).failure).toBe(hostile);
@@ -238,6 +204,77 @@ describe('opentune_get_clip_details', () => {
     const out = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') }));
     expect(out.summary).toContain('the pitch analysis state is failed (failed: f0_empty)');
     expect(out.summary).toContain('the AUTO button would run regenerate');
+  });
+
+  // A test build from before OpenTune's upstream project removed the reference alignment still has it in the
+  // window: with a reference track bound, the AUTO button runs it, and getDetails reports `reference`. The mock
+  // cannot bind a reference track (no precondition member for it), so the reply is changed the way such a build
+  // answers; the real window is checked on a real machine.
+  it('says the AUTO button runs reference alignment, which this server cannot run, and names no raw value', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      if (method !== 'content.getDetails') return;
+      (result.autoModes as Record<string, unknown>).uiButtonRuns = 'reference';
+    });
+    const outcome = await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') });
+    const out = body(outcome);
+    expect(out.summary).toContain(
+      'the AUTO button in the OpenTune window would now run reference alignment; this server cannot run that mode',
+    );
+    expect(out.summary).not.toContain('the AUTO button would run');
+    const autoModes = out.autoModes as { uiButtonRuns: string; available: string[] };
+    expect(autoModes.uiButtonRuns).toBe('reference');
+    expect(autoModes.available).not.toContain('reference');
+    // Only the AUTO part is about it: the other parts and the closing sentence are as before.
+    expect(out.summary).toMatch(/^Read the details of the clip: the audible render is up to date; /);
+    expect(out.summary).toContain('clip_revision can be passed as expected_revision to a write tool.');
+    // The section is asked for by itself too, and is not mentioned when it is not asked for.
+    const only = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId'), sections: ['auto_modes'] }));
+    expect(only.summary).toContain('would now run reference alignment; this server cannot run that mode');
+    const other = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId'), sections: ['render'] }));
+    expect(other.summary).not.toContain('AUTO button');
+  });
+
+  it.each(['someFutureMode', 'Reference', 'reference alignment', 'constructor'])(
+    'names a mode that is not on the fixed list as "a mode this server does not know": %j',
+    async (value) => {
+      const { mock, ctx } = await withMock();
+      const ids = mock.given({ clips: [clip()] });
+      await hookCalls(ctx, (method, result) => {
+        if (method !== 'content.getDetails') return;
+        (result.autoModes as Record<string, unknown>).uiButtonRuns = value;
+      });
+      const out = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') }));
+      expect(out.summary).toContain(
+        'the AUTO button in the OpenTune window would now run a mode this server does not know; this server cannot run that mode',
+      );
+      expect(out.summary).not.toContain(value);
+      expect((out.autoModes as { uiButtonRuns: string }).uiButtonRuns).toBe(value);
+    },
+  );
+
+  it.each(['snapNotes', 'notesOnly'])('names the mode %s of content.autoTune as before', async (value) => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      if (method !== 'content.getDetails') return;
+      (result.autoModes as Record<string, unknown>).uiButtonRuns = value;
+    });
+    const out = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') }));
+    expect(out.summary).toContain(`the AUTO button would run ${value}`);
+    expect(out.summary).not.toContain('this server cannot run that mode');
+  });
+
+  it('says nothing about the AUTO button when OpenTune reports no mode', async () => {
+    const { mock, ctx } = await withMock();
+    const ids = mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      if (method !== 'content.getDetails') return;
+      (result.autoModes as Record<string, unknown>).uiButtonRuns = null;
+    });
+    const out = body(await getClipDetails(ctx, { clip: need(ids, 'clip.placementId') }));
+    expect(out.summary).not.toContain('AUTO button');
   });
 
   it('lists at most MAX_HANDLES time handles and says how many there are', async () => {
@@ -438,17 +475,17 @@ describe('opentune_get_settings', () => {
     await hookCalls(ctx, (method, result) => {
       const processing = result.processing as Record<string, unknown> | undefined;
       if (processing === undefined) return;
-      if (method === 'session.info') Object.assign(processing, { referenceAlignMode: 'beat', renderingPriority: null });
+      if (method === 'session.info') Object.assign(processing, { f0Model: 'beat', renderingPriority: null });
       if (method === 'prefs.get') {
-        Object.assign(processing, { referenceAlignMode: null, renderingPriority: null });
-        processing.nullReasons = { referenceAlignMode: 'x', renderingPriority: 'unavailable_in_prefs' };
+        Object.assign(processing, { f0Model: null, renderingPriority: null });
+        processing.nullReasons = { f0Model: 'x', renderingPriority: 'unavailable_in_prefs' };
       }
     });
     const processing = body(await getSettings(ctx, { sections: ['processing'] })).processing as Record<string, unknown>;
-    expect(processing.referenceAlignMode).toBe('beat');
+    expect(processing.f0Model).toBe('beat');
     expect(processing.renderingPriority).toBeNull();
     expect(processing.nullReasons).toMatchObject({ renderingPriority: expect.any(String) as string });
-    expect(processing.nullReasons).not.toHaveProperty('referenceAlignMode');
+    expect(processing.nullReasons).not.toHaveProperty('f0Model');
   });
 
   it('without read.v1 returns the session.info values, with onboardingShown null and a reason', async () => {
@@ -460,6 +497,96 @@ describe('opentune_get_settings', () => {
     expect(processing).toHaveProperty('vocoderReady');
     expect(processing.onboardingShown).toBeNull();
     expect((processing.nullReasons as Record<string, unknown>).onboardingShown).toBe('capability_missing:read.v1');
+    // The options come from prefs.get only.
+    expect(processing.options).toBeNull();
+    expect((processing.nullReasons as Record<string, unknown>).options).toBe('capability_missing:read.v1');
+  });
+
+  it('reports the options of the vocoder weight, pitch model and rendering priority', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({
+      clips: [clip()],
+      preferences: { options: { vocoderWeight: ['a.onnx', 'b.onnx'], f0Model: ['fcpe', 'rmvpe'] } },
+    });
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.summary).toMatch(/^Read the OpenTune settings sections: processing\./);
+    const processing = out.processing as Record<string, unknown>;
+    expect(processing.options).toEqual({
+      vocoderWeight: ['a.onnx', 'b.onnx'],
+      f0Model: ['fcpe', 'rmvpe'],
+      renderingPriority: ['gpuFirst', 'cpuFirst'],
+    });
+    // Nothing is missing, so no reason is attached to the options.
+    expect(processing.nullReasons ?? {}).not.toHaveProperty('options');
+    // The options are data from the installation: they stay values of the result, not words of the summary.
+    expect(out.summary).not.toContain('a.onnx');
+  });
+
+  it('gives null with a reason, and no error, for an instance that does not report the options', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      if (method !== 'prefs.get') return;
+      delete (result.processing as Record<string, unknown>).options;
+    });
+    const outcome = await getSettings(ctx, { sections: ['processing'] });
+    const processing = body(outcome).processing as Record<string, unknown>;
+    expect(processing.options).toBeNull();
+    expect((processing.nullReasons as Record<string, unknown>).options).toBe('not_reported');
+    // The rest of the processing section is read as before.
+    expect(processing.tuningHz).toEqual(expect.any(Number));
+    expect(processing.vocoderWeight).toEqual(expect.any(String));
+  });
+
+  // An instance of specification 1.0.0-rc.6 still reports the reference alignment mode, in session.info, in
+  // prefs.get and in the options. opentune_set_settings refuses that setting, so the read does not show it
+  // either (docs/contract-changes/20261026-retire-reference.md: the server ignores what the build reports).
+  it('leaves out the reference alignment mode that an instance of rc.6 still reports', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({
+      clips: [clip()],
+      preferences: { options: { vocoderWeight: ['a.onnx'], f0Model: ['fcpe'] } },
+    });
+    await hookCalls(ctx, (method, result) => {
+      const processing = result.processing as Record<string, unknown> | undefined;
+      if (processing === undefined) return;
+      if (method === 'session.info') processing.referenceAlignMode = 'game';
+      if (method === 'prefs.get') {
+        processing.referenceAlignMode = 'standardAuto';
+        (processing.options as Record<string, unknown>).referenceAlignMode = ['standardAuto', 'game'];
+      }
+    });
+    const outcome = await getSettings(ctx, { sections: ['processing'] });
+    const processing = body(outcome).processing as Record<string, unknown>;
+    expect(processing).not.toHaveProperty('referenceAlignMode');
+    expect(processing.options).toEqual({
+      vocoderWeight: ['a.onnx'],
+      f0Model: ['fcpe'],
+      renderingPriority: ['gpuFirst', 'cpuFirst'],
+    });
+    expect(processing.nullReasons ?? {}).not.toHaveProperty('referenceAlignMode');
+    // The other settings are read as before.
+    expect(processing.tuningHz).toEqual(expect.any(Number));
+    expect(processing.renderingPriority).toEqual(expect.any(String));
+    expect(text(outcome)).not.toContain('referenceAlignMode');
+    expect(text(outcome)).not.toContain('standardAuto');
+  });
+
+  it('leaves out a reference alignment mode that is only in prefs.get, and one that is null in session.info', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      const processing = result.processing as Record<string, unknown> | undefined;
+      if (processing === undefined) return;
+      if (method === 'session.info') {
+        processing.referenceAlignMode = null;
+        processing.nullReasons = { referenceAlignMode: 'unavailable' };
+      }
+      if (method === 'prefs.get') processing.referenceAlignMode = 'game';
+    });
+    const processing = body(await getSettings(ctx, { sections: ['processing'] })).processing as Record<string, unknown>;
+    expect(processing).not.toHaveProperty('referenceAlignMode');
+    expect(processing.nullReasons ?? {}).not.toHaveProperty('referenceAlignMode');
   });
 
   it('keeps hostile log lines and project paths out of the summary, one case each', async () => {
@@ -499,5 +626,169 @@ describe('opentune_get_settings', () => {
     expect(getSettingsTool.annotations.readOnlyHint).toBe(true);
     expect(getSettingsTool.annotations.idempotentHint).toBe(true);
     expect([...getSettingsTool.otcpMethods].sort()).toEqual(['app.getLog', 'audio.get', 'prefs.get', 'session.info']);
+  });
+});
+
+describe('opentune_get_settings: rendering priority and vocoder', () => {
+  const processingOf = (outcome: Outcome) => body(outcome).processing as Record<string, unknown>;
+
+  it('gives next to the options one sentence per rendering priority: what it means and when it takes effect', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    const processing = processingOf(await getSettings(ctx, { sections: ['processing'] }));
+    const notes = (processing.optionNotes as { renderingPriority: Record<string, string> }).renderingPriority;
+    expect(Object.keys(notes)).toEqual(['gpuFirst', 'cpuFirst']);
+    expect(notes.gpuFirst).toContain('falls back to the CPU when that fails, so the GPU is not guaranteed');
+    expect(notes.gpuFirst).toContain('processing.backend is what runs now');
+    expect(notes.cpuFirst).toContain('Always uses the CPU');
+    for (const note of Object.values(notes)) {
+      // When it takes effect, and that the sound stays.
+      expect(note).toContain('Takes effect at once: the vocoder reloads for a few seconds, nothing is rendered again');
+    }
+    // The tool description is not where they are: it has no room left.
+    expect(getSettingsTool.description).not.toContain('falls back');
+  });
+
+  it('writes a note only for a value the options list, and none without the options', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      if (method !== 'prefs.get') return;
+      const options = (result.processing as { options: Record<string, unknown> }).options;
+      options.renderingPriority = ['cpuFirst', 'turboFirst'];
+    });
+    const notes = (
+      processingOf(await getSettings(ctx, { sections: ['processing'] })).optionNotes as {
+        renderingPriority: Record<string, string>;
+      }
+    ).renderingPriority;
+    // A value that OpenTune lists and this server does not know gets no note, and its name is not repeated.
+    expect(Object.keys(notes)).toEqual(['cpuFirst']);
+    expect(JSON.stringify(notes)).not.toContain('turboFirst');
+    // An instance that does not report the options has nothing to annotate.
+    const bare = await withMock();
+    bare.mock.given({ clips: [clip()] });
+    await hookCalls(bare.ctx, (method, result) => {
+      if (method === 'prefs.get') delete (result.processing as Record<string, unknown>).options;
+    });
+    expect(processingOf(await getSettings(bare.ctx, { sections: ['processing'] }))).not.toHaveProperty('optionNotes');
+  });
+
+  it('says that the CPU is in use under gpuFirst, with the log and the doctor as the places to look', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setGpuAvailable(false);
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.processing).toMatchObject({ renderingPriority: 'gpuFirst', backend: 'cpu' });
+    expect(out.summary).toContain(
+      'The rendering priority is gpuFirst but OpenTune is using the CPU: the GPU may be unavailable or have fallen back.',
+    );
+    expect(out.summary).toContain('read the log (opentune_get_settings with sections ["log"] and log_lines 30)');
+    expect(out.summary).toContain('"opentune-mcp doctor" checks Direct3D 12');
+    // The log it points at can be read with exactly those arguments.
+    body(await getSettings(ctx, { sections: ['log'], log_lines: 30 }));
+  });
+
+  it('does not call the CPU a fall back while the vocoder is not loaded: backend may be a value from before', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setGpuAvailable(false);
+    mock.setVocoderLoadOnDemand(true);
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    // The fields stay as OpenTune reports them; only the conclusion is withheld.
+    expect(out.processing).toMatchObject({ renderingPriority: 'gpuFirst', backend: 'cpu', vocoderReady: false });
+    expect(out.summary).not.toContain('using the CPU');
+    expect(out.summary).not.toContain('fallen back');
+    expect(out.summary).not.toContain('Direct3D 12');
+    // The sentence about the vocoder is there instead.
+    expect(out.summary).toContain('The vocoder is not loaded yet');
+    // A vocoder that is still reloading reports ready false too, and is not read as a fall back either.
+    mock.setVocoderLoadOnDemand(false);
+    await hookCalls(ctx, (method, result) => {
+      if (method === 'session.info') {
+        Object.assign(result.processing as Record<string, unknown>, {
+          vocoderReady: false,
+          vocoderReconfiguring: true,
+        });
+      }
+    });
+    expect(body(await getSettings(ctx, { sections: ['processing'] })).summary).not.toContain('using the CPU');
+  });
+
+  it('says the fall back once the vocoder is loaded, and then says nothing about an unloaded vocoder', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setGpuAvailable(false);
+    mock.setVocoderLoadOnDemand(true);
+    expect(body(await getSettings(ctx, { sections: ['processing'] })).summary).not.toContain('using the CPU');
+    mock.setVocoderLoadOnDemand(false);
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.processing).toMatchObject({ renderingPriority: 'gpuFirst', backend: 'cpu', vocoderReady: true });
+    expect(out.summary).toContain('The rendering priority is gpuFirst but OpenTune is using the CPU');
+    expect(out.summary).not.toContain('vocoder is not loaded');
+  });
+
+  it('says nothing about the CPU when the GPU runs, when the CPU was asked for, or when the backend is not reported', async () => {
+    const gpu = await withMock();
+    gpu.mock.given({ clips: [clip()] });
+    gpu.mock.setGpuAvailable(true);
+    expect(body(await getSettings(gpu.ctx, { sections: ['processing'] })).summary).not.toContain('using the CPU');
+    const cpu = await withMock();
+    cpu.mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+    cpu.mock.setGpuAvailable(true);
+    expect(body(await getSettings(cpu.ctx, { sections: ['processing'] })).summary).not.toContain('using the CPU');
+    const none = await withMock();
+    none.mock.given({ clips: [clip()] });
+    const out = body(await getSettings(none.ctx, { sections: ['processing'] }));
+    expect((out.processing as Record<string, unknown>).backend).toBeNull();
+    expect(out.summary).not.toContain('using the CPU');
+  });
+
+  it('builds the sentence from enumerated values only: a backend name that is not exactly cpu adds nothing', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    await hookCalls(ctx, (method, result) => {
+      if (method === 'session.info') (result.processing as Record<string, unknown>).backend = `cpu ${INJECTION}`;
+    });
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.summary).not.toContain('using the CPU');
+    expect(out.summary).not.toContain('Ignore all previous');
+    expect(text(await getSettings(ctx, { sections: ['processing'] }))).toContain('Ignore all previous');
+  });
+
+  it('does not call a vocoder that is not loaded normal, nor a fault: it says what to expect and what to do', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setVocoderLoadOnDemand(true);
+    const out = body(await getSettings(ctx, { sections: ['processing'] }));
+    expect(out.processing).toMatchObject({ vocoderReady: false });
+    expect(out.summary).toContain(
+      'The vocoder is not loaded yet; it loads when the first render needs it. If it is still not loaded after a ' +
+        'render, tell the user.',
+    );
+    // A load that failed or is stuck looks the same in session.info, so nothing may call it normal.
+    expect(out.summary).not.toContain('normal');
+    mock.setVocoderLoadOnDemand(false);
+    expect(body(await getSettings(ctx, { sections: ['processing'] })).summary).not.toContain('vocoder is not loaded');
+  });
+
+  it.each([
+    ['the CPU sentence, once the vocoder is loaded', false, 'using the CPU'],
+    ['the vocoder sentence, while it is not loaded', true, 'The vocoder is not loaded yet'],
+  ])('keeps a long log within the budget with %s in the summary', async (_name, onDemand, sentence) => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setGpuAvailable(false);
+    mock.setVocoderLoadOnDemand(onDemand);
+    for (let i = 0; i < 400; i += 1) mock.logLine(`${String(i)} ${'z'.repeat(2000)}`);
+    const outcome = await getSettings(ctx, {
+      sections: ['processing', 'audio_device', 'recent', 'export_caps', 'log'],
+      log_lines: 500,
+    });
+    const out = body(outcome);
+    expect(out.summary).toContain(sentence);
+    const result = render(outcome);
+    expect(JSON.stringify(result.structuredContent).length).toBeLessThanOrEqual(OUTPUT_BUDGET);
+    expect((result.content[0] as { text: string }).text.length).toBeLessThanOrEqual(OUTPUT_BUDGET);
   });
 });

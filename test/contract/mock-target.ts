@@ -4,6 +4,7 @@
 // The mock target: a fresh mock instance per vector, with its discovery file in a temporary
 // directory of its own, so every vector starts from the same state and sees no other client.
 
+import { existsSync } from 'node:fs';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -32,6 +33,23 @@ export function mockTarget(options: Omit<MockOptions, 'discoveryDir'> = {}): Con
           }
         },
         runnerValue: (name) => mock.runnerValue(name),
+        async expectEnded(waitMs) {
+          let timer: NodeJS.Timeout | undefined;
+          const ended = await Promise.race([
+            mock.whenEnded().then(() => true),
+            new Promise<boolean>((resolve) => {
+              timer = setTimeout(() => {
+                resolve(false);
+              }, waitMs);
+            }),
+          ]);
+          clearTimeout(timer);
+          const problems: string[] = [];
+          if (!ended) problems.push(`the mock did not end in ${String(waitMs)} ms`);
+          if (existsSync(mock.discoveryPath)) problems.push('the discovery file of the instance is still there');
+          // The mock runs inside this process: there is no process of its own whose exit could be observed.
+          return { problems, notChecked: ['the exit status of a process (the mock has none of its own)'] };
+        },
         async close() {
           await mock.stop();
           await rm(dir, { recursive: true, force: true });

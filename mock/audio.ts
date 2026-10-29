@@ -3,12 +3,14 @@
 
 // The audio device methods of the mock (capability audio.device): audio.get and audio.set
 // (spec/otcp/v1/methods/audio.get.schema.json). The setup belongs to the installation, not to the
-// project. The mock has one stand-in device that offers a few sample rates and buffer sizes; a
-// test can make it fail to open (`failsToOpen`), so that audio.set restores the previous setup.
+// project. The mock has two stand-in device types (the first with two output devices, the second with one), two
+// sample rates and two buffer sizes; switching the device type opens the default (first) output device of the new
+// type, as OpenTune does. A test can make it fail to open (`failsToOpen`), so that audio.set restores the previous
+// setup.
 
 import { checkNotBusy, envelope, type Handler } from './context.js';
 import { refuse } from './errors.js';
-import { AUDIO_AVAILABLE, type AudioRec } from './model.js';
+import { AUDIO_AVAILABLE, outputDevicesOf, type AudioRec } from './model.js';
 import { EMPTY_DIFF } from './writes.js';
 
 const warning = (code: string, subject: unknown = null, data: unknown = null) => ({ code, subject, data });
@@ -45,29 +47,33 @@ export function deviceView(audio: AudioRec) {
   };
 }
 
-const available = () => ({
+/** What the setup offers for the current device type. */
+const available = (audio: AudioRec, outputChannelPairCount: number) => ({
   deviceTypes: [...AUDIO_AVAILABLE.deviceTypes],
-  outputDevices: [...AUDIO_AVAILABLE.outputDevices],
+  outputDevices: [...outputDevicesOf(audio.deviceType)],
   sampleRatesHz: [...AUDIO_AVAILABLE.sampleRatesHz],
   bufferSizesFrame: [...AUDIO_AVAILABLE.bufferSizesFrame],
-  outputChannelPairCount: AUDIO_AVAILABLE.outputChannelPairCount,
+  outputChannelPairCount,
 });
 
-const get: Handler = ({ world }) => ({ device: deviceView(world.audio), available: available() });
+const get: Handler = ({ world }) => ({
+  device: deviceView(world.audio),
+  available: available(world.audio, world.outputChannelPairCount),
+});
 
-/** Whether the setup offers the value the call asks for. */
-function offered(name: Member, value: string | number): boolean {
+/** Whether the setup offers the value the call asks for; output devices are those of the device type that will run. */
+function offered(name: Member, value: string | number, deviceType: string, outputChannelPairCount: number): boolean {
   switch (name) {
     case 'deviceType':
       return (AUDIO_AVAILABLE.deviceTypes as readonly (string | number)[]).includes(value);
     case 'outputDevice':
-      return (AUDIO_AVAILABLE.outputDevices as readonly (string | number)[]).includes(value);
+      return (outputDevicesOf(deviceType) as readonly (string | number)[]).includes(value);
     case 'sampleRateHz':
       return (AUDIO_AVAILABLE.sampleRatesHz as readonly (string | number)[]).includes(value);
     case 'bufferSizeFrame':
       return (AUDIO_AVAILABLE.bufferSizesFrame as readonly (string | number)[]).includes(value);
     case 'outputChannelPair':
-      return typeof value === 'number' && value < AUDIO_AVAILABLE.outputChannelPairCount;
+      return typeof value === 'number' && value < outputChannelPairCount;
   }
 }
 
@@ -79,7 +85,8 @@ const set: Handler = (context) => {
     const value = params[name] as string | number | undefined;
     return value === undefined ? [] : [{ name, value }];
   });
-  const unavailable = given.find(({ name, value }) => !offered(name, value));
+  const targetType = typeof params.deviceType === 'string' ? params.deviceType : audio.deviceType;
+  const unavailable = given.find(({ name, value }) => !offered(name, value, targetType, world.outputChannelPairCount));
   if (unavailable !== undefined) {
     throw refuse(
       'INVALID_ARGUMENT',
@@ -87,7 +94,17 @@ const set: Handler = (context) => {
       `the audio setup does not offer the requested ${unavailable.name}`,
     );
   }
-  const differing = given.filter(({ name, value }) => audio[name] !== value);
+  // Another device type opens its default output device, unless the call names one.
+  const wanted: Record<Member, string | number> = { ...audio };
+  if (targetType !== audio.deviceType) {
+    wanted.deviceType = targetType;
+    wanted.outputDevice = outputDevicesOf(targetType)[0] ?? audio.outputDevice;
+  }
+  for (const { name, value } of given) wanted[name] = value;
+  const differing = MEMBERS.filter(({ name }) => audio[name] !== wanted[name]).map(({ name }) => ({
+    name,
+    value: wanted[name],
+  }));
   const dirtyBefore = world.project.dirty;
   if (audio.running && differing.length === 0) {
     return envelope(world, {

@@ -178,7 +178,8 @@ describe('OtcpSession against other listeners', () => {
     ['x', 'PROTOCOL_MISMATCH'],
     ['1.7', null],
   ])('checks the protocol major of a hello naming %s', async (protocol, kind) => {
-    const entry = entryOf(discoveryContent(4290));
+    // The discovery file this instance announced itself with serves majors 2 and 3.
+    const entry = entryOf(discoveryContent(4290, { protocolMajors: [2, 3] }));
     const fake = await fakeInstance((line, socket) => {
       const { id } = JSON.parse(line) as { id: number };
       socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, result: helloResult(entry, { protocol }) })}
@@ -188,8 +189,89 @@ describe('OtcpSession against other listeners', () => {
     if (kind === null) {
       expect((await opened).hello.protocol).toBe(protocol);
     } else {
-      expect((await failure(opened)).data).toMatchObject({ kind, reason: 'major_not_served', executed: false });
+      const error = await failure(opened);
+      expect(error.data).toMatchObject({ kind, reason: 'major_not_served', executed: false });
+      // The whole sentence at once: it names the major it read, never the instance's version string.
+      expect(error.data.detail).toMatch(
+        /^the instance speaks (OTCP major (?:[1-9][0-9]*)|an unreadable OTCP version); this server speaks major 1$/,
+      );
+      expect(error.data.detail).not.toContain(protocol);
+      // The majors of the discovery file come with the error, as they do with the status.
+      expect(error.data.protocolMajors).toEqual([2, 3]);
     }
+  });
+
+  it('adds the majors of the discovery file to the fixed PROTOCOL_MISMATCH response of the instance', async () => {
+    // PROTOCOL.md Appendix A: the instance refuses the hello with a fixed response that cannot
+    // repeat the majors it serves. The discovery file holds them.
+    const entry = entryOf(discoveryContent(4291, { protocolMajors: [2, 3] }));
+    const fake = await fakeInstance((line, socket) => {
+      const { id } = JSON.parse(line) as { id: number };
+      socket.write(
+        `${JSON.stringify({
+          jsonrpc: '2.0',
+          id,
+          error: {
+            code: -32002,
+            message: 'PROTOCOL_MISMATCH',
+            data: {
+              kind: 'PROTOCOL_MISMATCH',
+              retryable: false,
+              detail: 'unsupported protocol major version',
+              executed: false,
+            },
+          },
+        })}
+`,
+      );
+    });
+    const error = await failure(OtcpSession.open({ ...entry, port: fake.port }));
+    expect(error.data).toMatchObject({ kind: 'PROTOCOL_MISMATCH', executed: false, protocolMajors: [2, 3] });
+  });
+
+  it('takes the majors only from the discovery file, never from what the instance sends', async () => {
+    const entry = entryOf(discoveryContent(4292, { protocolMajors: [2] }));
+    const refusal = (kind: string, extra: Record<string, unknown>) => ({
+      code: -32002,
+      message: kind,
+      data: { kind, retryable: false, detail: 'refused', executed: false, ...extra },
+    });
+    // A hello refused with another kind, and a later request that fails: both carry protocolMajors
+    // on the wire, and neither reaches the error.
+    const fake = await fakeInstance((line, socket) => {
+      const { id, method } = JSON.parse(line) as { id: number; method: string };
+      const body =
+        method === 'session.hello'
+          ? { result: helloResult(entry) }
+          : { error: refusal('INVALID_ARGUMENT', { protocolMajors: [9] }) };
+      socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, ...body })}
+`);
+    });
+    const session = await OtcpSession.open({ ...entry, port: fake.port });
+    const refused = await failure(session.call('session.info', {}, 5000));
+    expect(refused.data).toMatchObject({ kind: 'INVALID_ARGUMENT' });
+    expect(refused.data).not.toHaveProperty('protocolMajors');
+    session.close();
+
+    const authFake = await fakeInstance((line, socket) => {
+      const { id } = JSON.parse(line) as { id: number };
+      socket.write(`${JSON.stringify({ jsonrpc: '2.0', id, error: refusal('AUTH_FAILED', { protocolMajors: [9] }) })}
+`);
+    });
+    const auth = await failure(OtcpSession.open({ ...entry, port: authFake.port }));
+    expect(auth.data).toMatchObject({ kind: 'AUTH_FAILED' });
+    expect(auth.data).not.toHaveProperty('protocolMajors');
+
+    // A PROTOCOL_MISMATCH that names other majors than the file still reports the file's.
+    const mismatch = await fakeInstance((line, socket) => {
+      const { id } = JSON.parse(line) as { id: number };
+      socket.write(
+        `${JSON.stringify({ jsonrpc: '2.0', id, error: refusal('PROTOCOL_MISMATCH', { protocolMajors: [9] }) })}
+`,
+      );
+    });
+    const error = await failure(OtcpSession.open({ ...entry, port: mismatch.port }));
+    expect(error.data.protocolMajors).toEqual([2]);
   });
 
   it('rejects a hello response that is not JSON-RPC', async () => {

@@ -326,7 +326,13 @@ export class ImportService {
         revealed.push(...Array.from({ length: world.visibleTrackCount - shown }, (_, k) => shown + k));
       }
       world.markDirty();
-      if (plan.focus) world.selectedPlacementIds = [placement.id];
+      if (plan.focus) {
+        // As in OpenTune, focusing the clip selects it and makes its track the active track, and the piano roll
+        // holds its content (without switching the view: the workspace stays as it is).
+        world.selectedPlacementIds = [placement.id];
+        world.activeTrackId = placement.trackId;
+        world.pianoRollContent = content;
+      }
       const analysisFails = this.#analysisFaults > 0;
       if (analysisFails) this.#analysisFaults--;
       const item: Item = {

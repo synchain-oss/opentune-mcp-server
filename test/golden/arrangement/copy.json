@@ -1,0 +1,240 @@
+{
+  "description": "A copy: not undoable, and removing the copies again needs the user to agree.",
+  "input": {
+    "ops": [
+      {
+        "op": "copy",
+        "clips": [
+          "p:01234567:0:1"
+        ],
+        "mode": "full",
+        "to_track_id": 0,
+        "start_timeline_sec": 0
+      }
+    ],
+    "expected_revision": "<arrangement_revision>"
+  },
+  "result": {
+    "summary": "opentune_edit_arrangement: created 1 placement, 1 content (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_edit_arrangement only after the user explicitly agrees). Warnings: STACKED_ON_SOURCE.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": "a45",
+          "ops": [
+            {
+              "op": "delete",
+              "placementIds": [
+                "p:01234567:0:7"
+              ]
+            }
+          ]
+        },
+        "requiresConsent": true
+      }
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "STACKED_ON_SOURCE",
+        "text": "The copy starts at the same timeline position as its source, so both play at once.",
+        "subject": {
+          "placementId": "p:01234567:0:7"
+        },
+        "data": null
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Only after the user explicitly agrees to restore it: call opentune_edit_arrangement with the arguments in restore, as they are, adding confirm: true.",
+        "revert": {
+          "method": "arrangement.edit",
+          "params": {
+            "expectedArrangementRevision": "a45",
+            "ops": [
+              {
+                "op": "delete",
+                "placementIds": [
+                  "p:01234567:0:7"
+                ]
+              }
+            ]
+          },
+          "requiresConsent": true
+        },
+        "restore": {
+          "tool": "opentune_edit_arrangement",
+          "arguments": {
+            "expected_revision": "ar1.YTQ1",
+            "ops": [
+              {
+                "op": "delete",
+                "clips": [
+                  "p:01234567:0:7"
+                ]
+              }
+            ]
+          }
+        }
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": {
+        "before": "a36",
+        "after": "a45"
+      },
+      "trackState": null,
+      "contents": [
+        {
+          "contentId": "c:01234567:0:4",
+          "changed": {
+            "notes": {
+              "before": null,
+              "after": "n37"
+            },
+            "pitch": {
+              "before": null,
+              "after": "p38"
+            },
+            "content": {
+              "before": null,
+              "after": "c39"
+            },
+            "grid": {
+              "before": null,
+              "after": "g40"
+            },
+            "key": {
+              "before": null,
+              "after": "k41"
+            },
+            "pitchShift": {
+              "before": null,
+              "after": "s42"
+            }
+          }
+        }
+      ]
+    },
+    "tokens": {
+      "arrangementRevision": "a45",
+      "contents": [
+        {
+          "contentId": "c:01234567:0:4",
+          "revision": "r43",
+          "gridRevision": "g40",
+          "keyRevision": "k41"
+        }
+      ],
+      "placements": [
+        {
+          "placementId": "p:01234567:0:7",
+          "geometryHash": "h44"
+        }
+      ]
+    },
+    "dirty": {
+      "before": true,
+      "after": true
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 6
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "STACKED_ON_SOURCE",
+        "subject": {
+          "placementId": "p:01234567:0:7"
+        },
+        "data": null
+      }
+    ],
+    "job": null,
+    "changes": [],
+    "created": [
+      {
+        "entity": "placement",
+        "ref": {
+          "placementId": "p:01234567:0:7"
+        },
+        "label": "Clip 7 on Track 1"
+      },
+      {
+        "entity": "content",
+        "ref": {
+          "contentId": "c:01234567:0:4"
+        },
+        "label": "Content 4"
+      }
+    ],
+    "removed": [],
+    "idMap": [
+      {
+        "entity": "placement",
+        "relation": "copy",
+        "from": [
+          {
+            "placementId": "p:01234567:0:1"
+          }
+        ],
+        "to": [
+          {
+            "placementId": "p:01234567:0:7"
+          }
+        ]
+      }
+    ],
+    "uiEffects": [
+      {
+        "surface": "arrangement view",
+        "effect": "created placement",
+        "target": "p:01234567:0:7",
+        "visibleNow": true
+      },
+      {
+        "surface": "piano roll",
+        "effect": "created content",
+        "target": "c:01234567:0:4",
+        "visibleNow": false,
+        "howToSee": "Open the clip in the piano roll."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "created",
+          "entity": "placement",
+          "label": "Clip 7 on Track 1",
+          "ref": {
+            "placementId": "p:01234567:0:7"
+          }
+        },
+        {
+          "kind": "created",
+          "entity": "content",
+          "label": "Content 4",
+          "ref": {
+            "contentId": "c:01234567:0:4"
+          }
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "arrangement_revision": "ar1.YTQ1",
+    "clip_ids": {
+      "created": [
+        "p:01234567:0:7"
+      ],
+      "removed": []
+    }
+  }
+}

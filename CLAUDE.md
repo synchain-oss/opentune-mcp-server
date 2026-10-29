@@ -1,6 +1,6 @@
 # CLAUDE.md —— OpenTune MCP Server 工作规范
 
-本文件是在本仓库内工作的 AI 编码代理与贡献者的常驻规范;与维护者的明确指令冲突时以维护者为准。仓库目前只有文档:文中提到的脚本(`npm run gates`、`scripts/*`)、workflow 与检查(`mcp-gate`、`branch-gate` 等)随后续 PR 陆续加入,加入之前按 §2 末条做人工检查。
+本文件是在本仓库内工作的 AI 编码代理与贡献者的常驻规范;与维护者的明确指令冲突时以维护者为准。仓库已包含 MCP 服务、测试、`npm run gates`(§2)与 CI workflow(§4,位于 `.github/workflows/`)。
 
 ## 0. 基本约定
 
@@ -58,7 +58,7 @@ npm run gates
 
 - SKIP 必须写明原因;不得把 FAIL 改成 SKIP 来过关。
 - 新增的守卫要有「删掉它就会变红」的证明;不写恒真的判据。
-- `npm run gates` 加入之前(仓库只有文档时),至少确认:README 中英标题结构一致、无个人路径 / 个人邮箱、无 AI 署名。
+- 若 `npm run gates` 无法运行(例如依赖尚未安装),至少确认:README 中英标题结构一致、无个人路径 / 个人邮箱、无 AI 署名。
 
 ## 3. 评审规则
 
@@ -70,13 +70,13 @@ npm run gates
 
 ## 4. 各 Workflow 触发范围一览
 
-> 规划中的清单;workflow 文件随后加入,以 `.github/workflows/` 实际内容为准。dev / prod 的必需检查只有 `mcp-gate` 与 `branch-gate`;review bot 永不设为必需。
+> 以 `.github/workflows/` 的实际内容为准;表中标注「规划中」的项尚未实现。dev / prod 的必需检查只有 `mcp-gate` 与 `branch-gate`;review bot 永不设为必需。
 
 | workflow | 触发 | 说明 |
 | --- | --- | --- |
 | `ci.yml` | PR → `dev` / `prod`(完整);PR → `feature/**`(轻量:单条 ubuntu 跑 lint / 类型检查 / 单测 / 合规 / 署名);push → `dev`、`feature/**`(完整) | `checks`(ubuntu × Node 22/24 + windows × Node 24;覆盖率在 ubuntu Node 24 上强制)、`protocol`(ubuntu + windows:stdio `tools/list` 对 golden、Inspector CLI `--strict`、契约向量对 mock、场景转录、instructions 快照、token 金丝雀、体积门禁、每个 op / 动作枚举值至少一个成功向量、规范方法闭包)、`package`(bundle 形状;空目录安装 tarball 后 `tools/list`;`mcpb validate`)、`audit`(含 devDependencies)、`compliance`(gitleaks、reuse lint、隐私、禁止新增音频文件、署名)、`docs`(README 中英结构一致、`docs/reference.md` 与生成结果一致、每个错误 kind / 状态 / doctor 检查 ID 都有 TROUBLESHOOTING 锚点);聚合 job `mcp-gate`(`if: always()`,唯一必需的 CI 检查) |
 | `branch-gate.yml` | PR → `dev` / `prod`(含 `edited`) | 分支命名(`dev` ← `feat/*` / `feature/*` / `dependabot/*`;`prod` ← `dev`)、fork 来源规则、DCO(豁免合并提交)、冻结契约守卫(§5)、PR 正文与提交的署名检查、same-repo PR 的提交身份白名单。job 名固定为 `branch-gate`,不加 `if:` |
-| 署名检查 | PR → `feature/**`(含 `edited`) | 在 `ci.yml` 轻量档的 `light` job 里检查提交与 PR 标题 / 正文,结果汇入 `mcp-gate` |
+| 署名检查 | PR → `feature/**`(含 `edited`) | 在 `ci.yml` 轻量档的 `light` job 里检查提交与 PR 标题 / 正文,结果汇入 `mcp-gate`。同仓分支开到 `feature/**` 时检查范围是 `origin/<base>..HEAD` 再减去默认分支上已有的提交(把 `dev` 合回主支线的子 PR 不会因 `dev` 上的 Dependabot 提交变红):默认分支上的提交都过了 `dev` 的必需检查与 `branch-gate`,不是本 PR 带来的,与 push 到主支线时的放宽对齐;PR 自己的提交(含把 `dev` 合回来的合并提交)仍按严格规则(只许项目身份)。取不到默认分支时报错,不退回不排除。到 `dev` / `prod` 的 PR、fork PR、Dependabot 的 PR 不变 |
 | `claude-review.yml` | 所有 same-repo、非草稿、非 Dependabot 的 PR;`dev` → `prod` 的晋升 PR 不审 | 薄调用方:调用 `Synchain-oss/ci-workflows` 的 `claude-review.yml`(钉 40 位 commit SHA,注释写 tag),本仓只传 `focus` 与 `extra_prompt`;检查名 `claude-pr-review / review`。中央 workflow:Claude Opus 5.5 走维护者订阅 OAuth token;评论用本 job 的 `GITHUB_TOKEN`(无 `id-token`,job 级 `contents: read`);模型无 shell,只有 Read / Glob / Grep 与行内评论工具,另有 deny 列表;PR 含被 git 跟踪的符号链接时拒审,检查之后关掉 `core.symlinks`(action 再检出的提交里的链接只会是普通文件);diff 预先写进 `.ot-review/`。中文分级;MCP 专项:stdout 污染、schema 兼容、描述即 prompt、路径与覆盖、提示注入、回环与 token、错误可操作性、结果清晰约定;`extra_prompt` 是 prompt 的最后一段,以不可信数据声明结尾 |
 | `review-dispatch.yml` | `issue_comment`:`/review`,评论者 ∈ {OWNER, MEMBER, COLLABORATOR} | fork PR 的人工触发 AI review(也可用于中央 workflow 不审的 Dependabot PR);固定 `/review` 时的 head SHA 并按它核对:diff 碰到 `.github/workflows/` 即中止、含符号链接即拒审;检出 PR 代码之前关掉 `core.symlinks`;action 之后核对模型读到的提交与 PR head 仍是该 SHA,否则回帖判作废;只有 `/review` 评论进入并发组。不调用中央 workflow(中央 claude-review 只接 `pull_request`,中央 deepseek-review 拒审 fork PR):prompt 骨架与工具边界照抄中央 `claude-review.yml`,`focus` 与 `extra_prompt` 逐字取自本仓 `claude-review.yml`(单测比对) |
 | `pr-agent.yml` | PR → `dev`(触发器 `branches: [dev]`) | 薄调用方:调用中央 `pr-agent.yml`(`provider: opencode-go`,DeepSeek V4.1 Flash,按量计费;模型、无 fallback、超时不重试、按 digest 锁定的镜像都在中央),检查名 `pr-agent / pr-agent`;仓库变量 `ENABLE_PR_AGENT == 'true'` 才运行(默认关);`persistent_comments: false`:review / improve 每次发新评论(`pr-agent-claude.yml` 在 PR → `dev` 上也发评论,持久模式会改写最新一条带 pr-agent 标记的评论,把它的评论覆盖掉);`ignore_globs` 只排除锁文件与生成的 `docs/reference.md`;`extra_instructions` 带不可信数据声明;永不设为必需 |
@@ -100,7 +100,7 @@ npm run gates
 - 版本:规范单独打 tag `spec-vMAJOR.MINOR.PATCH`(预发布 `-rc.N`),线上只传 `MAJOR.MINOR`;minor 只做追加,删除 / 改名 / 改语义或单位只能进新的 major。错误类别、告警码、原因码的注册表只追加,客户端必须接受未知代码。每个方法与向量标注 `capability` 与 `since`;方法 schema 用 JSON Schema 2020-12。
 - fork 在 `Tests/Control/spec/otcp/v1/` 放逐字节副本,并用 sha256 锁定(`.github/spec.lock`);不要直接改 fork 里的副本,由维护者同步。所以规范文件必须 LF 行尾、UTF-8、无 BOM。
 - 覆盖闭包:`spec/otcp/v1/methods/*.schema.json` 里的每个方法都必须出现在某个工具声明的 `otcpMethods` 里,或在带理由的「不暴露」清单中(单测强制)。
-- 工具面:名称匹配 `^opentune_[a-z0-9_]+$`,首个 npm 版本发布后冻结,改名先以 deprecated 形式保留一个 minor;描述 ≤ 600 字符、以 `OpenTune (audio vocal pitch editor): ` 开头;全部 `openWorldHint: false`;每个工具声明所需能力,缺失时返回可操作的错误;只有 `opentune_get_status` 设 `alwaysLoad`;`tools/list` 总量 ≤ 46 KB、单工具 ≤ 4 KB(`opentune_edit_notes` ≤ 9 KB)。返回写信封的工具共用一个宽松的 outputSchema(只列顶层键、无 enum、≤ 600 B),完整结构只在规范 schema 里,由 vitest 对 mock 与向量强制。
+- 工具面:名称匹配 `^opentune_[a-z0-9_]+$`,首个 npm 版本发布后冻结,改名先以 deprecated 形式保留一个 minor;描述 ≤ 600 字符、以 `OpenTune (audio vocal pitch editor): ` 开头;全部 `openWorldHint: false`;每个工具声明所需能力,缺失时返回可操作的错误;只有 `opentune_get_status` 设 `alwaysLoad`;`tools/list` 总量 ≤ 64 KB、单工具 ≤ 4 KB(`opentune_edit_notes` ≤ 9 KB)。返回写信封的工具共用一个宽松的 outputSchema(只列顶层键、无 enum、≤ 600 B),完整结构只在规范 schema 里,由 vitest 对 mock 与向量强制。
 
 ## 6. 环境与依赖
 
@@ -110,7 +110,7 @@ npm run gates
 | 打包 | esbuild → `dist/opentune-mcp.mjs`(ESM、`platform: node`、`target: node22`、带 shebang);发布包无依赖、无生命周期脚本;`THIRD-PARTY-NOTICES.md` 由 metafile 生成,缺项即红 |
 | 本地 gates | `npm run gates`(§2) |
 | 合规扫描 | gitleaks(版本见钉版文件,下载校验 sha256)、`reuse lint`、隐私检查、署名检查;都在 `npm run gates` 里 |
-| CI secrets | `CLAUDE_CODE_OAUTH_TOKEN`(`claude-review.yml` 与 `review-dispatch.yml`;Dependabot 另设的那份已不再使用:中央 claude-review 不审 Dependabot 的 PR)、`OPENCODE_GO_API_KEY_FOR_REVIEW`(`pr-agent.yml`)、组织 secret `CLAUDE_API_KEY_FOR_PR_REVIEW`(`pr-agent-claude.yml`)。npm 发布走 OIDC trusted publishing,不存 npm token |
+| CI secrets | `CLAUDE_CODE_OAUTH_TOKEN`(`claude-review.yml` 与 `review-dispatch.yml`;Dependabot 另设的那份已不再使用:中央 claude-review 不审 Dependabot 的 PR)、`OPENCODE_GO_API_KEY_FOR_REVIEW`(`pr-agent.yml`)、组织 secret `CLAUDE_API_KEY_FOR_PR_REVIEW`(`pr-agent-claude.yml`)。npm 发布从 0.2.0 起(规划中)经 OIDC trusted publishing 进行,不存 npm token |
 | 测试数据目录 | 发现文件只写 `OPENTUNE_MCP_DISCOVERY_DIR`;E2E 用 `OPENTUNE_DATA_DIR` 临时目录;任何测试解析到真实 AppData 即失败 |
 
 ## 7. 安全铁律(MCP 专项)
