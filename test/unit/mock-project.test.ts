@@ -198,6 +198,67 @@ describe('project.open', () => {
     });
   });
 
+  it('restores the number of visible tracks that the project stores, and the open does not mark the project changed', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ files: [...FILES], visibleTrackCount: 5, clips: [clip({ trackId: 2 })] });
+    await finished(session, await ok('project.saveAs', { path: ids.a }));
+    // The project file holds the number of visible tracks (it is not among the names of NOT_SAVED_IN_PROJECT).
+    expect(JSON.parse(readFileSync(need(ids, 'a'), 'utf8'))).toMatchObject({ visibleTrackCount: 5 });
+
+    // A file without the number is an old one: the initial four tracks stand, and fewer tracks than before reveal none.
+    const old = await finished(session, await ok('project.open', { path: ids.b }));
+    expect(old).toMatchObject({
+      restored: { visibleTrackCount: 4 },
+      sideEffects: {},
+      dirty: { before: false, after: false },
+    });
+
+    // A file with the number: five tracks, one more than shown before, reported from the two numbers.
+    const opened = await finished(session, await ok('project.open', { path: ids.a }));
+    expect(opened).toMatchObject({
+      restored: { visibleTrackCount: 5 },
+      sideEffects: { tracksRevealed: { trackIds: [4], revert: null } },
+      warnings: [],
+      dirty: { before: false, after: false },
+    });
+    expect(field(await ok('project.get'), 'project')).toEqual({ path: ids.a, dirty: false });
+    expect(mock.snapshot().tracks.filter((t) => t.visible)).toHaveLength(5);
+
+    // An old file with a clip on a later track: the clip shows the tracks up to its own, as before the number was stored.
+    const legacy = path.join(path.dirname(need(ids, 'a')), 'legacy.otproj');
+    const stored = JSON.parse(readFileSync(need(ids, 'a'), 'utf8')) as {
+      visibleTrackCount?: number;
+      clips: { trackId: number }[];
+    };
+    delete stored.visibleTrackCount;
+    for (const stored_clip of stored.clips) stored_clip.trackId = 6;
+    writeFileSync(legacy, JSON.stringify(stored));
+    const inferred = await finished(session, await ok('project.open', { path: legacy }));
+    expect(inferred).toMatchObject({
+      restored: { visibleTrackCount: 7 },
+      sideEffects: { tracksRevealed: { trackIds: [5, 6], revert: null } },
+      dirty: { after: false },
+    });
+  });
+
+  it('refuses a project file whose number of visible tracks is not a track count', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ files: [...FILES], clips: [clip()] });
+    await finished(session, await ok('project.saveAs', { path: ids.a }));
+    const stored = JSON.parse(readFileSync(need(ids, 'a'), 'utf8')) as Record<string, unknown>;
+    for (const bad of [0, 99, 2.5, '4']) {
+      writeFileSync(need(ids, 'a'), JSON.stringify({ ...stored, visibleTrackCount: bad }));
+      const started = await ok('project.open', { path: ids.a, discardUnsaved: true });
+      const { job } = (await ok('job.get', { jobId: field(started, 'job', 'jobId'), waitMs: 5000 })) as {
+        job: { state: string; error: { data: Record<string, unknown> } };
+      };
+      expect(job.state).toBe('failed');
+      expect(job.error.data).toMatchObject({ kind: 'IO_ERROR', reason: 'read_failed' });
+    }
+  });
+
   it('keeps the project when the file cannot be read, and does not discard changes unasked', async () => {
     const session = await sessions.open();
     const { mock, ok, fails } = session;
@@ -344,7 +405,7 @@ describe('project.saveCopy', () => {
       {
         code: 'NOT_SAVED_IN_PROJECT',
         subject: null,
-        data: { items: ['visibleTrackCount', 'undoHistory', 'preferences'] },
+        data: { items: ['undoHistory', 'preferences'] },
       },
     ]);
     // The project's file, its flag and the recent projects are as they were; the file of the project is untouched.

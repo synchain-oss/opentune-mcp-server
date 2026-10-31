@@ -79,7 +79,6 @@ const waitSchema = z
 
 /** What a project file does not hold, by the names of the warning NOT_SAVED_IN_PROJECT. */
 const NOT_STORED: Readonly<Record<string, string>> = Object.freeze({
-  visibleTrackCount: 'which tracks are shown',
   undoHistory: 'the undo and redo history',
   preferences: 'global preferences',
 });

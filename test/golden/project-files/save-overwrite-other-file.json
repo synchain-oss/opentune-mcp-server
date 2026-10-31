@@ -7,7 +7,7 @@
     "wait_seconds": 10
   },
   "result": {
-    "summary": "opentune_save_project_overwrite: OVERWROTE another existing project file at the user's request (path in path); a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. OpenTune also copies the audio the project uses into a folder next to the project file, named after it with _Media added. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences.",
+    "summary": "opentune_save_project_overwrite: OVERWROTE another existing project file at the user's request (path in path); a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. OpenTune also copies the audio the project uses into a folder next to the project file, named after it with _Media added. The project is no longer marked as changed. Not stored in the project file: the undo and redo history, global preferences.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -44,7 +44,6 @@
         "subject": null,
         "data": {
           "items": [
-            "visibleTrackCount",
             "undoHistory",
             "preferences"
           ]
@@ -101,7 +100,6 @@
         "subject": null,
         "data": {
           "items": [
-            "visibleTrackCount",
             "undoHistory",
             "preferences"
           ]
@@ -165,7 +163,6 @@
       "omittedChangeCount": 0
     },
     "notSavedInProject": [
-      "visibleTrackCount",
       "undoHistory",
       "preferences"
     ],

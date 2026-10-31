@@ -94,12 +94,12 @@ describe('opentune_save_project', () => {
       (first.lines as { kind: string; code?: string; text: string }[]).filter((l) => l.kind === 'warning').length,
     ).toBe(2);
     expect(first.summary).toMatch(/no longer marked as changed/);
-    expect(first.summary).toMatch(/Not stored in the project file: which tracks are shown, the undo and redo history/);
+    expect(first.summary).toMatch(/Not stored in the project file: the undo and redo history, global preferences/);
     expect(first.summary).not.toContain(need(ids, 'fresh'));
     expect(first).toMatchObject({
       path: need(ids, 'fresh'),
       requestedPath: need(ids, 'fresh'),
-      notSavedInProject: ['visibleTrackCount', 'undoHistory', 'preferences'],
+      notSavedInProject: ['undoHistory', 'preferences'],
       job: { kind: 'projectSave', state: 'succeeded' },
     });
     expect(fs.existsSync(need(ids, 'fresh'))).toBe(true);

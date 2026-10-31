@@ -147,14 +147,18 @@ describe('opentune_set_tracks', () => {
     ]);
   });
 
-  it('shows hidden track slots; the result says the state is not saved', async () => {
+  it('shows hidden track slots; the result says it marks the project changed and cannot be undone', async () => {
     const { mock, ctx } = await setup();
     mock.given({ clips: [clip()] });
     const result = body(await set(ctx, [{ op: 'reveal', count: 2 }]));
     expect(result.visibleTrackCount).toEqual({ before: 4, after: 6 });
     expect(result.summary).toContain('changed 2 tracks');
-    expect(result.summary).toContain('Warnings: NOT_PERSISTED');
+    expect(result.summary).toContain('Warnings: IRREVERSIBLE');
+    expect(firstSentence(result.summary)).toMatch(/not undoable: OpenTune has no undo for this/);
+    expect(firstSentence(result.summary)).not.toContain('not kept in the project');
     expect((await project(ctx)).visibleTrackCount).toBe(6);
+    // The number of visible tracks is saved with the project, so the project now has unsaved changes.
+    expect(body(await getProject(ctx, {})).summary).toContain('with unsaved changes');
   });
 
   it('duplicates a track as a full copy, and the result says it cannot be undone and how to remove the copy', async () => {

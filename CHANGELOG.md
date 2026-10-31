@@ -64,6 +64,16 @@ media folder to show up in real results.
   ended in "and never does" is rewritten.
 - `docs/COMPATIBILITY.md` names the specification `1.0.0-rc.9` and lists the test build `synchain-test/v1.8.0-ctl.3`
   (the same OpenTune and interface as `ctl.2`, with a macOS package added).
+- The number of visible tracks is project state, not view state: OpenTune 1.8.2 saves it in the project file and
+  restores it when the project is opened. Behaviour change: `opentune_set_tracks` with the op `reveal` (`track.add`)
+  now marks the project as changed, cannot be undone (undo reason `no_upstream_undo`, no revert recipe, warning
+  `IRREVERSIBLE`, so the first sentence of the summary says so) and is no longer described as "view state, not saved";
+  a client written against the earlier text that relied on the call leaving the project unchanged now sees unsaved
+  changes. `track.delete` is no way back: it deletes the clips on the track and one track per request. The warning
+  `NOT_SAVED_IN_PROJECT` lists only the undo history and the preferences, so the save tools no longer say that "which
+  tracks are shown" is missing from the file. `project.open` restores the stored number, reports the tracks it showed
+  as `tracksRevealed`, and leaves the project without unsaved changes. The mock follows
+  (`docs/contract-changes/20261031-spec-rc9.md`).
 
 ## [0.2.0] - 2026-10-29
 

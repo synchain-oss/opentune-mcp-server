@@ -397,7 +397,7 @@ OTCP capabilities: `arrangement.v1`. OTCP methods: `arrangement.edit`, `arrangem
 
 **Set OpenTune track mute, solo, volume, colour; show or duplicate tracks**: changes state, not destructive, not idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): duplicates a track with its clips (op duplicate, into the first hidden slot; clone = full copies, share = same contents; fails if that slot holds clips), shows hidden track slots (reveal; view state, not saved), and sets mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB): those have no undo entry, as in OpenTune; the result says so first and gives the call that restores the old values. Track ids are positions. Ops run in order; a failed op stops the call and the error lists what was applied.
+OpenTune (audio vocal pitch editor): duplicates a track with its clips (op duplicate, into the first hidden slot; clone = full copies, share = same contents; fails if that slot holds clips), shows hidden track slots (reveal; saved with the project, no undo), and sets mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB): those have no undo entry, as in OpenTune; the result says so first and gives the call that restores the old values. Track ids are positions. Ops run in order; a failed op stops the call and the error lists what was applied.
 
 OTCP capabilities: `tracks.v1`. OTCP methods: `track.set`, `track.add`, `track.duplicate`.
 

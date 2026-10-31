@@ -176,8 +176,11 @@ const add: Handler = (context) => {
   if (visibleBefore + count > TRACK_SLOTS) {
     throw refuse('INVALID_ARGUMENT', 'track_limit', 'fewer hidden track slots remain than count');
   }
+  const dirtyBefore = world.project.dirty;
   const stateBefore = world.capture();
   const revealed = world.revealThrough(visibleBefore + count - 1);
+  // OpenTune saves the number of visible tracks with the project, so the + button marks it as changed.
+  world.markDirty();
   return envelope(world, {
     applied: true,
     noOp: false,
@@ -189,9 +192,10 @@ const add: Handler = (context) => {
     })),
     diff: world.diff(stateBefore, world.capture()),
     contents: [],
-    undo: { undoable: false, reason: 'not_persisted_state', revert: null },
-    dirtyBefore: world.project.dirty,
-    warnings: [warning('NOT_PERSISTED', { trackId: revealed[0] })],
+    // The + button has no undo, and no request restores the previous number of tracks (track.delete does not).
+    undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
+    dirtyBefore,
+    warnings: [warning('IRREVERSIBLE', { trackId: revealed[0] })],
     extra: { visibleTrackCount: { before: visibleBefore, after: world.visibleTrackCount } },
   });
 };

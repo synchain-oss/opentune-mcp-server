@@ -36,7 +36,7 @@ const EXTENSIONS = ['.otproj'] as const;
 const warning = (code: string, subject: unknown = null, data: unknown = null) => ({ code, subject, data });
 const PROJECT = { singleton: 'project' } as const;
 /** State that a project file does not hold (the warning NOT_SAVED_IN_PROJECT). */
-const NOT_SAVED = ['visibleTrackCount', 'undoHistory', 'preferences'] as const;
+const NOT_SAVED = ['undoHistory', 'preferences'] as const;
 
 /** The media file a project clip shows, as far as the mock can tell what it holds. */
 function readMedia(file: string): ReturnType<typeof readWav> {
@@ -311,12 +311,16 @@ export class ProjectService {
         label: `Content ${String(c.objectId)}`,
       })),
     ];
+    const visibleBefore = world.visibleTrackCount;
     const historyCleared = world.resetProject();
 
     project.tracks.slice(0, TRACK_SLOTS).forEach((track, trackId) => {
       const slot = world.tracks[trackId];
       if (slot !== undefined) Object.assign(slot, track);
     });
+    // The project stores the number of visible tracks. A file without it is an old one: the initial number stands,
+    // and the clips below show the tracks they lie on.
+    if (project.visibleTrackCount !== undefined) world.setVisibleTrackCount(project.visibleTrackCount);
     world.transport.bpm = project.bpm;
     world.transport.timeSignature = { ...project.timeSignature };
     world.transport.playing = false;
@@ -374,8 +378,13 @@ export class ProjectService {
     world.touchArrangement();
     world.touchTrackState();
     world.project.path = file;
+    // Restoring the number of visible tracks does not mark the project as changed.
     world.project.dirty = false;
     this.#remember(file);
+    const revealed = Array.from(
+      { length: Math.max(0, world.visibleTrackCount - visibleBefore) },
+      (_, index) => visibleBefore + index,
+    );
 
     const created = [
       ...restored.map((p) => ({
@@ -415,6 +424,7 @@ export class ProjectService {
       undo: { undoable: false, reason: 'no_upstream_undo', revert },
       dirtyBefore,
       warnings,
+      sideEffects: revealed.length === 0 ? {} : { tracksRevealed: { trackIds: revealed, revert: null } },
       changes:
         previous.path === file
           ? []

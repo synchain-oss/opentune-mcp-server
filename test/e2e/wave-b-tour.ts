@@ -1714,12 +1714,17 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
           applied: true,
           noOp: false,
           undoable: false,
-          undoReason: 'not_persisted_state',
+          undoReason: 'no_upstream_undo',
           revert: 'none',
-          warnings: ['NOT_PERSISTED'],
+          warnings: ['IRREVERSIBLE'],
         },
       });
       collect('track.add', problems, add);
+      // The number of visible tracks is saved with the project, so the + button marks the project as changed.
+      const addDirty = isObject(add.envelope.dirty) ? add.envelope.dirty : {};
+      if (addDirty.after !== true) {
+        problems.push(`track.add left dirty.after at ${JSON.stringify(addDirty.after)}, not true`);
+      }
       const count = member(add.envelope, 'visibleTrackCount', 'the track.add result');
       const fresh = Number(member(await t.reads.project(), 'visibleTrackCount', 'project.get'));
       if (Number(member(count, 'after', 'visibleTrackCount')) !== fresh) {

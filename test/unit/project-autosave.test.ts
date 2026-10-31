@@ -194,7 +194,7 @@ describe('opentune_save_project mode autosave', () => {
       projectPath: s.proj,
       projectDirty: true,
       job: { kind: 'projectCopy', state: 'succeeded' },
-      notSavedInProject: ['visibleTrackCount', 'undoHistory', 'preferences'],
+      notSavedInProject: ['undoHistory', 'preferences'],
       // OpenTune puts the audio of a copy into a folder named after the copy, next to it.
       mediaFolder: path.join(s.autosaveDir, `${autosaveName(s.stem, 1).replace(/\.otproj$/, '')}_Media`),
     });

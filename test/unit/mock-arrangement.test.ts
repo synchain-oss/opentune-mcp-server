@@ -345,11 +345,18 @@ describe('track.set', () => {
 });
 
 describe('track.add and track.duplicate', () => {
-  it('shows tracks without marking the project changed, and stops at the last slot', async () => {
+  it('shows tracks and marks the project changed, cannot be undone, and stops at the last slot', async () => {
     const { mock, ok, fails } = await sessions.open();
     mock.given({});
     const added = await ok('track.add', { count: 2 });
-    expect(added).toMatchObject({ visibleTrackCount: { before: 4, after: 6 }, dirty: { before: false, after: false } });
+    // The number of visible tracks is saved with the project: the + button marks it changed, has no undo, and no
+    // request restores the earlier number.
+    expect(added).toMatchObject({
+      visibleTrackCount: { before: 4, after: 6 },
+      dirty: { before: false, after: true },
+      undo: { undoable: false, reason: 'no_upstream_undo', revert: null },
+      warnings: [{ code: 'IRREVERSIBLE', subject: { trackId: 4 }, data: null }],
+    });
     expect(added.changes).toHaveLength(2);
     expect((await fails('track.add', { count: 3 })).data).toMatchObject({ reason: 'track_limit' });
     expect(mock.snapshot().tracks.filter((t) => t.visible)).toHaveLength(6);
