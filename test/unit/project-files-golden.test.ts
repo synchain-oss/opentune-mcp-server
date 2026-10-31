@@ -85,7 +85,7 @@ async function scenarios(): Promise<Record<string, Scenario>> {
   const noAudioCopy: ProjectFs = {
     ...nodeProjectFs,
     copyNew: (from, to) =>
-      path.basename(path.dirname(from)) === 'Project_Media'
+      path.basename(path.dirname(from)).endsWith('_Media')
         ? Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }))
         : nodeProjectFs.copyNew(from, to),
   };
@@ -99,7 +99,7 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     ...nodeProjectFs,
     copyNew: async (from, to) => {
       await nodeProjectFs.copyNew(from, to);
-      if (path.basename(path.dirname(from)) === 'Project_Media') late += MEDIA_COPY_BUDGET_MS;
+      if (path.basename(path.dirname(from)).endsWith('_Media')) late += MEDIA_COPY_BUDGET_MS;
     },
   };
   const slow = testContext(t.dir, { now: () => NOW + late, files: slowAudioCopy });
@@ -127,9 +127,27 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     'opentune_save_project',
     { mode: 'save_as', path: need(ids, 'fresh'), wait_seconds: 10 },
   );
+  // A build that implements specification 1.0.0-rc.9 makes a folder for the audio of the copy, named after the copy.
+  const autosaveDir = path.join(path.dirname(need(ids, 'fresh')), `${path.parse(need(ids, 'fresh')).name}.autosave`);
+  mkdirSync(path.join(autosaveDir, `${path.parse(need(ids, 'fresh')).name}-autosave-0001_Media`), { recursive: true });
   await run(
     'autosave',
-    'An autosave copy of a project that has a file: a numbered copy in the autosave folder next to it; the project file and its unsaved-changes flag do not change.',
+    'An autosave copy of a project that has a file: a numbered copy in the autosave folder next to it, with the folder of its own that OpenTune made for its audio; the project file and its unsaved-changes flag do not change.',
+    'opentune_save_project',
+    { mode: 'autosave', wait_seconds: 10 },
+  );
+  await run(
+    'autosave-no-media-folder',
+    'An autosave copy for which no folder with its audio is found: mediaFolder is null, with its reason, and the summary says so.',
+    'opentune_save_project',
+    { mode: 'autosave', wait_seconds: 10 },
+  );
+  // A build that implements the earlier specification puts the audio of every copy into one shared folder.
+  mkdirSync(path.join(autosaveDir, 'Project_Media'));
+  writeFileSync(path.join(autosaveDir, 'Project_Media', '1.wav'), 'audio');
+  await run(
+    'autosave-shared-media-folder',
+    'An autosave copy of a build of the earlier specification: the audio of all the copies is in the shared Project_Media folder, which mediaFolder names; the summary says that every copy shares it and that this server does not delete it.',
     'opentune_save_project',
     { mode: 'autosave', wait_seconds: 10 },
   );
@@ -146,12 +164,13 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     { path: need(ids, 'existing'), confirm: true, wait_seconds: 10 },
   );
   // The project file is now the one that was replaced, and has audio next to it.
-  const media = path.join(path.dirname(need(ids, 'existing')), 'Project_Media');
+  // OpenTune names the media folder of a project file after it.
+  const media = path.join(path.dirname(need(ids, 'existing')), `${path.parse(need(ids, 'existing')).name}_Media`);
   mkdirSync(media);
   writeFileSync(path.join(media, '1.wav'), 'audio');
   await run(
     'save-copies-audio-for-old-version',
-    'A save when the project folder has audio: the old version gets a copy of it in its own Project_Media folder, so it still opens when the original audio is gone.',
+    'A save when the project folder has audio: the old version gets a copy of it in a media folder of the same name inside the oldversion folder, so it still opens when the original audio is gone.',
     'opentune_save_project',
     { mode: 'save', wait_seconds: 10 },
   );
@@ -195,8 +214,9 @@ describe('project save tool result golden snapshots', () => {
 
   it('shows nothing of the machine in the snapshots', async () => {
     const all = JSON.stringify(await scenarios());
-    expect(all).toContain('<tmp-1>/Project_Media');
-    expect(all).toContain('<tmp-2>/Project_Media');
+    expect(all).toContain('<tmp-1>/fresh_Media');
+    expect(all).toContain('<tmp-2>/existing_Media');
+    expect(all).toContain('.autosave/fresh-autosave-0001_Media');
     expect(all).toContain('.autosave/Project_Media');
     expect(all).toContain('.oldversion/');
     // No backslash of a Windows path (a JSON backslash is two characters), no drive letter, no folder of a user.

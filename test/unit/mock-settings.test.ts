@@ -246,6 +246,43 @@ describe('prefs.get and prefs.set: vocoder weight, rendering priority and pitch 
     expect(switched.sideEffects).toEqual({});
   });
 
+  it('warns BACKEND_FALLBACK only when gpuFirst is set and the backend that runs is the CPU', async () => {
+    const warnings = async (gpu: boolean | null, params: Record<string, unknown>): Promise<unknown[]> => {
+      const clock = new ManualClock();
+      const session = await sessions.open({ clock });
+      session.mock.given({ clips: [clip()], preferences: { renderingPriority: 'cpuFirst' } });
+      if (gpu !== null) session.mock.setGpuAvailable(gpu);
+      const started = await session.ok('prefs.set', params);
+      clock.advance(1000);
+      const job = await jobOf(session, started);
+      expect(job.state).toBe('succeeded');
+      return job.result?.warnings as unknown[];
+    };
+    const codes = (list: unknown[]) => list.map((w) => field(w, 'code'));
+    // The GPU cannot be used: the preference is set, and the warning says what was asked for and what runs.
+    const fellBack = await warnings(false, { renderingPriority: 'gpuFirst' });
+    expect(codes(fellBack)).toEqual(['GLOBAL_PREFERENCE', 'BACKEND_FALLBACK']);
+    expect(fellBack[1]).toEqual({
+      code: 'BACKEND_FALLBACK',
+      subject: null,
+      data: { requested: 'gpuFirst', actual: 'cpu' },
+    });
+    // No fall back: the GPU is used; or nothing was asked for the GPU; or the mock reports no backend at all.
+    expect(codes(await warnings(true, { renderingPriority: 'gpuFirst' }))).toEqual(['GLOBAL_PREFERENCE']);
+    expect(
+      codes(await warnings(false, { renderingPriority: 'cpuFirst', vocoderWeight: 'hifigan_coulin9.onnx' })),
+    ).toEqual(['GLOBAL_PREFERENCE']);
+    expect(codes(await warnings(null, { renderingPriority: 'gpuFirst' }))).toEqual(['GLOBAL_PREFERENCE']);
+    // The call did not change the priority (the setting is gpuFirst already): no warning, a no-op.
+    const session = await sessions.open();
+    session.mock.given({ preferences: { renderingPriority: 'gpuFirst' } });
+    session.mock.setGpuAvailable(false);
+    expect(await session.ok('prefs.set', { renderingPriority: 'gpuFirst' })).toMatchObject({
+      noOp: true,
+      warnings: [],
+    });
+  });
+
   it('applies the pitch model and the experimental features without a job', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;
@@ -918,6 +955,34 @@ describe('audio.get and audio.set', () => {
       executed: false,
     });
     expect(await ok('audio.get')).toEqual(before);
+  });
+
+  it('goes on with a switch of the device type or the output device when the ASIO rate cannot be restored, and warns', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    mock.given({ audio: { running: true, asioRateRestoreFails: true } });
+    const codes = (result: Record<string, unknown>) => (result.warnings as { code: string }[]).map((w) => w.code);
+    const type = await ok('audio.set', { deviceType: 'Mock Audio 2' });
+    expect(codes(type)).toEqual(['GLOBAL_PREFERENCE', 'ASIO_RATE_NOT_RESTORED']);
+    expect((type.warnings as unknown[])[1]).toEqual({
+      code: 'ASIO_RATE_NOT_RESTORED',
+      subject: { singleton: 'audioDevice' },
+      data: { deviceName: 'Mock Output', sampleRateHz: 44100 },
+    });
+    // The switch happened and is not rolled back.
+    expect(type.device).toMatchObject({ running: true, deviceType: 'Mock Audio 2', outputDevice: 'Mock B Output' });
+    expect((await ok('audio.get')).device).toMatchObject({ deviceType: 'Mock Audio 2' });
+    // The output device, alone or with other members, is a switch as well; the sample rate or buffer size alone is not.
+    await ok('audio.set', { deviceType: 'Mock Audio' });
+    const device = await ok('audio.set', { outputDevice: 'Mock Output 2', bufferSizeFrame: 256 });
+    expect(codes(device)).toEqual(['GLOBAL_PREFERENCE', 'ASIO_RATE_NOT_RESTORED']);
+    expect(codes(await ok('audio.set', { sampleRateHz: 48000 }))).toEqual(['GLOBAL_PREFERENCE']);
+    expect(await ok('audio.set', { sampleRateHz: 48000 })).toMatchObject({ noOp: true, warnings: [] });
+    // Without the failure, and without a running device, there is nothing to warn about.
+    mock.given({ audio: { running: true } });
+    expect(codes(await ok('audio.set', { deviceType: 'Mock Audio 2' }))).toEqual(['GLOBAL_PREFERENCE']);
+    mock.given({ audio: { running: false, asioRateRestoreFails: true } });
+    expect(codes(await ok('audio.set', { deviceType: 'Mock Audio 2' }))).toEqual(['GLOBAL_PREFERENCE']);
   });
 
   it('offers two device types; another type opens its own default output device, and the revert recipe names both', async () => {

@@ -76,15 +76,12 @@ export const systemDoctorFs: DoctorFs = {
 export const MIN_OFFICIAL_VERSION = '1.7.9';
 /** First official version that keeps its models in the shared program-data folder. */
 const SHARED_MODELS_FROM: Version = [1, 8, 0];
-/** The model files the official installation must have, relative to the models folder. */
-export const REQUIRED_MODELS: readonly (readonly string[])[] = [
-  ['fcpe.onnx'],
-  ['GAME', 'bd2dur.onnx'],
-  ['GAME', 'dur2bd.onnx'],
-  ['GAME', 'encoder.onnx'],
-  ['GAME', 'estimator.onnx'],
-  ['GAME', 'segmenter.onnx'],
-];
+/**
+ * The model files the official installation must have, relative to the models folder. The note segmentation models
+ * (the GAME folder) are not listed: the code of OpenTune 1.8.2 does not use them and later official versions do not
+ * ship them.
+ */
+export const REQUIRED_MODELS: readonly (readonly string[])[] = [['fcpe.onnx']];
 export const CHECKSUM_FILE = 'SHA256SUMS';
 const MAX_CHECKSUM_BYTES = 1024 * 1024;
 const MAX_LISTED = 10;
@@ -165,7 +162,10 @@ export async function modelsCheck(
   for (const dir of dirs) {
     const missing = await missingModels(deps.fs, p, dir);
     if (missing.length === 0) {
-      return { status: 'pass', message: `All ${String(REQUIRED_MODELS.length)} model files are present in ${dir}.` };
+      return {
+        status: 'pass',
+        message: `Required model files present in ${dir}: ${REQUIRED_MODELS.map((parts) => parts.join('\\')).join(', ')}.`,
+      };
     }
     problems.push(`${dir} lacks or has empty ${listed(missing)}`);
   }

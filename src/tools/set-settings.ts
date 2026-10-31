@@ -104,7 +104,7 @@ const processingSchema = z.strictObject({
     .enum(['gpuFirst', 'cpuFirst'])
     .optional()
     .describe(
-      'gpuFirst tries the GPU, falling back to the CPU without notice; cpuFirst uses the CPU. Applied by a job: the vocoder reloads for seconds and nothing renders again. The result reads the backend in use.',
+      'gpuFirst tries the GPU and falls back to the CPU if it cannot (newer builds warn BACKEND_FALLBACK); cpuFirst uses the CPU. Applied by a job: the vocoder reloads for seconds and nothing renders again. The result reads the backend in use.',
     ),
   f0_model: z.string().min(1).max(64).optional().describe('Pitch model, one of the options of opentune_get_settings.'),
 });
@@ -244,8 +244,9 @@ const sleep = (ms: number) =>
 
 /**
  * After a change of the rendering priority: the backend OpenTune uses now, read once the job has ended (session.info).
- * OpenTune tries the GPU under gpuFirst and falls back to the CPU without a word, so the request does not say what
- * runs. A vocoder that is still reloading is waited for within a limit, and said to be reloading when it still is.
+ * OpenTune tries the GPU under gpuFirst and falls back to the CPU when it cannot; an older OpenTune says nothing and
+ * a newer one (specification 1.0.0-rc.9) adds the warning BACKEND_FALLBACK to the job result, so the request itself does
+ * not say what runs. A vocoder that is still reloading is waited for within a limit, and said to be reloading when it still is.
  * A job does not wait for a vocoder that was not ready before the call (rule 4), and it can then end before the vocoder
  * loads again; what is read afterwards may still be the backend from before. Then `confirmed` is false with its reason
  * (`vocoder_not_ready_before_change`, or `ready_state_unavailable` when the vocoder could not be read before the call),

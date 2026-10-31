@@ -36,7 +36,7 @@ const EXTENSIONS = ['.otproj'] as const;
 const warning = (code: string, subject: unknown = null, data: unknown = null) => ({ code, subject, data });
 const PROJECT = { singleton: 'project' } as const;
 /** State that a project file does not hold (the warning NOT_SAVED_IN_PROJECT). */
-const NOT_SAVED = ['visibleTrackCount', 'undoHistory', 'preferences'] as const;
+const NOT_SAVED = ['undoHistory', 'preferences'] as const;
 
 /** The media file a project clip shows, as far as the mock can tell what it holds. */
 function readMedia(file: string): ReturnType<typeof readWav> {
@@ -204,7 +204,7 @@ export class ProjectService {
    * A copy job: it writes what the project holds now through a temporary file and a rename that never replaces
    * (section 20.4), and changes nothing in the project: the project's file, the unsaved-changes flag, the recent
    * projects and the history stay as they are. The mock's project files name their media by path, so unlike
-   * OpenTune it copies no media into a Project_Media folder.
+   * OpenTune it copies no media into a folder named after the target (<name>_Media).
    */
   #startCopy(target: string) {
     const { world } = this;
@@ -311,12 +311,16 @@ export class ProjectService {
         label: `Content ${String(c.objectId)}`,
       })),
     ];
+    const visibleBefore = world.visibleTrackCount;
     const historyCleared = world.resetProject();
 
     project.tracks.slice(0, TRACK_SLOTS).forEach((track, trackId) => {
       const slot = world.tracks[trackId];
       if (slot !== undefined) Object.assign(slot, track);
     });
+    // The project stores the number of visible tracks. A file without it is an old one: the initial number stands,
+    // and the clips below show the tracks they lie on.
+    if (project.visibleTrackCount !== undefined) world.setVisibleTrackCount(project.visibleTrackCount);
     world.transport.bpm = project.bpm;
     world.transport.timeSignature = { ...project.timeSignature };
     world.transport.playing = false;
@@ -374,8 +378,13 @@ export class ProjectService {
     world.touchArrangement();
     world.touchTrackState();
     world.project.path = file;
+    // Restoring the number of visible tracks does not mark the project as changed.
     world.project.dirty = false;
     this.#remember(file);
+    const revealed = Array.from(
+      { length: Math.max(0, world.visibleTrackCount - visibleBefore) },
+      (_, index) => visibleBefore + index,
+    );
 
     const created = [
       ...restored.map((p) => ({
@@ -415,6 +424,7 @@ export class ProjectService {
       undo: { undoable: false, reason: 'no_upstream_undo', revert },
       dirtyBefore,
       warnings,
+      sideEffects: revealed.length === 0 ? {} : { tracksRevealed: { trackIds: revealed, revert: null } },
       changes:
         previous.path === file
           ? []

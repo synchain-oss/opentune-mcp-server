@@ -73,6 +73,10 @@ export const WARNING_TEXT = table<string>({
     'Deleting a track made entries of the undo or redo history possibly stale; they may address tracks that have moved.',
   IMPORT_COMMIT_REPEATED:
     'OpenTune refused a clip id that the project already used, so the import committed the clip again; it was imported.',
+  BACKEND_FALLBACK:
+    'GPU first was requested, but OpenTune reported when the job ended that it runs on the CPU, because the GPU could not be used; the preference is set all the same.',
+  ASIO_RATE_NOT_RESTORED:
+    'The audio device was switched, but OpenTune could not restore the sample rate of the ASIO device first; the ASIO driver may still run at another sample rate than before.',
 });
 
 /** Side-effect names of PROTOCOL.md section 14.6. */

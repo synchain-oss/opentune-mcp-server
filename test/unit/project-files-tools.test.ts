@@ -17,6 +17,7 @@ import { getJob } from '../../src/tools/jobs.js';
 import { TOOLS } from '../../src/tools/index.js';
 import {
   mediaFolderMembers,
+  notStored,
   openProject,
   openProjectTool,
   overwriteProject,
@@ -66,9 +67,37 @@ const wait = { wait_seconds: 10 };
 
 /** What OpenTune does with the media of the project at every save; a fixed sentence, never built from the result. */
 const MEDIA_COPY =
-  'OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.';
-const mediaFolderOf = (file: string) => path.join(path.dirname(file), 'Project_Media');
+  'OpenTune also copies the audio the project uses into a media folder next to the project file: a folder named after it ' +
+  'with _Media added, or in a build that implements an earlier specification the Project_Media folder that all the ' +
+  'project files of the directory share, where a file of the same name is replaced.';
+/** The media folder of a project file: named after it, next to it. */
+const mediaFolderOf = (file: string) => path.join(path.dirname(file), `${path.parse(file).name}_Media`);
 const save = (ctx: ToolContext, args: Parameters<typeof saveProject>[1]) => saveProject(ctx, { ...wait, ...args });
+
+describe('what the warning NOT_SAVED_IN_PROJECT says is missing from the project file', () => {
+  const warned = (items: unknown[]) => ({
+    warnings: [{ code: 'NOT_SAVED_IN_PROJECT', subject: null, data: { items } }],
+  });
+
+  it('names what a build of specification 1.0.0-rc.9 lists: the undo history and the preferences', () => {
+    expect(notStored(warned(['undoHistory', 'preferences']))).toEqual({
+      names: ['undoHistory', 'preferences'],
+      phrases: ['the undo and redo history', 'global preferences'],
+    });
+  });
+
+  it('still names the shown tracks for a build of the earlier specification, which lists them', () => {
+    expect(notStored(warned(['visibleTrackCount', 'undoHistory', 'preferences']))).toEqual({
+      names: ['visibleTrackCount', 'undoHistory', 'preferences'],
+      phrases: ['which tracks are shown', 'the undo and redo history', 'global preferences'],
+    });
+  });
+
+  it('leaves out names it does not know, and says nothing without the warning', () => {
+    expect(notStored(warned(['somethingNew', 'preferences'])).names).toEqual(['preferences']);
+    expect(notStored({ warnings: [] })).toEqual({ names: [], phrases: [] });
+  });
+});
 
 describe('opentune_save_project', () => {
   it('saves under a new path with save_as, then saves the same file with save', async () => {
@@ -85,7 +114,7 @@ describe('opentune_save_project', () => {
       `from now on it is the project's file. ${MEDIA_COPY} The project is no longer marked as changed`,
     );
     expect(first.mediaFolder).toBe(mediaFolderOf(need(ids, 'fresh')));
-    expect(first.summary).not.toContain('Project_Media/');
+    expect(first.summary).not.toContain('_Media/');
     expect(first.summary).not.toContain(need(ids, 'fresh'));
     // The warnings keep the facts that the protocol states: the write has no undo, and some state is not stored.
     expect((first.warnings as { code: string }[]).map((w) => w.code)).toEqual(['IRREVERSIBLE', 'NOT_SAVED_IN_PROJECT']);
@@ -93,12 +122,12 @@ describe('opentune_save_project', () => {
       (first.lines as { kind: string; code?: string; text: string }[]).filter((l) => l.kind === 'warning').length,
     ).toBe(2);
     expect(first.summary).toMatch(/no longer marked as changed/);
-    expect(first.summary).toMatch(/Not stored in the project file: which tracks are shown, the undo and redo history/);
+    expect(first.summary).toMatch(/Not stored in the project file: the undo and redo history, global preferences/);
     expect(first.summary).not.toContain(need(ids, 'fresh'));
     expect(first).toMatchObject({
       path: need(ids, 'fresh'),
       requestedPath: need(ids, 'fresh'),
-      notSavedInProject: ['visibleTrackCount', 'undoHistory', 'preferences'],
+      notSavedInProject: ['undoHistory', 'preferences'],
       job: { kind: 'projectSave', state: 'succeeded' },
     });
     expect(fs.existsSync(need(ids, 'fresh'))).toBe(true);
@@ -140,8 +169,8 @@ describe('opentune_save_project', () => {
       });
     }
     // With a folder there is nothing to explain, and the envelope's reasons are left as they are.
-    expect(mediaFolderMembers(rendered, 'C:\\Music\\Project_Media')).toEqual({
-      mediaFolder: 'C:\\Music\\Project_Media',
+    expect(mediaFolderMembers(rendered, 'C:\\Music\\song_Media')).toEqual({
+      mediaFolder: 'C:\\Music\\song_Media',
     });
   });
 

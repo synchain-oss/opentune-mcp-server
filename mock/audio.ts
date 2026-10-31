@@ -6,7 +6,8 @@
 // project. The mock has two stand-in device types (the first with two output devices, the second with one), two
 // sample rates and two buffer sizes; switching the device type opens the default (first) output device of the new
 // type, as OpenTune does. A test can make it fail to open (`failsToOpen`), so that audio.set restores the previous
-// setup.
+// setup, or make the restoration of an ASIO sample rate fail (`asioRateRestoreFails`): the mock's device types are
+// stand-ins, so the failure is a flag, and the switch goes on with the warning ASIO_RATE_NOT_RESTORED.
 
 import { checkNotBusy, envelope, type Handler } from './context.js';
 import { refuse } from './errors.js';
@@ -123,6 +124,18 @@ const set: Handler = (context) => {
   }
   const wasRunning = audio.running;
   const before = deviceView(audio);
+  // OpenTune restores the sample rate of an ASIO device before it switches the device type or the output device. The
+  // restoration is best effort: a failure does not stop the switch and is reported as a warning.
+  const rateNotRestored =
+    wasRunning &&
+    audio.asioRateRestoreFails &&
+    differing.some(({ name }) => name === 'deviceType' || name === 'outputDevice')
+      ? warning(
+          'ASIO_RATE_NOT_RESTORED',
+          { singleton: 'audioDevice' },
+          { deviceName: audio.outputDevice, sampleRateHz: audio.sampleRateHz },
+        )
+      : null;
   const revert: Record<string, string | number> = {};
   for (const { name, value } of differing) {
     revert[name] = audio[name];
@@ -149,7 +162,10 @@ const set: Handler = (context) => {
       revert: wasRunning ? { method: 'audio.set', params: revert } : null,
     },
     dirtyBefore,
-    warnings: [warning('GLOBAL_PREFERENCE', null, { preferences: ['audioDevice'] })],
+    warnings: [
+      warning('GLOBAL_PREFERENCE', null, { preferences: ['audioDevice'] }),
+      ...(rateNotRestored === null ? [] : [rateNotRestored]),
+    ],
     extra: { device: after },
   });
 };

@@ -167,6 +167,16 @@ async function fromMock(): Promise<Record<string, Scenario>> {
     tool: 'opentune_set_settings',
     envelope: await audioSession.ok('audio.set', { sampleRateHz: 48000 }),
   };
+  const asioSession = await sessions.open({ instanceId: INSTANCE });
+  const asioIds = asioSession.mock.given({
+    audio: { running: true, alternatives: true, asioRateRestoreFails: true },
+  });
+  out['settings-audio-asio-rate-not-restored'] = {
+    description:
+      'A switch of the audio device type during which OpenTune could not restore the sample rate of an ASIO device: the switch went on, and the warning says that the ASIO driver may still run at another sample rate than before.',
+    tool: 'opentune_set_settings',
+    envelope: await asioSession.ok('audio.set', { deviceType: asioIds['audio.otherDeviceType'] }),
+  };
 
   // Clearing the recent-projects list and switching to openDyne: nothing takes either back, and the
   // first sentence says so before any mention of a way back.
@@ -231,6 +241,17 @@ async function fromMock(): Promise<Record<string, Scenario>> {
       'The result of the prefsApply job after a rendering priority change: no render follows, and the revert recipe carries the previous priority.',
     tool: 'opentune_set_settings',
     envelope: await jobResult({ renderingPriority: 'cpuFirst' }),
+  };
+  const fallback = await sessions.open({ instanceId: INSTANCE });
+  fallback.mock.given({ clips: [clip()], gpu: 'unavailable', preferences: { renderingPriority: 'cpuFirst' } });
+  const fallbackStarted = await fallback.ok('prefs.set', { renderingPriority: 'gpuFirst' });
+  const fallbackJob = (await fallback.ok('job.get', { jobId: (fallbackStarted.job as Json).jobId, waitMs: 30_000 }))
+    .job as Json;
+  out['settings-rendering-priority-fallback'] = {
+    description:
+      'The result of the prefsApply job after a change to gpuFirst on a machine whose GPU cannot be used: the preference is set, and the warning BACKEND_FALLBACK says that OpenTune reported the CPU as the backend.',
+    tool: 'opentune_set_settings',
+    envelope: fallbackJob.result as Json,
   };
   out['settings-pitch-model'] = {
     description:

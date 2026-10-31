@@ -6,6 +6,87 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The OTCP protocol specification in `spec/otcp/v1/` is
 versioned separately and has its own changelog.
 
+## [Unreleased]
+
+The OTCP specification in `spec/otcp/v1/` is now `1.0.0-rc.9`. The server in this repository does not change what it
+sends to OpenTune; the specification, its mock and the text of the results do. A test build that implements `rc.9`
+(the fork has to follow; see `docs/contract-changes/20261031-spec-rc9.md`) is needed for the new warnings and the new
+media folder to show up in real results.
+
+### Added
+
+- Two warnings, with a mock that produces them, rendering templates and golden files. `BACKEND_FALLBACK` (`data`:
+  `requested`, `actual`) is carried by the job result of `prefs.set` when the call changed the rendering priority to
+  `gpuFirst` and the backend in use is `cpu`. `ASIO_RATE_NOT_RESTORED` (subject `{"singleton":"audioDevice"}`, `data`:
+  `deviceName`, `sampleRateHz`) is carried by `audio.set` when the device type or the output device changed to ASIO and
+  OpenTune could not put the previous sample rate back: the switch goes on, and the warning tells the user to check the
+  rate in the driver. The rendering text of the server is English only; the Chinese wording is in
+  `docs/TROUBLESHOOTING.zh-CN.md`.
+- The specification vectors `audio/set-asio-rate-not-restored`, `audio/set-asio-rate-not-needed`,
+  `prefs/set-rendering-priority-fallback` and `prefs/set-rendering-priority-gpu`, with the vector members
+  `given.gpu` and `given.audio.asioRateRestoreFails`.
+
+### Changed
+
+- The media folder of a project file is `<file name without extension>_Media` beside the target `.otproj`, instead of
+  one `Project_Media` folder that all the project files of a directory shared. OpenTune writes the media files again at
+  every save, through a temporary file, so no file stays half written. Save, Save As and `project.saveCopy` all follow
+  the target path; only a media folder of the same name with no `.otproj` of that name is replaced, and
+  `project.saveCopy` reports `ALREADY_EXISTS` by looking at the `.otproj` alone. In this server, the old version of a
+  project (`<name>.oldversion`) now gets a copy of `<name>_Media` (the `Project_Media` folder of an earlier OpenTune
+  is still copied when there is no `<name>_Media`). With a build that implements `rc.9`, the autosave copies get a
+  media folder of their own each (`mediaFolder` in the result), and each copy holds a full set of the audio, so
+  `<name>.autosave` takes about the size of the audio times up to 10. A build that implements `rc.8` (the test builds
+  `ctl.2` and `ctl.3`) keeps the audio of all the copies in one `Project_Media` folder inside `<name>.autosave`, and the
+  protocol version on the wire cannot tell the two apart, so the tool looks at the file system after it has written a
+  copy: `mediaFolder` is the folder of the copy when it exists, else the shared `Project_Media` (the summary then says
+  that every copy shares it, that a file of the same name is replaced and that the server does not delete it), else
+  null with the reason `media_folder_not_found`. The fixed sentence of the other save modes names both layouts.
+- `opentune_save_project` with `mode: autosave` keeps the newest 10 copies instead of 50, and when it rolls a copy
+  away it deletes the media folder of that copy with it: the one folder whose path is computed from the name of the
+  copy (`<copy name>_Media`), its regular files and then the folder, never a pattern. A copy that could not be deleted
+  keeps its folder. A copy that has no folder of its own (the `rc.8` layout above) is no failure. `couldNotRemove`
+  counts the copies that could not be deleted; the new member `audioFoldersCouldNotRemove` counts the deleted copies
+  whose folder could not be deleted, and the summary says so with its own sentence ("The audio folders of N deleted
+  copies could not be deleted."), apart from the sentence about copies. Neither raises an error. The first autosave
+  after the update deletes every copy beyond the newest 10, each with its media folder.
+- The description of the setting `rendering_priority` of `opentune_set_settings` no longer says that the fall back to
+  the CPU happens without notice: a build that implements specification `1.0.0-rc.9` adds the warning
+  `BACKEND_FALLBACK` to the result, and an older build says nothing (`docs/TROUBLESHOOTING.md`).
+- `opentune-mcp doctor` (`OT_MODELS_MISSING`) no longer asks for the five model files in the `GAME` folder of the
+  official installation: the code of OpenTune 1.8.2 does not use them and later official versions do not ship them.
+  `fcpe.onnx` is still required.
+- Build and test setup: the unit project of the tests has a time limit of 60 seconds per test (the golden tests passed
+  the default 5 seconds on a loaded machine), and the build pins `minimatch` to `11.0.3` through `overrides`, which
+  clears the advisory GHSA-g3hv-75wg-m249 that `npm audit` reported for the lint toolchain.
+- The description of an undo entry is the text of the undo menu of OpenTune and follows its language: clients must
+  not parse it (specification section 15.1, `edit.getHistory`, `undoable`).
+- An export that finds render work still pending, including blocks waiting for a delayed retry, drains it before it
+  starts; when that does not finish in time, it fails with the existing `NOT_READY` reason `export_wait_timeout`, which
+  is retryable (specification section 19 rules 6 and 7). No new reason code.
+- `audio.set` does not roll back the switch when the previous ASIO sample rate cannot be restored. The earlier text,
+  which called for `OpenFailed` and a rollback, is gone; `device_open_failed` stays for a device that really cannot be
+  opened.
+- The descriptions of `processing.backend`, `vocoderReady`, `vocoderReconfiguring`, `renderingPriority` and
+  `options.renderingPriority` say what the values mean and when they are read, and the sentence in `prefs.set` that
+  ended in "and never does" is rewritten.
+- `docs/COMPATIBILITY.md` names the specification `1.0.0-rc.9` and lists the test build `synchain-test/v1.8.0-ctl.3`
+  (the same OpenTune and interface as `ctl.2`, with a macOS package added). It lists what differs on the two test
+  builds, which implement `rc.8`: the media folders, `track.add` (`NOT_PERSISTED`, the project not marked as changed),
+  `NOT_SAVED_IN_PROJECT` (which still lists `visibleTrackCount`; the save tools keep the phrase for it), the two new
+  warnings and the wait of an export for render blocks.
+- The number of visible tracks is project state, not view state: OpenTune 1.8.2 saves it in the project file and
+  restores it when the project is opened. Behaviour change: `opentune_set_tracks` with the op `reveal` (`track.add`)
+  now marks the project as changed, cannot be undone (undo reason `no_upstream_undo`, no revert recipe, warning
+  `IRREVERSIBLE`; the first sentence of the summary says it cannot be undone but does not call it destructive, because
+  showing a track destroys nothing) and is no longer described as "view state, not saved";
+  a client written against the earlier text that relied on the call leaving the project unchanged now sees unsaved
+  changes. `track.delete` is no way back: it deletes the clips on the track and one track per request. The warning
+  `NOT_SAVED_IN_PROJECT` lists only the undo history and the preferences, so the save tools no longer say that "which
+  tracks are shown" is missing from the file. `project.open` restores the stored number, reports the tracks it showed
+  as `tracksRevealed`, and leaves the project without unsaved changes. The mock follows
+  (`docs/contract-changes/20261031-spec-rc9.md`).
+
 ## [0.2.0] - 2026-10-29
 
 The second public version of OpenTune MCP Server (by Synchain), and wave B of the control interface: editing the
