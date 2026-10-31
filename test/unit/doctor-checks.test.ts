@@ -72,17 +72,17 @@ describe('version check', () => {
   });
 
   it('passes from 1.7.9, fails below it, cannot tell without a version or installation', () => {
-    expect(versionCheck(install('1.7.9'), true).status).toBe('pass');
-    expect(versionCheck(install('1.8.1'), true).status).toBe('pass');
-    expect(versionCheck(install('1.10.0'), true).status).toBe('pass');
-    expect(versionCheck(install('2.0.0'), true).status).toBe('pass');
-    const old = versionCheck(install('1.7.8'), true);
+    expect(versionCheck(install('1.7.9'), 'win32').status).toBe('pass');
+    expect(versionCheck(install('1.8.1'), 'win32').status).toBe('pass');
+    expect(versionCheck(install('1.10.0'), 'win32').status).toBe('pass');
+    expect(versionCheck(install('2.0.0'), 'win32').status).toBe('pass');
+    const old = versionCheck(install('1.7.8'), 'win32');
     expect(old).toMatchObject({ status: 'fail', message: expect.stringContaining('"1.7.8"') as unknown });
-    expect(versionCheck(install('1.6.0'), true).status).toBe('fail');
-    expect(versionCheck(install(null), true).message).toMatch(/^Cannot tell/);
-    expect(versionCheck(install('nightly'), true).status).toBe('warn');
-    expect(versionCheck(null, true).message).toMatch(/^Not checked: no official/);
-    expect(versionCheck(null, false).message).toMatch(/on Windows only/);
+    expect(versionCheck(install('1.6.0'), 'win32').status).toBe('fail');
+    expect(versionCheck(install(null), 'win32').message).toMatch(/^Cannot tell/);
+    expect(versionCheck(install('nightly'), 'win32').status).toBe('warn');
+    expect(versionCheck(null, 'win32').message).toMatch(/^Not checked: no official/);
+    expect(versionCheck(null, 'linux').message).toMatch(/on Windows and macOS only/);
   });
 });
 
@@ -92,28 +92,28 @@ describe('models check', () => {
 
   it('looks in the shared folder from 1.8 and in the install folder for 1.7', async () => {
     const fs = memoryFs({ ...modelFiles(shared) });
-    expect(await modelsCheck(install('1.8.1'), { env, fs }, true)).toMatchObject({
+    expect(await modelsCheck(install('1.8.1'), { env, fs }, 'win32')).toMatchObject({
       status: 'pass',
       message: expect.stringContaining(shared) as unknown,
     });
     const own = 'C:\\Program Files\\OpenTune\\models';
     const old = memoryFs({ ...modelFiles(own) });
-    expect((await modelsCheck(install('1.7.9'), { env, fs: old }, true)).status).toBe('pass');
+    expect((await modelsCheck(install('1.7.9'), { env, fs: old }, 'win32')).status).toBe('pass');
     // 1.7.9 does not look in the shared folder, and 1.8.1 not in the install folder.
-    const wrong = await modelsCheck(install('1.7.9'), { env, fs }, true);
+    const wrong = await modelsCheck(install('1.7.9'), { env, fs }, 'win32');
     expect(wrong.status).toBe('fail');
     expect(wrong.message).toContain(own);
-    expect((await modelsCheck(install('1.8.1'), { env, fs: old }, true)).status).toBe('fail');
+    expect((await modelsCheck(install('1.8.1'), { env, fs: old }, 'win32')).status).toBe('fail');
   });
 
   it('lists what is missing or empty', async () => {
     const files = modelFiles(shared);
     files[win.join(shared, 'fcpe.onnx')] = '';
-    const result = await modelsCheck(install('1.8.1'), { env, fs: memoryFs(files) }, true);
+    const result = await modelsCheck(install('1.8.1'), { env, fs: memoryFs(files) }, 'win32');
     expect(result.status).toBe('fail');
     expect(result.message).toContain(`${shared} lacks or has empty fcpe.onnx`);
     // A missing file is listed, too.
-    const missing = await modelsCheck(install('1.8.1'), { env, fs: memoryFs({}) }, true);
+    const missing = await modelsCheck(install('1.8.1'), { env, fs: memoryFs({}) }, 'win32');
     expect(missing.status).toBe('fail');
     expect(missing.message).toContain(`${shared} lacks or has empty fcpe.onnx`);
   });
@@ -121,7 +121,7 @@ describe('models check', () => {
   it('does not ask for the note segmentation models (the GAME folder): the installation passes without them', async () => {
     expect(REQUIRED_MODELS.map((parts) => parts.join('\\'))).toEqual(['fcpe.onnx']);
     const only = memoryFs({ [win.join(shared, 'fcpe.onnx')]: 'weights' });
-    const result = await modelsCheck(install('1.8.1'), { env, fs: only }, true);
+    const result = await modelsCheck(install('1.8.1'), { env, fs: only }, 'win32');
     expect(result.status).toBe('pass');
     expect(result.message).toContain('fcpe.onnx');
     // With the GAME files there too, nothing changes.
@@ -129,16 +129,16 @@ describe('models check', () => {
       [win.join(shared, 'fcpe.onnx')]: 'weights',
       [win.join(shared, 'GAME', 'encoder.onnx')]: 'weights',
     });
-    expect((await modelsCheck(install('1.8.1'), { env, fs: withGame }, true)).status).toBe('pass');
+    expect((await modelsCheck(install('1.8.1'), { env, fs: withGame }, 'win32')).status).toBe('pass');
   });
 
   it('uses the default program-data folder, tries both folders without a version, and defers otherwise', async () => {
     const fs = memoryFs({ ...modelFiles(shared) });
-    expect((await modelsCheck(install(null), { env: {}, fs }, true)).status).toBe('pass');
-    const none = await modelsCheck(install(null), { env, fs: memoryFs({}) }, true);
+    expect((await modelsCheck(install(null), { env: {}, fs }, 'win32')).status).toBe('pass');
+    const none = await modelsCheck(install(null), { env, fs: memoryFs({}) }, 'win32');
     expect(none).toMatchObject({ status: 'warn', message: expect.stringMatching(/^Cannot tell/) as unknown });
-    expect((await modelsCheck(null, { env, fs }, true)).message).toMatch(/^Not checked/);
-    expect((await modelsCheck(install('1.8.1'), { env, fs }, false)).message).toMatch(/^Not checked/);
+    expect((await modelsCheck(null, { env, fs }, 'win32')).message).toMatch(/^Not checked/);
+    expect((await modelsCheck(install('1.8.1'), { env, fs }, 'linux')).message).toMatch(/^Not checked/);
   });
 });
 

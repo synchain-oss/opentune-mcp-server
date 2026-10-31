@@ -16,6 +16,7 @@ import {
 import {
   parseEpochMs,
   parsePidLines,
+  parsePsStartTime,
   parseProcStartTime,
   parseTasklist,
   pgrepPids,
@@ -55,6 +56,20 @@ describe('resolveDiscoveryDir', () => {
     });
     expect(resolveDiscoveryDir({}, 'darwin', '/Users/user')).toMatchObject({
       dir: '/Users/user/Library/Application Support/OpenTune/control/instances',
+    });
+    // On macOS neither LOCALAPPDATA nor XDG_STATE_HOME has any say, and a trailing slash of OPENTUNE_DATA_DIR is dropped.
+    expect(resolveDiscoveryDir({ LOCALAPPDATA: '/x', XDG_STATE_HOME: '/y' }, 'darwin', '/Users/user')).toMatchObject({
+      dir: '/Users/user/Library/Application Support/OpenTune/control/instances',
+      source: 'default',
+    });
+    expect(resolveDiscoveryDir({ OPENTUNE_DATA_DIR: '/Volumes/Data/ot/' }, 'darwin', '/Users/user')).toEqual({
+      ok: true,
+      dir: '/Volumes/Data/ot/control/instances',
+      source: 'dataDir',
+    });
+    expect(resolveDiscoveryDir({ OPENTUNE_DATA_DIR: 'data' }, 'darwin', '/Users/user')).toMatchObject({
+      ok: false,
+      variable: 'OPENTUNE_DATA_DIR',
     });
     expect(resolveDiscoveryDir({}, 'linux', '/home/user')).toMatchObject({
       dir: '/home/user/.local/state/OpenTune/control/instances',
@@ -268,6 +283,14 @@ describe('process probes', () => {
     expect(parseEpochMs('nan')).toBeNull();
   });
 
+  it('reads the start time that ps prints on macOS, as UTC, and refuses text that is not a date', () => {
+    // ps -o lstart= run with LC_ALL=C and TZ=UTC: local time, the day of the month padded with a space.
+    expect(parsePsStartTime('Fri Oct 30 12:08:15 2026\n')).toBe(Date.UTC(2026, 9, 30, 12, 8, 15));
+    expect(parsePsStartTime('Mon Jan  5 03:04:05 2026\n')).toBe(Date.UTC(2026, 0, 5, 3, 4, 5));
+    expect(parsePsStartTime('  Sat Oct 31 06:03:00 2026  ')).toBe(Date.UTC(2026, 9, 31, 6, 3, 0));
+    for (const text of ['', '\n', 'STARTED', 'ps: illegal option']) expect(parsePsStartTime(text), text).toBeNull();
+  });
+
   it('lists no OpenTune only when pgrep says nothing matched', () => {
     expect(pgrepPids({ ok: true, output: '12\n34\n' })).toEqual([12, 34]);
     expect(pgrepPids({ ok: false, exitCode: 1 })).toEqual([]);
@@ -305,7 +328,7 @@ describe('process probes', () => {
     let self = await probe.probe(process.pid);
     for (let attempt = 1; attempt < 3 && self.startTimeMs === null; attempt++) self = await probe.probe(process.pid);
     expect(self.alive).toBe(true);
-    if (process.platform === 'win32' || process.platform === 'linux') expect(self.startTimeMs).not.toBeNull();
+    if (['win32', 'linux', 'darwin'].includes(process.platform)) expect(self.startTimeMs).not.toBeNull();
     if (self.startTimeMs !== null) expect(Math.abs(self.startTimeMs - performance.timeOrigin)).toBeLessThan(2000);
     expect(await probe.probe(process.pid)).toEqual(self);
     expect((await probe.probe(2 ** 31 - 2)).alive).toBe(false);

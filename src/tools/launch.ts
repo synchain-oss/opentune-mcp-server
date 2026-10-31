@@ -17,7 +17,7 @@ import { z } from 'zod';
 import { toolError } from '../errors/tool-error.js';
 import type { DiscoveryEntry } from '../discovery/file.js';
 import { checkLaunchConfig, isWsl, readOsRelease } from '../launch/config.js';
-import type { OfficialInstall } from '../launch/install.js';
+import { isWorkingDirectory, type OfficialInstall } from '../launch/install.js';
 import {
   acquireLock,
   launchDir,
@@ -151,7 +151,7 @@ async function decide(
   const startedAtMs = ctx.now();
   const started = await startProcess(ctx.launch.spawn, {
     exe: config.path,
-    cwd: install?.dir ?? config.dir,
+    cwd: isWorkingDirectory(install) ? install.dir : config.dir,
     env: ctx.env,
     readyFile: readyFilePath(dir, hash),
     nonce,
@@ -170,7 +170,7 @@ async function decide(
     // Waiting still works; only other calls cannot join this start.
     ctx.logger.warn(`opentune_launch: the launch record could not be written (${(error as Error).message})`);
   });
-  const workingDirectory = install ? 'official_install' : 'executable_folder';
+  const workingDirectory = isWorkingDirectory(install) ? 'official_install' : 'executable_folder';
   return { kind: 'wait', wait: { record, dir, exited: started.exited, workingDirectory } };
 }
 
