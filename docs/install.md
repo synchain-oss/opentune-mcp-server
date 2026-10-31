@@ -57,6 +57,37 @@ Windows the command starts with `claude.cmd`; see [Troubleshooting](TROUBLESHOOT
 
 Run `opentune-mcp doctor --client cursor` and put the printed JSON into `~/.cursor/mcp.json`.
 
+## macOS (Apple silicon)
+
+The macOS test build of OpenTune (from the release `synchain-test/v1.8.0-ctl.3` on, Apple silicon only, macOS 13.3 or
+later) works with the same three clients; the MCPB manifest lists `darwin` next to `win32`. What differs from
+Windows:
+
+- **Official OpenTune first.** Install the official OpenTune 1.8.0 or later in `/Applications`. The test build
+  contains no models; it uses the ones inside `/Applications/OpenTune.app`. `opentune-mcp doctor` reports the
+  version it reads from the app's `Info.plist` (`OT_NO_OFFICIAL_INSTALL`, `OT_VERSION_UNSUPPORTED`) and whether
+  `fcpe.onnx` is where the official app looks for it (`OT_MODELS_MISSING`).
+- **Unpack the zip into a folder of your own** and keep its files together: `OpenTune-ctl.app`,
+  `OpenTune-AI.command`, `opentune-control.json` and `SHA256SUMS`. The manifest is beside the script, not inside the
+  app (a file inside the app would break its signature).
+- **The configured program is `OpenTune-AI.command`.** Set **OpenTune executable** (MCPB), the `opentune_path` option of
+  the plugin or `OPENTUNE_MCP_OPENTUNE_PATH` to the absolute path of that script, not to the executable inside the
+  app. The server starts the script directly, in its folder, without a terminal; the script replaces itself with
+  OpenTune and passes `--control-api`. Double-clicking `OpenTune-ctl.app` starts OpenTune without the control API,
+  which the server then reports as `RUNNING_WITHOUT_API`.
+- **Allow the first start by hand.** The build is signed ad hoc and not notarized, so Gatekeeper blocks it once; see
+  [macOS: first start blocked by Gatekeeper](TROUBLESHOOTING.md#macos-first-start-blocked-by-gatekeeper). The server
+  never changes file attributes and never runs `xattr`.
+- **Checksum.** `shasum -a 256 -c opentune-mcp-<version>.mcpb.sha256` (the `sha256sum` that `doctor --client
+claude-desktop` prints is not part of stock macOS).
+- **GUI clients and `PATH`.** Cursor and Claude Desktop do not read your shell profile. When your Node.js is not in
+  `/usr/bin` or `/usr/local/bin` (Homebrew on Apple silicon uses `/opt/homebrew/bin`; version managers use their own
+  folder), `doctor --client` prints the full path of `npx` and a `PATH` entry. Claude Desktop's configuration file is
+  `~/Library/Application Support/Claude/claude_desktop_config.json`.
+- **Windows-only checks.** `OT_D3D12_NOT_COPIED` reports "Not applicable": the Direct3D 12 runtime is a Windows
+  component. The skills run on macOS too (`beat-grid` with the macOS universal2 analyzer, `lyrics-timeline` on Apple
+  silicon with Python 3.10 or later).
+
 ## WSL
 
 The server must run with Windows Node.js, because OpenTune listens on `127.0.0.1` of Windows, which WSL cannot reach.

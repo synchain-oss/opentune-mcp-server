@@ -21,7 +21,7 @@ OpenTune MCP Server is an open-source project led by [Synchain](https://www.sync
 | --- | --- |
 | Windows x64, with the unofficial test build of OpenTune from [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) (it has the control API) | Supported. |
 | Official OpenTune release (it has no control API) | Does not work: `opentune_get_status` reports `NO_API_BUILD`. If the configuration points at the test build but an official OpenTune is the one running, it reports `RUNNING_WITHOUT_API`. |
-| macOS | Not yet. |
+| macOS on Apple silicon (macOS 13.3 or later), with the macOS test build of OpenTune from `synchain-test/v1.8.0-ctl.3` on | Pre-release support. The test build is not notarized, so the first start needs a manual approval; see [Troubleshooting](docs/TROUBLESHOOTING.md#macos-first-start-blocked-by-gatekeeper). Intel Macs are not supported. |
 | Linux | Not supported: OpenTune itself has no Linux build. |
 | WSL | The server must run with Windows Node.js; see [WSL](#wsl). |
 
@@ -30,9 +30,9 @@ The OpenTune VST3/ARA plug-in inside a DAW is not covered; only OpenTune Standal
 ## Prerequisites
 
 - **Node.js 22 or later** (not needed for the MCPB package, which Claude Desktop runs with its own runtime).
-- **An installed official OpenTune, version 1.7.9 or newer.** The test build contains no models and no Direct3D 12 runtime; it uses the ones of the official installation. OpenTune 1.7.9 must be installed in its default location, because it keeps its models in its install folder. OpenTune 1.8.1 can be installed anywhere; it keeps its models in `%ProgramData%\OpenTune\Models`.
-- **The unofficial test build**, a zip that you unpack to a folder outside Program Files. Check that `opentune-control.json` sits next to `OpenTune.exe`.
-- **`OPENTUNE_MCP_OPENTUNE_PATH`** set to the absolute path of the test build's `OpenTune.exe`. The install snippets below set it for you.
+- **An installed official OpenTune, version 1.7.9 or newer** (on macOS: 1.8.0 or newer, in `/Applications/OpenTune.app`). The test build contains no models and no Direct3D 12 runtime; it uses the ones of the official installation. On Windows, OpenTune 1.7.9 must be installed in its default location, because it keeps its models in its install folder. OpenTune 1.8.1 can be installed anywhere; it keeps its models in `%ProgramData%\OpenTune\Models`.
+- **The unofficial test build**, a zip that you unpack to a folder outside Program Files. Check that `opentune-control.json` sits next to `OpenTune.exe`. On macOS the zip holds `OpenTune-ctl.app` and, beside it, `OpenTune-AI.command`, `opentune-control.json` and `SHA256SUMS`: unpack it into a folder of your own and keep the files together. The first start is blocked by Gatekeeper until you allow it once by hand (see [Troubleshooting](docs/TROUBLESHOOTING.md#macos-first-start-blocked-by-gatekeeper)).
+- **`OPENTUNE_MCP_OPENTUNE_PATH`** set to the absolute path of the test build's `OpenTune.exe` (on macOS: of `OpenTune-AI.command`, not of the executable inside the app). The install snippets below set it for you.
 
 Run `opentune-mcp doctor` to check all of this (it never starts OpenTune); every check it reports has a section in [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md).
 
@@ -42,7 +42,7 @@ The first time OpenTune starts with a fresh data folder it shows a one-time welc
 
 ## Install
 
-`opentune-mcp doctor --client <claude-code|claude-desktop|cursor>` prints the configuration for a client with your own paths filled in. It only prints; it never writes a client's configuration file. The snippets below are what it prints on Windows, with `C:\Users\user\Apps\OpenTune\OpenTune.exe` standing for the path of your test build.
+`opentune-mcp doctor --client <claude-code|claude-desktop|cursor>` prints the configuration for a client with your own paths filled in. It only prints; it never writes a client's configuration file. The snippets below are what it prints on Windows, with `C:\Users\user\Apps\OpenTune\OpenTune.exe` standing for the path of your test build. On macOS the same commands work without the `cmd /c` wrapper and with `/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command` as the path (see the macOS snippets after the Cursor example).
 
 **Claude Desktop (recommended): the MCPB package.** Download `opentune-mcp-<version>.mcpb` and its `.sha256` file from the [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases) page, check the checksum, open the `.mcpb` file (or drag it into Settings > Extensions) and choose Install. In the extension settings, set "OpenTune executable" to the test build's `OpenTune.exe`. Details: [docs/install.md](docs/install.md). Advanced: register the npm package by hand with `opentune-mcp doctor --client claude-desktop`.
 
@@ -83,6 +83,16 @@ claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\
   }
 }
 ```
+
+**On macOS** the commands drop the `cmd /c` wrapper, and the path is that of `OpenTune-AI.command` in the folder where you unpacked the test build (`/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command` here):
+
+```text
+claude plugin marketplace add synchain-oss/opentune-mcp-server
+claude plugin install opentune@synchain-opentune --config opentune_path=/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command
+claude mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command -- npx -y @synchain/opentune-mcp
+```
+
+The first two lines are the plugin, the last one is the registration without the plugin; use one of them. Cursor and Claude Desktop are started by the macOS desktop, which does not read your shell profile, so a Node.js from Homebrew or a version manager is not on their `PATH`. When your `node` is outside `/usr/bin` and `/usr/local/bin`, `opentune-mcp doctor --client cursor` therefore prints the full path of `npx` and a `PATH` entry for the configuration; use what it prints. Claude Desktop reads `~/Library/Application Support/Claude/claude_desktop_config.json`.
 
 Then ask the agent to check OpenTune. It calls `opentune_get_status` first and follows the `nextStep` in the result; `opentune_launch` starts the configured OpenTune with its control API.
 
@@ -229,6 +239,7 @@ OpenTune Standalone with the control API  (synchain-oss/OpenTune, AGPL-3.0)
 - **`RUNNING_WITHOUT_API` was only checked by hand.** The state of an official OpenTune that runs without the control API was verified manually, not by an automated test.
 - **Read-only source folder.** An export without `path` goes next to the source file. When that folder is read-only the export fails with an error; it does not pick another folder. Give a writable `path`.
 - **First launch needs a person.** The welcome dialog has to be answered once ([First launch](#first-launch)).
+- **macOS is pre-release.** The macOS test build is for Apple silicon only, signed ad hoc and not notarized, so Gatekeeper asks for a manual approval on the first start ([Troubleshooting](docs/TROUBLESHOOTING.md#macos-first-start-blocked-by-gatekeeper)). The server's unit tests and its stdio smoke test run on a macOS runner in CI. The `beat-grid` skill (macOS universal2 analyzer) and the `lyrics-timeline` skill (Python 3.10 or later, Apple silicon) support macOS; `opentune-mcp doctor` marks the Windows-only Direct3D 12 check as not applicable there.
 - **Not covered:** official OpenTune builds that lack the control API, Linux, the VST3/ARA plug-in, features that OpenTune's own window does not have, and drawing-style edits (drawing, stretching, splitting or merging notes, per-note EQ, hand-drawn curves).
 
 ## Relationship to OpenTune

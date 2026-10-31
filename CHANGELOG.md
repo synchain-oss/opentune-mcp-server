@@ -25,6 +25,19 @@ media folder to show up in real results.
 - The specification vectors `audio/set-asio-rate-not-restored`, `audio/set-asio-rate-not-needed`,
   `prefs/set-rendering-priority-fallback` and `prefs/set-rendering-priority-gpu`, with the vector members
   `given.gpu` and `given.audio.asioRateRestoreFails`.
+- macOS support (Apple silicon), for the macOS test build `synchain-test/v1.8.0-ctl.3` and later. Discovery, the
+  launch contract and the process probe were already macOS-compatible and are unchanged apart from a tested parser for
+  the start time that `ps` reports. `opentune_launch` starts the configured program directly (`shell: false`,
+  detached, in the folder of the program); the test build's `OpenTune-AI.command` is that program, with
+  `opentune-control.json` beside it. `opentune-mcp doctor`: `OT_OPENTUNE_PATH` hints at the script when the path names
+  the executable inside an app bundle, `OT_NO_OFFICIAL_INSTALL` looks for `/Applications/OpenTune.app` and reads the
+  version from its `Info.plist` (`CFBundleShortVersionString`; read-only, nothing is installed or started),
+  `OT_VERSION_UNSUPPORTED` asks for 1.8.0 or later there, `OT_MODELS_MISSING` follows the search order of the official
+  app, `OT_MODELS_SHADOWED` also looks into app bundles beside the configured file, and `OT_D3D12_NOT_COPIED` reports
+  "Not applicable" (no new status or check ID). `docs/TROUBLESHOOTING.md` (both languages) has a section on the
+  Gatekeeper block of the first start and the macOS notes of the existing sections; README, `docs/install.md`,
+  `docs/features.md` and `docs/COMPATIBILITY.md` name macOS as supported (pre-release). The full tier of CI runs the
+  unit tests and the stdio smoke test on `macos-14` with Node.js 24.
 
 ### Changed
 

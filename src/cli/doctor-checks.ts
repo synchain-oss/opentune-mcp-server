@@ -74,6 +74,8 @@ export const systemDoctorFs: DoctorFs = {
 
 /** The oldest official OpenTune this server is known to work with. */
 export const MIN_OFFICIAL_VERSION = '1.7.9';
+/** On macOS: the oldest official release the test build is checked against (it is a macOS build from 1.8.0 on). */
+export const MIN_OFFICIAL_VERSION_MACOS = '1.8.0';
 /** First official version that keeps its models in the shared program-data folder. */
 const SHARED_MODELS_FROM: Version = [1, 8, 0];
 /**
@@ -96,6 +98,7 @@ export function parseVersion(text: string | null): Version | null {
 
 const compare = (a: Version, b: Version): number => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 const MIN_VERSION: Version = [1, 7, 9];
+const MIN_VERSION_MACOS: Version = [1, 8, 0];
 
 type Pathlib = typeof path.win32;
 export const pathLib = (platform: NodeJS.Platform): Pathlib => (platform === 'win32' ? path.win32 : path.posix);
@@ -106,29 +109,36 @@ const listed = (items: readonly string[]): string =>
     : `${items.slice(0, MAX_LISTED).join(', ')} and ${String(items.length - MAX_LISTED)} more`;
 
 const notChecked = (why: string): Outcome => ({ status: 'warn', message: `Not checked: ${why}.` });
-const NOT_WINDOWS = 'this check looks at an official OpenTune installation on Windows only';
+const NOT_INSTALLABLE = 'this check looks at an official OpenTune installation on Windows and macOS only';
 const NO_INSTALL = 'no official OpenTune installation was found';
 const NO_BUILD = 'OPENTUNE_MCP_OPENTUNE_PATH does not name a usable build';
 
-export function versionCheck(install: OfficialInstall | null, windows: boolean): Outcome {
-  if (!windows) return notChecked(NOT_WINDOWS);
+/** The oldest supported official version on this system, as text and as numbers. */
+const minimumVersion = (platform: NodeJS.Platform): { text: string; version: Version } =>
+  platform === 'darwin'
+    ? { text: MIN_OFFICIAL_VERSION_MACOS, version: MIN_VERSION_MACOS }
+    : { text: MIN_OFFICIAL_VERSION, version: MIN_VERSION };
+
+export function versionCheck(install: OfficialInstall | null, platform: NodeJS.Platform): Outcome {
+  if (platform !== 'win32' && platform !== 'darwin') return notChecked(NOT_INSTALLABLE);
   if (install === null) return notChecked(NO_INSTALL);
+  const min = minimumVersion(platform);
   const version = parseVersion(install.version);
   if (version === null) {
     return {
       status: 'warn',
       message:
         `Cannot tell: the version of the official installation in ${install.dir} is unknown, so it cannot be compared ` +
-        `with the oldest supported version ${MIN_OFFICIAL_VERSION}.`,
+        `with the oldest supported version ${min.text}.`,
     };
   }
   const shown = JSON.stringify(install.version);
-  return compare(version, MIN_VERSION) < 0
+  return compare(version, min.version) < 0
     ? {
         status: 'fail',
-        message: `Official OpenTune ${shown} is older than the oldest supported version ${MIN_OFFICIAL_VERSION}. Update it from the official OpenTune release page.`,
+        message: `Official OpenTune ${shown} is older than the oldest supported version ${min.text}. Update it from the official OpenTune release page.`,
       }
-    : { status: 'pass', message: `Official OpenTune ${shown} is supported (${MIN_OFFICIAL_VERSION} or later).` };
+    : { status: 'pass', message: `Official OpenTune ${shown} is supported (${min.text} or later).` };
 }
 
 export interface ModelsDeps {
@@ -141,18 +151,63 @@ async function missingModels(fs: DoctorFs, p: Pathlib, dir: string): Promise<str
   const missing: string[] = [];
   for (const parts of REQUIRED_MODELS) {
     const info = await fs.stat(p.join(dir, ...parts));
-    if (info === null || !info.isFile || info.size === 0) missing.push(parts.join('\\'));
+    if (info === null || !info.isFile || info.size === 0) missing.push(parts.join(p.sep));
   }
   return missing;
+}
+
+/**
+ * macOS: OpenTune looks for its models folder in this order and uses the first one that exists, whatever it holds: the
+ * folder next to its executable, `../Resources/models` in its own app bundle (both are the build's own folders, see
+ * shadowedCheck), `models` in the official app bundle, `/Applications/OpenTune/models`, and the shared program-data
+ * folder `/Library/Application Support/OpenTune/models`. These are the three that belong to the official installation.
+ */
+export function macOfficialModelDirs(install: OfficialInstall): string[] {
+  return [
+    path.posix.join(install.dir, 'Contents', 'Resources', 'models'),
+    '/Applications/OpenTune/models',
+    '/Library/Application Support/OpenTune/models',
+  ];
+}
+
+async function macModelsCheck(install: OfficialInstall, fs: DoctorFs): Promise<Outcome> {
+  const p = path.posix;
+  const candidates = macOfficialModelDirs(install);
+  let used: string | null = null;
+  for (const dir of candidates) {
+    if ((await fs.stat(dir))?.isDirectory === true) {
+      used = dir;
+      break;
+    }
+  }
+  const version = install.version === null ? 'of unknown version' : JSON.stringify(install.version);
+  if (used === null) {
+    return {
+      status: 'fail',
+      message: `No models folder was found for official OpenTune ${version}; OpenTune looks in ${candidates.join(', ')}. Install the official OpenTune for macOS again; it ships the models inside the app.`,
+    };
+  }
+  const missing = await missingModels(fs, p, used);
+  if (missing.length === 0) {
+    return {
+      status: 'pass',
+      message: `Required model files present in ${used}: ${REQUIRED_MODELS.map((parts) => parts.join(p.sep)).join(', ')}.`,
+    };
+  }
+  return {
+    status: 'fail',
+    message: `Model files are missing for official OpenTune ${version}: ${used} lacks or has empty ${listed(missing)}. OpenTune uses the first folder that exists, which is this one. Install the official OpenTune for macOS again; it ships the models inside the app.`,
+  };
 }
 
 export async function modelsCheck(
   install: OfficialInstall | null,
   deps: ModelsDeps,
-  windows: boolean,
+  platform: NodeJS.Platform,
 ): Promise<Outcome> {
-  if (!windows) return notChecked(NOT_WINDOWS);
+  if (platform !== 'win32' && platform !== 'darwin') return notChecked(NOT_INSTALLABLE);
   if (install === null) return notChecked(NO_INSTALL);
+  if (platform === 'darwin') return macModelsCheck(install, deps.fs);
   const p = path.win32;
   const shared = p.join(deps.env.ProgramData ?? 'C:\\ProgramData', 'OpenTune', 'Models');
   const own = p.join(install.dir, 'models');
@@ -262,7 +317,7 @@ export async function sidecarCheck(exeDir: string | null, deps: SidecarDeps): Pr
     const m = /^([0-9A-Fa-f]{64}) [ *](.+)$/.exec(line);
     const parts = m ? safeRelative((m[2] ?? '').trim()) : null;
     if (!m || parts === null) bad.push(`unusable line ${JSON.stringify(line.slice(0, 80))}`);
-    else entries.push({ hash: (m[1] ?? '').toLowerCase(), rel: parts.join('\\'), parts });
+    else entries.push({ hash: (m[1] ?? '').toLowerCase(), rel: parts.join(p.sep), parts });
   }
   const missing: string[] = [];
   const differing: string[] = [];
@@ -288,13 +343,47 @@ export async function sidecarCheck(exeDir: string | null, deps: SidecarDeps): Pr
       };
 }
 
+/**
+ * The models folders of the build itself, in the order OpenTune looks at them. Next to the executable on every system;
+ * on macOS also `../Resources/models` of the app bundle the executable is in, and, because the configured program may
+ * be the script that starts the app (OpenTune-AI.command, which sits in the folder that holds the app), the same two
+ * folders of every app bundle in the executable's folder.
+ */
+async function ownModelDirs(exeDir: string, deps: SidecarDeps): Promise<string[]> {
+  const p = pathLib(deps.platform);
+  const dirs = [p.join(exeDir, 'models')];
+  if (deps.platform !== 'darwin') return dirs;
+  dirs.push(p.join(exeDir, '..', 'Resources', 'models'));
+  const bundles = ((await deps.fs.list(exeDir)) ?? []).filter((name) => name.endsWith('.app')).sort();
+  for (const name of bundles) {
+    dirs.push(
+      p.join(exeDir, name, 'Contents', 'MacOS', 'models'),
+      p.join(exeDir, name, 'Contents', 'Resources', 'models'),
+    );
+  }
+  return dirs;
+}
+
 export async function shadowedCheck(exeDir: string | null, deps: SidecarDeps): Promise<Outcome> {
   if (exeDir === null) return notChecked(NO_BUILD);
   const p = pathLib(deps.platform);
-  const dir = p.join(exeDir, 'models');
-  const info = await deps.fs.stat(dir);
+  let dir = '';
+  let info: FileInfo | null = null;
+  for (const candidate of await ownModelDirs(exeDir, deps)) {
+    info = await deps.fs.stat(candidate);
+    if (info !== null) {
+      dir = candidate;
+      break;
+    }
+  }
   if (info === null) {
-    return { status: 'pass', message: 'No models folder next to the executable.' };
+    return {
+      status: 'pass',
+      message:
+        deps.platform === 'darwin'
+          ? 'No models folder next to the executable or in an app bundle beside it.'
+          : 'No models folder next to the executable.',
+    };
   }
   if (!info.isDirectory) {
     return { status: 'warn', message: `${dir} exists but is not a folder; OpenTune may not look at it.` };
@@ -316,6 +405,14 @@ export interface D3d12Deps extends SidecarDeps {
 }
 
 export async function d3d12Check(exeDir: string | null, deps: D3d12Deps): Promise<Outcome> {
+  if (deps.platform !== 'win32') {
+    // Not a failure and not a gap in the set-up, so it passes instead of warning.
+    const where = deps.platform === 'darwin' ? 'macOS' : 'this system';
+    return {
+      status: 'pass',
+      message: `Not applicable on ${where}: the Direct3D 12 runtime is a Windows component; there is nothing to copy.`,
+    };
+  }
   if (exeDir === null) return notChecked(NO_BUILD);
   const p = pathLib(deps.platform);
   const bytes = await deps.fs.readFile(p.join(exeDir, CONTROL_MANIFEST), MAX_MANIFEST_BYTES + 1);

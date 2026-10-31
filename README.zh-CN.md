@@ -21,7 +21,7 @@ OpenTune MCP Server 是由 [Synchain](https://www.synchain.ca) 主导的开源�
 | --- | --- |
 | Windows x64,配合 [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) 的非官方 OpenTune 测试版(带控制接口) | 支持。 |
 | 官方 OpenTune 发布版(没有控制接口) | 不能用:`opentune_get_status` 报告 `NO_API_BUILD`。配置指向测试版、但实际开着的是官方 OpenTune 时,报告 `RUNNING_WITHOUT_API`。 |
-| macOS | 暂无。 |
+| Apple 芯片：配合 macOS 测试版（`synchain-test/v1.8.0-ctl.3` 起），需要 macOS 13.3 或更新 | 预发布阶段的支持。测试版没有经过公证(notarize),首次启动需要手动放行,见[排障](docs/TROUBLESHOOTING.zh-CN.md#macos-first-start-blocked-by-gatekeeper)。不支持 Intel 的 Mac。 |
 | Linux | 不支持:OpenTune 本身没有 Linux 版。 |
 | WSL | 服务必须用 Windows 上的 Node.js 运行,见 [WSL](#wsl)。 |
 
@@ -30,9 +30,9 @@ DAW 内的 OpenTune VST3/ARA 插件不在范围内,只覆盖 OpenTune 独立版�
 ## 前置条件
 
 - **Node.js 22 或更高**(MCPB 包不需要,Claude Desktop 用自带的运行时运行它)。
-- **已安装官方 OpenTune,1.7.9 或更新。** 测试版不含模型与 Direct3D 12 运行库,使用官方安装里的那一份。OpenTune 1.7.9 须装在默认位置,因为它的模型在安装目录下;OpenTune 1.8.1 可以装在任意位置,模型在 `%ProgramData%\OpenTune\Models`。
-- **非官方测试版**,是一个 zip,解压到 Program Files 之外的文件夹。确认 `opentune-control.json` 就在 `OpenTune.exe` 旁边。
-- **`OPENTUNE_MCP_OPENTUNE_PATH`** 设为测试版里 `OpenTune.exe` 的绝对路径。下面的安装片段会替你设好。
+- **已安装官方 OpenTune,1.7.9 或更新**(macOS 上:1.8.0 或更新,装在 `/Applications/OpenTune.app`)。测试版不含模型与 Direct3D 12 运行库,使用官方安装里的那一份。在 Windows 上,OpenTune 1.7.9 须装在默认位置,因为它的模型在安装目录下;OpenTune 1.8.1 可以装在任意位置,模型在 `%ProgramData%\OpenTune\Models`。
+- **非官方测试版**,是一个 zip,解压到 Program Files 之外的文件夹。确认 `opentune-control.json` 就在 `OpenTune.exe` 旁边。macOS 上的 zip 里是 `OpenTune-ctl.app`,以及放在它旁边的 `OpenTune-AI.command`、`opentune-control.json` 和 `SHA256SUMS`:请解压到你自己的文件夹,并让这些文件保持在一起。Gatekeeper 会拦下第一次启动,需要你手动放行一次(见[排障](docs/TROUBLESHOOTING.zh-CN.md#macos-first-start-blocked-by-gatekeeper))。
+- **`OPENTUNE_MCP_OPENTUNE_PATH`** 设为测试版里 `OpenTune.exe` 的绝对路径(macOS 上:`OpenTune-AI.command` 的路径,不是 app 里面那个可执行文件)。下面的安装片段会替你设好。
 
 运行 `opentune-mcp doctor` 可以检查以上全部(它不会启动 OpenTune);它报告的每一项检查在 [docs/TROUBLESHOOTING.zh-CN.md](docs/TROUBLESHOOTING.zh-CN.md) 里都有对应小节。
 
@@ -42,7 +42,7 @@ OpenTune 在全新数据目录下首次启动时,会弹出一次「首次引导�
 
 ## 安装
 
-`opentune-mcp doctor --client <claude-code|claude-desktop|cursor>` 会打印该客户端的配置,并填好你自己的路径;它只打印,从不写客户端的配置文件。下面的片段就是它在 Windows 上打印的内容,其中 `C:\Users\user\Apps\OpenTune\OpenTune.exe` 代表你的测试版路径。
+`opentune-mcp doctor --client <claude-code|claude-desktop|cursor>` 会打印该客户端的配置,并填好你自己的路径;它只打印,从不写客户端的配置文件。下面的片段就是它在 Windows 上打印的内容,其中 `C:\Users\user\Apps\OpenTune\OpenTune.exe` 代表你的测试版路径。在 macOS 上,同样的命令去掉 `cmd /c`,路径换成 `/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command`(见 Cursor 示例之后的 macOS 片段)。
 
 **Claude Desktop(首推):MCPB 包。** 从 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases) 页面下载 `opentune-mcp-<version>.mcpb` 与对应的 `.sha256` 文件,核对校验和,打开 `.mcpb` 文件(或拖进 设置 > 扩展)并选择安装。在扩展设置里把「OpenTune executable」设为测试版的 `OpenTune.exe`。详见 [docs/install.md](docs/install.md)。进阶:用 `opentune-mcp doctor --client claude-desktop` 手动注册 npm 包。
 
@@ -83,6 +83,16 @@ claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\
   }
 }
 ```
+
+**在 macOS 上**,命令去掉 `cmd /c` 包装,路径是你解压测试版的文件夹里 `OpenTune-AI.command` 的路径(这里用 `/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command`):
+
+```text
+claude plugin marketplace add synchain-oss/opentune-mcp-server
+claude plugin install opentune@synchain-opentune --config opentune_path=/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command
+claude mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command -- npx -y @synchain/opentune-mcp
+```
+
+前两行是插件,最后一行是不用插件的注册方式;二选一即可。Cursor 与 Claude Desktop 是由 macOS 桌面启动的,不会读取你的 shell 配置文件,所以用 Homebrew 或版本管理器装的 Node.js 不在它们的 `PATH` 上。当你的 `node` 不在 `/usr/bin` 与 `/usr/local/bin` 下时,`opentune-mcp doctor --client cursor` 会打印 `npx` 的完整路径和配置里的 `PATH` 项;请照它打印的写。Claude Desktop 读取的是 `~/Library/Application Support/Claude/claude_desktop_config.json`。
 
 然后让 agent 检查 OpenTune。它会先调用 `opentune_get_status` 并照结果里的 `nextStep` 做;`opentune_launch` 会用控制接口启动配置好的 OpenTune。
 
@@ -229,6 +239,7 @@ opentune-mcp  (本仓库,Node.js,MIT)
 - **`RUNNING_WITHOUT_API` 只做了人工核对。** 「运行着没开控制接口的官方 OpenTune」这一状态是人工验证的,没有自动化测试。
 - **源目录只读。** 不给 `path` 的导出会写在源文件旁。该目录只读时导出会报错,不会自动换目录。请指定一个可写的 `path`。
 - **首次启动需要人工操作。** 首次引导对话框需要有人回答一次([首次启动](#首次启动))。
+- **macOS 处于预发布阶段。** macOS 测试版只支持 Apple 芯片,是 ad-hoc 签名、没有经过公证的,所以第一次启动时 Gatekeeper 会要求手动放行([排障](docs/TROUBLESHOOTING.zh-CN.md#macos-first-start-blocked-by-gatekeeper))。本服务的单元测试和 stdio 冒烟测试在 CI 的 macOS runner 上运行。`beat-grid` skill(macOS universal2 分析器)与 `lyrics-timeline` skill(Python 3.10 或更新,Apple 芯片)支持 macOS;`opentune-mcp doctor` 把仅限 Windows 的 Direct3D 12 检查标为不适用。
 - **不在范围内:** 没有控制接口的官方 OpenTune 构建、Linux、VST3/ARA 插件、OpenTune 窗口本身没有的功能,以及绘制式编辑(绘制、拉伸、拆分或合并音符、逐音符 EQ、手绘曲线)。
 
 ## 与 OpenTune 的关系

@@ -30,17 +30,21 @@ OpenTune 使用的控制协议版本本服务不支持。请更新 OpenTune 或�
 
 OpenTune 在运行,但没有控制接口:它启动时没带 `--control-api`(或 `OPENTUNE_CONTROL_API=1`),或者该构建没有控制接口。`opentune_launch` 启动、且 30 秒内没有宣告控制接口的进程也算在这里。请保存工作,退出 OpenTune,再用 `opentune_launch` 重新启动(或自己带选项启动带接口的构建)。此类进程在运行时,`opentune_launch` 什么也不会启动,本服务也从不关闭 OpenTune。
 
+服务按进程名找到这样的进程:Windows 上是 `OpenTune.exe`,macOS 上是 `OpenTune`(app 包内的可执行文件,官方 app 与测试版同名)。所以在 macOS 上,官方 OpenTune.app 也算在内;双击 `OpenTune-ctl.app` 打开的测试版同样算,因为这样启动时没有控制接口。请退出它,再用 `OpenTune-AI.command` 或 `opentune_launch` 启动测试版。
+
 ### Status NOT_RUNNING
 
 配置的 OpenTune 构建带有控制接口,但没有在运行。`opentune_launch` 会启动它(见 [Starting OpenTune](#starting-opentune));你也可以自己带 `--control-api` 启动。
 
-`reason` 为 `launch_exited` 时,`opentune_launch` 启动的 OpenTune 在控制接口可用之前就退出了。请手动启动看看发生了什么,并运行 `opentune-mcp doctor`。
+`reason` 为 `launch_exited` 时,`opentune_launch` 启动的 OpenTune 在控制接口可用之前就退出了。请手动启动看看发生了什么,并运行 `opentune-mcp doctor`。在 macOS 上,被 Gatekeeper 拦下的测试版可能这样结束,也可能一直不宣告自己(`launch_timeout`);见 [macOS: first start blocked by Gatekeeper](#macos-first-start-blocked-by-gatekeeper)。
 
 当 `processes: null` 且 `nullReasons.processes` 为 `not_listable`(出现在此状态、`NO_API_BUILD` 或 `NOT_INSTALLED` 时),说明服务无法列出正在运行的进程,所以可能仍有一个没开控制接口的 OpenTune 在运行。此时 `opentune_launch` 什么也不启动,直到用户确认没有 OpenTune 在运行(见 [OPENTUNE_NOT_AVAILABLE](#error-opentune_not_available))。
 
 ### Status NO_API_BUILD
 
 `OPENTUNE_MCP_OPENTUNE_PATH` 指向的可执行文件旁边没有适用于协议主版本 1 的 `opentune-control.json`(`reason`:`manifest_missing`、`manifest_too_large`、`manifest_invalid` 或 `protocol_mismatch`)。该文件必须是不超过 8 KiB 的 UTF-8 JSON 对象,其 `protocolMajors` 列出 1;其他成员会被忽略。官方 OpenTune 发布版没有控制接口,也会落在这里。请配置带控制接口的构建。`opentune_launch` 从不启动这样的可执行文件。
+
+在 macOS 上遇到 `manifest_missing` 时:测试版不把 `opentune-control.json` 放进 app 包(放进 `OpenTune-ctl.app/Contents/MacOS` 会破坏 app 的签名),而是放在你解压出的文件夹里、`OpenTune-AI.command` 的旁边。所以 `OPENTUNE_MCP_OPENTUNE_PATH` 要指向 `OpenTune-AI.command`,而不是 app 里面的可执行文件。`opentune-mcp doctor` 看到这样的路径时会这样提示(`OT_OPENTUNE_PATH`)。
 
 ### Status NOT_INSTALLED
 
@@ -53,6 +57,8 @@ OpenTune 在运行,但没有控制接口:它启动时没带 `--control-api`(或 
 ## Starting OpenTune
 
 `opentune_launch` 只启动 `OPENTUNE_MCP_OPENTUNE_PATH` 里的可执行文件,并且只在 [NOT_INSTALLED](#status-not_installed) 与 [NO_API_BUILD](#status-no_api_build) 的检查通过时才启动。它唯一的输入是 `allow_second_instance`;工具调用中的任何内容都改不了可执行文件、参数或环境。它会传入 `--control-api`、一个就绪文件、一个随机的启动 nonce,并在设置了 `OPENTUNE_MCP_DISCOVERY_DIR` 时传入该目录(`--control-api-dir=`),然后最多等 30 秒,等待发现文件带有该 nonce 的实例。等待期间,发现目录里的 `launching` 文件夹保存着 `<pid>.json`(pid、启动时间和 nonce 的哈希,绝无令牌)以及就绪文件,因此 `opentune_get_status` 会报告 [STARTING](#status-starting),重复或并发的调用会等待同一次启动。已有带控制接口的实例在运行(`alreadyRunning`;第二个实例需要 `allow_second_instance` 和用户的明确同意),或有一个没开控制接口的 OpenTune 在运行时,它什么也不启动。服务无法列出正在运行的进程时,无法排除后一种情况,也什么都不启动(错误 [OPENTUNE_NOT_AVAILABLE](#error-opentune_not_available),`reason` 为 `process_list_unavailable`)。`allow_second_instance: true` 不是幂等的:每次带它的调用,在之前的启动完成后都会多启动一个实例,所以每得到一次同意只用一次。它从不结束进程,超时之后也不会。
+
+在 macOS 上,配置的程序是测试版的 `OpenTune-AI.command`。服务直接在它所在的文件夹里启动这个文件,选项和参数相同。脚本是在没有终端的情况下启动的,它会用 `exec` 把自己换成 OpenTune:服务启动的进程以及 `launching` 里的记录,就是 OpenTune 本身。脚本所在的文件夹是工作目录;不使用官方 app 做工作目录,因为 OpenTune 按 app 的路径找已安装的模型(见 [OT_MODELS_MISSING](#doctor-ot_models_missing))。
 
 ## Errors
 
@@ -191,31 +197,44 @@ OpenTune 宣告运行中实例的目录必须可读。在带控制接口的 Open
 
 ### Doctor OT_OPENTUNE_PATH
 
-`OPENTUNE_MCP_OPENTUNE_PATH` 必须是带控制接口的构建的 OpenTune 可执行文件的绝对路径,且旁边有 `opentune-control.json`。
+`OPENTUNE_MCP_OPENTUNE_PATH` 必须是带控制接口的构建的 OpenTune 可执行文件的绝对路径,且旁边有 `opentune-control.json`。在 macOS 上,测试版不把该文件放进 app 包(放进去会破坏签名),而是放在 `OpenTune-AI.command` 旁边,也就是存放 `OpenTune-ctl.app` 的那个文件夹:请把变量指向 `OpenTune-AI.command`,不要指向 app 里面的可执行文件。变量指向 app 包内的可执行文件且清单缺失时,检查信息会这样提示。
 
 ### Doctor OT_NO_OFFICIAL_INSTALL
 
-是否存在官方 OpenTune 安装(仅 Windows):服务读取注册表里的卸载项,再查看常见的安装文件夹。找不到只是警告,不是错误。本服务从不启动这份安装;`opentune_launch` 启动的 OpenTune 以它为工作目录,这样没有自带 models 文件夹的构建能找到已安装的模型。没有安装时,工作目录是所配置可执行文件所在的文件夹。
+是否存在官方 OpenTune 安装(Windows 与 macOS)。在 Windows 上,服务读取注册表里的卸载项,再查看常见的安装文件夹。在 macOS 上,它查找 `/Applications/OpenTune.app`,并从其 `Info.plist`(`CFBundleShortVersionString`)读取版本;不会启动任何东西,也不会安装任何东西。找不到只是警告,不是错误。本服务从不启动这份安装。在 Windows 上,`opentune_launch` 启动的 OpenTune 以该安装为工作目录,这样没有自带 models 文件夹的构建能找到已安装的模型;没有安装时,以及在 macOS 上始终,工作目录是所配置可执行文件所在的文件夹。在 macOS 上,测试版不含模型,使用官方 app 里的模型,所以启动测试版之前请先在 `/Applications` 里安装官方的 macOS 版 OpenTune(1.8.0 或更新)。
 
 ### Doctor OT_VERSION_UNSUPPORTED
 
-官方 OpenTune 安装的版本(读自其卸载项;仅 Windows)必须是 1.7.9 或更新。更旧的:请从官方发布页面更新 OpenTune。`warn` 且信息为「Not checked」表示没找到安装或该检查不适用于此系统;`warn` 且信息为「Cannot tell」表示该安装没有报告版本。
+官方 OpenTune 安装的版本(Windows 读自其卸载项,macOS 读自 `Info.plist`)在 Windows 上必须是 1.7.9 或更新,在 macOS 上必须是 1.8.0 或更新(第一个官方 macOS 版本)。更旧的:请从官方发布页面更新 OpenTune。`warn` 且信息为「Not checked」表示没找到安装或该检查不适用于此系统;`warn` 且信息为「Cannot tell」表示该安装没有报告版本。
 
 ### Doctor OT_MODELS_MISSING
 
-官方安装需要这个文件,且不能为空:`fcpe.onnx`。(`GAME` 文件夹里的音符分段模型不再检查:OpenTune 1.8.2 的代码已不使用它们,之后的官方版本也不再附带。)OpenTune 1.8 及之后把它放在 `%ProgramData%\OpenTune\Models`;1.7.x 放在安装文件夹的 `models` 文件夹里。该检查只看是否存在与大小,从不看内容。失败时,信息会指出它查看的文件夹和缺失的文件:请重新运行官方安装程序(或修复安装),让它恢复这个模型。已安装版本未知时,两个文件夹都会尝试,结果是警告。
+官方安装需要这个文件,且不能为空:`fcpe.onnx`。(`GAME` 文件夹里的音符分段模型不再检查:OpenTune 1.8.2 的代码已不使用它们,之后的官方版本也不再附带。)在 Windows 上,OpenTune 1.8 及之后把它放在 `%ProgramData%\OpenTune\Models`;1.7.x 放在安装文件夹的 `models` 文件夹里。在 macOS 上,检查沿用官方 app 的查找顺序,使用下列文件夹中第一个存在的:`/Applications/OpenTune.app/Contents/Resources/models`、`/Applications/OpenTune/models`、`/Library/Application Support/OpenTune/models`。该检查只看是否存在与大小,从不看内容。失败时,信息会指出它查看的文件夹和缺失的文件:请重新运行官方安装程序(或修复安装),让它恢复这个模型;在 macOS 上请重新安装官方 app。在 Windows 上已安装版本未知时,两个文件夹都会尝试,结果是警告。
 
 ### Doctor OT_SIDECAR_INCOMPLETE
 
-测试版是一个 zip,可执行文件旁有一个 `SHA256SUMS` 文件(每行 `<sha256>  <相对路径>`)。`fail` 表示它列出的某个文件缺失或哈希不符(信息会点名),或者清单无法读取。请删除该文件夹,把整个 zip 重新解压到一个空文件夹;不要把单个文件复制到旧版本上。`warn`(「Cannot verify」)表示没有 `SHA256SUMS`,这对你自己构建的可执行文件是正常的,此时无法检查该文件夹。
+测试版是一个 zip,可执行文件旁有一个 `SHA256SUMS` 文件(每行 `<sha256>  <相对路径>`;在 macOS 上它在 `OpenTune-AI.command` 旁边、存放 app 的文件夹里,清单里的路径包含 app 文件夹)。`fail` 表示它列出的某个文件缺失或哈希不符(信息会点名),或者清单无法读取。请删除该文件夹,把整个 zip 重新解压到一个空文件夹;不要把单个文件复制到旧版本上。`warn`(「Cannot verify」)表示没有 `SHA256SUMS`,这对你自己构建的可执行文件是正常的,此时无法检查该文件夹。
 
 ### Doctor OT_MODELS_SHADOWED
 
-可执行文件旁的 `models` 文件夹会先于已安装的模型被找到。测试版不自带这个文件夹,所以除非是你有意放的,请重命名或删除它;信息会说明它是否包含全部所需的模型文件。
+可执行文件旁的 `models` 文件夹会先于已安装的模型被找到。测试版不自带这个文件夹,所以除非是你有意放的,请重命名或删除它;信息会说明它是否包含全部所需的模型文件。在 macOS 上,检查还会查看可执行文件所在 app 包的 `Contents/Resources/models`,以及所配置文件所在文件夹里每个 `.app` 的 `models` 文件夹,因为 app 包会先于官方 app 的模型被查找。
 
 ### Doctor OT_D3D12_NOT_COPIED
 
 测试版在 `opentune-control.json`(`d3d12`)里列出了 Direct3D 12 运行库,但没有自带它。没有这个文件时 OpenTune 在 CPU 上做推理,所以这是警告,复制是可选的。在一台有 NVIDIA 显卡的机器上实测:不复制时音高分析(F0)回落到 CPU。请在 PowerShell 里运行该检查打印出的命令,它们把 `D3D12Core.dll` 从官方安装复制到可执行文件旁的 `D3D12` 文件夹,并打印其 SHA-256 哈希,用来与 `opentune-control.json` 对比;请原样使用打印出的命令,因为它们会对含特殊字符的路径做转义。如果复制出的文件哈希不同(`fail`),请删除 `D3D12` 文件夹(回到 CPU),再从官方安装重新复制。`D3D12SDKLayers.dll` 是调试层:不要复制它,如果它在那里就删掉。「Cannot tell」表示 `opentune-control.json` 的 `d3d12` 条目没有列出文件,或哈希不是 64 个十六进制字符,所以什么也检查不了:请重新解压测试版。
+
+在 macOS 上,这个检查始终以 `pass` 报告「Not applicable」:Direct3D 12 运行库是 Windows 组件,没有什么可复制的。
+
+## macOS: first start blocked by Gatekeeper
+
+macOS 测试版是 ad-hoc 签名、没有经过公证(notarize)的,所以 Gatekeeper 可能拒绝首次启动:macOS 提示 `OpenTune-AI.command` 或 `OpenTune-ctl.app`「无法打开,因为无法验证开发者」或「已损坏」,或者 `opentune_launch` 返回 `NOT_RUNNING`、`reason` 为 `launch_exited`(进程在启动后马上结束,因为没有人能回答那个对话框)。对下载来的未公证构建这是预期行为,不是本服务的故障;本服务只启动你配置的那个文件,也从不修改它的属性。
+
+1. 把 zip 解压到你自己的文件夹里(例如用户主目录下),并让这些文件保持在一起:`OpenTune-AI.command`、`opentune-control.json`、`SHA256SUMS` 和 `OpenTune-ctl.app`。不要把 app 挪出这个文件夹。
+2. 手动放行一次:在 Finder 里按住 Control 点击 `OpenTune-AI.command`,选择「打开」并确认。macOS 15 及更新版本没有这个捷径:先尝试打开一次该文件,再到「系统设置 > 隐私与安全性」,滚动到关于被拦截项目的提示,选择「仍要打开」。之后如果 macOS 又拦下 `OpenTune-ctl.app`,做法相同。(发布页面上的官方 OpenTune 是另一个 app,不受影响。)
+3. 另一种做法:如果你信任这份下载(先把它与发布页面上的 `SHA256SUMS` 比对),可以自己去掉解压出的文件夹的隔离属性:`xattr -dr com.apple.quarantine <文件夹>`。本服务从不运行这条命令。
+4. 先手动启动一次测试版,确认它能打开,再运行 `opentune-mcp doctor`,然后让助手再次启动 OpenTune。把 `OPENTUNE_MCP_OPENTUNE_PATH` 指向 `OpenTune-AI.command`(见 [Doctor OT_OPENTUNE_PATH](#doctor-ot_opentune_path))。
+
+测试版需要 Apple 芯片、macOS 13.3 或更新版本,并且在 `/Applications` 里装有官方 OpenTune 1.8.0 或更新版本(见 [Doctor OT_NO_OFFICIAL_INSTALL](#doctor-ot_no_official_install))。
 
 ## Claude Code mcp add fails in PowerShell
 

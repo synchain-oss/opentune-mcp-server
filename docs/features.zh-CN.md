@@ -13,7 +13,7 @@ OpenTune MCP Server (by Synchain) 让 AI 客户端操作 OpenTune 独立版,即�
 
 ## 使用前提
 
-- **带控制接口的 OpenTune 构建。** 官方 OpenTune 发布版还没有控制接口,所以本服务只能配合 OpenTune 的[非官方测试版](https://github.com/synchain-oss/OpenTune/releases)使用(Windows x64)。配官方 OpenTune 时,`opentune_get_status` 报告 `NO_API_BUILD`。测试版使用已安装的官方 OpenTune(1.7.9 或更新)里的模型。安装配置见 [README](../README.zh-CN.md#安装) 与 [install.md](install.md)。
+- **带控制接口的 OpenTune 构建。** 官方 OpenTune 发布版还没有控制接口,所以本服务只能配合 OpenTune 的[非官方测试版](https://github.com/synchain-oss/OpenTune/releases)使用(Windows x64,或 `synchain-test/v1.8.0-ctl.3` 起的 Apple 芯片 macOS 版)。配官方 OpenTune 时,`opentune_get_status` 报告 `NO_API_BUILD`。测试版使用已安装的官方 OpenTune(1.7.9 或更新;macOS 上是 `/Applications` 里的 1.8.0 或更新)里的模型。安装配置见 [README](../README.zh-CN.md#安装) 与 [install.md](install.md)。
 - **只覆盖 OpenTune 独立版。** DAW 里的 OpenTune VST3/ARA 插件不在范围内;与 DAW 之间只通过文件路径交换。
 - **测试版要新到够用。** 每个工具都声明了它需要的测试版能力,缺少某项能力的工具会返回 `UNSUPPORTED` 并附下一步,其余工具照常工作。0.2.0 随附的测试版是 `synchain-test/v1.8.0-ctl.2`(规范 `1.0.0-rc.8`),已包含关闭 OpenTune(`app.quit`)、切换视图(`ui.workspace`)和自动副本(`project.copy`)。更早的测试版缺少比它更晚加入的能力。见 [COMPATIBILITY.md](COMPATIBILITY.md#capabilities-of-the-test-build)。
 - **首次启动需要有人在场。** OpenTune 用全新数据目录第一次启动时会弹出一个一次性的欢迎对话框,必须在 OpenTune 窗口里回答;在此之前所有写操作都会以 `BUSY` 失败。见 [First launch dialog](TROUBLESHOOTING.zh-CN.md#first-launch-dialog)。
@@ -212,7 +212,7 @@ Skill 是随插件或扩展一起提供的文字说明。它们不是额外的�
 
 ## 已知限制与不做的事
 
-- **平台。** Windows x64 配合非官方测试版。macOS:暂无。Linux:不支持(OpenTune 本身没有 Linux 版)。官方 OpenTune 发布版没有控制接口,不能用;VST3/ARA 插件不在范围内。在 WSL 里,服务必须用 Windows 的 Node.js 运行(见 [WSL](../README.zh-CN.md#wsl))。
+- **平台。** Windows x64 配合非官方测试版。Apple 芯片的 macOS 配合 macOS 测试版(预发布阶段;未经公证,首次启动需要手动放行,见 [install.md](install.md#macos-apple-silicon))。Intel 的 Mac 与 Linux:不支持(OpenTune 本身没有 Linux 版)。官方 OpenTune 发布版没有控制接口,不能用;VST3/ARA 插件不在范围内。在 WSL 里,服务必须用 Windows 的 Node.js 运行(见 [WSL](../README.zh-CN.md#wsl))。
 - **绘制式编辑。** 绘制、拉伸、拆分或合并音符、逐音符 EQ 和手绘音高曲线都不提供,OpenTune 窗口本身没有的功能也一样不提供。`opentune_edit_notes` 只改已有的音符:它从不新增或删除音符。
 - **OpenTune 里没有歌词、没有段落标记、不检测节拍。** agent 按时间、按乐句(`opentune_analyze_pitch` 的 `detail: phrases`),或者借助 `lyrics-timeline` skill 按歌词来定位,拿不准时会问你。节拍来自 `beat-grid` skill,或来自你给的 BPM、节拍轨或 MIDI 文件。一个工程只有一个速度和一个拍号。
 - **参考对齐已经没有了。** OpenTune 上游已经退役了参考轨和它的 AUTO Ref 按钮。本服务不提供对应的模式(见 [COMPATIBILITY.md](COMPATIBILITY.md#reference-alignment-was-removed))。
