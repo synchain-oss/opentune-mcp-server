@@ -37,7 +37,7 @@ media folder to show up in real results.
   "Not applicable" (no new status or check ID). `docs/TROUBLESHOOTING.md` (both languages) has a section on the
   Gatekeeper block of the first start and the macOS notes of the existing sections; README, `docs/install.md`,
   `docs/features.md` and `docs/COMPATIBILITY.md` name macOS as supported (pre-release). The full tier of CI runs the
-  unit tests and the stdio smoke test on `macos-14` with Node.js 24.
+  unit tests and the stdio smoke test on `macos-15` with Node.js 24.
 
 ### Changed
 

@@ -8,7 +8,7 @@ name: CI
 # 两档：
 # - 完整档：PR → dev / prod；push → dev、feature/**；手动触发（workflow_dispatch，在所选分支上）。
 #   checks（ubuntu × Node 22/24 + windows × Node 24；覆盖率门槛在 ubuntu / Node 24 上强制）、
-#   protocol（ubuntu + windows）、macos（macos-14 × Node 24：单测 + stdio 冒烟）、package、plugin（Claude Code 插件组装与 claude plugin validate、
+#   protocol（ubuntu + windows）、macos（macos-15 × Node 24：单测 + stdio 冒烟）、package、plugin（Claude Code 插件组装与 claude plugin validate、
 #   skills zip、各 skill 自带的 Python 测试）、audit、compliance、docs。release.yml 经 workflow_call
 #   调用本 workflow，跑的也是完整档。
 # - 轻量档：PR → feature/**（子 PR）。单条 ubuntu job：lint、format、typecheck、单测 + 覆盖率、隐私、
@@ -187,9 +187,9 @@ jobs:
   # 启动时间解析、macOS 的启动与 doctor 路径）和 stdio 冒烟（打包后的 bundle 答 initialize 与 tools/list）。
   # 覆盖率门槛与 lint 等不重复（已在 ubuntu / Node 24 上强制）。
   macos:
-    name: macos (macos-14, Node 24)
+    name: macos (macos-15, Node 24)
     if: github.event_name != 'pull_request' || !startsWith(github.base_ref, 'feature/')
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
