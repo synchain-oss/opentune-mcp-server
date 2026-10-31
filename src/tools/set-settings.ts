@@ -104,7 +104,7 @@ const processingSchema = z.strictObject({
     .enum(['gpuFirst', 'cpuFirst'])
     .optional()
     .describe(
-      'gpuFirst tries the GPU, falling back to the CPU without notice; cpuFirst uses the CPU. Applied by a job: the vocoder reloads for seconds and nothing renders again. The result reads the backend in use.',
+      'gpuFirst tries the GPU and falls back to the CPU if it cannot (newer builds warn BACKEND_FALLBACK); cpuFirst uses the CPU. Applied by a job: the vocoder reloads for seconds and nothing renders again. The result reads the backend in use.',
     ),
   f0_model: z.string().min(1).max(64).optional().describe('Pitch model, one of the options of opentune_get_settings.'),
 });

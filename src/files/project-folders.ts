@@ -3,7 +3,7 @@
 
 // The two folders this server keeps next to a project file, and the only file system work it does in
 // them: `<name>.autosave` holds numbered copies of the project that opentune_save_project writes with
-// mode autosave (the newest 50 are kept), and `<name>.oldversion` holds the earlier content of a project
+// mode autosave (the newest 10 are kept), and `<name>.oldversion` holds the earlier content of a project
 // file that a save is about to replace (the newest 10 are kept). `<name>` is the file name without
 // `.otproj`.
 //
@@ -13,9 +13,13 @@
 // delete only a regular file in them whose name matches the pattern of its folder for this project name. Such a
 // file counts as a copy or an old version of this project and can be deleted by the roll, whoever put it there. A
 // directory (a media folder among them), a link, another project's copies and every file with any other name are
-// never touched, whatever else the folder holds. A folder, once made, stays: when the save it was made for is refused,
-// an empty `.oldversion` folder can remain, on purpose, because deleting directories is outside what this module
-// does. The names come from this module, never from a tool argument.
+// never touched, whatever else the folder holds, with one exception: when the roll of the autosave copies deletes a
+// copy, it deletes the media folder of that copy together with it (removeMediaFolder: the regular files in the one
+// folder whose path is computed from the name of the copy, never a pattern, then the folder if it is empty), because
+// OpenTune gives every copy a full set of its audio in a folder of its own and nothing else would ever delete it. A
+// folder, once made, otherwise stays: when the save it was made for is refused, an empty `.oldversion` folder can
+// remain, on purpose, because deleting directories is outside what this module does. The names come from this module,
+// never from a tool argument.
 //
 // The audio of an old version: an old version names its audio relative to the folder it is in, so it finds the
 // audio only in a media folder of the same name inside `<name>.oldversion`. OpenTune names the media folder of a
@@ -39,12 +43,16 @@
 
 import { randomBytes } from 'node:crypto';
 import fs from 'node:fs/promises';
+import path from 'node:path';
 
 import { splitPath } from '../paths/index.js';
 import { extensionOf, pathProblem, systemOf, type PathSystem } from '../paths/validate.js';
 
-/** Autosave copies kept per project; the oldest beyond this are deleted after a new one is written. */
-export const AUTOSAVE_KEEP = 50;
+/**
+ * Autosave copies kept per project; the oldest beyond this are deleted after a new one is written, each together with
+ * the media folder of the copy.
+ */
+export const AUTOSAVE_KEEP = 10;
 /** Old versions kept per project file; the oldest beyond this are deleted after a save. */
 export const OLDVERSION_KEEP = 10;
 
@@ -97,6 +105,12 @@ export interface ProjectFs {
   stat(file: string): Promise<FileStat | null>;
   /** Deletes one file. */
   remove(file: string): Promise<void>;
+  /**
+   * Deletes the media folder of an autosave copy: the regular files directly in it, then the folder itself. Nothing
+   * is done when nothing is at the path or the path is not a folder (a link is not followed and not deleted). Fails
+   * when the folder still holds anything else (a sub-folder or a link) or a file cannot be deleted.
+   */
+  removeMediaFolder(dir: string): Promise<void>;
   /** Whether a regular file exists at the path (links are followed). */
   fileExists(file: string): Promise<boolean>;
   /** Whether two paths name the same existing file (the file system's own identity, not the path text). */
@@ -188,6 +202,21 @@ export const nodeProjectFs: ProjectFs = {
   async remove(file) {
     await fs.unlink(file);
   },
+  async removeMediaFolder(dir) {
+    let stat;
+    try {
+      stat = await fs.lstat(dir);
+    } catch (error) {
+      const code = codeOf(error);
+      if (code === 'ENOENT' || code === 'ENOTDIR') return;
+      throw error;
+    }
+    if (!stat.isDirectory()) return;
+    for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
+      if (entry.isFile()) await fs.unlink(path.join(dir, entry.name));
+    }
+    await fs.rmdir(dir);
+  },
   async fileExists(file) {
     try {
       return (await fs.stat(file)).isFile();
@@ -261,8 +290,12 @@ export class ProjectFolders {
 
   /** The folder where OpenTune puts the audio of the autosave copy with this number: named after the copy, next to it. */
   autosaveMediaDir(number: number): string {
-    const copy = this.autosaveName(number).slice(0, -EXTENSION.length);
-    return `${this.autosaveDir}${this.sep}${copy}${MEDIA_SUFFIX}`;
+    return this.autosaveMediaDirOf(this.autosaveName(number));
+  }
+
+  /** The folder of the audio of the autosave copy with this file name, which must be one of this project's copies. */
+  autosaveMediaDirOf(copyName: string): string {
+    return `${this.autosaveDir}${this.sep}${copyName.slice(0, -EXTENSION.length)}${MEDIA_SUFFIX}`;
   }
 
   autosaveName(number: number): string {
@@ -377,12 +410,33 @@ async function removeAll(ops: ProjectFs, dir: string, sep: string, names: readon
   return { removed, failed };
 }
 
-/** Deletes the autosave copies beyond the newest `keep`. A failure to list or delete is counted, never thrown. */
+/**
+ * Deletes the autosave copies beyond the newest `keep`, each together with its media folder (the folder whose path is
+ * computed from the name of the copy; a copy that could not be deleted keeps its folder, which it still needs). `removed`
+ * counts the copies deleted; a copy or a media folder that could not be deleted is counted in `failed`. A failure to
+ * list or delete is counted, never thrown.
+ */
 export async function rollAutosaves(ops: ProjectFs, folders: ProjectFolders, keep = AUTOSAVE_KEEP): Promise<Rolled> {
   try {
     const entries = await ops.list(folders.autosaveDir);
     if (entries === null) return { removed: 0, failed: 0 };
-    return await removeAll(ops, folders.autosaveDir, folders.sep, autosavesToDelete(folders, entries, keep));
+    let removed = 0;
+    let failed = 0;
+    for (const name of autosavesToDelete(folders, entries, keep)) {
+      try {
+        await ops.remove(`${folders.autosaveDir}${folders.sep}${name}`);
+        removed += 1;
+      } catch {
+        failed += 1;
+        continue;
+      }
+      try {
+        await ops.removeMediaFolder(folders.autosaveMediaDirOf(name));
+      } catch {
+        failed += 1;
+      }
+    }
+    return { removed, failed };
   } catch {
     return { removed: 0, failed: 1 };
   }

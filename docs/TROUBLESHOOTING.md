@@ -292,9 +292,9 @@ version.
 
 ### Doctor OT_MODELS_MISSING
 
-The official installation needs these files, none of them empty: `fcpe.onnx`, and `GAME\bd2dur.onnx`,
-`GAME\dur2bd.onnx`, `GAME\encoder.onnx`, `GAME\estimator.onnx`, `GAME\segmenter.onnx`. OpenTune 1.8 and later keeps
-them in `%ProgramData%\OpenTune\Models`; 1.7.x keeps them in the `models` folder of its install folder. The check only
+The official installation needs this file, not empty: `fcpe.onnx`. (The note segmentation models in the `GAME` folder
+are not checked: the code of OpenTune 1.8.2 does not use them and later official versions do not ship them.) OpenTune 1.8
+and later keeps it in `%ProgramData%\OpenTune\Models`; 1.7.x keeps it in the `models` folder of its install folder. The check only
 looks at existence and size, never at the content. When it fails, the message names the folder it looked in and the
 files that are missing: run the official installer again (or repair the installation) so that it restores the models.
 When the installed version is unknown, both folders are tried and the result is a warning.
@@ -394,25 +394,28 @@ within the call; and the preference itself in the `processing` section of `opent
 ## Autosave copies and old versions
 
 Both folders sit next to the project file and are named after it without `.otproj`. `opentune_save_project` with
-`mode: autosave` writes `<name>.autosave/<name>-autosave-0001.otproj`, `-0002` and so on, and keeps the newest 50; it
+`mode: autosave` writes `<name>.autosave/<name>-autosave-0001.otproj`, `-0002` and so on, and keeps the newest 10; it
 never touches the project file, the unsaved-changes mark or the list of recent projects, and writes only inside `<name>.autosave` (the copy and the
 folder with its audio, `<name>-autosave-0001_Media` and so on: OpenTune names the audio folder of a project file after
 the file, so every copy gets a folder of its own and none can replace the audio of another project). For the same
-reason every copy holds a complete set of the project's audio, and the server does not delete these folders when it
-rolls the older copies away (it never deletes a folder), so the space taken by `<name>.autosave` grows with the
-number of copies; delete the `_Media` folders of copies you no longer need by hand. Every save that replaces a
+reason every copy holds a complete set of the project's audio, so the space taken by `<name>.autosave` is about the
+size of the audio times up to 10; the server deletes the media folder of a copy together with the copy when it rolls the
+copy away (see below). Every save that replaces a
 project file first copies the old file into `<name>.oldversion/<name>-<YYYYMMDD-HHMMSS>.otproj` (local time, `-2`, `-3`
 when the second is taken) and keeps the newest 10; when the newest old version already holds exactly the bytes of the
 file to be replaced (a save right after a save that changed nothing), no new copy is made and the result says so
 (`oldVersion.reused`). The server deletes only regular files in these two folders whose names match these patterns:
-such a file counts as a copy or an old version and is deleted once it is beyond the newest 50 or 10, whoever put it
-there. Folders, links, files with any other name, the media folders (the ones that OpenTune fills inside
-`<name>.autosave`, and the one this server fills inside `<name>.oldversion`, see below) and the files of other projects
-are never touched. If OpenTune refuses the save, or reports that it changed nothing (`executed` is `false`, or the
+such a file counts as a copy or an old version and is deleted once it is beyond the newest 10, whoever put it
+there. When it deletes a copy, it deletes the media folder of that copy too: the one folder whose name is the name of
+the copy without `.otproj` plus `_Media`, and only the regular files directly in it (a sub-folder or a link in it stays,
+and so does the folder then); a copy that could not be deleted keeps its folder. Other folders, links, files with any
+other name, the media folders of the copies that stay, a media folder that belongs to no copy, the media folder this
+server fills inside `<name>.oldversion` (see below) and the files of other projects are never touched. If OpenTune refuses the save, or reports that it changed nothing (`executed` is `false`, or the
 refusal `confirm_required` of a different existing file), the project file is as it was, so the old version that was
 just made is deleted again (an old version that was only reused is never deleted). When the save fails in any other way,
 the old version is kept, because the project file may already have been partly written: it is then the way back. An
-empty `<name>.oldversion` folder can remain after a refused save; the server never deletes folders. To get earlier work
+empty `<name>.oldversion` folder can remain after a refused save; the only folders the server deletes are the media
+folders of the autosave copies it rolls away. To get earlier work
 back, open the wanted file with `opentune_open_project`.
 
 An autosave copy or an old version names its audio relative to the folder it is in, so it finds the audio only in a

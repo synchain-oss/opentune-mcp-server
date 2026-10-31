@@ -97,7 +97,7 @@ claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\
 5. **「用伴奏 WAV 帮我确定这首歌的调,再按这个调自动修音。」** agent 调用 `opentune_estimate_key`,传入 `mix_path`(`.wav` 文件的绝对路径),也可以再给出人声片段 `clip`。结果列出最可能的几个调及其置信度,并说明相对大小调(音阶相同)分不开的情况,给出 `recommendation.key`,agent 再把它传给 `opentune_autotune_range`。估计本身不会改动任何内容。
 6. **「把第二段人声往后挪 0.5 秒,并加个淡入。」** agent 调用 `opentune_get_project`(各片段的时间线起点,以及 `arrangement_revision`),先用 `opentune_edit_arrangement` 加 `dry_run` 预览,再在一次调用里发出 `move`(新的 `start_timeline_sec`:当前起点加 0.5)和 `fade`(`fade_in_sec`),这是一个撤销步骤。这移动的是片段在时间线上的位置,不会拉伸片段里的音频(那是 `opentune_edit_timing` 的事)。OpenTune 没有段落标记,所以 agent 会用起始时间说明它指的是哪个片段,有两个都像时会来问你。
 7. **「把伴奏轨静音,我想听听人声。」** agent 用 `opentune_get_project` 读出各轨道,用 `opentune_set_tracks`(操作 `mute`)把伴奏轨静音,你要求的话再用 `opentune_transport`(动作 `play`)开始播放。轨道名是数据:不确定哪条是伴奏轨时,agent 会来问你。静音在 OpenTune 里没有撤销条目(和窗口里一样);结果会给出取消静音的调用,所以用完请让它把这条轨道的静音取消。播放从你电脑的音频设备出声,agent 听不到,听感要你自己判断。
-8. **「另存为新工程 `C:\Music\take1-v2.otproj`。」** agent 用模式 `save_as` 和这个路径调用 `opentune_save_project`,新文件成为当前工程文件。它不会替换另一个已有文件:要替换就得用 `opentune_save_project_overwrite`,而它会先征得你的明确同意。OpenTune 没有自动保存,所以 agent 会在每一步之后写一个自动副本(模式 `autosave`:在工程文件旁的 `<工程名>.autosave` 文件夹里写一个带编号的副本,保留最新的 50 个,不动你的工程文件),只在你要求或同意时才覆盖工程文件;被覆盖的文件会存进 `<工程名>.oldversion`(保留最新的 10 个)。撤销历史不会存进工程文件。
+8. **「另存为新工程 `C:\Music\take1-v2.otproj`。」** agent 用模式 `save_as` 和这个路径调用 `opentune_save_project`,新文件成为当前工程文件。它不会替换另一个已有文件:要替换就得用 `opentune_save_project_overwrite`,而它会先征得你的明确同意。OpenTune 没有自动保存,所以 agent 会在每一步之后写一个自动副本(模式 `autosave`:在工程文件旁的 `<工程名>.autosave` 文件夹里写一个带编号的副本,保留最新的 10 个,不动你的工程文件),只在你要求或同意时才覆盖工程文件;被覆盖的文件会存进 `<工程名>.oldversion`(保留最新的 10 个)。撤销历史不会存进工程文件。
 
 ## 与 DAW 配合使用
 
@@ -225,7 +225,7 @@ opentune-mcp  (本仓库,Node.js,MIT)
 
 - **混合模式与小幅修正。** OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 Hybrid Mode: Small corrections use DSP, large corrections use vocoder)默认开启。修正量中小于 75 音分的部分走 DSP 移调而不是声码器,这是 OpenTune 自身的设计,在真实人声上这种小修正可能几乎听不出来。想让小修正也明显生效,请在 OpenTune 首选项里关闭该项,或让 agent 用 `opentune_set_settings`(`processing.hybrid_mode`)来关;它是 OpenTune 的全局设置而不是工程设置,关掉之后一直保持关闭,直到有人再把它打开。见[混合模式](docs/TROUBLESHOOTING.zh-CN.md#hybrid-mode)。
 - **有些修改不能撤销。** 导入音频、改片段的调性和时间网格的 `seed` 不能撤销。拆分、合并、删除片段也不能撤销,这是 OpenTune 的缺陷(它释放了自己的撤销条目还要用的对象);复制片段和删除轨道同样不能撤销。静音、独奏、音量、颜色、速度、拍号和全局设置在 OpenTune 里没有撤销条目。结果会在第一句话里写明,破坏性的操作 agent 会先问你,有办法还原时结果还会给出恢复原状的调用。
-- **OpenTune 自己没有自动保存。** OpenTune 不会自己保存,撤销历史也不会存进工程文件。所以 agent 会在每一步之后写一个工程的自动副本(工程文件旁的 `<工程名>.autosave`,保留最新的 50 个)。副本不会改动你的工程文件,所以 OpenTune 关闭或崩溃时副本里的内容还在,但工程文件只在你要求或同意时才更新。规范 `1.0.0-rc.8` 之前的测试构建写不了副本:这时请在想保住成果时让 agent 保存。
+- **OpenTune 自己没有自动保存。** OpenTune 不会自己保存,撤销历史也不会存进工程文件。所以 agent 会在每一步之后写一个工程的自动副本(工程文件旁的 `<工程名>.autosave`,保留最新的 10 个)。副本不会改动你的工程文件,所以 OpenTune 关闭或崩溃时副本里的内容还在,但工程文件只在你要求或同意时才更新。规范 `1.0.0-rc.8` 之前的测试构建写不了副本:这时请在想保住成果时让 agent 保存。
 - **`RUNNING_WITHOUT_API` 只做了人工核对。** 「运行着没开控制接口的官方 OpenTune」这一状态是人工验证的,没有自动化测试。
 - **源目录只读。** 不给 `path` 的导出会写在源文件旁。该目录只读时导出会报错,不会自动换目录。请指定一个可写的 `path`。
 - **首次启动需要人工操作。** 首次引导对话框需要有人回答一次([首次启动](#首次启动))。

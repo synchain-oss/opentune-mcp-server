@@ -608,7 +608,7 @@ const autosaveFolderFailed = (error: unknown): Outcome => ({
   }),
 });
 
-/** Writes the next numbered copy of the project into <name>.autosave and keeps the newest 50. */
+/** Writes the next numbered copy of the project into <name>.autosave and keeps the newest 10. */
 async function runAutosave(ctx: ToolContext, args: SaveProjectArgs): Promise<Outcome> {
   const tool = SAVE;
   return withInstance(ctx, { instanceId: args.instance_id }, AUTOSAVE_CAPABILITIES, async (session) => {
@@ -716,7 +716,7 @@ async function runAutosave(ctx: ToolContext, args: SaveProjectArgs): Promise<Out
           `${tool}: wrote autosave copy ${String(number)} (path in autosave.path); the project file was not changed` +
           `${unsaved}.${rolledSentence(rolled, AUTOSAVE_KEEP, 'copy', 'copies')}${missing}` +
           ' OpenTune also copies the audio the project uses into a folder of its own for this copy (mediaFolder); this ' +
-          'server does not delete that folder when it rolls older copies away.',
+          'server deletes that folder together with the copy when it rolls the copy away.',
         job: jobRef(job),
         autosave: {
           ...copy,
@@ -878,7 +878,7 @@ export const saveProjectTool = defineTool({
   title: 'Save OpenTune project',
   description:
     'OpenTune (audio vocal pitch editor): saves the project. mode autosave writes a numbered copy into ' +
-    '<name>.autosave next to the project file (newest 50 kept) and writes nothing outside that folder: use it ' +
+    '<name>.autosave next to the project file (newest 10 kept) and writes nothing outside that folder: use it ' +
     'after each step without asking. mode save overwrites the project file; save_as takes an absolute .otproj ' +
     'path and makes it the project file; use both only when the user asks or agrees (the replaced file goes to ' +
     '<name>.oldversion, newest 10). A different existing file is refused: use another path, or ' +

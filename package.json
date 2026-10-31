@@ -79,5 +79,8 @@
     "vite": "8.3.4",
     "vitest": "5.0.3",
     "zod": "4.6.7"
+  },
+  "overrides": {
+    "minimatch": "11.0.3"
   }
 }

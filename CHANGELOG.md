@@ -35,8 +35,22 @@ media folder to show up in real results.
   `project.saveCopy` reports `ALREADY_EXISTS` by looking at the `.otproj` alone. In this server, the old version of a
   project (`<name>.oldversion`) now gets a copy of `<name>_Media` (the `Project_Media` folder of an earlier OpenTune
   is still copied when there is no `<name>_Media`), and the autosave copies get a media folder of their own each
-  (`mediaFolder` in the result). The server never deletes a media folder, so `<name>.autosave` takes more space than
-  before.
+  (`mediaFolder` in the result). Each copy holds a full set of the audio, so `<name>.autosave` takes about the size of
+  the audio times up to 10.
+- `opentune_save_project` with `mode: autosave` keeps the newest 10 copies instead of 50, and when it rolls a copy
+  away it deletes the media folder of that copy with it: the one folder whose path is computed from the name of the
+  copy (`<copy name>_Media`), its regular files and then the folder, never a pattern. A copy that could not be deleted
+  keeps its folder, and a folder that could not be deleted is counted in `couldNotRemove` and never raises an error. The
+  first autosave after the update deletes every copy beyond the newest 10, each with its media folder.
+- The description of the setting `rendering_priority` of `opentune_set_settings` no longer says that the fall back to
+  the CPU happens without notice: a build that implements specification `1.0.0-rc.9` adds the warning
+  `BACKEND_FALLBACK` to the result, and an older build says nothing (`docs/TROUBLESHOOTING.md`).
+- `opentune-mcp doctor` (`OT_MODELS_MISSING`) no longer asks for the five model files in the `GAME` folder of the
+  official installation: the code of OpenTune 1.8.2 does not use them and later official versions do not ship them.
+  `fcpe.onnx` is still required.
+- Build and test setup: the unit project of the tests has a time limit of 60 seconds per test (the golden tests passed
+  the default 5 seconds on a loaded machine), and the build pins `minimatch` to `11.0.3` through `overrides`, which
+  clears the advisory GHSA-g3hv-75wg-m249 that `npm audit` reported for the lint toolchain.
 - The description of an undo entry is the text of the undo menu of OpenTune and follows its language: clients must
   not parse it (specification section 15.1, `edit.getHistory`, `undoable`).
 - An export that finds render work still pending, including blocks waiting for a delayed retry, drains it before it

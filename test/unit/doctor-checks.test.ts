@@ -108,12 +108,28 @@ describe('models check', () => {
 
   it('lists what is missing or empty', async () => {
     const files = modelFiles(shared);
-    Reflect.deleteProperty(files, win.join(shared, 'GAME', 'encoder.onnx'));
     files[win.join(shared, 'fcpe.onnx')] = '';
     const result = await modelsCheck(install('1.8.1'), { env, fs: memoryFs(files) }, true);
     expect(result.status).toBe('fail');
-    expect(result.message).toContain('fcpe.onnx, GAME\\encoder.onnx');
-    expect(result.message).not.toContain('segmenter');
+    expect(result.message).toContain(`${shared} lacks or has empty fcpe.onnx`);
+    // A missing file is listed, too.
+    const missing = await modelsCheck(install('1.8.1'), { env, fs: memoryFs({}) }, true);
+    expect(missing.status).toBe('fail');
+    expect(missing.message).toContain(`${shared} lacks or has empty fcpe.onnx`);
+  });
+
+  it('does not ask for the note segmentation models (the GAME folder): the installation passes without them', async () => {
+    expect(REQUIRED_MODELS.map((parts) => parts.join('\\'))).toEqual(['fcpe.onnx']);
+    const only = memoryFs({ [win.join(shared, 'fcpe.onnx')]: 'weights' });
+    const result = await modelsCheck(install('1.8.1'), { env, fs: only }, true);
+    expect(result.status).toBe('pass');
+    expect(result.message).toContain('fcpe.onnx');
+    // With the GAME files there too, nothing changes.
+    const withGame = memoryFs({
+      [win.join(shared, 'fcpe.onnx')]: 'weights',
+      [win.join(shared, 'GAME', 'encoder.onnx')]: 'weights',
+    });
+    expect((await modelsCheck(install('1.8.1'), { env, fs: withGame }, true)).status).toBe('pass');
   });
 
   it('uses the default program-data folder, tries both folders without a version, and defers otherwise', async () => {
@@ -228,9 +244,9 @@ describe('shadowed models check', () => {
     const complete = await shadowedCheck(exeDir, deps(modelFiles(win.join(exeDir, 'models'))));
     expect(complete.status).toBe('warn');
     expect(complete.message).toContain('holds all required model files');
-    const partial = await shadowedCheck(exeDir, deps({ [win.join(exeDir, 'models', 'fcpe.onnx')]: 'w' }));
+    const partial = await shadowedCheck(exeDir, deps({ [win.join(exeDir, 'models', 'readme.txt')]: 'w' }));
     expect(partial.status).toBe('warn');
-    expect(partial.message).toContain('GAME\\bd2dur.onnx');
+    expect(partial.message).toContain('fcpe.onnx');
     const file = await shadowedCheck(exeDir, deps({ [win.join(exeDir, 'models')]: 'a file' }));
     expect(file.message).toContain('not a folder');
   });

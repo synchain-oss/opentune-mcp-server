@@ -23,7 +23,8 @@ export default defineConfig({
     projects: [
       {
         extends: true,
-        test: { name: 'unit', include: ['test/unit/**/*.test.ts'] },
+        // The golden tests build many scenarios against the mock; on a loaded machine they need more than the default 5 s.
+        test: { name: 'unit', include: ['test/unit/**/*.test.ts'], testTimeout: 60_000 },
       },
       {
         // Runs the built bundle as a child process; the global setup builds it first.
