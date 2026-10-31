@@ -156,6 +156,8 @@ describe('opentune_set_tracks', () => {
     expect(result.summary).toContain('Warnings: IRREVERSIBLE');
     expect(firstSentence(result.summary)).toMatch(/not undoable: OpenTune has no undo for this/);
     expect(firstSentence(result.summary)).not.toContain('not kept in the project');
+    // Showing a track destroys nothing, so the sentence does not call it destructive although nothing can undo it.
+    expect(firstSentence(result.summary)).not.toContain('destructive');
     expect((await project(ctx)).visibleTrackCount).toBe(6);
     // The number of visible tracks is saved with the project, so the project now has unsaved changes.
     expect(body(await getProject(ctx, {})).summary).toContain('with unsaved changes');

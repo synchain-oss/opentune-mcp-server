@@ -67,7 +67,8 @@ media folder to show up in real results.
 - The number of visible tracks is project state, not view state: OpenTune 1.8.2 saves it in the project file and
   restores it when the project is opened. Behaviour change: `opentune_set_tracks` with the op `reveal` (`track.add`)
   now marks the project as changed, cannot be undone (undo reason `no_upstream_undo`, no revert recipe, warning
-  `IRREVERSIBLE`, so the first sentence of the summary says so) and is no longer described as "view state, not saved";
+  `IRREVERSIBLE`; the first sentence of the summary says it cannot be undone but does not call it destructive, because
+  showing a track destroys nothing) and is no longer described as "view state, not saved";
   a client written against the earlier text that relied on the call leaving the project unchanged now sees unsaved
   changes. `track.delete` is no way back: it deletes the clips on the track and one track per request. The warning
   `NOT_SAVED_IN_PROJECT` lists only the undo history and the preferences, so the save tools no longer say that "which

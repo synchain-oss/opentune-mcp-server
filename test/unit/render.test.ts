@@ -212,6 +212,65 @@ describe('summary', () => {
     expect(many.summary).toContain('revealed the hidden tracks 0, 1, 2, 3, 4, 5, 6, 7 and 4 more');
   });
 
+  it('does not call a result destructive when IRREVERSIBLE comes only from showing hidden tracks', () => {
+    const shown = { visible: { before: false, after: true, unit: null } };
+    const track = (trackId: number, fields: Json = shown): Json => ({
+      entity: 'track',
+      ref: { trackId },
+      label: null,
+      fields,
+    });
+    const irreversible = [{ code: 'IRREVERSIBLE', subject: { trackId: 4 }, data: null }];
+    const undo = { undoable: false, reason: 'no_upstream_undo', revert: null };
+
+    // Only tracks that became visible: no "destructive", and the sentence about the missing undo stays.
+    const reveal = render({ changes: [track(4), track(5)], warnings: irreversible, undo });
+    const first = reveal.summary.split('. ')[0] ?? '';
+    expect(first).toBe(
+      'opentune_test: changed 2 tracks (revealed the hidden tracks 4, 5; not undoable: OpenTune has no undo for this; ' +
+        'cannot be restored by any request)',
+    );
+    expect(first).not.toContain('destructive');
+    expect(reveal.summary).toContain('Warnings: IRREVERSIBLE');
+
+    // Another change in the same result, of the same track or of anything else: destructive again.
+    const withColour = render({
+      changes: [track(4, { ...shown, colour: { before: '#000000', after: '#FFFFFF', unit: null } })],
+      warnings: irreversible,
+      undo,
+    });
+    expect(withColour.summary.split('. ')[0]).toContain('(destructive; ');
+    const withOther = render({
+      changes: [track(4), change('placement', { placementId: 'p:01234567:0:1' })],
+      warnings: irreversible,
+      undo,
+    });
+    expect(withOther.summary.split('. ')[0]).toContain('(destructive; ');
+    const hidden = render({
+      changes: [track(4, { visible: { before: true, after: false, unit: null } })],
+      warnings: irreversible,
+      undo,
+    });
+    expect(hidden.summary.split('. ')[0]).toContain('(destructive; ');
+
+    // The other warnings and removed entities still make a result destructive, with or without shown tracks.
+    for (const code of ['UPSTREAM_UNDO_DEFECT', 'OVERWROTE_OTHER_PROJECT']) {
+      const other = render({
+        changes: [track(4)],
+        warnings: [...irreversible, { code, subject: null, data: null }],
+        undo,
+      });
+      expect(other.summary.split('. ')[0], code).toContain('(destructive; ');
+    }
+    const removing = render({
+      changes: [track(4)],
+      removed: [change('placement', { placementId: 'p:01234567:0:1' })],
+      warnings: irreversible,
+      undo,
+    });
+    expect(removing.summary.split('. ')[0]).toContain('(destructive; ');
+  });
+
   it('reports a noOp as a success, with the dirty mark when it changed', () => {
     const noOp = { undoable: false, reason: 'no_op', revert: null };
     expect(render({ noOp: true, undo: noOp, dirty: { before: true, after: true } }).summary).toBe(

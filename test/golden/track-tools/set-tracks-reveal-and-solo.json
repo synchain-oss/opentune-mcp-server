@@ -14,11 +14,11 @@
     ]
   },
   "result": {
-    "summary": "opentune_set_tracks: 2 requests ran in this order (destructive; revealed the hidden track 4; not undoable: OpenTune has no undo for this; cannot be restored by any request; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line), reported separately in results. 1. changed 1 track. Warnings: IRREVERSIBLE. 2. changed 4 tracks.",
+    "summary": "opentune_set_tracks: 2 requests ran in this order (revealed the hidden track 4; not undoable: OpenTune has no undo for this; cannot be restored by any request; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line), reported separately in results. 1. changed 1 track. Warnings: IRREVERSIBLE. 2. changed 4 tracks.",
     "results": [
       {
         "method": "track.add",
-        "summary": "opentune_set_tracks: changed 1 track (destructive; revealed the hidden track 4; not undoable: OpenTune has no undo for this; cannot be restored by any request). Warnings: IRREVERSIBLE.",
+        "summary": "opentune_set_tracks: changed 1 track (revealed the hidden track 4; not undoable: OpenTune has no undo for this; cannot be restored by any request). Warnings: IRREVERSIBLE.",
         "applied": true,
         "noOp": false,
         "dryRun": false,
