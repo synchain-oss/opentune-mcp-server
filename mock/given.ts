@@ -63,6 +63,8 @@ export interface GivenState {
   readonly audio?: {
     readonly running: boolean;
     readonly failsToOpen?: boolean;
+    /** Restoring the sample rate of an ASIO device before a switch of the device type or the output device fails. */
+    readonly asioRateRestoreFails?: boolean;
     /** The machine also offers another device type and another output device; their names are bound. */
     readonly alternatives?: boolean;
   };
@@ -75,6 +77,8 @@ export interface GivenState {
    * the vector that depends on it runs.
    */
   readonly keyboardFocus?: 'tempoField';
+  /** Whether OpenTune can create its inference session on the GPU (World.gpuAvailable). */
+  readonly gpu?: 'available' | 'unavailable';
   readonly preferences?: {
     readonly tuningHz?: number;
     readonly hybridMode?: boolean;
@@ -110,6 +114,7 @@ export const WORLD_GIVEN_MEMBERS = [
   'dialogs',
   'onboarding',
   'keyboardFocus',
+  'gpu',
   'preferences',
   'projectFile',
 ] as const;
@@ -301,6 +306,7 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
   if (given.audio !== undefined) {
     world.audio.running = given.audio.running;
     world.audio.failsToOpen = given.audio.failsToOpen === true;
+    world.audio.asioRateRestoreFails = given.audio.asioRateRestoreFails === true;
     world.transport.audioDeviceRunning = given.audio.running;
     if (given.audio.alternatives === true) {
       if (!given.audio.running) throw new Error('given.audio.alternatives needs running');
@@ -324,6 +330,7 @@ export function applyGiven(world: World, files: WorkFiles, given: GivenState): R
       given.dialogs.map((d) => ({ kind: d.kind, trackId: d.trackId ?? null, colour: d.colour ?? null })),
     );
   }
+  if (given.gpu !== undefined) world.gpuAvailable = given.gpu === 'available';
   if (given.onboarding !== undefined) {
     world.prefs.onboardingShown = given.onboarding === 'shown';
     world.onboardingShowing = given.onboarding === 'showing';

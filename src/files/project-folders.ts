@@ -9,25 +9,29 @@
 //
 // The path policy of these operations: they run only on a project file whose path passed the rules of
 // spec/otcp/v1/PROTOCOL.md section 20.1, they create at most the two folders directly below that file's
-// directory (and `Project_Media` inside `.oldversion`, see below), they write only files inside them, and they
+// directory (and a media folder inside `.oldversion`, see below), they write only files inside them, and they
 // delete only a regular file in them whose name matches the pattern of its folder for this project name. Such a
 // file counts as a copy or an old version of this project and can be deleted by the roll, whoever put it there. A
-// directory, a link, `Project_Media`, another project's copies and every file with any other name are never
-// touched, whatever else the folder holds. A folder, once made, stays: when the save it was made for is refused,
+// directory (a media folder among them), a link, another project's copies and every file with any other name are
+// never touched, whatever else the folder holds. A folder, once made, stays: when the save it was made for is refused,
 // an empty `.oldversion` folder can remain, on purpose, because deleting directories is outside what this module
 // does. The names come from this module, never from a tool argument.
 //
 // The audio of an old version: an old version names its audio relative to the folder it is in, so it finds the
-// audio only in `<name>.oldversion/Project_Media`. Whenever an old version is made (or reused), the regular files
-// of the `Project_Media` folder next to the project file that is being copied are copied there, by the rules of
-// OpenTune's own copy of its audio: a file is written only when it is missing there or older than its source,
-// never deleted, never overwritten when newer, and links and sub-folders are not followed. Which files a project
-// file uses can only be told by reading the project file, and this module does not depend on the structure of
-// OpenTune's files, so it copies the whole folder. That folder is shared by every project file in the same directory:
-// the audio of the other projects in it is copied too, and every project file has an oldversion folder of its own, so
-// the space taken grows with the number of project files in one directory (one folder per project avoids that). The
-// roll of the old versions never touches that folder, so it only grows. The only file there that is ever deleted
-// is the part of a copy that failed while this attempt wrote it.
+// audio only in a media folder of the same name inside `<name>.oldversion`. OpenTune names the media folder of a
+// project file after it, `<name>_Media`, next to the file (specification 1.0.0-rc.9). A project file that an earlier
+// OpenTune saved names its audio in a folder `Project_Media` that every project file of the directory shared. So
+// whenever an old version is made (or reused), the regular files of the media folder next to the project file that
+// is being copied are copied into the folder of the same name inside `<name>.oldversion`: `<name>_Media` when it
+// exists, else `Project_Media`. A file is written only when it is missing there or older than its source, never
+// deleted, never overwritten when newer, and links and sub-folders are not followed. Which files a project file
+// uses can only be told by reading the project file, and this module does not depend on the structure of
+// OpenTune's files, so it copies the whole folder. A `<name>_Media` folder holds the audio of this project file
+// only; the folder `Project_Media` is shared by every project file in the same directory, so the audio of the other
+// projects in it is copied too, and every project file has an oldversion folder of its own, so the space taken grows
+// with the number of project files in one directory. The roll of the old versions never touches these folders, so
+// they only grow. The only file there that is ever deleted is the part of a copy that failed while this attempt
+// wrote it.
 //
 // The copy has a time budget (MEDIA_COPY_BUDGET_MS), checked between files: when it is used up, the files that are
 // left are not copied and are reported as not copied (`timedOut`); the next save copies them, because only files that
@@ -45,8 +49,23 @@ export const AUTOSAVE_KEEP = 50;
 export const OLDVERSION_KEEP = 10;
 
 const EXTENSION = '.otproj';
-/** The folder of the audio of a project, next to the project file; OpenTune makes it, and so does this module. */
-const MEDIA_FOLDER = 'Project_Media';
+/**
+ * The folder of the audio of a project file written by an earlier OpenTune, next to the project file and shared by
+ * every project file of the directory; OpenTune makes it, and so does this module (inside the oldversion folder).
+ */
+const LEGACY_MEDIA_FOLDER = 'Project_Media';
+/** The suffix of the folder of the audio of a project file: `<name>_Media`, named after the project file. */
+const MEDIA_SUFFIX = '_Media';
+
+/** A folder of the audio of a project file next to it, and the folder of the same name inside the oldversion folder. */
+export interface MediaFolder {
+  /** The name of the folder (the same on both sides). */
+  readonly name: string;
+  /** The folder next to the project file, where the project file finds its audio. */
+  readonly dir: string;
+  /** The folder where an old version finds its audio: its path is relative to the oldversion folder. */
+  readonly oldversionDir: string;
+}
 
 /** An entry of a directory: its name and whether it is a regular file (not a directory or a link). */
 export interface FolderEntry {
@@ -222,13 +241,28 @@ export class ProjectFolders {
   }
 
   /** The folder with the audio of the project file, next to it: where the project file finds its audio. */
-  get mediaDir(): string {
-    return `${this.dir}${this.sep}${MEDIA_FOLDER}`;
+  get media(): MediaFolder {
+    return this.mediaFolder(`${this.stem}${MEDIA_SUFFIX}`);
   }
 
-  /** The folder where an old version finds its audio: its path is relative to the oldversion folder. */
-  get oldversionMediaDir(): string {
-    return `${this.oldversionDir}${this.sep}${MEDIA_FOLDER}`;
+  /** The folder `Project_Media` of an earlier OpenTune, shared by the project files of the directory. */
+  get legacyMedia(): MediaFolder {
+    return this.mediaFolder(LEGACY_MEDIA_FOLDER);
+  }
+
+  private mediaFolder(name: string): MediaFolder {
+    return {
+      name,
+      dir: `${this.dir}${this.sep}${name}`,
+      // The path of an old version's audio is relative to the folder the old version is in.
+      oldversionDir: `${this.oldversionDir}${this.sep}${name}`,
+    };
+  }
+
+  /** The folder where OpenTune puts the audio of the autosave copy with this number: named after the copy, next to it. */
+  autosaveMediaDir(number: number): string {
+    const copy = this.autosaveName(number).slice(0, -EXTENSION.length);
+    return `${this.autosaveDir}${this.sep}${copy}${MEDIA_SUFFIX}`;
   }
 
   autosaveName(number: number): string {
@@ -371,12 +405,12 @@ export async function rollOldVersions(
 
 /** What became of the audio of the project file that an old version was made of. */
 export interface MediaCopy {
-  /** Files written into the `Project_Media` folder of the oldversion folder: new there, or replacing an older one. */
+  /** Files written into the media folder of the oldversion folder: new there, or replacing an older one. */
   readonly copied: number;
   /**
    * Paths, relative to the project file's folder and written with `/`, of the files that should have been copied and
-   * were not (`Project_Media/<file name>`), or `Project_Media` itself when the folder could not be read or the
-   * folder for the copies could not be made. At most MAX_MEDIA_NAMED are listed. The files that were left when the
+   * were not (`<media folder>/<file name>`), or the name of the media folder itself when the folder could not be read
+   * or the folder for the copies could not be made. At most MAX_MEDIA_NAMED are listed. The files that were left when the
    * time budget ran out are among them.
    */
   readonly notCopied: readonly string[];
@@ -447,8 +481,8 @@ async function sameAsNewest(ops: ProjectFs, folders: ProjectFolders): Promise<Ol
   }
 }
 
-/** `Project_Media/<name>`: how a file of the media folder is named in a result, whatever the path separator. */
-const mediaLabel = (name: string): string => `${MEDIA_FOLDER}/${name}`;
+/** `<media folder>/<name>`: how a file of the media folder is named in a result, whatever the path separator. */
+const mediaLabel = (folder: MediaFolder, name: string): string => `${folder.name}/${name}`;
 
 type MediaStep = 'copied' | 'kept' | 'failed';
 
@@ -489,9 +523,10 @@ async function copyOneMedia(ops: ProjectFs, from: string, to: string): Promise<M
 }
 
 /**
- * Copies the audio of the project file into `<name>.oldversion/Project_Media`, where an old version looks for it: the
- * regular files of the `Project_Media` folder next to the project file, none of its sub-folders and no link. It does
- * nothing, and reports nothing, when that folder does not exist (a project that never had audio). It never deletes
+ * Copies the audio of the project file into the media folder inside `<name>.oldversion`, where an old version looks
+ * for it: the regular files of the media folder next to the project file (`<name>_Media`, else the `Project_Media` of
+ * an earlier OpenTune), none of its sub-folders and no link. It does nothing, and reports nothing, when neither
+ * folder exists (a project that never had audio). It never deletes
  * anything, and never throws: the old version of the project file is what a save needs, and a failure here is reported in
  * the result instead (`notCopied`) and does not stop the save. The oldversion folder must exist already.
  *
@@ -514,36 +549,47 @@ export async function copyMediaToOldVersions(
     };
   };
   const started = clock();
-  let names: string[];
-  try {
-    const entries = await ops.list(folders.mediaDir);
-    if (entries === null) return result(0, []);
-    names = entries
-      .filter((entry) => entry.isFile)
-      .map((entry) => entry.name)
-      .sort();
-  } catch {
-    return result(0, [MEDIA_FOLDER]);
+  let folder: MediaFolder | null = null;
+  let names: string[] = [];
+  // The folder named after the project file, else the shared folder of an earlier OpenTune.
+  for (const candidate of [folders.media, folders.legacyMedia]) {
+    try {
+      const entries = await ops.list(candidate.dir);
+      if (entries === null) continue;
+      folder = candidate;
+      names = entries
+        .filter((entry) => entry.isFile)
+        .map((entry) => entry.name)
+        .sort();
+      break;
+    } catch {
+      return result(0, [candidate.name]);
+    }
   }
-  if (names.length === 0) return result(0, []);
+  if (folder === null || names.length === 0) return result(0, []);
+  const found = folder;
   try {
-    await ops.makeDir(folders.oldversionMediaDir);
+    await ops.makeDir(found.oldversionDir);
   } catch {
-    return result(0, [MEDIA_FOLDER]);
+    return result(0, [found.name]);
   }
   let copied = 0;
   const failed: string[] = [];
   for (const [index, name] of names.entries()) {
     const step = await copyOneMedia(
       ops,
-      `${folders.mediaDir}${folders.sep}${name}`,
-      `${folders.oldversionMediaDir}${folders.sep}${name}`,
+      `${found.dir}${folders.sep}${name}`,
+      `${found.oldversionDir}${folders.sep}${name}`,
     );
     if (step === 'copied') copied += 1;
-    else if (step === 'failed') failed.push(mediaLabel(name));
+    else if (step === 'failed') failed.push(mediaLabel(found, name));
     // Out of time: what is left is not tried (the next save does it). Nothing left means nothing timed out.
     if (clock() - started >= MEDIA_COPY_BUDGET_MS) {
-      return result(copied, failed, names.slice(index + 1).map(mediaLabel));
+      return result(
+        copied,
+        failed,
+        names.slice(index + 1).map((left) => mediaLabel(found, left)),
+      );
     }
   }
   return result(copied, failed);

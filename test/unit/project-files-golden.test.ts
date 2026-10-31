@@ -85,7 +85,7 @@ async function scenarios(): Promise<Record<string, Scenario>> {
   const noAudioCopy: ProjectFs = {
     ...nodeProjectFs,
     copyNew: (from, to) =>
-      path.basename(path.dirname(from)) === 'Project_Media'
+      path.basename(path.dirname(from)).endsWith('_Media')
         ? Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }))
         : nodeProjectFs.copyNew(from, to),
   };
@@ -99,7 +99,7 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     ...nodeProjectFs,
     copyNew: async (from, to) => {
       await nodeProjectFs.copyNew(from, to);
-      if (path.basename(path.dirname(from)) === 'Project_Media') late += MEDIA_COPY_BUDGET_MS;
+      if (path.basename(path.dirname(from)).endsWith('_Media')) late += MEDIA_COPY_BUDGET_MS;
     },
   };
   const slow = testContext(t.dir, { now: () => NOW + late, files: slowAudioCopy });
@@ -146,12 +146,13 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     { path: need(ids, 'existing'), confirm: true, wait_seconds: 10 },
   );
   // The project file is now the one that was replaced, and has audio next to it.
-  const media = path.join(path.dirname(need(ids, 'existing')), 'Project_Media');
+  // OpenTune names the media folder of a project file after it.
+  const media = path.join(path.dirname(need(ids, 'existing')), `${path.parse(need(ids, 'existing')).name}_Media`);
   mkdirSync(media);
   writeFileSync(path.join(media, '1.wav'), 'audio');
   await run(
     'save-copies-audio-for-old-version',
-    'A save when the project folder has audio: the old version gets a copy of it in its own Project_Media folder, so it still opens when the original audio is gone.',
+    'A save when the project folder has audio: the old version gets a copy of it in a media folder of the same name inside the oldversion folder, so it still opens when the original audio is gone.',
     'opentune_save_project',
     { mode: 'save', wait_seconds: 10 },
   );
@@ -195,9 +196,9 @@ describe('project save tool result golden snapshots', () => {
 
   it('shows nothing of the machine in the snapshots', async () => {
     const all = JSON.stringify(await scenarios());
-    expect(all).toContain('<tmp-1>/Project_Media');
-    expect(all).toContain('<tmp-2>/Project_Media');
-    expect(all).toContain('.autosave/Project_Media');
+    expect(all).toContain('<tmp-1>/fresh_Media');
+    expect(all).toContain('<tmp-2>/existing_Media');
+    expect(all).toContain('.autosave/fresh-autosave-0001_Media');
     expect(all).toContain('.oldversion/');
     // No backslash of a Windows path (a JSON backslash is two characters), no drive letter, no folder of a user.
     expect(all).not.toContain('\\\\');

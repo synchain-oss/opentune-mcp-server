@@ -204,7 +204,7 @@ export class ProjectService {
    * A copy job: it writes what the project holds now through a temporary file and a rename that never replaces
    * (section 20.4), and changes nothing in the project: the project's file, the unsaved-changes flag, the recent
    * projects and the history stay as they are. The mock's project files name their media by path, so unlike
-   * OpenTune it copies no media into a Project_Media folder.
+   * OpenTune it copies no media into a folder named after the target (<name>_Media).
    */
   #startCopy(target: string) {
     const { world } = this;

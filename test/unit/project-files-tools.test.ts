@@ -66,8 +66,9 @@ const wait = { wait_seconds: 10 };
 
 /** What OpenTune does with the media of the project at every save; a fixed sentence, never built from the result. */
 const MEDIA_COPY =
-  'OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.';
-const mediaFolderOf = (file: string) => path.join(path.dirname(file), 'Project_Media');
+  'OpenTune also copies the audio the project uses into a folder next to the project file, named after it with _Media added.';
+/** The media folder of a project file: named after it, next to it. */
+const mediaFolderOf = (file: string) => path.join(path.dirname(file), `${path.parse(file).name}_Media`);
 const save = (ctx: ToolContext, args: Parameters<typeof saveProject>[1]) => saveProject(ctx, { ...wait, ...args });
 
 describe('opentune_save_project', () => {
@@ -85,7 +86,7 @@ describe('opentune_save_project', () => {
       `from now on it is the project's file. ${MEDIA_COPY} The project is no longer marked as changed`,
     );
     expect(first.mediaFolder).toBe(mediaFolderOf(need(ids, 'fresh')));
-    expect(first.summary).not.toContain('Project_Media/');
+    expect(first.summary).not.toContain('_Media/');
     expect(first.summary).not.toContain(need(ids, 'fresh'));
     // The warnings keep the facts that the protocol states: the write has no undo, and some state is not stored.
     expect((first.warnings as { code: string }[]).map((w) => w.code)).toEqual(['IRREVERSIBLE', 'NOT_SAVED_IN_PROJECT']);
@@ -140,8 +141,8 @@ describe('opentune_save_project', () => {
       });
     }
     // With a folder there is nothing to explain, and the envelope's reasons are left as they are.
-    expect(mediaFolderMembers(rendered, 'C:\\Music\\Project_Media')).toEqual({
-      mediaFolder: 'C:\\Music\\Project_Media',
+    expect(mediaFolderMembers(rendered, 'C:\\Music\\song_Media')).toEqual({
+      mediaFolder: 'C:\\Music\\song_Media',
     });
   });
 

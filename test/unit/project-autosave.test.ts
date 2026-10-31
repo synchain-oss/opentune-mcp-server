@@ -141,10 +141,12 @@ async function setup(options: SetupOptions = {}) {
     autosaveDir: path.join(dir, `${stem}.autosave`),
     oldDir: path.join(dir, `${stem}.oldversion`),
     otherOldDir: path.join(path.dirname(other), `${otherStem}.oldversion`),
-    mediaDir: path.join(dir, 'Project_Media'),
-    oldMediaDir: path.join(dir, `${stem}.oldversion`, 'Project_Media'),
-    otherMediaDir: path.join(path.dirname(other), 'Project_Media'),
-    otherOldMediaDir: path.join(path.dirname(other), `${otherStem}.oldversion`, 'Project_Media'),
+    // OpenTune names the media folder of a project file after it, and an old version finds its audio in the folder of
+    // the same name inside <name>.oldversion.
+    mediaDir: path.join(dir, `${stem}_Media`),
+    oldMediaDir: path.join(dir, `${stem}.oldversion`, `${stem}_Media`),
+    otherMediaDir: path.join(path.dirname(other), `${otherStem}_Media`),
+    otherOldMediaDir: path.join(path.dirname(other), `${otherStem}.oldversion`, `${otherStem}_Media`),
   };
 }
 
@@ -189,7 +191,8 @@ describe('opentune_save_project mode autosave', () => {
       projectDirty: true,
       job: { kind: 'projectCopy', state: 'succeeded' },
       notSavedInProject: ['visibleTrackCount', 'undoHistory', 'preferences'],
-      mediaFolder: path.join(s.autosaveDir, 'Project_Media'),
+      // OpenTune puts the audio of a copy into a folder named after the copy, next to it.
+      mediaFolder: path.join(s.autosaveDir, `${autosaveName(s.stem, 1).replace(/\.otproj$/, '')}_Media`),
     });
     // Nothing of the project changed: the file, the flag, and no old version was made.
     expect(fs.readFileSync(s.proj).equals(before)).toBe(true);

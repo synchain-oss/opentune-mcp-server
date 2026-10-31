@@ -6,7 +6,7 @@
     "wait_seconds": 10
   },
   "result": {
-    "summary": "opentune_save_project: wrote autosave copy 1 (path in autosave.path); the project file was not changed; the project has no unsaved changes. Not stored in the copy: which tracks are shown, the undo and redo history, global preferences. OpenTune also copies the audio the project uses into a Project_Media folder inside the autosave folder.",
+    "summary": "opentune_save_project: wrote autosave copy 1 (path in autosave.path); the project file was not changed; the project has no unsaved changes. Not stored in the copy: which tracks are shown, the undo and redo history, global preferences. OpenTune also copies the audio the project uses into a folder of its own for this copy (mediaFolder); this server does not delete that folder when it rolls older copies away.",
     "applied": false,
     "noOp": false,
     "dryRun": false,
@@ -65,6 +65,6 @@
       "undoHistory",
       "preferences"
     ],
-    "mediaFolder": "<tmp-1>/fresh.autosave/Project_Media"
+    "mediaFolder": "<tmp-1>/fresh.autosave/fresh-autosave-0001_Media"
   }
 }

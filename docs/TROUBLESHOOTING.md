@@ -355,7 +355,10 @@ reason `capability_missing`, which does not mean that no dialog is open.
 
 `opentune_get_settings` (section `processing`) shows the rendering priority and the backend OpenTune uses now
 (`processing.backend`). With `gpuFirst` OpenTune tries the GPU each time the vocoder loads and falls back to the CPU
-without a word when that fails, so the GPU is not guaranteed. When the priority is `gpuFirst`, the backend is `cpu` and
+when that fails, so the GPU is not guaranteed. An OpenTune that implements specification 1.0.0-rc.9 says so when it
+happens right after a change: the result of a `prefs.set` call that changed the priority to `gpuFirst` and ended with
+the backend `cpu` carries the warning `BACKEND_FALLBACK` (`data`: `requested`, `actual`), which
+`opentune_set_settings` passes on. An older OpenTune says nothing. When the priority is `gpuFirst`, the backend is `cpu` and
 the vocoder is loaded (`processing.vocoderReady` is true), the summary says so; a vocoder that is not loaded can still
 report the backend from before, so nothing is concluded from it. To see why, read the log: `opentune_get_settings` with
 sections `["log"]` and `log_lines` 30 shows
@@ -393,14 +396,17 @@ within the call; and the preference itself in the `processing` section of `opent
 Both folders sit next to the project file and are named after it without `.otproj`. `opentune_save_project` with
 `mode: autosave` writes `<name>.autosave/<name>-autosave-0001.otproj`, `-0002` and so on, and keeps the newest 50; it
 never touches the project file, the unsaved-changes mark or the list of recent projects, and writes only inside `<name>.autosave` (the copy and the
-`Project_Media` folder with its audio: OpenTune replaces an older audio file of the same name in such a folder, which is
-why the copies get a folder of their own and cannot replace the audio of another project). Every save that replaces a
+folder with its audio, `<name>-autosave-0001_Media` and so on: OpenTune names the audio folder of a project file after
+the file, so every copy gets a folder of its own and none can replace the audio of another project). For the same
+reason every copy holds a complete set of the project's audio, and the server does not delete these folders when it
+rolls the older copies away (it never deletes a folder), so the space taken by `<name>.autosave` grows with the
+number of copies; delete the `_Media` folders of copies you no longer need by hand. Every save that replaces a
 project file first copies the old file into `<name>.oldversion/<name>-<YYYYMMDD-HHMMSS>.otproj` (local time, `-2`, `-3`
 when the second is taken) and keeps the newest 10; when the newest old version already holds exactly the bytes of the
 file to be replaced (a save right after a save that changed nothing), no new copy is made and the result says so
 (`oldVersion.reused`). The server deletes only regular files in these two folders whose names match these patterns:
 such a file counts as a copy or an old version and is deleted once it is beyond the newest 50 or 10, whoever put it
-there. Folders, links, files with any other name, the `Project_Media` folders (the one that OpenTune fills inside
+there. Folders, links, files with any other name, the media folders (the ones that OpenTune fills inside
 `<name>.autosave`, and the one this server fills inside `<name>.oldversion`, see below) and the files of other projects
 are never touched. If OpenTune refuses the save, or reports that it changed nothing (`executed` is `false`, or the
 refusal `confirm_required` of a different existing file), the project file is as it was, so the old version that was
@@ -409,23 +415,26 @@ the old version is kept, because the project file may already have been partly w
 empty `<name>.oldversion` folder can remain after a refused save; the server never deletes folders. To get earlier work
 back, open the wanted file with `opentune_open_project`.
 
-An autosave copy or an old version names its audio relative to the folder it is in, so it finds the audio only in the
-`Project_Media` folder inside its own folder. A copy in `<name>.autosave` has one, which OpenTune fills. For an old
+An autosave copy or an old version names its audio relative to the folder it is in, so it finds the audio only in a
+media folder inside its own folder. A copy in `<name>.autosave` has one, which OpenTune fills. For an old
 version, the server fills it: whenever an old version is made (or an existing one is reused), and before the save runs,
-it copies the regular files of the `Project_Media` folder next to the file being replaced into
-`<name>.oldversion/Project_Media`. It follows OpenTune's own rule for that folder: a file is copied only when it is
-missing there or older than its source; a newer file is never overwritten, nothing is deleted, and links and
-sub-folders are skipped. With the audio there, an old version still opens after the original audio files (for example in
-a downloads folder) were deleted. If the file being replaced has no `Project_Media` folder, nothing is done.
+it copies the regular files of the media folder next to the file being replaced into the folder of the same name inside
+`<name>.oldversion`. OpenTune names the media folder of a project file after it, `<name>_Media`. A project file that an
+earlier OpenTune saved names its audio in a shared folder `Project_Media` instead; where there is no `<name>_Media`
+folder, the server copies that one, into `<name>.oldversion/Project_Media`. The rule of the server is: a file is copied
+only when it is missing there or older than its source; a newer file is never overwritten, nothing is deleted, and links
+and sub-folders are skipped. With the audio there, an old version still opens after the original audio files (for
+example in a downloads folder) were deleted. If the file being replaced has no media folder, nothing is done.
 
-What is copied is the whole `Project_Media` folder, not only the audio that this project uses: telling which files a
-project uses would mean reading the project file, which this server does not do. That folder is shared by all the
-project files in the same directory, so the audio of the other projects there is copied too, and each project file has
-an `<name>.oldversion/Project_Media` of its own: with several project files in one directory, the space taken multiplies
-by their number. Keep one project per folder to avoid that. The rolling of old versions never touches this folder, so it
-only grows, and it can hold audio of other projects; delete it by hand if the old versions are no longer needed. As in
-the `Project_Media` folder next to the project, a file there is replaced by a newer source file of the same name, so an
-older old version then finds the newer audio under that name.
+What is copied is the whole media folder, not only the audio that this project uses: telling which files a
+project uses would mean reading the project file, which this server does not do. A `<name>_Media` folder holds the audio
+of its project file alone, so nothing of other projects comes along. The `Project_Media` folder of an earlier OpenTune
+is shared by all the project files in the same directory, so the audio of the other projects there is copied too, and
+each project file has an `<name>.oldversion/Project_Media` of its own: with several project files in one directory, the
+space taken multiplies by their number. Keep one project per folder to avoid that. The rolling of old versions never
+touches the media folder there, so it only grows; delete it by hand if the old versions are no longer needed. A file
+there is replaced by a newer source file of the same name, so an older old version then finds the newer audio under that
+name.
 
 The copy has a time limit of 15 seconds, so that the first save of a project with a lot of audio does not hold the save
 up. The time is checked between files, so a single very large file can still take longer. When the limit is reached, the
@@ -439,7 +448,7 @@ If some audio could not be copied (a full or read-only disk, or a file that is i
 `oldVersion.media.timedOut` is `false` unless the time ran out as well. The result then carries a warning line (code
 `OLD_VERSION_MEDIA_NOT_COPIED`, `source: server`; it is the same line for a failure and for the time limit, with one
 sentence for each) and a sentence in the summary, and `oldVersion.media.notCopied` lists the files (paths such as
-`Project_Media/1.wav`; `Project_Media` itself when the whole folder could not be read or made; `notCopiedCount` has the
+`<name>_Media/1.wav`; the name of the media folder itself when the whole folder could not be read or made; `notCopiedCount` has the
 full count). That old version may not find its audio once the original audio files are gone. Fix the cause (free space,
 close the program that holds the file) and save again: the missing files are copied then. `oldVersion.media.copied`
 counts the files that were copied by this save.

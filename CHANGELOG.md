@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The OTCP protocol specification in `spec/otcp/v1/` is
 versioned separately and has its own changelog.
 
+## [Unreleased]
+
+The OTCP specification in `spec/otcp/v1/` is now `1.0.0-rc.9`. The server in this repository does not change what it
+sends to OpenTune; the specification, its mock and the text of the results do. A test build that implements `rc.9`
+(the fork has to follow; see `docs/contract-changes/20261031-spec-rc9.md`) is needed for the new warnings and the new
+media folder to show up in real results.
+
+### Added
+
+- Two warnings, with a mock that produces them, rendering templates and golden files. `BACKEND_FALLBACK` (`data`:
+  `requested`, `actual`) is carried by the job result of `prefs.set` when the call changed the rendering priority to
+  `gpuFirst` and the backend in use is `cpu`. `ASIO_RATE_NOT_RESTORED` (subject `{"singleton":"audioDevice"}`, `data`:
+  `deviceName`, `sampleRateHz`) is carried by `audio.set` when the device type or the output device changed to ASIO and
+  OpenTune could not put the previous sample rate back: the switch goes on, and the warning tells the user to check the
+  rate in the driver. The rendering text of the server is English only; the Chinese wording is in
+  `docs/TROUBLESHOOTING.zh-CN.md`.
+- The specification vectors `audio/set-asio-rate-not-restored`, `audio/set-asio-rate-not-needed`,
+  `prefs/set-rendering-priority-fallback` and `prefs/set-rendering-priority-gpu`, with the vector members
+  `given.gpu` and `given.audio.asioRateRestoreFails`.
+
+### Changed
+
+- The media folder of a project file is `<file name without extension>_Media` beside the target `.otproj`, instead of
+  one `Project_Media` folder that all the project files of a directory shared. OpenTune writes the media files again at
+  every save, through a temporary file, so no file stays half written. Save, Save As and `project.saveCopy` all follow
+  the target path; only a media folder of the same name with no `.otproj` of that name is replaced, and
+  `project.saveCopy` reports `ALREADY_EXISTS` by looking at the `.otproj` alone. In this server, the old version of a
+  project (`<name>.oldversion`) now gets a copy of `<name>_Media` (the `Project_Media` folder of an earlier OpenTune
+  is still copied when there is no `<name>_Media`), and the autosave copies get a media folder of their own each
+  (`mediaFolder` in the result). The server never deletes a media folder, so `<name>.autosave` takes more space than
+  before.
+- The description of an undo entry is the text of the undo menu of OpenTune and follows its language: clients must
+  not parse it (specification section 15.1, `edit.getHistory`, `undoable`).
+- An export that finds render work still pending, including blocks waiting for a delayed retry, drains it before it
+  starts; when that does not finish in time, it fails with the existing `NOT_READY` reason `export_wait_timeout`, which
+  is retryable (specification section 19 rules 6 and 7). No new reason code.
+- `audio.set` does not roll back the switch when the previous ASIO sample rate cannot be restored. The earlier text,
+  which called for `OpenFailed` and a rollback, is gone; `device_open_failed` stays for a device that really cannot be
+  opened.
+- The descriptions of `processing.backend`, `vocoderReady`, `vocoderReconfiguring`, `renderingPriority` and
+  `options.renderingPriority` say what the values mean and when they are read, and the sentence in `prefs.set` that
+  ended in "and never does" is rewritten.
+- `docs/COMPATIBILITY.md` names the specification `1.0.0-rc.9` and lists the test build `synchain-test/v1.8.0-ctl.3`
+  (the same OpenTune and interface as `ctl.2`, with a macOS package added).
+
 ## [0.2.0] - 2026-10-29
 
 The second public version of OpenTune MCP Server (by Synchain), and wave B of the control interface: editing the

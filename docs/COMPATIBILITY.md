@@ -12,7 +12,7 @@ SPDX-License-Identifier: MIT
 | Official OpenTune installation | 1.7.9 or newer                                                                                  | The oldest version supported. The side-car smoke test (the test build started next to an official installation) passes in CI with 1.7.9 in its default folder, 1.8.1 in its default folder and 1.8.1 in a custom folder.                                                                                       |
 | Models                         | From the official installation                                                                  | The test build contains no models and no Direct3D 12 runtime. 1.7.9 must be installed in its default folder, because it keeps its models in its install folder; 1.8.1 keeps them in `%ProgramData%\OpenTune\Models`, so it can be installed anywhere. `opentune-mcp doctor` checks this (`OT_MODELS_MISSING`). |
 | OpenTune build                 | An unofficial test build from [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) | An official OpenTune release has no control API and is reported as `NO_API_BUILD`. The test build has `opentune-control.json` next to `OpenTune.exe`, listing `protocolMajors` 1.                                                                                                                              |
-| OTCP specification             | `1.0.0-rc.8` (wire version `1.0`, protocol major 1)                                             | The specification in `spec/otcp/v1/` of this repository. The test build and this server must both support protocol major 1; otherwise the status is `PROTOCOL_MISMATCH`.                                                                                                                                       |
+| OTCP specification             | `1.0.0-rc.9` (wire version `1.0`, protocol major 1)                                             | The specification in `spec/otcp/v1/` of this repository. The test build and this server must both support protocol major 1; otherwise the status is `PROTOCOL_MISMATCH`.                                                                                                                                       |
 | Node.js                        | 22 or later                                                                                     | Not needed for the MCPB package.                                                                                                                                                                                                                                                                               |
 | Operating system               | Windows x64                                                                                     | macOS: not yet. Linux: not supported. WSL: run the server with Windows Node.js.                                                                                                                                                                                                                                |
 
@@ -21,7 +21,15 @@ The unofficial OpenTune test build that matches each release of this server:
 | Server | OTCP specification | Unofficial OpenTune test build |
 | ------ | ------------------ | ------------------------------ |
 | 0.2.0  | `1.0.0-rc.8`       | `synchain-test/v1.8.0-ctl.2`   |
+| 0.2.0  | `1.0.0-rc.8`       | `synchain-test/v1.8.0-ctl.3`   |
 | 0.1.0  | `1.0.0-rc.3`       | `synchain-test/v1.8.0-ctl.1`   |
+
+`synchain-test/v1.8.0-ctl.3` is the same OpenTune with the same control interface as `ctl.2`; it only adds a macOS
+package, which this server does not use yet (see the operating system above). The specification in this repository is
+now `1.0.0-rc.9` (see [the record of the change](contract-changes/20261031-spec-rc9.md)): the two builds above
+implement `rc.8`, so they do not report the warnings `BACKEND_FALLBACK` and `ASIO_RATE_NOT_RESTORED` and keep the
+media folder `Project_Media`, and this server works with them as before. A test build that implements `rc.9` is not
+listed yet.
 
 ## How long to wait
 

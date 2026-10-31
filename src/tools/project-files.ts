@@ -8,9 +8,10 @@
 // into <name>.autosave next to the project file and never touches the project file, its unsaved-changes
 // flag or the recent-projects list. Replacing the project file (mode save, save_as, the overwrite tool)
 // first copies the old content into <name>.oldversion, together with the audio next to it (all the files of the
-// Project_Media folder next to that file, which every project file of the directory shares, into
-// <name>.oldversion/Project_Media, where an old version looks for its audio; a failure to copy the audio, or the end
-// of the time given to it, does not stop the save and comes back as a warning); replacing another project file and
+// media folder next to that file, <name>_Media, or the Project_Media of an earlier OpenTune that every project file of
+// the directory shares, into the folder of the same name inside <name>.oldversion, where an old version looks for its
+// audio; a failure to copy the audio, or the end of the time given to it, does not stop the save and comes back as a
+// warning); replacing another project file and
 // discarding unsaved changes are separate, explicit steps that need the user's consent. The file system work is in
 // src/files/project-folders.ts. File names and paths come back only as data inside the result, never in the summary.
 
@@ -86,15 +87,15 @@ const NOT_STORED: Readonly<Record<string, string>> = Object.freeze({
 const consentStep = (message: string): NextStep => ({ actor: 'user', message });
 
 /**
- * What OpenTune does at every save, whatever its result says: it first copies the audio the project uses into the
- * folder Project_Media next to the project file (files copied before and unchanged are skipped; an older file of
- * the same name is replaced, which in a folder shared with another OpenTune project can replace that project's audio:
- * OpenTune's own behavior, and the reason autosave copies get a folder of their own). The sentence is fixed and is
- * not built from anything the result holds.
+ * What OpenTune does at every save, whatever its result says: it copies the audio the project uses into a folder next
+ * to the project file that is named after it, the file name without .otproj followed by _Media (specification
+ * 1.0.0-rc.9; a file of the same name in it is always replaced, and no other project file shares the folder). The
+ * sentence is fixed and is not built from anything the result holds.
  */
 const MEDIA_COPY =
-  'OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.';
-const MEDIA_FOLDER = 'Project_Media';
+  'OpenTune also copies the audio the project uses into a folder next to the project file, named after it with _Media added.';
+/** The suffix of the media folder of a project file. */
+const MEDIA_SUFFIX = '_Media';
 
 /**
  * The media folder of a project file this server was told the path of (save_as and overwrite, whose path it checked
@@ -102,8 +103,8 @@ const MEDIA_FOLDER = 'Project_Media';
  */
 function mediaFolderOf(file: string | null, platform: NodeJS.Platform): string | null {
   if (file === null) return null;
-  const { dir, sep } = splitPath(file, systemOf(platform));
-  return `${dir}${sep}${MEDIA_FOLDER}`;
+  const { dir, stem, sep } = splitPath(file, systemOf(platform));
+  return `${dir}${sep}${stem}${MEDIA_SUFFIX}`;
 }
 
 /**
@@ -365,7 +366,7 @@ const MEDIA_NOT_COPIED = 'OLD_VERSION_MEDIA_NOT_COPIED';
 
 /** The sentence of the summary for audio that failed to be copied. Fixed: the names are data in oldVersion.media. */
 const MEDIA_NOT_COPIED_SENTENCE =
-  ' The audio of the replaced project could not be copied completely into the Project_Media folder inside the ' +
+  ' The audio of the replaced project could not be copied completely into the media folder inside the ' +
   'oldversion folder (listed in oldVersion.media.notCopied), so that old version may not find its audio when it is ' +
   'opened after the original audio files are gone.';
 
@@ -377,7 +378,7 @@ const MEDIA_BUDGET_SECONDS = String(MEDIA_COPY_BUDGET_MS / 1000);
  * Unlike a failure, it needs no fix: the next save that replaces this project file copies the rest.
  */
 const MEDIA_TIMED_OUT_SENTENCE =
-  ' Copying the audio of the replaced project into the Project_Media folder inside the oldversion folder stopped ' +
+  ' Copying the audio of the replaced project into the media folder inside the oldversion folder stopped ' +
   `after ${MEDIA_BUDGET_SECONDS} seconds, so that the save is not held up; the files not copied yet are listed in ` +
   'oldVersion.media.notCopied, and that old version may not find all of its audio when it is opened after the ' +
   'original audio files are gone. The next save that replaces this project file copies the rest.';
@@ -402,12 +403,12 @@ const mediaSentence = (backup: OldVersion | null): string =>
 
 /** The text of the warning line for audio that failed to be copied. */
 const MEDIA_WARNING_FAILED =
-  'The audio of the replaced project was not copied completely into the Project_Media folder inside the oldversion ' +
+  'The audio of the replaced project was not copied completely into the media folder inside the oldversion ' +
   'folder, so that old version may not find its audio when it is opened after the original audio files are gone (the ' +
   'files are in data.notCopied).';
 /** The text of the warning line for audio that was left when the time ran out. */
 const MEDIA_WARNING_TIMED_OUT =
-  'Copying the audio of the replaced project into the Project_Media folder inside the oldversion folder stopped ' +
+  'Copying the audio of the replaced project into the media folder inside the oldversion folder stopped ' +
   `after ${MEDIA_BUDGET_SECONDS} seconds, so that the save is not held up (the files not copied yet are in ` +
   'data.notCopied), and that old version may not find all of its audio when it is opened after the original audio ' +
   'files are gone. The next save that replaces this project file copies the rest.';
@@ -714,7 +715,8 @@ async function runAutosave(ctx: ToolContext, args: SaveProjectArgs): Promise<Out
         summary:
           `${tool}: wrote autosave copy ${String(number)} (path in autosave.path); the project file was not changed` +
           `${unsaved}.${rolledSentence(rolled, AUTOSAVE_KEEP, 'copy', 'copies')}${missing}` +
-          ' OpenTune also copies the audio the project uses into a Project_Media folder inside the autosave folder.',
+          ' OpenTune also copies the audio the project uses into a folder of its own for this copy (mediaFolder); this ' +
+          'server does not delete that folder when it rolls older copies away.',
         job: jobRef(job),
         autosave: {
           ...copy,
@@ -725,7 +727,7 @@ async function runAutosave(ctx: ToolContext, args: SaveProjectArgs): Promise<Out
         projectPath: typeof result.projectPath === 'string' ? result.projectPath : null,
         projectDirty: typeof dirty === 'boolean' ? dirty : null,
         notSavedInProject: stored.names,
-        mediaFolder: `${folders.autosaveDir}${folders.sep}${MEDIA_FOLDER}`,
+        mediaFolder: folders.autosaveMediaDir(number),
         ...(Object.keys(reasons).length === 0 ? {} : { nullReasons: reasons }),
       },
     } satisfies Outcome;

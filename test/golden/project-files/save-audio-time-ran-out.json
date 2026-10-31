@@ -6,7 +6,7 @@
     "wait_seconds": 10
   },
   "result": {
-    "summary": "opentune_save_project: saved the project to its file (path in path), replacing its previous content; a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. The newest old version already held exactly this content, so no new copy was made. Copying the audio of the replaced project into the Project_Media folder inside the oldversion folder stopped after 15 seconds, so that the save is not held up; the files not copied yet are listed in oldVersion.media.notCopied, and that old version may not find all of its audio when it is opened after the original audio files are gone. The next save that replaces this project file copies the rest. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences. OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.",
+    "summary": "opentune_save_project: saved the project to its file (path in path), replacing its previous content; a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. The newest old version already held exactly this content, so no new copy was made. Copying the audio of the replaced project into the media folder inside the oldversion folder stopped after 15 seconds, so that the save is not held up; the files not copied yet are listed in oldVersion.media.notCopied, and that old version may not find all of its audio when it is opened after the original audio files are gone. The next save that replaces this project file copies the rest. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences. OpenTune also copies the audio the project uses into a folder next to the project file, named after it with _Media added.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -48,11 +48,11 @@
         "kind": "warning",
         "code": "OLD_VERSION_MEDIA_NOT_COPIED",
         "source": "server",
-        "text": "Copying the audio of the replaced project into the Project_Media folder inside the oldversion folder stopped after 15 seconds, so that the save is not held up (the files not copied yet are in data.notCopied), and that old version may not find all of its audio when it is opened after the original audio files are gone. The next save that replaces this project file copies the rest.",
+        "text": "Copying the audio of the replaced project into the media folder inside the oldversion folder stopped after 15 seconds, so that the save is not held up (the files not copied yet are in data.notCopied), and that old version may not find all of its audio when it is opened after the original audio files are gone. The next save that replaces this project file copies the rest.",
         "subject": null,
         "data": {
           "notCopied": [
-            "Project_Media/3.wav"
+            "existing_Media/3.wav"
           ],
           "notCopiedCount": 1,
           "timedOut": true
@@ -134,7 +134,7 @@
       "media": {
         "copied": 1,
         "notCopied": [
-          "Project_Media/3.wav"
+          "existing_Media/3.wav"
         ],
         "notCopiedCount": 1,
         "timedOut": true

@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 // The audio of an old version (opentune_save_project and opentune_save_project_overwrite): an old version names its
-// audio relative to its own folder, so the files of the Project_Media folder next to the project file that is replaced
-// are copied into <name>.oldversion/Project_Media before the save, by the rules of OpenTune's own copy of its audio. The
-// tests run the tools against the mock with a recording file system, and fail single operations of it.
+// audio relative to its own folder, so the files of the media folder next to the project file that is replaced are
+// copied into the folder of the same name inside <name>.oldversion before the save. OpenTune names that folder after the
+// project file, <name>_Media; the shared Project_Media folder of an earlier OpenTune is used when there is no folder of
+// the first kind, and most tests below use it (the last group covers the first kind). The tests run the tools against
+// the mock with a recording file system, and fail single operations of it.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -386,7 +388,7 @@ describe('a failure to copy the audio does not stop the save', () => {
         text: expect.stringContaining('may not find its audio') as unknown,
       }),
     ]);
-    expect(result.summary).toContain('could not be copied completely into the Project_Media folder');
+    expect(result.summary).toContain('could not be copied completely into the media folder');
     expect(result.summary).toContain('oldVersion.media.notCopied');
     expect(result.summary).not.toContain('2.wav');
     // A failure is not the end of the time: that sentence is not there.
@@ -715,7 +717,7 @@ describe('copyMediaToOldVersions', () => {
     const many = Object.fromEntries(
       Array.from({ length: MAX_MEDIA_NAMED + 5 }, (_, i) => [`a${String(i).padStart(2, '0')}.wav`, 'x']),
     );
-    put(f.mediaDir, many);
+    put(f.legacyMedia.dir, many);
     const { ops } = recorded({ copyNew: denied });
     const result = await copyMediaToOldVersions(ops, f);
     expect(result.copied).toBe(0);
@@ -731,7 +733,7 @@ describe('copyMediaToOldVersions', () => {
     const many = Object.fromEntries(
       Array.from({ length: MAX_MEDIA_NAMED + 6 }, (_, i) => [`a${String(i).padStart(2, '0')}.wav`, 'x']),
     );
-    put(f.mediaDir, many);
+    put(f.legacyMedia.dir, many);
     let time = 0;
     // The first file takes the whole budget.
     const { ops } = recorded({
@@ -747,14 +749,14 @@ describe('copyMediaToOldVersions', () => {
     expect(result.notCopiedCount).toBe(MAX_MEDIA_NAMED + 5);
     expect(result.notCopied).toHaveLength(MAX_MEDIA_NAMED);
     expect(result.notCopied[0]).toBe('Project_Media/a01.wav');
-    expect(names(f.oldversionMediaDir)).toEqual(['a00.wav']);
+    expect(names(f.legacyMedia.oldversionDir)).toEqual(['a00.wav']);
   });
 
   it('counts the files that failed apart from those left, and lists the failed ones first', async () => {
     const t = tempDir();
     cleanup.push(t.remove);
     const f = folders(path.join(t.dir, 'song.otproj'));
-    put(f.mediaDir, { 'a.wav': 'a', 'b.wav': 'b', 'c.wav': 'c' });
+    put(f.legacyMedia.dir, { 'a.wav': 'a', 'b.wav': 'b', 'c.wav': 'c' });
     let time = 0;
     const { ops } = recorded({
       copyNew: (from, to) => {
@@ -777,7 +779,7 @@ describe('copyMediaToOldVersions', () => {
     const t = tempDir();
     cleanup.push(t.remove);
     const f = folders(path.join(t.dir, 'song.otproj'));
-    put(f.mediaDir, { 'b.wav': 'b', 'a.wav': 'a' });
+    put(f.legacyMedia.dir, { 'b.wav': 'b', 'a.wav': 'a' });
     const { ops, calls } = recorded();
     expect(await copyMediaToOldVersions(ops, f)).toEqual({ ...NOTHING, copied: 2, failedCount: 0 });
     expect(calls.filter((c) => c.op === 'copyNew').map((c) => path.basename(c.args[0] ?? ''))).toEqual([
@@ -785,22 +787,22 @@ describe('copyMediaToOldVersions', () => {
       'b.wav',
     ]);
     expect(await copyMediaToOldVersions(ops, f)).toEqual({ ...NOTHING, failedCount: 0 });
-    expect(names(f.oldversionMediaDir)).toEqual(['a.wav', 'b.wav']);
+    expect(names(f.legacyMedia.oldversionDir)).toEqual(['a.wav', 'b.wav']);
   });
 
   it('does not delete a file that appeared under the name meanwhile, and does not count it as failed', async () => {
     const t = tempDir();
     cleanup.push(t.remove);
     const f = folders(path.join(t.dir, 'song.otproj'));
-    put(f.mediaDir, { '1.wav': 'source' });
+    put(f.legacyMedia.dir, { '1.wav': 'source' });
     const { ops, calls } = recorded({
       // The listing of the target said nothing was there; another process wrote the file in between.
       stat: (file) => (isMedia(file) && file.includes('oldversion') ? Promise.resolve(null) : nodeProjectFs.stat(file)),
     });
-    put(f.oldversionMediaDir, { '1.wav': 'written by someone else' });
+    put(f.legacyMedia.oldversionDir, { '1.wav': 'written by someone else' });
     const result = await copyMediaToOldVersions(ops, f);
     expect(result).toEqual({ ...NOTHING, failedCount: 0 });
-    expect(read(path.join(f.oldversionMediaDir, '1.wav'))).toBe('written by someone else');
+    expect(read(path.join(f.legacyMedia.oldversionDir, '1.wav'))).toBe('written by someone else');
     expect(calls.filter((c) => c.op === 'remove')).toEqual([]);
   });
 });
@@ -848,5 +850,81 @@ describe('the operations of the real file system that the copy of the audio uses
       nodeProjectFs.copyReplace(path.join(t.dir, 'from.wav'), path.join(t.dir, 'dir.wav')),
     ).rejects.toThrow();
     expect(names(t.dir)).toEqual(['dir.wav', 'from.wav', 'to.wav']);
+  });
+});
+
+// OpenTune names the media folder of a project file after it, <name>_Media next to the file (specification
+// 1.0.0-rc.9); an earlier OpenTune wrote the shared Project_Media folder, which the tests above cover.
+describe('the media folder named after the project file', () => {
+  const mediaOf = (s: Awaited<ReturnType<typeof setup>>) => ({
+    name: `${s.stem}_Media`,
+    dir: path.join(s.dir, `${s.stem}_Media`),
+    oldDir: path.join(s.oldDir, `${s.stem}_Media`),
+  });
+
+  it('copies <name>_Media into <name>.oldversion/<name>_Media, which is where the old version looks for its audio', async () => {
+    const s = await setup();
+    const m = mediaOf(s);
+    put(m.dir, { '1.wav': 'audio one', '2.mp3': 'audio two' });
+    const result = body(await save(s.ctx));
+    expect(names(m.oldDir)).toEqual(['1.wav', '2.mp3']);
+    expect(read(path.join(m.oldDir, '2.mp3'))).toBe('audio two');
+    expect(media(result)).toEqual({ copied: 2, notCopied: [], notCopiedCount: 0, timedOut: false });
+    expect(names(s.oldDir)).toEqual([m.name, `${s.stem}-${STAMP}.otproj`].sort());
+    // The audio next to the project file is only read, and the shared folder of an earlier OpenTune is not made.
+    expect(names(m.dir)).toEqual(['1.wav', '2.mp3']);
+    expect(fs.existsSync(path.join(s.oldDir, 'Project_Media'))).toBe(false);
+  });
+
+  it('copies only the folder of this project file when the shared folder of an earlier OpenTune is there as well', async () => {
+    const s = await setup();
+    const m = mediaOf(s);
+    put(m.dir, { '1.wav': 'of this project' });
+    put(s.mediaDir, { '1.wav': 'of the shared folder', '9.wav': 'of another project' });
+    const result = body(await save(s.ctx));
+    expect(names(m.oldDir)).toEqual(['1.wav']);
+    expect(read(path.join(m.oldDir, '1.wav'))).toBe('of this project');
+    expect(fs.existsSync(s.oldMediaDir)).toBe(false);
+    expect(media(result)).toEqual({ copied: 1, notCopied: [], notCopiedCount: 0, timedOut: false });
+  });
+
+  it('falls back to Project_Media when the project file has no folder of its own yet', async () => {
+    const s = await setup();
+    put(s.mediaDir, { '1.wav': 'audio' });
+    const result = body(await save(s.ctx));
+    expect(names(s.oldMediaDir)).toEqual(['1.wav']);
+    expect(fs.existsSync(mediaOf(s).oldDir)).toBe(false);
+    expect(media(result)).toMatchObject({ copied: 1 });
+  });
+
+  it('does nothing, and says nothing, when neither folder exists', async () => {
+    const s = await setup();
+    const result = body(await save(s.ctx));
+    expect(media(result)).toEqual(NOTHING);
+    expect(names(s.oldDir)).toEqual([`${s.stem}-${STAMP}.otproj`]);
+  });
+
+  it('names a file that could not be copied, and the folder itself when it cannot be read, by the name of the folder', async () => {
+    const refuseMedia = (from: string, to: string) =>
+      path.basename(path.dirname(from)).endsWith('_Media') ? denied() : nodeProjectFs.copyNew(from, to);
+    const s = await setup(recorded({ copyNew: refuseMedia }).ops);
+    const m = mediaOf(s);
+    put(m.dir, { '1.wav': 'audio' });
+    const result = body(await save(s.ctx));
+    expect(media(result)).toEqual({
+      copied: 0,
+      notCopied: [`${m.name}/1.wav`],
+      notCopiedCount: 1,
+      timedOut: false,
+    });
+    expect(mediaWarnings(result)).toHaveLength(1);
+
+    const t = tempDir();
+    cleanup.push(t.remove);
+    const f = ProjectFolders.of(path.join(t.dir, 'song.otproj'), process.platform);
+    if (f === null) throw new Error('no folders');
+    fs.mkdirSync(f.oldversionDir);
+    const unreadable = recorded({ list: denied });
+    expect(await copyMediaToOldVersions(unreadable.ops, f)).toMatchObject({ notCopied: ['song_Media'] });
   });
 });

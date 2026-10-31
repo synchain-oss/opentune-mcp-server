@@ -1,0 +1,228 @@
+{
+  "description": "The result of the prefsApply job after a change to gpuFirst on a machine whose GPU cannot be used: the preference is set, and the warning BACKEND_FALLBACK says that OpenTune reported the CPU as the backend.",
+  "tool": "opentune_set_settings",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "preference",
+        "ref": {
+          "preference": "renderingPriority"
+        },
+        "label": "Rendering priority",
+        "fields": {
+          "renderingPriority": {
+            "before": "cpuFirst",
+            "after": "gpuFirst",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "prefs.set",
+        "params": {
+          "renderingPriority": "cpuFirst"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "GLOBAL_PREFERENCE",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "renderingPriority"
+          ]
+        }
+      },
+      {
+        "code": "BACKEND_FALLBACK",
+        "subject": null,
+        "data": {
+          "requested": "gpuFirst",
+          "actual": "cpu"
+        }
+      }
+    ],
+    "job": null
+  },
+  "rendered": {
+    "summary": "opentune_set_settings: this changes user-global OpenTune settings, which belong to the installation and not to the project, and OpenTune records no undo entry for it: the revert line gives the opentune_set_settings call that puts the previous values back. changed 1 preference (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_settings, see the revert line). Warnings: GLOBAL_PREFERENCE, BACKEND_FALLBACK.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "prefs.set",
+        "params": {
+          "renderingPriority": "cpuFirst"
+        }
+      }
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "GLOBAL_PREFERENCE",
+        "text": "A user-global preference changed; it outlives the project and the session.",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "renderingPriority"
+          ]
+        }
+      },
+      {
+        "kind": "warning",
+        "code": "BACKEND_FALLBACK",
+        "text": "GPU first was requested, but OpenTune reported when the job ended that it runs on the CPU, because the GPU could not be used; the preference is set all the same.",
+        "subject": null,
+        "data": {
+          "requested": "gpuFirst",
+          "actual": "cpu"
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_settings with the arguments in restore, as they are.",
+        "revert": {
+          "method": "prefs.set",
+          "params": {
+            "renderingPriority": "cpuFirst"
+          }
+        },
+        "restore": {
+          "tool": "opentune_set_settings",
+          "arguments": {
+            "processing": {
+              "rendering_priority": "cpuFirst"
+            }
+          }
+        }
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "GLOBAL_PREFERENCE",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "renderingPriority"
+          ]
+        }
+      },
+      {
+        "code": "BACKEND_FALLBACK",
+        "subject": null,
+        "data": {
+          "requested": "gpuFirst",
+          "actual": "cpu"
+        }
+      }
+    ],
+    "job": null,
+    "changes": [
+      {
+        "entity": "preference",
+        "ref": {
+          "preference": "renderingPriority"
+        },
+        "label": "Rendering priority",
+        "fields": {
+          "renderingPriority": {
+            "before": "cpuFirst",
+            "after": "gpuFirst",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "preferences",
+        "effect": "changed preference",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Open the preferences."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "preference",
+          "label": "Rendering priority",
+          "ref": {
+            "preference": "renderingPriority"
+          },
+          "fields": [
+            {
+              "field": "renderingPriority",
+              "before": "cpuFirst",
+              "after": "gpuFirst",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
+  }
+}
