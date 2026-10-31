@@ -106,9 +106,10 @@ export interface ProjectFs {
   /** Deletes one file. */
   remove(file: string): Promise<void>;
   /**
-   * Deletes the media folder of an autosave copy: the regular files directly in it, then the folder itself. Nothing
-   * is done when nothing is at the path or the path is not a folder (a link is not followed and not deleted). Fails
-   * when the folder still holds anything else (a sub-folder or a link) or a file cannot be deleted.
+   * Deletes the media folder of an autosave copy: the regular files directly in it, then the folder itself. Succeeds
+   * without doing anything when nothing is at the path (a build that implements specification 1.0.0-rc.8 gives a
+   * copy no folder of its own) or the path is not a folder (a link is not followed and not deleted). Fails when the
+   * folder still holds anything else (a sub-folder or a link) or a file cannot be deleted.
    */
   removeMediaFolder(dir: string): Promise<void>;
   /** Whether a regular file exists at the path (links are followed). */
@@ -298,6 +299,14 @@ export class ProjectFolders {
     return `${this.autosaveDir}${this.sep}${copyName.slice(0, -EXTENSION.length)}${MEDIA_SUFFIX}`;
   }
 
+  /**
+   * The folder `Project_Media` inside the autosave folder, where a build that implements specification 1.0.0-rc.8 puts
+   * the audio of every copy: one folder for all the copies. This server never deletes it.
+   */
+  get autosaveSharedMediaDir(): string {
+    return `${this.autosaveDir}${this.sep}${LEGACY_MEDIA_FOLDER}`;
+  }
+
   autosaveName(number: number): string {
     return `${this.stem}-autosave-${String(number).padStart(4, '0')}${EXTENSION}`;
   }
@@ -396,6 +405,16 @@ export interface Rolled {
   readonly failed: number;
 }
 
+/** What the roll of the autosave copies did: the copies are counted apart from the audio folders of deleted copies. */
+export interface RolledAutosaves extends Rolled {
+  /**
+   * Copies that were deleted whose audio folder could not be deleted. A folder that does not exist is not one of them:
+   * a build that implements specification 1.0.0-rc.8 keeps the audio of all the copies in one shared folder, so a
+   * copy has no folder of its own to delete.
+   */
+  readonly foldersFailed: number;
+}
+
 async function removeAll(ops: ProjectFs, dir: string, sep: string, names: readonly string[]): Promise<Rolled> {
   let removed = 0;
   let failed = 0;
@@ -413,15 +432,21 @@ async function removeAll(ops: ProjectFs, dir: string, sep: string, names: readon
 /**
  * Deletes the autosave copies beyond the newest `keep`, each together with its media folder (the folder whose path is
  * computed from the name of the copy; a copy that could not be deleted keeps its folder, which it still needs). `removed`
- * counts the copies deleted; a copy or a media folder that could not be deleted is counted in `failed`. A failure to
- * list or delete is counted, never thrown.
+ * counts the copies deleted and `failed` the copies that could not be deleted; `foldersFailed` counts, apart from
+ * them, the deleted copies whose audio folder could not be deleted (a folder that does not exist is not a failure). A
+ * failure to list or delete is counted, never thrown.
  */
-export async function rollAutosaves(ops: ProjectFs, folders: ProjectFolders, keep = AUTOSAVE_KEEP): Promise<Rolled> {
+export async function rollAutosaves(
+  ops: ProjectFs,
+  folders: ProjectFolders,
+  keep = AUTOSAVE_KEEP,
+): Promise<RolledAutosaves> {
   try {
     const entries = await ops.list(folders.autosaveDir);
-    if (entries === null) return { removed: 0, failed: 0 };
+    if (entries === null) return { removed: 0, failed: 0, foldersFailed: 0 };
     let removed = 0;
     let failed = 0;
+    let foldersFailed = 0;
     for (const name of autosavesToDelete(folders, entries, keep)) {
       try {
         await ops.remove(`${folders.autosaveDir}${folders.sep}${name}`);
@@ -433,12 +458,12 @@ export async function rollAutosaves(ops: ProjectFs, folders: ProjectFolders, kee
       try {
         await ops.removeMediaFolder(folders.autosaveMediaDirOf(name));
       } catch {
-        failed += 1;
+        foldersFailed += 1;
       }
     }
-    return { removed, failed };
+    return { removed, failed, foldersFailed };
   } catch {
-    return { removed: 0, failed: 1 };
+    return { removed: 0, failed: 1, foldersFailed: 0 };
   }
 }
 

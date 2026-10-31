@@ -7,7 +7,7 @@
     "wait_seconds": 10
   },
   "result": {
-    "summary": "opentune_save_project: wrote a new project file (path in path); no existing file was replaced, and from now on it is the project's file. OpenTune also copies the audio the project uses into a folder next to the project file, named after it with _Media added. The project is no longer marked as changed. Not stored in the project file: the undo and redo history, global preferences.",
+    "summary": "opentune_save_project: wrote a new project file (path in path); no existing file was replaced, and from now on it is the project's file. OpenTune also copies the audio the project uses into a media folder next to the project file: a folder named after it with _Media added, or in a build that implements an earlier specification the Project_Media folder that all the project files of the directory share, where a file of the same name is replaced. The project is no longer marked as changed. Not stored in the project file: the undo and redo history, global preferences.",
     "applied": true,
     "noOp": false,
     "dryRun": false,

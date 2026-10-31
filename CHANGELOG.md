@@ -34,14 +34,22 @@ media folder to show up in real results.
   the target path; only a media folder of the same name with no `.otproj` of that name is replaced, and
   `project.saveCopy` reports `ALREADY_EXISTS` by looking at the `.otproj` alone. In this server, the old version of a
   project (`<name>.oldversion`) now gets a copy of `<name>_Media` (the `Project_Media` folder of an earlier OpenTune
-  is still copied when there is no `<name>_Media`), and the autosave copies get a media folder of their own each
-  (`mediaFolder` in the result). Each copy holds a full set of the audio, so `<name>.autosave` takes about the size of
-  the audio times up to 10.
+  is still copied when there is no `<name>_Media`). With a build that implements `rc.9`, the autosave copies get a
+  media folder of their own each (`mediaFolder` in the result), and each copy holds a full set of the audio, so
+  `<name>.autosave` takes about the size of the audio times up to 10. A build that implements `rc.8` (the test builds
+  `ctl.2` and `ctl.3`) keeps the audio of all the copies in one `Project_Media` folder inside `<name>.autosave`, and the
+  protocol version on the wire cannot tell the two apart, so the tool looks at the file system after it has written a
+  copy: `mediaFolder` is the folder of the copy when it exists, else the shared `Project_Media` (the summary then says
+  that every copy shares it, that a file of the same name is replaced and that the server does not delete it), else
+  null with the reason `media_folder_not_found`. The fixed sentence of the other save modes names both layouts.
 - `opentune_save_project` with `mode: autosave` keeps the newest 10 copies instead of 50, and when it rolls a copy
   away it deletes the media folder of that copy with it: the one folder whose path is computed from the name of the
   copy (`<copy name>_Media`), its regular files and then the folder, never a pattern. A copy that could not be deleted
-  keeps its folder, and a folder that could not be deleted is counted in `couldNotRemove` and never raises an error. The
-  first autosave after the update deletes every copy beyond the newest 10, each with its media folder.
+  keeps its folder. A copy that has no folder of its own (the `rc.8` layout above) is no failure. `couldNotRemove`
+  counts the copies that could not be deleted; the new member `audioFoldersCouldNotRemove` counts the deleted copies
+  whose folder could not be deleted, and the summary says so with its own sentence ("The audio folders of N deleted
+  copies could not be deleted."), apart from the sentence about copies. Neither raises an error. The first autosave
+  after the update deletes every copy beyond the newest 10, each with its media folder.
 - The description of the setting `rendering_priority` of `opentune_set_settings` no longer says that the fall back to
   the CPU happens without notice: a build that implements specification `1.0.0-rc.9` adds the warning
   `BACKEND_FALLBACK` to the result, and an older build says nothing (`docs/TROUBLESHOOTING.md`).
@@ -63,7 +71,10 @@ media folder to show up in real results.
   `options.renderingPriority` say what the values mean and when they are read, and the sentence in `prefs.set` that
   ended in "and never does" is rewritten.
 - `docs/COMPATIBILITY.md` names the specification `1.0.0-rc.9` and lists the test build `synchain-test/v1.8.0-ctl.3`
-  (the same OpenTune and interface as `ctl.2`, with a macOS package added).
+  (the same OpenTune and interface as `ctl.2`, with a macOS package added). It lists what differs on the two test
+  builds, which implement `rc.8`: the media folders, `track.add` (`NOT_PERSISTED`, the project not marked as changed),
+  `NOT_SAVED_IN_PROJECT` (which still lists `visibleTrackCount`; the save tools keep the phrase for it), the two new
+  warnings and the wait of an export for render blocks.
 - The number of visible tracks is project state, not view state: OpenTune 1.8.2 saves it in the project file and
   restores it when the project is opened. Behaviour change: `opentune_set_tracks` with the op `reveal` (`track.add`)
   now marks the project as changed, cannot be undone (undo reason `no_upstream_undo`, no revert recipe, warning

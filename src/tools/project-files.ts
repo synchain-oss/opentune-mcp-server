@@ -33,6 +33,7 @@ import {
   type OldVersion,
   type ProjectFs,
   type Rolled,
+  type RolledAutosaves,
 } from '../files/project-folders.js';
 import type { Json, OtcpSession } from '../otcp/client.js';
 import { resolvePath, splitPath, systemOf, type PathSystem } from '../paths/index.js';
@@ -77,8 +78,13 @@ const waitSchema = z
   .optional()
   .describe('Seconds to wait for the job to end, 0 to 30. Default 25.');
 
-/** What a project file does not hold, by the names of the warning NOT_SAVED_IN_PROJECT. */
+/**
+ * What a project file does not hold, by the names of the warning NOT_SAVED_IN_PROJECT. A build that implements
+ * specification 1.0.0-rc.8 still lists visibleTrackCount (rc.9 builds save the number of shown tracks with the project
+ * and do not list it); the sentence follows what the build reports.
+ */
 const NOT_STORED: Readonly<Record<string, string>> = Object.freeze({
+  visibleTrackCount: 'which tracks are shown',
   undoHistory: 'the undo and redo history',
   preferences: 'global preferences',
 });
@@ -86,13 +92,17 @@ const NOT_STORED: Readonly<Record<string, string>> = Object.freeze({
 const consentStep = (message: string): NextStep => ({ actor: 'user', message });
 
 /**
- * What OpenTune does at every save, whatever its result says: it copies the audio the project uses into a folder next
- * to the project file that is named after it, the file name without .otproj followed by _Media (specification
- * 1.0.0-rc.9; a file of the same name in it is always replaced, and no other project file shares the folder). The
- * sentence is fixed and is not built from anything the result holds.
+ * What OpenTune does at every save, whatever its result says: it copies the audio the project uses into a media folder
+ * next to the project file. A build that implements specification 1.0.0-rc.9 names the folder after the project file
+ * (the file name without .otproj followed by _Media) and no other project file shares it; an earlier build uses one
+ * folder, Project_Media, for every project file of the directory, so a file of the same name in it is replaced. The
+ * protocol version on the wire does not tell the two apart, so the sentence says both and is fixed: it is not built
+ * from anything the result holds.
  */
 const MEDIA_COPY =
-  'OpenTune also copies the audio the project uses into a folder next to the project file, named after it with _Media added.';
+  'OpenTune also copies the audio the project uses into a media folder next to the project file: a folder named after ' +
+  'it with _Media added, or in a build that implements an earlier specification the Project_Media folder that all the ' +
+  'project files of the directory share, where a file of the same name is replaced.';
 /** The suffix of the media folder of a project file. */
 const MEDIA_SUFFIX = '_Media';
 
@@ -170,7 +180,7 @@ const unsavedStep: NextStep = {
 };
 
 /** Items of NOT_SAVED_IN_PROJECT that this server can name, in the order OpenTune listed them. */
-function notStored(result: Json): { names: string[]; phrases: string[] } {
+export function notStored(result: Json): { names: string[]; phrases: string[] } {
   const warnings: unknown[] = Array.isArray(result.warnings) ? result.warnings : [];
   const warning = warnings.find((w) => isObject(w) && w.code === 'NOT_SAVED_IN_PROJECT');
   const items =
@@ -352,6 +362,55 @@ function rolledSentence(rolled: Rolled | null, keep: number, singular: string, p
   const failed = rolled.failed === 0 ? '' : ` Some ${plural} beyond the newest ${String(keep)} could not be deleted.`;
   return removed + failed;
 }
+
+/** The sentence about the audio folders of deleted autosave copies that could not be deleted; empty when none failed. */
+function foldersSentence(rolled: RolledAutosaves): string {
+  const n = rolled.foldersFailed;
+  if (n === 0) return '';
+  return n === 1
+    ? ' The audio folder of 1 deleted copy could not be deleted.'
+    : ` The audio folders of ${String(n)} deleted copies could not be deleted.`;
+}
+
+/** Where the audio of an autosave copy was found after it was written. */
+type AutosaveMedia =
+  /** The folder of its own, named after the copy (specification 1.0.0-rc.9). */
+  | { readonly kind: 'own'; readonly dir: string }
+  /** The Project_Media folder inside the autosave folder, shared by every copy (a build of 1.0.0-rc.8). */
+  | { readonly kind: 'shared'; readonly dir: string }
+  | { readonly kind: 'none' };
+
+/**
+ * Looks for the audio folder of the copy that was just written: its own folder first, then the shared Project_Media.
+ * The protocol version on the wire cannot tell the layouts apart, so the result is read from the file system. A folder
+ * that cannot be read counts as not there.
+ */
+async function findAutosaveMedia(ops: ProjectFs, folders: ProjectFolders, number: number): Promise<AutosaveMedia> {
+  const candidates = [
+    { kind: 'own', dir: folders.autosaveMediaDir(number) },
+    { kind: 'shared', dir: folders.autosaveSharedMediaDir },
+  ] as const;
+  for (const candidate of candidates) {
+    try {
+      if ((await ops.list(candidate.dir)) !== null) return candidate;
+    } catch {
+      // Not readable: not found.
+    }
+  }
+  return { kind: 'none' };
+}
+
+/** The fixed sentence about the audio of an autosave copy, by where it was found. */
+const AUTOSAVE_MEDIA_SENTENCE: Readonly<Record<AutosaveMedia['kind'], string>> = {
+  own:
+    ' OpenTune also copies the audio the project uses into a folder of its own for this copy (mediaFolder); this ' +
+    'server deletes that folder together with the copy when it rolls the copy away.',
+  shared:
+    ' OpenTune also copies the audio the project uses into the Project_Media folder inside the autosave folder ' +
+    '(mediaFolder); every copy shares that folder, a file of the same name in it is replaced, and this server does not ' +
+    'delete it when it rolls a copy away.',
+  none: ' No folder with the audio of this copy was found in the autosave folder (mediaFolder is null).',
+};
 
 const KEPT =
   'a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); ' +
@@ -693,6 +752,7 @@ async function runAutosave(ctx: ToolContext, args: SaveProjectArgs): Promise<Out
     }
     // Rolled only now that the copy exists: a failed copy leaves the older ones alone.
     const rolled = await rollAutosaves(ops, folders);
+    const media = await findAutosaveMedia(ops, folders, number);
     const dirty = result.projectDirty;
     const unsaved =
       dirty === true
@@ -706,6 +766,7 @@ async function runAutosave(ctx: ToolContext, args: SaveProjectArgs): Promise<Out
     const reasons: Json = {
       ...(isObject(rendered.nullReasons) ? rendered.nullReasons : {}),
       ...(isObject(result.nullReasons) ? result.nullReasons : {}),
+      ...(media.kind === 'none' ? { mediaFolder: 'media_folder_not_found' } : {}),
     };
     return {
       ok: true,
@@ -713,20 +774,20 @@ async function runAutosave(ctx: ToolContext, args: SaveProjectArgs): Promise<Out
         ...rendered,
         summary:
           `${tool}: wrote autosave copy ${String(number)} (path in autosave.path); the project file was not changed` +
-          `${unsaved}.${rolledSentence(rolled, AUTOSAVE_KEEP, 'copy', 'copies')}${missing}` +
-          ' OpenTune also copies the audio the project uses into a folder of its own for this copy (mediaFolder); this ' +
-          'server deletes that folder together with the copy when it rolls the copy away.',
+          `${unsaved}.${rolledSentence(rolled, AUTOSAVE_KEEP, 'copy', 'copies')}${foldersSentence(rolled)}${missing}` +
+          AUTOSAVE_MEDIA_SENTENCE[media.kind],
         job: jobRef(job),
         autosave: {
           ...copy,
           sizeBytes: typeof result.sizeBytes === 'number' ? result.sizeBytes : null,
           removedOlder: rolled.removed,
           couldNotRemove: rolled.failed,
+          audioFoldersCouldNotRemove: rolled.foldersFailed,
         },
         projectPath: typeof result.projectPath === 'string' ? result.projectPath : null,
         projectDirty: typeof dirty === 'boolean' ? dirty : null,
         notSavedInProject: stored.names,
-        mediaFolder: folders.autosaveMediaDir(number),
+        mediaFolder: media.kind === 'none' ? null : media.dir,
         ...(Object.keys(reasons).length === 0 ? {} : { nullReasons: reasons }),
       },
     } satisfies Outcome;

@@ -1,0 +1,70 @@
+{
+  "description": "An autosave copy of a build of the earlier specification: the audio of all the copies is in the shared Project_Media folder, which mediaFolder names; the summary says that every copy shares it and that this server does not delete it.",
+  "tool": "opentune_save_project",
+  "input": {
+    "mode": "autosave",
+    "wait_seconds": 10
+  },
+  "result": {
+    "summary": "opentune_save_project: wrote autosave copy 3 (path in autosave.path); the project file was not changed; the project has no unsaved changes. Not stored in the copy: the undo and redo history, global preferences. OpenTune also copies the audio the project uses into the Project_Media folder inside the autosave folder (mediaFolder); every copy shares that folder, a file of the same name in it is replaced, and this server does not delete it when it rolls a copy away.",
+    "applied": false,
+    "noOp": false,
+    "dryRun": false,
+    "undo": null,
+    "lines": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [],
+    "job": {
+      "jobId": "j:01234567:4",
+      "kind": "projectCopy",
+      "state": "succeeded"
+    },
+    "changes": [],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [],
+    "changeTable": {
+      "rows": [],
+      "omittedChangeCount": 0
+    },
+    "autosave": {
+      "path": "<tmp-1>/fresh.autosave/fresh-autosave-0003.otproj",
+      "number": 3,
+      "folder": "<tmp-1>/fresh.autosave",
+      "keep": 10,
+      "sizeBytes": "<size>",
+      "removedOlder": 0,
+      "couldNotRemove": 0,
+      "audioFoldersCouldNotRemove": 0
+    },
+    "projectPath": "<tmp-1>/fresh.otproj",
+    "projectDirty": false,
+    "notSavedInProject": [
+      "undoHistory",
+      "preferences"
+    ],
+    "mediaFolder": "<tmp-1>/fresh.autosave/Project_Media"
+  }
+}

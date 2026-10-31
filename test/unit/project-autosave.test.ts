@@ -195,9 +195,13 @@ describe('opentune_save_project mode autosave', () => {
       projectDirty: true,
       job: { kind: 'projectCopy', state: 'succeeded' },
       notSavedInProject: ['undoHistory', 'preferences'],
-      // OpenTune puts the audio of a copy into a folder named after the copy, next to it.
-      mediaFolder: path.join(s.autosaveDir, `${autosaveName(s.stem, 1).replace(/\.otproj$/, '')}_Media`),
+      // The mock writes no audio folder, and none is there: no folder is named, and the reason is given.
+      mediaFolder: null,
+      nullReasons: { mediaFolder: 'media_folder_not_found' },
     });
+    expect(first.summary).toContain(
+      'No folder with the audio of this copy was found in the autosave folder (mediaFolder is null).',
+    );
     // Nothing of the project changed: the file, the flag, and no old version was made.
     expect(fs.readFileSync(s.proj).equals(before)).toBe(true);
     expect(s.mock.snapshot().dirty).toBe(true);
@@ -206,6 +210,51 @@ describe('opentune_save_project mode autosave', () => {
     const second = body(await autosave(s.ctx));
     expect(second.autosave).toMatchObject({ number: 2, path: path.join(s.autosaveDir, autosaveName(s.stem, 2)) });
     expect(names(s.autosaveDir)).toEqual([autosaveName(s.stem, 1), autosaveName(s.stem, 2)]);
+  });
+
+  it('reports the folder of its own that OpenTune made for the copy, and says the server deletes it with the copy', async () => {
+    const s = await setup();
+    // A build that implements specification 1.0.0-rc.9 names the audio folder of a copy after the copy.
+    const ownOf = (n: number) => path.join(s.autosaveDir, `${autosaveName(s.stem, n).replace(/\.otproj$/, '')}_Media`);
+    populate(ownOf(1), ['1.wav']);
+    const result = body(await autosave(s.ctx));
+    expect(result.mediaFolder).toBe(ownOf(1));
+    expect(result.summary).toContain(
+      'into a folder of its own for this copy (mediaFolder); this server deletes that folder together with the copy when it rolls the copy away.',
+    );
+    expect(result.summary).not.toContain('Project_Media');
+    expect((result.nullReasons as Record<string, unknown> | undefined)?.mediaFolder).toBeUndefined();
+    // Both layouts there: the folder of its own is the one of the copy.
+    populate(path.join(s.autosaveDir, 'Project_Media'), ['take1.wav']);
+    populate(ownOf(2), ['1.wav']);
+    const second = body(await autosave(s.ctx));
+    expect(second.mediaFolder).toBe(ownOf(2));
+  });
+
+  it('reports the shared Project_Media of a build of the earlier specification, and never deletes it', async () => {
+    const { ops, calls } = recorded();
+    const s = await setup({ files: ops });
+    // That layout: the audio of every copy is in one folder inside the autosave folder, and a copy has none of its own.
+    const shared = path.join(s.autosaveDir, 'Project_Media');
+    populate(shared, ['take1.wav']);
+    const copies = Array.from({ length: AUTOSAVE_KEEP }, (_, i) => autosaveName(s.stem, 10 + i));
+    populate(s.autosaveDir, copies);
+
+    const result = body(await autosave(s.ctx));
+    expect(result.mediaFolder).toBe(shared);
+    expect(result.summary).toContain(
+      'into the Project_Media folder inside the autosave folder (mediaFolder); every copy shares that folder, a file of the same name in it is replaced, and this server does not delete it when it rolls a copy away.',
+    );
+    expect(result.summary).not.toContain('a folder of its own');
+    expect((result.nullReasons as Record<string, unknown> | undefined)?.mediaFolder).toBeUndefined();
+    // The oldest copy was rolled. It has no folder of its own, which is not a failure, and the shared folder stays.
+    expect(result.autosave).toMatchObject({ removedOlder: 1, couldNotRemove: 0, audioFoldersCouldNotRemove: 0 });
+    expect(result.summary).toContain('1 copy beyond the newest 10 was deleted from that folder.');
+    expect(result.summary).not.toMatch(/could not be deleted/);
+    expect(calls.filter((c) => c.op === 'removeMediaFolder').map((c) => c.args[0])).toEqual([
+      path.join(s.autosaveDir, `${(copies[0] ?? '').replace(/\.otproj$/, '')}_Media`),
+    ]);
+    expect(names(shared)).toEqual(['take1.wav']);
   });
 
   it('takes the next number after the highest in the folder, not after the count', async () => {
@@ -302,13 +351,26 @@ describe('opentune_save_project mode autosave', () => {
 
     // Two copies are rolled: both are deleted, and the folder of each is tried and counted as failed.
     const result = body(await autosave(s.ctx));
-    expect(result.autosave).toMatchObject({ removedOlder: 2, couldNotRemove: 2 });
+    // The copies are deleted; it is their audio folders that stay, and the summary says that and nothing else.
+    expect(result.autosave).toMatchObject({ removedOlder: 2, couldNotRemove: 0, audioFoldersCouldNotRemove: 2 });
     expect(result.summary).toContain('2 copies beyond the newest 10 were deleted from that folder.');
-    expect(result.summary).toContain('Some copies beyond the newest 10 could not be deleted.');
+    expect(result.summary).toContain('The audio folders of 2 deleted copies could not be deleted.');
+    expect(result.summary).not.toContain('Some copies beyond the newest 10 could not be deleted.');
     expect(calls.filter((c) => c.op === 'removeMediaFolder').map((c) => c.args[0])).toEqual(
       copies.slice(0, 2).map(mediaOf),
     );
     for (const copy of copies.slice(0, 2)) expect(names(mediaOf(copy))).toEqual(['1.wav']);
+  });
+
+  it('says it in the singular when the audio folder of one deleted copy could not be deleted', async () => {
+    const { ops } = recorded({ removeMediaFolder: denied });
+    const s = await setup({ files: ops });
+    const copies = Array.from({ length: AUTOSAVE_KEEP }, (_, i) => autosaveName(s.stem, 10 + i));
+    populate(s.autosaveDir, copies);
+    populate(path.join(s.autosaveDir, `${(copies[0] ?? '').replace(/\.otproj$/, '')}_Media`), ['1.wav']);
+    const result = body(await autosave(s.ctx));
+    expect(result.autosave).toMatchObject({ removedOlder: 1, couldNotRemove: 0, audioFoldersCouldNotRemove: 1 });
+    expect(result.summary).toContain('The audio folder of 1 deleted copy could not be deleted.');
   });
 
   it('keeps the media folder of a copy that could not be deleted: the copy still needs its audio', async () => {
@@ -320,7 +382,10 @@ describe('opentune_save_project mode autosave', () => {
     populate(mediaDir, ['1.wav']);
 
     const result = body(await autosave(s.ctx));
-    expect(result.autosave).toMatchObject({ removedOlder: 0, couldNotRemove: 2 });
+    // The copies could not be deleted, so no audio folder was tried, and none is said to have failed.
+    expect(result.autosave).toMatchObject({ removedOlder: 0, couldNotRemove: 2, audioFoldersCouldNotRemove: 0 });
+    expect(result.summary).toContain('Some copies beyond the newest 10 could not be deleted.');
+    expect(result.summary).not.toContain('audio folder');
     expect(calls.filter((c) => c.op === 'removeMediaFolder')).toEqual([]);
     expect(names(mediaDir)).toEqual(['1.wav']);
     expect(fs.existsSync(path.join(s.autosaveDir, copies[0] ?? ''))).toBe(true);
@@ -770,7 +835,16 @@ describe('where the file system work happens', () => {
       const [first = '', second = ''] = call.args;
       switch (call.op) {
         case 'list':
-          expect(folders.has(first) || mediaTargets.has(first), `list ${first}`).toBe(true);
+          // The folders, the audio folders next to the project files, and where the audio of the copy just written
+          // is looked for: its own folder or the shared Project_Media, inside the autosave folder.
+          expect(
+            folders.has(first) ||
+              mediaTargets.has(first) ||
+              (path.dirname(first) === s.autosaveDir &&
+                (path.basename(first) === 'Project_Media' ||
+                  new RegExp(`^${s.stem}-autosave-\\d{4,}_Media$`).test(path.basename(first)))),
+            `list ${first}`,
+          ).toBe(true);
           break;
         case 'makeDir':
           expect(folders.has(first) || oldMediaDirs.has(first), `makeDir ${first}`).toBe(true);
@@ -1015,8 +1089,10 @@ describe('the newest old version and the comparison of two files', () => {
     expect(names(t.dir)).toEqual(['keep.txt', 'song-autosave-0001.otproj', 'song-autosave-0002_Media']);
     expect(names(path.join(t.dir, 'song-autosave-0002_Media'))).toEqual(['1.wav']);
 
-    // Nothing there: nothing to do. A regular file at the path is not a media folder and stays.
+    // Nothing there: nothing to do, and no error (a build of the earlier specification gives a copy no folder of its
+    // own, so this is the usual case there). A regular file at the path is not a media folder and stays.
     await nodeProjectFs.removeMediaFolder(dir);
+    await nodeProjectFs.removeMediaFolder(path.join(t.dir, 'no-such-folder', 'song-autosave-0009_Media'));
     await nodeProjectFs.removeMediaFolder(path.join(t.dir, 'keep.txt'));
     expect(fs.readFileSync(path.join(t.dir, 'keep.txt'), 'utf8')).toBe('content of keep.txt');
 

@@ -26,10 +26,36 @@ The unofficial OpenTune test build that matches each release of this server:
 
 `synchain-test/v1.8.0-ctl.3` is the same OpenTune with the same control interface as `ctl.2`; it only adds a macOS
 package, which this server does not use yet (see the operating system above). The specification in this repository is
-now `1.0.0-rc.9` (see [the record of the change](contract-changes/20261031-spec-rc9.md)): the two builds above
-implement `rc.8`, so they do not report the warnings `BACKEND_FALLBACK` and `ASIO_RATE_NOT_RESTORED` and keep the
-media folder `Project_Media`, and this server works with them as before. A test build that implements `rc.9` is not
-listed yet.
+now `1.0.0-rc.9` (see [the record of the change](contract-changes/20261031-spec-rc9.md)). The two builds above
+implement `rc.8`; a test build that implements `rc.9` is not listed yet. Both have the wire version `1.0`, so the
+version on the wire does not tell them apart, and this server does not guess: it reads the result it gets and, where a
+sentence depends on the layout, looks at the file system. All tools work with the `rc.8` builds. What differs there,
+as far as the text of `rc.8` and the builds show:
+
+- **Media folders.** An `rc.8` build keeps the audio of all the project files of a directory in one folder,
+  `Project_Media`, next to them, and the audio of all the autosave copies in `<name>.autosave/Project_Media`; an `rc.9`
+  build uses `<name>_Media` and, for a copy, `<copy name>_Media`. After it writes an autosave copy the server looks for
+  the folder of the copy and then for the shared one: `autosave.mediaFolder` names the one it finds, the summary says
+  that a shared folder is shared by every copy, replaces files of the same name and is not deleted by the server, and
+  when neither exists `mediaFolder` is null with the reason `media_folder_not_found`. Deleting a rolled copy deletes its
+  own folder when it has one; having none is not an error. The sentence of a save names both layouts. The old versions
+  copy `<name>_Media`, else `Project_Media` (see [Autosave copies and old versions](TROUBLESHOOTING.md#autosave-copies-and-old-versions)).
+- **Showing a track (`opentune_set_tracks`, op `reveal`, OTCP `track.add`).** The tool description says "saved with
+  the project, no undo", which is the `rc.9` behaviour. An `rc.8` build treats the number of visible tracks as view
+  state: it returns the warning `NOT_PERSISTED` and the undo reason `not_persisted_state`, sends no `IRREVERSIBLE`, and
+  leaves the project without unsaved changes (`dirty.after` stays as it was). The summary of a result is built from
+  what the build returned, so it says what happened on that build; do not take the description as a statement about it.
+  For the same reason `project.open` on an `rc.8` build does not restore a stored number of tracks or report
+  `sideEffects.tracksRevealed`; it shows the tracks that hold clips.
+- **`NOT_SAVED_IN_PROJECT`.** An `rc.8` build lists `visibleTrackCount` among the items, next to `undoHistory` and
+  `preferences`, and the save tools say "which tracks are shown" for it; an `rc.9` build lists only the last two.
+- **Warnings that only an `rc.9` build sends.** `BACKEND_FALLBACK` (a change to `gpuFirst` that ends on the CPU) and
+  `ASIO_RATE_NOT_RESTORED`. An `rc.8` build says nothing in the first case (read `processing.backend`), and in the
+  second a failed restoration of the ASIO sample rate fails `audio.set` with `IO_ERROR(device_open_failed)` and takes
+  the switch back.
+- **`NOT_READY(export_wait_timeout)` for render blocks waiting for a delayed retry.** Only an `rc.9` build waits for
+  them before an export and fails the export when they cannot be drained; the text of `rc.8` does not say that an
+  export waits for them. The reason itself (analysis or rendering did not settle) exists in both.
 
 ## How long to wait
 

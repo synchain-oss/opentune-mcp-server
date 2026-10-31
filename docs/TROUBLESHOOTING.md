@@ -397,10 +397,10 @@ Both folders sit next to the project file and are named after it without `.otpro
 `mode: autosave` writes `<name>.autosave/<name>-autosave-0001.otproj`, `-0002` and so on, and keeps the newest 10; it
 never touches the project file, the unsaved-changes mark or the list of recent projects, and writes only inside `<name>.autosave` (the copy and the
 folder with its audio, `<name>-autosave-0001_Media` and so on: OpenTune names the audio folder of a project file after
-the file, so every copy gets a folder of its own and none can replace the audio of another project). For the same
+the file, so in a build that implements specification 1.0.0-rc.9 every copy gets a folder of its own and none can replace the audio of another project). For the same
 reason every copy holds a complete set of the project's audio, so the space taken by `<name>.autosave` is about the
 size of the audio times up to 10; the server deletes the media folder of a copy together with the copy when it rolls the
-copy away (see below). Every save that replaces a
+copy away (see below). A build that implements the earlier specification (the test builds `synchain-test/v1.8.0-ctl.2` and `ctl.3`) does not give a copy a folder of its own: it puts the audio of all the copies into one shared folder, `<name>.autosave/Project_Media`, where a file of the same name is replaced and which the server never deletes. The protocol version on the wire does not tell the builds apart, so after a copy is written the server looks for its folder: `autosave.mediaFolder` is the folder of the copy when it exists, else the shared `Project_Media` (the summary then says that every copy shares it), else null with `nullReasons.mediaFolder` `media_folder_not_found`. A deleted copy that has no folder of its own is not a failure; `autosave.audioFoldersCouldNotRemove` counts the deleted copies whose own folder could not be deleted (the summary then says "The audio folders of N deleted copies could not be deleted."), apart from `autosave.couldNotRemove`, which counts the copies that could not be deleted. Every save that replaces a
 project file first copies the old file into `<name>.oldversion/<name>-<YYYYMMDD-HHMMSS>.otproj` (local time, `-2`, `-3`
 when the second is taken) and keeps the newest 10; when the newest old version already holds exactly the bytes of the
 file to be replaced (a save right after a save that changed nothing), no new copy is made and the result says so

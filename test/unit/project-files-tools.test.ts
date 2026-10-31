@@ -17,6 +17,7 @@ import { getJob } from '../../src/tools/jobs.js';
 import { TOOLS } from '../../src/tools/index.js';
 import {
   mediaFolderMembers,
+  notStored,
   openProject,
   openProjectTool,
   overwriteProject,
@@ -66,10 +67,37 @@ const wait = { wait_seconds: 10 };
 
 /** What OpenTune does with the media of the project at every save; a fixed sentence, never built from the result. */
 const MEDIA_COPY =
-  'OpenTune also copies the audio the project uses into a folder next to the project file, named after it with _Media added.';
+  'OpenTune also copies the audio the project uses into a media folder next to the project file: a folder named after it ' +
+  'with _Media added, or in a build that implements an earlier specification the Project_Media folder that all the ' +
+  'project files of the directory share, where a file of the same name is replaced.';
 /** The media folder of a project file: named after it, next to it. */
 const mediaFolderOf = (file: string) => path.join(path.dirname(file), `${path.parse(file).name}_Media`);
 const save = (ctx: ToolContext, args: Parameters<typeof saveProject>[1]) => saveProject(ctx, { ...wait, ...args });
+
+describe('what the warning NOT_SAVED_IN_PROJECT says is missing from the project file', () => {
+  const warned = (items: unknown[]) => ({
+    warnings: [{ code: 'NOT_SAVED_IN_PROJECT', subject: null, data: { items } }],
+  });
+
+  it('names what a build of specification 1.0.0-rc.9 lists: the undo history and the preferences', () => {
+    expect(notStored(warned(['undoHistory', 'preferences']))).toEqual({
+      names: ['undoHistory', 'preferences'],
+      phrases: ['the undo and redo history', 'global preferences'],
+    });
+  });
+
+  it('still names the shown tracks for a build of the earlier specification, which lists them', () => {
+    expect(notStored(warned(['visibleTrackCount', 'undoHistory', 'preferences']))).toEqual({
+      names: ['visibleTrackCount', 'undoHistory', 'preferences'],
+      phrases: ['which tracks are shown', 'the undo and redo history', 'global preferences'],
+    });
+  });
+
+  it('leaves out names it does not know, and says nothing without the warning', () => {
+    expect(notStored(warned(['somethingNew', 'preferences'])).names).toEqual(['preferences']);
+    expect(notStored({ warnings: [] })).toEqual({ names: [], phrases: [] });
+  });
+});
 
 describe('opentune_save_project', () => {
   it('saves under a new path with save_as, then saves the same file with save', async () => {

@@ -127,9 +127,27 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     'opentune_save_project',
     { mode: 'save_as', path: need(ids, 'fresh'), wait_seconds: 10 },
   );
+  // A build that implements specification 1.0.0-rc.9 makes a folder for the audio of the copy, named after the copy.
+  const autosaveDir = path.join(path.dirname(need(ids, 'fresh')), `${path.parse(need(ids, 'fresh')).name}.autosave`);
+  mkdirSync(path.join(autosaveDir, `${path.parse(need(ids, 'fresh')).name}-autosave-0001_Media`), { recursive: true });
   await run(
     'autosave',
-    'An autosave copy of a project that has a file: a numbered copy in the autosave folder next to it; the project file and its unsaved-changes flag do not change.',
+    'An autosave copy of a project that has a file: a numbered copy in the autosave folder next to it, with the folder of its own that OpenTune made for its audio; the project file and its unsaved-changes flag do not change.',
+    'opentune_save_project',
+    { mode: 'autosave', wait_seconds: 10 },
+  );
+  await run(
+    'autosave-no-media-folder',
+    'An autosave copy for which no folder with its audio is found: mediaFolder is null, with its reason, and the summary says so.',
+    'opentune_save_project',
+    { mode: 'autosave', wait_seconds: 10 },
+  );
+  // A build that implements the earlier specification puts the audio of every copy into one shared folder.
+  mkdirSync(path.join(autosaveDir, 'Project_Media'));
+  writeFileSync(path.join(autosaveDir, 'Project_Media', '1.wav'), 'audio');
+  await run(
+    'autosave-shared-media-folder',
+    'An autosave copy of a build of the earlier specification: the audio of all the copies is in the shared Project_Media folder, which mediaFolder names; the summary says that every copy shares it and that this server does not delete it.',
     'opentune_save_project',
     { mode: 'autosave', wait_seconds: 10 },
   );
@@ -199,6 +217,7 @@ describe('project save tool result golden snapshots', () => {
     expect(all).toContain('<tmp-1>/fresh_Media');
     expect(all).toContain('<tmp-2>/existing_Media');
     expect(all).toContain('.autosave/fresh-autosave-0001_Media');
+    expect(all).toContain('.autosave/Project_Media');
     expect(all).toContain('.oldversion/');
     // No backslash of a Windows path (a JSON backslash is two characters), no drive letter, no folder of a user.
     expect(all).not.toContain('\\\\');

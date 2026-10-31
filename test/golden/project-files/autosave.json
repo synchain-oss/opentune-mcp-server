@@ -1,5 +1,5 @@
 {
-  "description": "An autosave copy of a project that has a file: a numbered copy in the autosave folder next to it; the project file and its unsaved-changes flag do not change.",
+  "description": "An autosave copy of a project that has a file: a numbered copy in the autosave folder next to it, with the folder of its own that OpenTune made for its audio; the project file and its unsaved-changes flag do not change.",
   "tool": "opentune_save_project",
   "input": {
     "mode": "autosave",
@@ -56,7 +56,8 @@
       "keep": 10,
       "sizeBytes": "<size>",
       "removedOlder": 0,
-      "couldNotRemove": 0
+      "couldNotRemove": 0,
+      "audioFoldersCouldNotRemove": 0
     },
     "projectPath": "<tmp-1>/fresh.otproj",
     "projectDirty": false,
