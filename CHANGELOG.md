@@ -8,7 +8,7 @@ versioned separately and has its own changelog.
 
 ## [Unreleased]
 
-The OTCP specification in `spec/otcp/v1/` is now `1.0.0-rc.9`. The server in this repository does not change what it
+The OTCP specification in `spec/otcp/v1/` is now `1.0.0`, released with the text of `1.0.0-rc.9`. The server in this repository does not change what it
 sends to OpenTune; the specification, its mock and the text of the results do. A test build that implements `rc.9`
 (the fork has to follow; see `docs/contract-changes/20261031-spec-rc9.md`) is needed for the new warnings and the new
 media folder to show up in real results.
