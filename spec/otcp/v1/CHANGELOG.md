@@ -2,6 +2,15 @@
 
 All notable changes to the OTCP specification are recorded here. Versions follow `MAJOR.MINOR.PATCH` (README.md, "Versions"); each released version is tagged `spec-v<version>`.
 
+## [1.0.0] - 2026-11-01
+
+First release of protocol major 1. The text is that of `1.0.0-rc.9`, except for the status and two sentences that referred to the release candidate (below). The wire version stays `1.0`, and no method, param, result member, capability, error kind, reason or warning is added, removed or changed, so a client or server of rc.9 is a client or server of 1.0.0. From this version on, the rules of PROTOCOL.md section 2 apply to every change: a patch changes only wording, examples and vectors, a minor version only adds, and a removal, a rename or a change of meaning or unit needs a new major version.
+
+### Changed
+
+- Status and current version `1.0.0` (PROTOCOL.md, README.md); the text no longer calls itself a draft or a release candidate.
+- Two sentences that said "this release candidate" name the version they mean: an implementation of version 1.0 may still send the export errors of PROTOCOL.md section 19 rule 11 without a reason, and a project file written before `1.0.0-rc.9` names its media in the folder `Project_Media` (section 20.4 rule 3). Neither rule changes.
+
 ## [1.0.0-rc.9] - 2026-10-31
 
 Ninth release candidate of protocol major 1, proposed as the text of 1.0.0. It records the behaviour of the OpenTune release that the control interface now builds on (OpenTune 1.8.2), which differs from the text in five places, and it adds what a review of the processing settings found missing: a warning for the case in which the GPU priority runs on the CPU, and descriptions for the processing fields of `session.info` and `prefs.get`. The wire version stays `1.0`. The change adds two warning codes and changes no method, param or result member, so a client of rc.8 keeps working: it accepts the warnings it does not know (PROTOCOL.md section 2.3), and a server of rc.8 does not send them. A client of rc.9 that talks to a server of rc.8 simply never receives them. One behaviour changes, though: `track.add` now marks the project as changed (the number of visible tracks is project state), so a client that relied on it leaving the project unchanged sees `dirty.after` true.
