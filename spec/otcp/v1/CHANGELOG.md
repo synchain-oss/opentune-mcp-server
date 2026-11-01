@@ -9,7 +9,7 @@ First release of protocol major 1. The text is that of `1.0.0-rc.9`, except for 
 ### Changed
 
 - Status and current version `1.0.0` (PROTOCOL.md, README.md); the text no longer calls itself a draft or a release candidate.
-- Two sentences that said "this release candidate" name the version they mean: an implementation of version 1.0 may still send the export errors of PROTOCOL.md section 19 rule 11 without a reason, and a project file written before `1.0.0-rc.9` names its media in the folder `Project_Media` (section 20.4 rule 3). Neither rule changes.
+- Two sentences that said "this release candidate" name the version they mean: an implementation of protocol major 1 may still send the export errors of PROTOCOL.md section 19 rule 11 without a reason, and a project file written by an earlier OpenTune, which kept the media of every project in a directory in one shared folder, names its media in the folder `Project_Media` (section 20.4 rule 3). Neither rule changes.
 
 ## [1.0.0-rc.9] - 2026-10-31
 
