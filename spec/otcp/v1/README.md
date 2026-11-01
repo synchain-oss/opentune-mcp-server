@@ -50,4 +50,4 @@ Implementers of a server read all of it. Implementers of a client can skip secti
 
 ## How to cite
 
-Refer to a released version by its tag and this directory, for example: "OpenTune Control Protocol (OTCP) 1.0.0-rc.1, `spec/otcp/v1/` at tag `spec-v1.0.0-rc.1`". To pin an exact copy, record the tag and the SHA-256 of each file. Sections of PROTOCOL.md are cited by number, for example "OTCP 1.0, section 14.4".
+Refer to a released version by its tag and this directory, for example: "OpenTune Control Protocol (OTCP) 1.0.0, `spec/otcp/v1/` at tag `spec-v1.0.0`". To pin an exact copy, record the tag and the SHA-256 of each file. Sections of PROTOCOL.md are cited by number, for example "OTCP 1.0, section 14.4".

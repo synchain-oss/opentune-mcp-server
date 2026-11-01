@@ -4,12 +4,14 @@ All notable changes to the OTCP specification are recorded here. Versions follow
 
 ## [1.0.0] - 2026-11-01
 
-First release of protocol major 1. The text is that of `1.0.0-rc.9`, except for the status and two sentences that referred to the release candidate (below). The wire version stays `1.0`, and no method, param, result member, capability, error kind, reason or warning is added, removed or changed, so a client or server of rc.9 is a client or server of 1.0.0. From this version on, the rules of PROTOCOL.md section 2 apply to every change: a patch changes only wording, examples and vectors, a minor version only adds, and a removal, a rename or a change of meaning or unit needs a new major version.
+First release of protocol major 1. The text is that of `1.0.0-rc.9`, except for the status, four sentences that referred to the release candidate and one example (below). The wire version stays `1.0`, and no method, param, result member, capability, error kind, reason or warning is added, removed or changed, so a client or server of rc.9 is a client or server of 1.0.0. From this version on, the rules of PROTOCOL.md section 2 apply to every change: a patch changes only wording, examples and vectors, a minor version only adds, and a removal, a rename or a change of meaning or unit needs a new major version.
 
 ### Changed
 
 - Status and current version `1.0.0` (PROTOCOL.md, README.md); the text no longer calls itself a draft or a release candidate.
 - Two sentences that said "this release candidate" name the version they mean: an implementation of protocol major 1 may still send the export errors of PROTOCOL.md section 19 rule 11 without a reason, and a project file written by an earlier OpenTune, which kept the media of every project in a directory in one shared folder, names its media in the folder `Project_Media` (section 20.4 rule 3). Neither rule changes.
+- Two sentences that announced what "a later release candidate" might change say which kind of version could change it (section 2.2): keeping the redo history after a change without an undo entry (section 15.3 rule 9) would change the rule and needs a new major version, so clients keep assuming that such a change clears the redo history; a reason of its own for the failed commit of a note of zero duration, and a warning that lets the prediction report it (section 15.4 rule 7), can come in a minor version. Neither rule changes.
+- README.md: the example of how to refer to a released version names `1.0.0` and the tag `spec-v1.0.0`.
 
 ## [1.0.0-rc.9] - 2026-10-31
 
