@@ -1,0 +1,270 @@
+{
+  "description": "A switch of the audio device type during which OpenTune could not restore the sample rate of an ASIO device: the switch went on, and the warning says that the ASIO driver may still run at another sample rate than before.",
+  "tool": "opentune_set_settings",
+  "input": {
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "changes": [
+      {
+        "entity": "audioDevice",
+        "ref": {
+          "singleton": "audioDevice"
+        },
+        "label": "Audio device",
+        "fields": {
+          "deviceType": {
+            "before": "Mock Audio",
+            "after": "Mock Audio 2",
+            "unit": null
+          },
+          "outputDevice": {
+            "before": "Mock Output",
+            "after": "Mock B Output",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "audio.set",
+        "params": {
+          "deviceType": "Mock Audio",
+          "outputDevice": "Mock Output"
+        }
+      }
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "GLOBAL_PREFERENCE",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "audioDevice"
+          ]
+        }
+      },
+      {
+        "code": "ASIO_RATE_NOT_RESTORED",
+        "subject": {
+          "singleton": "audioDevice"
+        },
+        "data": {
+          "deviceName": "Mock Output",
+          "sampleRateHz": 44100
+        }
+      }
+    ],
+    "job": null,
+    "device": {
+      "running": true,
+      "deviceType": "Mock Audio 2",
+      "outputDevice": "Mock B Output",
+      "sampleRateHz": 44100,
+      "bufferSizeFrame": 512,
+      "outputChannelPair": 0
+    }
+  },
+  "rendered": {
+    "summary": "opentune_set_settings: this changes user-global OpenTune settings, which belong to the installation and not to the project, and OpenTune records no undo entry for it: the revert line gives the opentune_set_settings call that puts the previous values back. changed 1 audioDevice (not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_settings, see the revert line). Warnings: GLOBAL_PREFERENCE, ASIO_RATE_NOT_RESTORED.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "ui_parity",
+      "revert": {
+        "method": "audio.set",
+        "params": {
+          "deviceType": "Mock Audio",
+          "outputDevice": "Mock Output"
+        }
+      }
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "GLOBAL_PREFERENCE",
+        "text": "A user-global preference changed; it outlives the project and the session.",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "audioDevice"
+          ]
+        }
+      },
+      {
+        "kind": "warning",
+        "code": "ASIO_RATE_NOT_RESTORED",
+        "text": "The audio device was switched, but OpenTune could not restore the sample rate of the ASIO device first; the ASIO driver may still run at another sample rate than before.",
+        "subject": {
+          "singleton": "audioDevice"
+        },
+        "data": {
+          "deviceName": "Mock Output",
+          "sampleRateHz": 44100
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune records no undo entry for this, as in its own interface). Restore: call opentune_set_settings with the arguments in restore, as they are.",
+        "revert": {
+          "method": "audio.set",
+          "params": {
+            "deviceType": "Mock Audio",
+            "outputDevice": "Mock Output"
+          }
+        },
+        "restore": {
+          "tool": "opentune_set_settings",
+          "arguments": {
+            "audio_device": {
+              "device_type": "Mock Audio",
+              "output_device": "Mock Output"
+            }
+          }
+        }
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "GLOBAL_PREFERENCE",
+        "subject": null,
+        "data": {
+          "preferences": [
+            "audioDevice"
+          ]
+        }
+      },
+      {
+        "code": "ASIO_RATE_NOT_RESTORED",
+        "subject": {
+          "singleton": "audioDevice"
+        },
+        "data": {
+          "deviceName": "Mock Output",
+          "sampleRateHz": 44100
+        }
+      }
+    ],
+    "job": null,
+    "device": {
+      "running": true,
+      "deviceType": "Mock Audio 2",
+      "outputDevice": "Mock B Output",
+      "sampleRateHz": 44100,
+      "bufferSizeFrame": 512,
+      "outputChannelPair": 0
+    },
+    "changes": [
+      {
+        "entity": "audioDevice",
+        "ref": {
+          "singleton": "audioDevice"
+        },
+        "label": "Audio device",
+        "fields": {
+          "deviceType": {
+            "before": "Mock Audio",
+            "after": "Mock Audio 2",
+            "unit": null
+          },
+          "outputDevice": {
+            "before": "Mock Output",
+            "after": "Mock B Output",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "audio settings",
+        "effect": "changed audioDevice",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Open the audio settings page."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "audioDevice",
+          "label": "Audio device",
+          "ref": {
+            "singleton": "audioDevice"
+          },
+          "fields": [
+            {
+              "field": "deviceType",
+              "before": "Mock Audio",
+              "after": "Mock Audio 2",
+              "unit": null
+            },
+            {
+              "field": "outputDevice",
+              "before": "Mock Output",
+              "after": "Mock B Output",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    }
+  }
+}

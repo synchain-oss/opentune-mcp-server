@@ -17,7 +17,17 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { startMock } from '../../mock/server.js';
 import { pidAlive } from '../../src/discovery/process.js';
 import { manifestProblem } from '../../src/launch/config.js';
-import { detectOfficialInstall, installDir, parseRegQuery, systemInstallDetector } from '../../src/launch/install.js';
+import {
+  MAC_APP,
+  MAC_PLIST,
+  detectOfficialInstall,
+  installDir,
+  isWorkingDirectory,
+  parseRegQuery,
+  plistShortVersion,
+  systemInstallDetector,
+  type InstallDeps,
+} from '../../src/launch/install.js';
 import {
   LOCK_DENIED_MS,
   LOCK_FILES,
@@ -256,6 +266,36 @@ describe('opentune_launch', () => {
       expect(calls[0]?.options.cwd).toBe(install);
       expect(calls[0]?.args.some((a) => a.startsWith('--control-api-dir='))).toBe(false);
       expect(calls[0]?.args[1]).toContain(path.join(data, 'control', 'instances', 'launching'));
+    },
+    TIMEOUT,
+  );
+
+  // The paths of the stand-in are POSIX paths, which the platform darwin accepts; a Windows host has none.
+  it.skipIf(process.platform === 'win32')(
+    'on macOS runs in the folder of the executable even though /Applications/OpenTune.app is found, spawns it directly, and checks the manifest next to it',
+    async () => {
+      const mac = setup({
+        launch: {
+          officialInstall: () => Promise.resolve({ dir: MAC_APP, version: '1.8.1', source: 'bundle' }),
+        },
+      });
+      const ctx = { ...mac.ctx, platform: 'darwin' as const };
+      const b = body(await launch(ctx, {}));
+      expect(mac.calls).toHaveLength(1);
+      expect(mac.calls[0]?.file).toBe(mac.exe);
+      expect(mac.calls[0]?.options).toEqual({
+        shell: false,
+        detached: true,
+        stdio: 'ignore',
+        cwd: path.dirname(mac.exe),
+        env: ctx.env,
+      });
+      expect(b).toMatchObject({ launched: true, state: 'READY', workingDirectory: 'executable_folder' });
+      // Without opentune-control.json next to the program nothing is started, whatever the program is.
+      const bare = setup({ manifest: null });
+      const refused = body(await launch({ ...bare.ctx, platform: 'darwin' }, {}));
+      expect(refused).toMatchObject({ launched: false, state: 'NO_API_BUILD', reason: 'manifest_missing' });
+      expect(bare.calls).toHaveLength(0);
     },
     TIMEOUT,
   );
@@ -773,6 +813,7 @@ describe('official installation', () => {
           return Promise.resolve(runs[args.join(' ')] ?? { ok: false as const, exitCode: 1 });
         },
         isFile: (file: string) => Promise.resolve(files.includes(file)),
+        readFile: () => Promise.resolve(null),
       },
     };
   }
@@ -830,6 +871,94 @@ describe('official installation', () => {
     });
     expect(await detectOfficialInstall(deps({}, [], { ProgramFiles: 'C:\\Program Files' }).deps)).toBeNull();
     expect(await detectOfficialInstall({ ...deps({}, []).deps, platform: 'linux' })).toBeNull();
-    expect(await systemInstallDetector({}, 'darwin')()).toBeNull();
+    expect(await systemInstallDetector({}, 'linux')()).toBeNull();
+  });
+});
+
+describe('official installation on macOS', () => {
+  // The Info.plist of the app bundle as the build writes it (an XML property list, tab indented).
+  const plist = (version: string) =>
+    [
+      '<?xml version="1.0" encoding="UTF-8"?>',
+      '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">',
+      '<plist version="1.0">',
+      '<dict>',
+      '	<key>CFBundleExecutable</key>',
+      '	<string>OpenTune</string>',
+      '	<key>CFBundleShortVersionString</key>',
+      `	<string>${version}</string>`,
+      '	<key>CFBundleVersion</key>',
+      '	<string>1.8.1</string>',
+      '</dict>',
+      '</plist>',
+    ].join('\n');
+
+  function mac(options: { plist?: Buffer | null; present?: boolean; plutil?: ToolRun } = {}) {
+    const asked: string[][] = [];
+    const read: string[] = [];
+    const deps: InstallDeps = {
+      env: {},
+      platform: 'darwin',
+      run: (file, args) => {
+        asked.push([file, ...args]);
+        return Promise.resolve(options.plutil ?? { ok: false, exitCode: 1 });
+      },
+      isFile: (file) => Promise.resolve(options.present !== false && file === MAC_PLIST),
+      readFile: (file) => {
+        read.push(file);
+        return Promise.resolve(options.plist ?? null);
+      },
+    };
+    return { asked, read, deps };
+  }
+
+  it('reads the version from the Info.plist of /Applications/OpenTune.app, and nothing else', async () => {
+    expect(MAC_APP).toBe('/Applications/OpenTune.app');
+    const { asked, read, deps } = mac({ plist: Buffer.from(plist('1.8.1')) });
+    expect(await detectOfficialInstall(deps)).toEqual({ dir: MAC_APP, version: '1.8.1', source: 'bundle' });
+    expect(read).toEqual([MAC_PLIST]);
+    expect(asked).toEqual([]);
+  });
+
+  it('finds no installation without an Info.plist, and still finds one whose version it cannot read', async () => {
+    expect(await detectOfficialInstall(mac({ present: false }).deps)).toBeNull();
+    expect(await detectOfficialInstall(mac({ plist: null }).deps)).toEqual({
+      dir: MAC_APP,
+      version: null,
+      source: 'bundle',
+    });
+    expect(await detectOfficialInstall(mac({ plist: Buffer.from(plist('not a version!')) }).deps)).toMatchObject({
+      version: null,
+    });
+    expect(await detectOfficialInstall(mac({ plist: Buffer.from('<plist><dict/></plist>') }).deps)).toMatchObject({
+      version: null,
+    });
+  });
+
+  it('asks plutil, which only reads, for the value of a binary property list', async () => {
+    const binary = Buffer.concat([Buffer.from('bplist00'), Buffer.alloc(8)]);
+    const { asked, deps } = mac({ plist: binary, plutil: { ok: true, output: '1.8.2\n' } });
+    expect(await detectOfficialInstall(deps)).toEqual({ dir: MAC_APP, version: '1.8.2', source: 'bundle' });
+    expect(asked).toEqual([['/usr/bin/plutil', '-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', MAC_PLIST]]);
+    const failed = mac({ plist: binary, plutil: { ok: false, exitCode: 1 } });
+    expect(await detectOfficialInstall(failed.deps)).toMatchObject({ version: null, source: 'bundle' });
+    const garbage = mac({ plist: binary, plutil: { ok: true, output: '<script>' } });
+    expect(await detectOfficialInstall(garbage.deps)).toMatchObject({ version: null });
+  });
+
+  it('parses the version only from the CFBundleShortVersionString entry', () => {
+    expect(plistShortVersion(plist('1.8.0'))).toBe('1.8.0');
+    expect(plistShortVersion(plist('1.8.0-beta 2'))).toBe('1.8.0-beta 2');
+    expect(plistShortVersion(plist(''))).toBeNull();
+    expect(plistShortVersion(plist('<b>'))).toBeNull();
+    // CFBundleVersion is another entry and does not stand in for it.
+    expect(plistShortVersion('<key>CFBundleVersion</key><string>1.8.1</string>')).toBeNull();
+  });
+
+  it('is not used as the working directory of a start, unlike the Windows installation folder', () => {
+    expect(isWorkingDirectory(null)).toBe(false);
+    expect(isWorkingDirectory({ dir: MAC_APP, version: '1.8.1', source: 'bundle' })).toBe(false);
+    expect(isWorkingDirectory({ dir: 'C:\\Apps\\OpenTune', version: null, source: 'registry' })).toBe(true);
+    expect(isWorkingDirectory({ dir: 'C:\\Apps\\OpenTune', version: null, source: 'folder' })).toBe(true);
   });
 });

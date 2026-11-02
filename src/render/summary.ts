@@ -131,10 +131,39 @@ function trackFacts(envelope: Json, dryRun: boolean): { revealed: readonly numbe
   return { revealed, phrases };
 }
 
+/**
+ * Whether every change of the result is a track that became visible and nothing else. Showing a track cannot be
+ * taken back by any request, but it destroys nothing: no clip, note or setting is lost.
+ */
+function onlyShowsTracks(envelope: Json): boolean {
+  const changes = asList(envelope.changes);
+  return (
+    changes.length > 0 &&
+    changes.every((item) => {
+      if (!isObject(item) || item.entity !== 'track' || !isObject(item.fields)) return false;
+      const members = Object.keys(item.fields);
+      const visible = item.fields.visible;
+      return members.length === 1 && isObject(visible) && visible.before === false && visible.after === true;
+    })
+  );
+}
+
+/**
+ * Whether the first sentence calls the result destructive: it removed entities, or it carries one of the warnings of
+ * DESTRUCTIVE_WARNINGS. IRREVERSIBLE on its own does not count when the result only showed hidden tracks (track.add:
+ * OpenTune has no undo for the + button, and nothing is lost by it); the other warnings, and any other change that
+ * comes with it, still do. Everything that asks whether a result is destructive goes through this function.
+ */
+export function isDestructive(envelope: Json): boolean {
+  if (asList(envelope.removed).length > 0) return true;
+  const codes = warningCodes(envelope).filter((c) => DESTRUCTIVE_WARNINGS.has(c));
+  if (codes.length === 0) return false;
+  return !(codes.every((c) => c === 'IRREVERSIBLE') && onlyShowsTracks(envelope));
+}
+
 function flagsOf(envelope: Json, reRender?: ReRenderState): string[] {
   const flags: string[] = [];
-  const removed = asList(envelope.removed).length;
-  if (removed > 0 || warningCodes(envelope).some((c) => DESTRUCTIVE_WARNINGS.has(c))) flags.push('destructive');
+  if (isDestructive(envelope)) flags.push('destructive');
   const tracks = trackFacts(envelope, envelope.dryRun === true);
   flags.push(...tracks.phrases);
   // The tempo that OpenTune's tempo field rounded when the window switched view: nobody asked for it, so it is said

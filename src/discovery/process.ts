@@ -63,6 +63,17 @@ export function parsePidLines(text: string): number[] {
     .map((line) => Number(line.trim()));
 }
 
+/**
+ * macOS: the start time from `ps -o lstart=`, which prints local time such as `Fri Oct 30 12:08:15 2026` (the day of the
+ * month is padded with a space). The caller runs ps with TZ=UTC, so the text is read as UTC. The resolution is one
+ * second. Text that is not a date is null.
+ */
+export function parsePsStartTime(text: string): number | null {
+  const line = text.trim();
+  const ms = line === '' ? Number.NaN : Date.parse(`${line} UTC`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 /** A number of ms since the epoch printed on a line of its own, or null. */
 export function parseEpochMs(text: string): number | null {
   const value = Number(text.trim());
@@ -148,8 +159,7 @@ async function startTime(pid: number): Promise<number | null> {
   }
   // macOS and other systems: ps prints the start time in seconds; the probe tolerates 2 s.
   const out = await run('/bin/ps', ['-o', 'lstart=', '-p', String(pid)], { ...process.env, LC_ALL: 'C', TZ: 'UTC' });
-  const ms = out === null ? Number.NaN : Date.parse(`${out.trim()} UTC`);
-  return Number.isFinite(ms) ? ms : null;
+  return out === null ? null : parsePsStartTime(out);
 }
 
 /** The probe of the running system. Start times are cached per pid while the pid stays alive. */
@@ -173,6 +183,8 @@ export function systemProbe(): ProcessProbe {
         const out = await run(system32('tasklist.exe'), ['/FI', 'IMAGENAME eq OpenTune.exe', '/FO', 'CSV', '/NH']);
         return out === null ? null : parseTasklist(out);
       }
+      // macOS: the executable inside the app bundle, official or test build, is named OpenTune
+      // (CFBundleExecutable), and pgrep -x matches that process name exactly.
       return pgrepPids(await runTool('/usr/bin/pgrep', ['-x', 'OpenTune']));
     },
   };

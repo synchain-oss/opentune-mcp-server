@@ -6,7 +6,7 @@
     "wait_seconds": 10
   },
   "result": {
-    "summary": "opentune_save_project: saved the project to its file (path in path), replacing its previous content; a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. The project is no longer marked as changed. Not stored in the project file: which tracks are shown, the undo and redo history, global preferences. OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.",
+    "summary": "opentune_save_project: saved the project to its file (path in path), replacing its previous content; a copy of the replaced content was kept in the oldversion folder next to that file (path in oldVersion.path); opening that copy with opentune_open_project goes back to it. The project is no longer marked as changed. Not stored in the project file: the undo and redo history, global preferences. OpenTune also copies the audio the project uses into a media folder next to the project file: a folder named after it with _Media added, or in a build that implements an earlier specification the Project_Media folder that all the project files of the directory share, where a file of the same name is replaced.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
@@ -32,7 +32,6 @@
         "subject": null,
         "data": {
           "items": [
-            "visibleTrackCount",
             "undoHistory",
             "preferences"
           ]
@@ -80,7 +79,6 @@
         "subject": null,
         "data": {
           "items": [
-            "visibleTrackCount",
             "undoHistory",
             "preferences"
           ]
@@ -88,7 +86,7 @@
       }
     ],
     "job": {
-      "jobId": "j:01234567:3",
+      "jobId": "j:01234567:5",
       "kind": "projectSave",
       "state": "succeeded"
     },
@@ -104,7 +102,6 @@
       "omittedChangeCount": 0
     },
     "notSavedInProject": [
-      "visibleTrackCount",
       "undoHistory",
       "preferences"
     ],

@@ -201,7 +201,8 @@ export interface OtcpMock {
   /**
    * Whether the GPU can create the inference session. Unset, the mock reports no backend (null, reason unavailable).
    * Set, processing.backend is "directml" under gpuFirst with the GPU available, and "cpu" otherwise: under gpuFirst
-   * without a GPU it is the fall back that OpenTune makes without a word.
+   * without a GPU it is the fall back to the CPU that OpenTune makes by itself; a prefs.set that sets gpuFirst then
+   * carries the warning BACKEND_FALLBACK.
    */
   setGpuAvailable(on: boolean): void;
   /** OpenTune cannot load these pitch models: prefs.set of one of them (it must be among the options) fails with model_missing. */

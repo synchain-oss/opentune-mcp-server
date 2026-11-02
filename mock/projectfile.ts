@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: MIT
 
 // The project file of the mock: a small JSON document that holds what OpenTune saves with a project
-// (the clips, their contents, the tracks and the tempo) and none of what it does not (the number of
-// visible tracks, the undo history and the preferences; PROTOCOL.md section 22, project.save). It
-// is only ever written to the mock's work directory; the real format is OpenTune's own.
+// (the clips, their contents, the tracks, the number of visible tracks and the tempo) and none of what
+// it does not (the undo history and the preferences; PROTOCOL.md section 22, project.save). A file
+// without the number of visible tracks is an old one: opening it shows the tracks that hold clips,
+// beyond the initial ones. It is only ever written to the mock's work directory; the real format is
+// OpenTune's own.
 
 import { TRACK_SLOTS, type KeyRec, type HandleRec, type NoteRec, type PitchShiftRec, type World } from './model.js';
 
@@ -37,6 +39,8 @@ export interface ProjectFile {
   bpm: number;
   timeSignature: { numerator: number; denominator: number };
   tracks: { muted: boolean; solo: boolean; volumeLinear: number; colour: string }[];
+  /** The number of visible tracks; a file that predates it has none. */
+  visibleTrackCount?: number;
   contents: ProjectContentFile[];
   clips: ProjectClipFile[];
 }
@@ -51,6 +55,7 @@ export function projectOf(world: World): ProjectFile {
     bpm: world.transport.bpm,
     timeSignature: { ...world.transport.timeSignature },
     tracks: world.tracks.map(({ muted, solo, volumeLinear, colour }) => ({ muted, solo, volumeLinear, colour })),
+    visibleTrackCount: world.visibleTrackCount,
     contents: contents.map((c) => ({
       source: c.sourcePath ?? '',
       durationSec: c.durationSec,
@@ -152,6 +157,13 @@ export function parseProject(text: string): ProjectFile | undefined {
   if (!isNumber(value.bpm) || !isRecord(timeSignature)) return undefined;
   if (!isNumber(timeSignature.numerator) || !isNumber(timeSignature.denominator)) return undefined;
   if (!tracks.every(validTrack) || !contents.every(validContent)) return undefined;
+  const shown = value.visibleTrackCount;
+  if (
+    shown !== undefined &&
+    !(typeof shown === 'number' && Number.isInteger(shown) && shown >= 1 && shown <= TRACK_SLOTS)
+  ) {
+    return undefined;
+  }
   if (!clips.every((clip) => validClip(clip, contents.length))) return undefined;
   return value as unknown as ProjectFile;
 }

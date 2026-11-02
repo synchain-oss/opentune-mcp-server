@@ -12,10 +12,11 @@ import path from 'node:path';
 import { resolveDiscoveryDir } from '../discovery/dir.js';
 import { DISCOVERY_FILE_RE, parseDiscoveryFile, readDiscoveryBytes } from '../discovery/file.js';
 import { troubleshootingUrl } from '../errors/next-step.js';
-import { OPENTUNE_PATH_ENV, checkLaunchConfig, isWsl } from '../launch/config.js';
-import type { InstallDetector, OfficialInstall } from '../launch/install.js';
+import { OPENTUNE_PATH_ENV, checkLaunchConfig, configuredOpentunePath, isWsl } from '../launch/config.js';
+import { MAC_APP, type InstallDetector, type OfficialInstall } from '../launch/install.js';
 import { SERVER_NAME, VERSION } from '../version.js';
 import {
+  MIN_OFFICIAL_VERSION_MACOS,
   d3d12Check,
   modelsCheck,
   shadowedCheck,
@@ -109,6 +110,25 @@ async function discoveryCheck(deps: DoctorDeps): Promise<CheckResult> {
   return result(id, 'pass', [`${dir.dir} is readable (${dir.source}); ${count}.`, ...lines].join('\n'));
 }
 
+/** The folder that holds an app bundle, for a path of the form `<folder>/<name>.app/Contents/MacOS/<executable>`. */
+const APP_EXECUTABLE = /^(.+)\/[^/]+\.app\/Contents\/MacOS\/[^/]+$/;
+
+/**
+ * macOS: the test build keeps opentune-control.json out of the app bundle (a file in Contents/MacOS would break the
+ * signature of the app), next to OpenTune-AI.command in the folder that holds the app. The executable inside the app
+ * therefore has no manifest beside it; say which file to configure instead.
+ */
+async function macAppHint(deps: DoctorDeps): Promise<string> {
+  const exe = configuredOpentunePath(deps.env);
+  const folder = deps.platform === 'darwin' && exe !== undefined ? APP_EXECUTABLE.exec(exe)?.[1] : undefined;
+  if (folder === undefined) return '';
+  const script = path.posix.join(folder, 'OpenTune-AI.command');
+  const present = (await (deps.fs ?? systemDoctorFs).stat(script))?.isFile === true;
+  return present
+    ? ` On macOS the manifest is not inside the app but next to OpenTune-AI.command: set ${OPENTUNE_PATH_ENV} to ${script}.`
+    : ` On macOS the manifest is not inside the app but next to OpenTune-AI.command, in the folder that holds the app: set ${OPENTUNE_PATH_ENV} to that script.`;
+}
+
 async function opentunePathCheck(deps: DoctorDeps): Promise<CheckResult> {
   const id = 'OT_OPENTUNE_PATH';
   const config = await checkLaunchConfig(deps.env, deps.platform);
@@ -136,7 +156,8 @@ async function opentunePathCheck(deps: DoctorDeps): Promise<CheckResult> {
       return result(
         id,
         'fail',
-        `${OPENTUNE_PATH_ENV} names a build without a usable opentune-control.json (${config.reason.replaceAll('_', ' ')}).`,
+        `${OPENTUNE_PATH_ENV} names a build without a usable opentune-control.json (${config.reason.replaceAll('_', ' ')}).` +
+          (config.reason === 'manifest_missing' ? await macAppHint(deps) : ''),
       );
     case 'ok':
       return result(id, 'pass', `${OPENTUNE_PATH_ENV} = ${config.path}, a build with the control API.`);
@@ -145,18 +166,34 @@ async function opentunePathCheck(deps: DoctorDeps): Promise<CheckResult> {
 
 function officialInstallCheck(deps: DoctorDeps, install: OfficialInstall | null): CheckResult {
   const id = 'OT_NO_OFFICIAL_INSTALL';
-  if (deps.platform !== 'win32') {
-    return result(id, 'warn', 'Not checked: this check looks for an official OpenTune installation on Windows only.');
+  if (deps.platform !== 'win32' && deps.platform !== 'darwin') {
+    return result(
+      id,
+      'warn',
+      'Not checked: this check looks for an official OpenTune installation on Windows and macOS only.',
+    );
   }
   if (install === null) {
     return result(
       id,
       'warn',
-      'No official OpenTune installation was found (uninstall entries in the registry, usual install folders). This ' +
-        'is not an error; an OpenTune started by this server then runs in the folder of its executable.',
+      deps.platform === 'darwin'
+        ? `No official OpenTune installation was found (looked for ${MAC_APP}). The macOS test build contains no ` +
+            'models: it uses the ones inside the official app, so install the official OpenTune for macOS ' +
+            `(${MIN_OFFICIAL_VERSION_MACOS} or later) in /Applications before you start the test build.`
+        : 'No official OpenTune installation was found (uninstall entries in the registry, usual install folders). ' +
+            'This is not an error; an OpenTune started by this server then runs in the folder of its executable.',
     );
   }
   const version = install.version === null ? 'version unknown' : `version ${JSON.stringify(install.version)}`;
+  if (install.source === 'bundle') {
+    return result(
+      id,
+      'pass',
+      `Official OpenTune installation in ${install.dir} (${version}, read from its Info.plist). A test build finds ` +
+        'the installed models inside this app.',
+    );
+  }
   const via = install.source === 'registry' ? 'uninstall entry' : 'install folder';
   return result(
     id,
@@ -184,10 +221,10 @@ export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
         'Running inside WSL, which cannot reach OpenTune on Windows; run this server with Windows Node.js.',
       )
     : result('OT_WSL_RUNTIME', 'pass', 'Not running inside WSL.');
-  const windows = deps.platform === 'win32';
+  const hasInstaller = deps.platform === 'win32' || deps.platform === 'darwin';
   const fs = deps.fs ?? systemDoctorFs;
   // The installation is looked up once; several checks use it.
-  const install = windows ? await deps.officialInstall().catch(() => null) : null;
+  const install = hasInstaller ? await deps.officialInstall().catch(() => null) : null;
   const config = await checkLaunchConfig(deps.env, deps.platform);
   const exeDir = config.state === 'ok' ? config.dir : null;
   const sidecar = { platform: deps.platform, fs };
@@ -198,8 +235,8 @@ export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
     await discoveryCheck(deps),
     await opentunePathCheck(deps),
     officialInstallCheck(deps, install),
-    outcome('OT_VERSION_UNSUPPORTED', versionCheck(install, windows)),
-    outcome('OT_MODELS_MISSING', await modelsCheck(install, { env: deps.env, fs }, windows)),
+    outcome('OT_VERSION_UNSUPPORTED', versionCheck(install, deps.platform)),
+    outcome('OT_MODELS_MISSING', await modelsCheck(install, { env: deps.env, fs }, deps.platform)),
     outcome('OT_SIDECAR_INCOMPLETE', await sidecarCheck(exeDir, sidecar)),
     outcome('OT_MODELS_SHADOWED', await shadowedCheck(exeDir, sidecar)),
     outcome('OT_D3D12_NOT_COPIED', await d3d12Check(exeDir, { ...sidecar, officialDir: install?.dir ?? null })),

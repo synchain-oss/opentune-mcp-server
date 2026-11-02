@@ -21,7 +21,7 @@ OpenTune MCP Server 是由 [Synchain](https://www.synchain.ca) 主导的开源�
 | --- | --- |
 | Windows x64,配合 [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) 的非官方 OpenTune 测试版(带控制接口) | 支持。 |
 | 官方 OpenTune 发布版(没有控制接口) | 不能用:`opentune_get_status` 报告 `NO_API_BUILD`。配置指向测试版、但实际开着的是官方 OpenTune 时,报告 `RUNNING_WITHOUT_API`。 |
-| macOS | 暂无。 |
+| Apple 芯片：配合 macOS 测试版（`synchain-test/v1.8.0-ctl.3` 起），需要 macOS 13.3 或更新 | 预发布阶段的支持。测试版没有经过公证(notarize),首次启动需要手动放行,见[排障](docs/TROUBLESHOOTING.zh-CN.md#macos-first-start-blocked-by-gatekeeper)。不支持 Intel 的 Mac。 |
 | Linux | 不支持:OpenTune 本身没有 Linux 版。 |
 | WSL | 服务必须用 Windows 上的 Node.js 运行,见 [WSL](#wsl)。 |
 
@@ -30,9 +30,9 @@ DAW 内的 OpenTune VST3/ARA 插件不在范围内,只覆盖 OpenTune 独立版�
 ## 前置条件
 
 - **Node.js 22 或更高**(MCPB 包不需要,Claude Desktop 用自带的运行时运行它)。
-- **已安装官方 OpenTune,1.7.9 或更新。** 测试版不含模型与 Direct3D 12 运行库,使用官方安装里的那一份。OpenTune 1.7.9 须装在默认位置,因为它的模型在安装目录下;OpenTune 1.8.1 可以装在任意位置,模型在 `%ProgramData%\OpenTune\Models`。
-- **非官方测试版**,是一个 zip,解压到 Program Files 之外的文件夹。确认 `opentune-control.json` 就在 `OpenTune.exe` 旁边。
-- **`OPENTUNE_MCP_OPENTUNE_PATH`** 设为测试版里 `OpenTune.exe` 的绝对路径。下面的安装片段会替你设好。
+- **已安装官方 OpenTune,1.7.9 或更新**(macOS 上:1.8.0 或更新,装在 `/Applications/OpenTune.app`)。测试版不含模型与 Direct3D 12 运行库,使用官方安装里的那一份。在 Windows 上,OpenTune 1.7.9 须装在默认位置,因为它的模型在安装目录下;OpenTune 1.8.1 可以装在任意位置,模型在 `%ProgramData%\OpenTune\Models`。
+- **非官方测试版**,是一个 zip,解压到 Program Files 之外的文件夹。确认 `opentune-control.json` 就在 `OpenTune.exe` 旁边。macOS 上的 zip 里是 `OpenTune-ctl.app`,以及放在它旁边的 `OpenTune-AI.command`、`opentune-control.json` 和 `SHA256SUMS`:请解压到你自己的文件夹,并让这些文件保持在一起。Gatekeeper 会拦下第一次启动,需要你手动放行一次(见[排障](docs/TROUBLESHOOTING.zh-CN.md#macos-first-start-blocked-by-gatekeeper))。
+- **`OPENTUNE_MCP_OPENTUNE_PATH`** 设为测试版里 `OpenTune.exe` 的绝对路径(macOS 上:`OpenTune-AI.command` 的路径,不是 app 里面那个可执行文件)。下面的安装片段会替你设好。
 
 运行 `opentune-mcp doctor` 可以检查以上全部(它不会启动 OpenTune);它报告的每一项检查在 [docs/TROUBLESHOOTING.zh-CN.md](docs/TROUBLESHOOTING.zh-CN.md) 里都有对应小节。
 
@@ -42,7 +42,7 @@ OpenTune 在全新数据目录下首次启动时,会弹出一次「首次引导�
 
 ## 安装
 
-`opentune-mcp doctor --client <claude-code|claude-desktop|cursor>` 会打印该客户端的配置,并填好你自己的路径;它只打印,从不写客户端的配置文件。下面的片段就是它在 Windows 上打印的内容,其中 `C:\Users\user\Apps\OpenTune\OpenTune.exe` 代表你的测试版路径。
+`opentune-mcp doctor --client <claude-code|claude-desktop|cursor>` 会打印该客户端的配置,并填好你自己的路径;它只打印,从不写客户端的配置文件。下面的片段就是它在 Windows 上打印的内容,其中 `C:\Users\user\Apps\OpenTune\OpenTune.exe` 代表你的测试版路径。在 macOS 上,同样的命令去掉 `cmd /c`,路径换成 `/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command`(见 Cursor 示例之后的 macOS 片段)。
 
 **Claude Desktop(首推):MCPB 包。** 从 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases) 页面下载 `opentune-mcp-<version>.mcpb` 与对应的 `.sha256` 文件,核对校验和,打开 `.mcpb` 文件(或拖进 设置 > 扩展)并选择安装。在扩展设置里把「OpenTune executable」设为测试版的 `OpenTune.exe`。详见 [docs/install.md](docs/install.md)。进阶:用 `opentune-mcp doctor --client claude-desktop` 手动注册 npm 包。
 
@@ -84,6 +84,16 @@ claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\
 }
 ```
 
+**在 macOS 上**,命令去掉 `cmd /c` 包装,路径是你解压测试版的文件夹里 `OpenTune-AI.command` 的路径(这里用 `/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command`):
+
+```text
+claude plugin marketplace add synchain-oss/opentune-mcp-server
+claude plugin install opentune@synchain-opentune --config opentune_path=/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command
+claude mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=/Users/user/Apps/OpenTune-ctl/OpenTune-AI.command -- npx -y @synchain/opentune-mcp
+```
+
+前两行是插件,最后一行是不用插件的注册方式;二选一即可。Cursor 与 Claude Desktop 是由 macOS 桌面启动的,不会读取你的 shell 配置文件,所以用 Homebrew 或版本管理器装的 Node.js 不在它们的 `PATH` 上。当你的 `node` 不在 `/usr/bin` 与 `/usr/local/bin` 下时,`opentune-mcp doctor --client cursor` 会打印 `npx` 的完整路径和配置里的 `PATH` 项;请照它打印的写。Claude Desktop 读取的是 `~/Library/Application Support/Claude/claude_desktop_config.json`。
+
 然后让 agent 检查 OpenTune。它会先调用 `opentune_get_status` 并照结果里的 `nextStep` 做;`opentune_launch` 会用控制接口启动配置好的 OpenTune。
 
 ## 示例提示
@@ -97,7 +107,7 @@ claude.cmd mcp add opentune --scope user -e OPENTUNE_MCP_OPENTUNE_PATH=C:\Users\
 5. **「用伴奏 WAV 帮我确定这首歌的调,再按这个调自动修音。」** agent 调用 `opentune_estimate_key`,传入 `mix_path`(`.wav` 文件的绝对路径),也可以再给出人声片段 `clip`。结果列出最可能的几个调及其置信度,并说明相对大小调(音阶相同)分不开的情况,给出 `recommendation.key`,agent 再把它传给 `opentune_autotune_range`。估计本身不会改动任何内容。
 6. **「把第二段人声往后挪 0.5 秒,并加个淡入。」** agent 调用 `opentune_get_project`(各片段的时间线起点,以及 `arrangement_revision`),先用 `opentune_edit_arrangement` 加 `dry_run` 预览,再在一次调用里发出 `move`(新的 `start_timeline_sec`:当前起点加 0.5)和 `fade`(`fade_in_sec`),这是一个撤销步骤。这移动的是片段在时间线上的位置,不会拉伸片段里的音频(那是 `opentune_edit_timing` 的事)。OpenTune 没有段落标记,所以 agent 会用起始时间说明它指的是哪个片段,有两个都像时会来问你。
 7. **「把伴奏轨静音,我想听听人声。」** agent 用 `opentune_get_project` 读出各轨道,用 `opentune_set_tracks`(操作 `mute`)把伴奏轨静音,你要求的话再用 `opentune_transport`(动作 `play`)开始播放。轨道名是数据:不确定哪条是伴奏轨时,agent 会来问你。静音在 OpenTune 里没有撤销条目(和窗口里一样);结果会给出取消静音的调用,所以用完请让它把这条轨道的静音取消。播放从你电脑的音频设备出声,agent 听不到,听感要你自己判断。
-8. **「另存为新工程 `C:\Music\take1-v2.otproj`。」** agent 用模式 `save_as` 和这个路径调用 `opentune_save_project`,新文件成为当前工程文件。它不会替换另一个已有文件:要替换就得用 `opentune_save_project_overwrite`,而它会先征得你的明确同意。OpenTune 没有自动保存,所以 agent 会在每一步之后写一个自动副本(模式 `autosave`:在工程文件旁的 `<工程名>.autosave` 文件夹里写一个带编号的副本,保留最新的 50 个,不动你的工程文件),只在你要求或同意时才覆盖工程文件;被覆盖的文件会存进 `<工程名>.oldversion`(保留最新的 10 个)。撤销历史不会存进工程文件。
+8. **「另存为新工程 `C:\Music\take1-v2.otproj`。」** agent 用模式 `save_as` 和这个路径调用 `opentune_save_project`,新文件成为当前工程文件。它不会替换另一个已有文件:要替换就得用 `opentune_save_project_overwrite`,而它会先征得你的明确同意。OpenTune 没有自动保存,所以 agent 会在每一步之后写一个自动副本(模式 `autosave`:在工程文件旁的 `<工程名>.autosave` 文件夹里写一个带编号的副本,保留最新的 10 个,不动你的工程文件),只在你要求或同意时才覆盖工程文件;被覆盖的文件会存进 `<工程名>.oldversion`(保留最新的 10 个)。撤销历史不会存进工程文件。
 
 ## 与 DAW 配合使用
 
@@ -225,10 +235,11 @@ opentune-mcp  (本仓库,Node.js,MIT)
 
 - **混合模式与小幅修正。** OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 Hybrid Mode: Small corrections use DSP, large corrections use vocoder)默认开启。修正量中小于 75 音分的部分走 DSP 移调而不是声码器,这是 OpenTune 自身的设计,在真实人声上这种小修正可能几乎听不出来。想让小修正也明显生效,请在 OpenTune 首选项里关闭该项,或让 agent 用 `opentune_set_settings`(`processing.hybrid_mode`)来关;它是 OpenTune 的全局设置而不是工程设置,关掉之后一直保持关闭,直到有人再把它打开。见[混合模式](docs/TROUBLESHOOTING.zh-CN.md#hybrid-mode)。
 - **有些修改不能撤销。** 导入音频、改片段的调性和时间网格的 `seed` 不能撤销。拆分、合并、删除片段也不能撤销,这是 OpenTune 的缺陷(它释放了自己的撤销条目还要用的对象);复制片段和删除轨道同样不能撤销。静音、独奏、音量、颜色、速度、拍号和全局设置在 OpenTune 里没有撤销条目。结果会在第一句话里写明,破坏性的操作 agent 会先问你,有办法还原时结果还会给出恢复原状的调用。
-- **OpenTune 自己没有自动保存。** OpenTune 不会自己保存,撤销历史也不会存进工程文件。所以 agent 会在每一步之后写一个工程的自动副本(工程文件旁的 `<工程名>.autosave`,保留最新的 50 个)。副本不会改动你的工程文件,所以 OpenTune 关闭或崩溃时副本里的内容还在,但工程文件只在你要求或同意时才更新。规范 `1.0.0-rc.8` 之前的测试构建写不了副本:这时请在想保住成果时让 agent 保存。
+- **OpenTune 自己没有自动保存。** OpenTune 不会自己保存,撤销历史也不会存进工程文件。所以 agent 会在每一步之后写一个工程的自动副本(工程文件旁的 `<工程名>.autosave`,保留最新的 10 个)。副本不会改动你的工程文件,所以 OpenTune 关闭或崩溃时副本里的内容还在,但工程文件只在你要求或同意时才更新。规范 `1.0.0-rc.8` 之前的测试构建写不了副本:这时请在想保住成果时让 agent 保存。
 - **`RUNNING_WITHOUT_API` 只做了人工核对。** 「运行着没开控制接口的官方 OpenTune」这一状态是人工验证的,没有自动化测试。
 - **源目录只读。** 不给 `path` 的导出会写在源文件旁。该目录只读时导出会报错,不会自动换目录。请指定一个可写的 `path`。
 - **首次启动需要人工操作。** 首次引导对话框需要有人回答一次([首次启动](#首次启动))。
+- **macOS 处于预发布阶段。** macOS 测试版只支持 Apple 芯片,是 ad-hoc 签名、没有经过公证的,所以第一次启动时 Gatekeeper 会要求手动放行([排障](docs/TROUBLESHOOTING.zh-CN.md#macos-first-start-blocked-by-gatekeeper))。本服务的单元测试和 stdio 冒烟测试在 CI 的 macOS runner 上运行。`beat-grid` skill(macOS universal2 分析器)与 `lyrics-timeline` skill(Python 3.10 或更新,Apple 芯片)支持 macOS;`opentune-mcp doctor` 把仅限 Windows 的 Direct3D 12 检查标为不适用。
 - **不在范围内:** 没有控制接口的官方 OpenTune 构建、Linux、VST3/ARA 插件、OpenTune 窗口本身没有的功能,以及绘制式编辑(绘制、拉伸、拆分或合并音符、逐音符 EQ、手绘曲线)。
 
 ## 与 OpenTune 的关系

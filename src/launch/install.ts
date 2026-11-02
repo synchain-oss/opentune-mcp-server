@@ -1,25 +1,32 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 Synchain
 // SPDX-License-Identifier: MIT
 
-// The official OpenTune installation on Windows, found read-only: first through the uninstall
-// entries in the registry, then in the usual install folders. It is used as the working directory
-// of an OpenTune this server starts (an API build without models of its own then finds the
-// installed ones) and reported by doctor. It is never a candidate executable to start: only
-// OPENTUNE_MCP_OPENTUNE_PATH names that. Not finding an installation is not an error.
+// The official OpenTune installation, found read-only. On Windows first through the uninstall
+// entries in the registry, then in the usual install folders; on macOS /Applications/OpenTune.app,
+// whose version is read from its Info.plist. On Windows it is used as the working directory of an
+// OpenTune this server starts (an API build without models of its own then finds the installed
+// ones); on macOS the models are found by the path of the app, so a start keeps the folder of the
+// executable as its working directory. It is reported by doctor. It is never a candidate
+// executable to start: only OPENTUNE_MCP_OPENTUNE_PATH names that. Not finding an installation is
+// not an error. Nothing here runs an installer or writes anything.
 
-import { stat } from 'node:fs/promises';
+import { open, stat } from 'node:fs/promises';
 import path from 'node:path';
 
 import { isAbsoluteLocalPath } from '../discovery/dir.js';
 import { runTool, type ToolRun } from '../discovery/process.js';
 
 export interface OfficialInstall {
-  /** The installation folder, which holds OpenTune.exe. */
+  /** The installation folder, which holds OpenTune.exe; on macOS the app bundle, OpenTune.app. */
   readonly dir: string;
-  /** DisplayVersion of the uninstall entry, or null (not found through the registry, or not set). */
+  /** DisplayVersion of the uninstall entry (Windows) or CFBundleShortVersionString (macOS), or null (not found, not set, unreadable). */
   readonly version: string | null;
-  readonly source: 'registry' | 'folder';
+  readonly source: 'registry' | 'folder' | 'bundle';
 }
+
+/** Whether a start runs in the installation's folder (Windows); a macOS app bundle is not used that way. */
+export const isWorkingDirectory = (install: OfficialInstall | null): install is OfficialInstall =>
+  install !== null && install.source !== 'bundle';
 
 /** Looks for the installation; resolves with null when there is none or it cannot be determined. */
 export type InstallDetector = () => Promise<OfficialInstall | null>;
@@ -30,6 +37,8 @@ export interface InstallDeps {
   /** Runs a system tool by absolute path without a shell (runTool unless a test replaces it). */
   readonly run: (file: string, args: readonly string[]) => Promise<ToolRun>;
   readonly isFile: (file: string) => Promise<boolean>;
+  /** The first `max` bytes of a file, or null when it cannot be read. */
+  readonly readFile: (file: string, max: number) => Promise<Buffer | null>;
 }
 
 const EXE = 'OpenTune.exe';
@@ -90,8 +99,37 @@ async function fromRegistry(deps: InstallDeps, reg: string): Promise<OfficialIns
   return null;
 }
 
-/** The installation, or null. Windows only; other systems have no official installer to find. */
+/** Where the official macOS installer puts the app (the folder of globalApplicationsDirectory in OpenTune). */
+export const MAC_APP = '/Applications/OpenTune.app';
+export const MAC_PLIST = `${MAC_APP}/Contents/Info.plist`;
+const MAX_PLIST_BYTES = 64 * 1024;
+const PLUTIL = '/usr/bin/plutil';
+
+/** CFBundleShortVersionString from the text of an XML property list, or null. */
+export function plistShortVersion(xml: string): string | null {
+  const m = /<key>CFBundleShortVersionString<\/key>\s*<string>([^<]*)<\/string>/.exec(xml);
+  const version = (m?.[1] ?? '').trim();
+  return VERSION_RE.test(version) ? version : null;
+}
+
+async function fromMacBundle(deps: InstallDeps): Promise<OfficialInstall | null> {
+  if (!(await deps.isFile(MAC_PLIST))) return null;
+  const bytes = await deps.readFile(MAC_PLIST, MAX_PLIST_BYTES);
+  let version: string | null = null;
+  if (bytes !== null && bytes.subarray(0, 6).toString('latin1') === 'bplist') {
+    // A binary property list: plutil only reads it and prints the one value.
+    const printed = await deps.run(PLUTIL, ['-extract', 'CFBundleShortVersionString', 'raw', '-o', '-', MAC_PLIST]);
+    const text = printed.ok ? printed.output.trim() : '';
+    version = VERSION_RE.test(text) ? text : null;
+  } else if (bytes !== null) {
+    version = plistShortVersion(bytes.toString('utf8'));
+  }
+  return { dir: MAC_APP, version, source: 'bundle' };
+}
+
+/** The installation, or null. Windows and macOS only; other systems have no official installer to find. */
 export async function detectOfficialInstall(deps: InstallDeps): Promise<OfficialInstall | null> {
+  if (deps.platform === 'darwin') return fromMacBundle(deps);
   if (deps.platform !== 'win32') return null;
   const { env } = deps;
   const reg = path.win32.join(env.SystemRoot ?? 'C:\\Windows', 'System32', 'reg.exe');
@@ -112,7 +150,21 @@ const isFile = (file: string) =>
     () => false,
   );
 
+const readHead = async (file: string, max: number): Promise<Buffer | null> => {
+  const handle = await open(file, 'r').catch(() => null);
+  if (handle === null) return null;
+  try {
+    const buffer = Buffer.alloc(max);
+    const { bytesRead } = await handle.read(buffer, 0, max, 0);
+    return buffer.subarray(0, bytesRead);
+  } catch {
+    return null;
+  } finally {
+    await handle.close().catch(() => undefined);
+  }
+};
+
 /** The detector of the running system; errors count as "not found". */
 export function systemInstallDetector(env: NodeJS.ProcessEnv, platform: NodeJS.Platform): InstallDetector {
-  return () => detectOfficialInstall({ env, platform, run: runTool, isFile }).catch(() => null);
+  return () => detectOfficialInstall({ env, platform, run: runTool, isFile, readFile: readHead }).catch(() => null);
 }

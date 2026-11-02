@@ -14,24 +14,24 @@
     ]
   },
   "result": {
-    "summary": "opentune_set_tracks: 2 requests ran in this order (revealed the hidden track 4; not undoable: the state is not kept in the project; cannot be restored by any request; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line), reported separately in results. 1. changed 1 track. Warnings: NOT_PERSISTED. 2. changed 4 tracks.",
+    "summary": "opentune_set_tracks: 2 requests ran in this order (revealed the hidden track 4; not undoable: OpenTune has no undo for this; cannot be restored by any request; not undoable: OpenTune records no undo entry for this, as in its own interface; can be restored with opentune_set_tracks, see the revert line), reported separately in results. 1. changed 1 track. Warnings: IRREVERSIBLE. 2. changed 4 tracks.",
     "results": [
       {
         "method": "track.add",
-        "summary": "opentune_set_tracks: changed 1 track (revealed the hidden track 4; not undoable: the state is not kept in the project; cannot be restored by any request). Warnings: NOT_PERSISTED.",
+        "summary": "opentune_set_tracks: changed 1 track (revealed the hidden track 4; not undoable: OpenTune has no undo for this; cannot be restored by any request). Warnings: IRREVERSIBLE.",
         "applied": true,
         "noOp": false,
         "dryRun": false,
         "undo": {
           "undoable": false,
-          "reason": "not_persisted_state",
+          "reason": "no_upstream_undo",
           "revert": null
         },
         "lines": [
           {
             "kind": "warning",
-            "code": "NOT_PERSISTED",
-            "text": "The change is applied in the running session but is not stored in the project file.",
+            "code": "IRREVERSIBLE",
+            "text": "This change can be neither undone nor reverted by any request of the protocol.",
             "subject": {
               "trackId": 4
             },
@@ -39,7 +39,7 @@
           },
           {
             "kind": "revert",
-            "text": "Not undoable (the state is not kept in the project). No request of the protocol can restore the previous state.",
+            "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
             "revert": null,
             "restore": null
           }
@@ -71,7 +71,7 @@
         "sideEffects": {},
         "warnings": [
           {
-            "code": "NOT_PERSISTED",
+            "code": "IRREVERSIBLE",
             "subject": {
               "trackId": 4
             },

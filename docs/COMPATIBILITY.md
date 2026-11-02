@@ -7,21 +7,62 @@ SPDX-License-Identifier: MIT
 
 ## Versions
 
-| Part                           | Version                                                                                         | Notes                                                                                                                                                                                                                                                                                                          |
-| ------------------------------ | ----------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Official OpenTune installation | 1.7.9 or newer                                                                                  | The oldest version supported. The side-car smoke test (the test build started next to an official installation) passes in CI with 1.7.9 in its default folder, 1.8.1 in its default folder and 1.8.1 in a custom folder.                                                                                       |
-| Models                         | From the official installation                                                                  | The test build contains no models and no Direct3D 12 runtime. 1.7.9 must be installed in its default folder, because it keeps its models in its install folder; 1.8.1 keeps them in `%ProgramData%\OpenTune\Models`, so it can be installed anywhere. `opentune-mcp doctor` checks this (`OT_MODELS_MISSING`). |
-| OpenTune build                 | An unofficial test build from [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) | An official OpenTune release has no control API and is reported as `NO_API_BUILD`. The test build has `opentune-control.json` next to `OpenTune.exe`, listing `protocolMajors` 1.                                                                                                                              |
-| OTCP specification             | `1.0.0-rc.8` (wire version `1.0`, protocol major 1)                                             | The specification in `spec/otcp/v1/` of this repository. The test build and this server must both support protocol major 1; otherwise the status is `PROTOCOL_MISMATCH`.                                                                                                                                       |
-| Node.js                        | 22 or later                                                                                     | Not needed for the MCPB package.                                                                                                                                                                                                                                                                               |
-| Operating system               | Windows x64                                                                                     | macOS: not yet. Linux: not supported. WSL: run the server with Windows Node.js.                                                                                                                                                                                                                                |
+| Part                           | Version                                                                                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Official OpenTune installation | 1.7.9 or newer (macOS: 1.8.0 or newer)                                                          | The oldest version supported; on macOS the first official release, 1.8.0, installed as `/Applications/OpenTune.app`. The side-car smoke test (the test build started next to an official installation) passes in CI with 1.7.9 in its default folder, 1.8.1 in its default folder and 1.8.1 in a custom folder.                                                                                                                                                                                                                          |
+| Models                         | From the official installation                                                                  | The test build contains no models and no Direct3D 12 runtime. 1.7.9 must be installed in its default folder, because it keeps its models in its install folder; 1.8.1 keeps them in `%ProgramData%\OpenTune\Models`, so it can be installed anywhere. On macOS the test build uses the models of the official app, searched in the order of that app (`Contents/Resources/models` of the app, `/Applications/OpenTune/models`, `/Library/Application Support/OpenTune/models`). `opentune-mcp doctor` checks this (`OT_MODELS_MISSING`). |
+| OpenTune build                 | An unofficial test build from [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) | An official OpenTune release has no control API and is reported as `NO_API_BUILD`. The test build has `opentune-control.json` next to `OpenTune.exe`, listing `protocolMajors` 1; on macOS it is next to `OpenTune-AI.command`, which is the file to configure.                                                                                                                                                                                                                                                                          |
+| OTCP specification             | `1.0.0` (wire version `1.0`, protocol major 1)                                                  | The specification in `spec/otcp/v1/` of this repository. The test build and this server must both support protocol major 1; otherwise the status is `PROTOCOL_MISMATCH`.                                                                                                                                                                                                                                                                                                                                                                 |
+| Node.js                        | 22 or later                                                                                     | Not needed for the MCPB package.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Operating system               | Windows x64; macOS on Apple silicon (13.3 or later), pre-release                                | macOS needs the macOS test build (`ctl.3` or later; not notarized, see [Gatekeeper](TROUBLESHOOTING.md#macos-first-start-blocked-by-gatekeeper)). Intel Macs and Linux: not supported. WSL: run the server with Windows Node.js.                                                                                                                                                                                                                                                                                                         |
 
 The unofficial OpenTune test build that matches each release of this server:
 
 | Server | OTCP specification | Unofficial OpenTune test build |
 | ------ | ------------------ | ------------------------------ |
 | 0.2.0  | `1.0.0-rc.8`       | `synchain-test/v1.8.0-ctl.2`   |
+| 0.2.0  | `1.0.0-rc.8`       | `synchain-test/v1.8.0-ctl.3`   |
 | 0.1.0  | `1.0.0-rc.3`       | `synchain-test/v1.8.0-ctl.1`   |
+
+`synchain-test/v1.8.0-ctl.3` is the same OpenTune with the same control interface as `ctl.2`; it adds a macOS
+package (Apple silicon, signed ad hoc), which this server supports (see the operating system above and
+[install.md](install.md#macos-apple-silicon)). The specification in this repository is
+now `1.0.0`, whose text is that of `1.0.0-rc.9` (see the records of [rc.9](contract-changes/20261031-spec-rc9.md)
+and [1.0.0](contract-changes/20261101-spec-1.0.0.md)). The two builds above
+implement `rc.8`; a test build that implements `rc.9` is not listed yet. Both have the wire version `1.0`, so the
+version on the wire does not tell them apart, and this server does not guess: it reads the result it gets and, where a
+sentence depends on the layout, looks at the file system. All tools work with the `rc.8` builds. What differs there,
+as far as the text of `rc.8` and the builds show:
+
+- **Media folders.** An `rc.8` build keeps the audio of all the project files of a directory in one folder,
+  `Project_Media`, next to them, and the audio of all the autosave copies in `<name>.autosave/Project_Media`; an `rc.9`
+  build uses `<name>_Media` and, for a copy, `<copy name>_Media`. After it writes an autosave copy the server looks for
+  the folder of the copy and then for the shared one: `autosave.mediaFolder` names the one it finds, the summary says
+  that a shared folder is shared by every copy, replaces files of the same name and is not deleted by the server, and
+  when neither exists `mediaFolder` is null with the reason `media_folder_not_found`. Deleting a rolled copy deletes its
+  own folder when it has one; having none is not an error. The sentence of a save names both layouts. The
+  `mediaFolder` of the result of `save_as` and of the overwrite tool is likewise the folder found after the write:
+  `<name>_Media` next to the file, else the `Project_Media` next to it, else null with the reason
+  `media_folder_not_found` (a folder that cannot be looked into counts as not there, and the save is still reported as
+  done); a save to the project's own file names no folder (null, reason `project_path_not_given`), because only
+  OpenTune knows that path. The old versions copy `<name>_Media`, else `Project_Media` (see
+  [Autosave copies and old versions](TROUBLESHOOTING.md#autosave-copies-and-old-versions)).
+- **Showing a track (`opentune_set_tracks`, op `reveal`, OTCP `track.add`).** The tool description says "saved with
+  the project, no undo", which is the `rc.9` behaviour. An `rc.8` build treats the number of visible tracks as view
+  state: it returns the warning `NOT_PERSISTED` and the undo reason `not_persisted_state`, sends no `IRREVERSIBLE`, and
+  leaves the project without unsaved changes (`dirty.after` stays as it was). The summary of a result is built from
+  what the build returned, so it says what happened on that build; do not take the description as a statement about it.
+  For the same reason `project.open` on an `rc.8` build does not restore a stored number of tracks or report
+  `sideEffects.tracksRevealed`; it shows the tracks that hold clips.
+- **`NOT_SAVED_IN_PROJECT`.** An `rc.8` build lists `visibleTrackCount` among the items, next to `undoHistory` and
+  `preferences`, and the save tools say "which tracks are shown" for it; an `rc.9` build lists only the last two.
+- **Warnings that only an `rc.9` build sends.** `BACKEND_FALLBACK` (a change to `gpuFirst` that ends on the CPU) and
+  `ASIO_RATE_NOT_RESTORED`. An `rc.8` build says nothing in the first case (read `processing.backend`), and in the
+  second a failed restoration of the ASIO sample rate fails `audio.set` with `IO_ERROR(device_open_failed)` and takes
+  the switch back.
+- **`NOT_READY(export_wait_timeout)` for render blocks waiting for a delayed retry.** Only an `rc.9` build waits for
+  them before an export and fails the export when they cannot be drained; the text of `rc.8` does not say that an
+  export waits for them. The reason itself (analysis or rendering did not settle) exists in both.
 
 ## How long to wait
 

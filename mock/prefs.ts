@@ -164,6 +164,14 @@ function commit(context: MethodContext, planned: readonly Planned[]): Record<str
     );
     touched.push(open);
   }
+  // gpuFirst was asked for and OpenTune runs on the CPU: the preference is set, the GPU is not in use. The job reads the
+  // backend once, when it ends.
+  if (
+    planned.some(({ setting, wanted }) => setting.name === 'renderingPriority' && wanted === 'gpuFirst') &&
+    world.backend === 'cpu'
+  ) {
+    warnings.push(warning('BACKEND_FALLBACK', null, { requested: 'gpuFirst', actual: world.backend }));
+  }
   return envelope(world, {
     applied: true,
     noOp: false,

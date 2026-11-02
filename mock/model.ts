@@ -144,6 +144,8 @@ export interface AudioRec {
   outputChannelPair: number;
   /** Test interface: the device fails to open with any changed setup. */
   failsToOpen: boolean;
+  /** Test interface: restoring the sample rate of an ASIO device before a switch of the device type or output device fails. */
+  asioRateRestoreFails: boolean;
 }
 
 /**
@@ -305,6 +307,7 @@ export class World {
     bufferSizeFrame: 512,
     outputChannelPair: 0,
     failsToOpen: false,
+    asioRateRestoreFails: false,
   };
   /** Test interface: the output channel pairs the device offers (OpenTune's Standalone offers one). */
   outputChannelPairCount: number = AUDIO_AVAILABLE.outputChannelPairCount;

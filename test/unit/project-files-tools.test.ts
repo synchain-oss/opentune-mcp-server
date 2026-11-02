@@ -13,10 +13,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { ManualClock } from '../../mock/clock.js';
 import { startMock } from '../../mock/server.js';
+import { nodeProjectFs, type ProjectFs } from '../../src/files/project-folders.js';
 import { getJob } from '../../src/tools/jobs.js';
 import { TOOLS } from '../../src/tools/index.js';
 import {
   mediaFolderMembers,
+  notStored,
   openProject,
   openProjectTool,
   overwriteProject,
@@ -34,13 +36,13 @@ afterEach(async () => {
   for (const fn of cleanup.splice(0).reverse()) await fn();
 });
 
-async function setup(options: { manual?: boolean } = {}) {
+async function setup(options: { manual?: boolean; files?: ProjectFs } = {}) {
   const t = tempDir();
   cleanup.push(t.remove);
   const clock = new ManualClock();
   const mock = await startMock({ discoveryDir: t.dir, ...(options.manual === true ? { clock } : {}) });
   cleanup.push(() => mock.stop());
-  const ctx = testContext(t.dir);
+  const ctx = testContext(t.dir, options.files === undefined ? {} : { files: options.files });
   cleanup.push(() => {
     ctx.instances.close();
   });
@@ -66,14 +68,55 @@ const wait = { wait_seconds: 10 };
 
 /** What OpenTune does with the media of the project at every save; a fixed sentence, never built from the result. */
 const MEDIA_COPY =
-  'OpenTune also copies the audio the project uses into the Project_Media folder next to the project file.';
-const mediaFolderOf = (file: string) => path.join(path.dirname(file), 'Project_Media');
+  'OpenTune also copies the audio the project uses into a media folder next to the project file: a folder named after it ' +
+  'with _Media added, or in a build that implements an earlier specification the Project_Media folder that all the ' +
+  'project files of the directory share, where a file of the same name is replaced.';
+/** The media folder of a project file: named after it, next to it. */
+const mediaFolderOf = (file: string) => path.join(path.dirname(file), `${path.parse(file).name}_Media`);
+/** The folder that a build of specification 1.0.0-rc.8 shares between all the project files of a directory. */
+const sharedMediaFolderOf = (file: string) => path.join(path.dirname(file), 'Project_Media');
+/**
+ * Makes the folder that OpenTune makes at a save. The mock writes no audio folder (its project files name their audio
+ * by path), so a test that wants the layout of a build makes the folder, as that build would have, before the save: the
+ * server looks for it after the write.
+ */
+const makeFolder = (dir: string) => {
+  fs.mkdirSync(dir);
+  fs.writeFileSync(path.join(dir, '1.wav'), 'audio');
+};
 const save = (ctx: ToolContext, args: Parameters<typeof saveProject>[1]) => saveProject(ctx, { ...wait, ...args });
+
+describe('what the warning NOT_SAVED_IN_PROJECT says is missing from the project file', () => {
+  const warned = (items: unknown[]) => ({
+    warnings: [{ code: 'NOT_SAVED_IN_PROJECT', subject: null, data: { items } }],
+  });
+
+  it('names what a build of specification 1.0.0-rc.9 lists: the undo history and the preferences', () => {
+    expect(notStored(warned(['undoHistory', 'preferences']))).toEqual({
+      names: ['undoHistory', 'preferences'],
+      phrases: ['the undo and redo history', 'global preferences'],
+    });
+  });
+
+  it('still names the shown tracks for a build of the earlier specification, which lists them', () => {
+    expect(notStored(warned(['visibleTrackCount', 'undoHistory', 'preferences']))).toEqual({
+      names: ['visibleTrackCount', 'undoHistory', 'preferences'],
+      phrases: ['which tracks are shown', 'the undo and redo history', 'global preferences'],
+    });
+  });
+
+  it('leaves out names it does not know, and says nothing without the warning', () => {
+    expect(notStored(warned(['somethingNew', 'preferences'])).names).toEqual(['preferences']);
+    expect(notStored({ warnings: [] })).toEqual({ names: [], phrases: [] });
+  });
+});
 
 describe('opentune_save_project', () => {
   it('saves under a new path with save_as, then saves the same file with save', async () => {
     const { ctx, mock } = await setup();
     const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true });
+    // A build of specification 1.0.0-rc.9 copies the audio into a folder named after the file.
+    makeFolder(mediaFolderOf(need(ids, 'fresh')));
     const first = body(await save(ctx, { mode: 'save_as', path: need(ids, 'fresh') }));
     // A new file replaced nothing: the first sentence says what was written, and not that it cannot be restored.
     expect(first.summary).toMatch(
@@ -85,7 +128,7 @@ describe('opentune_save_project', () => {
       `from now on it is the project's file. ${MEDIA_COPY} The project is no longer marked as changed`,
     );
     expect(first.mediaFolder).toBe(mediaFolderOf(need(ids, 'fresh')));
-    expect(first.summary).not.toContain('Project_Media/');
+    expect(first.summary).not.toContain('_Media/');
     expect(first.summary).not.toContain(need(ids, 'fresh'));
     // The warnings keep the facts that the protocol states: the write has no undo, and some state is not stored.
     expect((first.warnings as { code: string }[]).map((w) => w.code)).toEqual(['IRREVERSIBLE', 'NOT_SAVED_IN_PROJECT']);
@@ -93,12 +136,12 @@ describe('opentune_save_project', () => {
       (first.lines as { kind: string; code?: string; text: string }[]).filter((l) => l.kind === 'warning').length,
     ).toBe(2);
     expect(first.summary).toMatch(/no longer marked as changed/);
-    expect(first.summary).toMatch(/Not stored in the project file: which tracks are shown, the undo and redo history/);
+    expect(first.summary).toMatch(/Not stored in the project file: the undo and redo history, global preferences/);
     expect(first.summary).not.toContain(need(ids, 'fresh'));
     expect(first).toMatchObject({
       path: need(ids, 'fresh'),
       requestedPath: need(ids, 'fresh'),
-      notSavedInProject: ['visibleTrackCount', 'undoHistory', 'preferences'],
+      notSavedInProject: ['undoHistory', 'preferences'],
       job: { kind: 'projectSave', state: 'succeeded' },
     });
     expect(fs.existsSync(need(ids, 'fresh'))).toBe(true);
@@ -140,8 +183,13 @@ describe('opentune_save_project', () => {
       });
     }
     // With a folder there is nothing to explain, and the envelope's reasons are left as they are.
-    expect(mediaFolderMembers(rendered, 'C:\\Music\\Project_Media')).toEqual({
-      mediaFolder: 'C:\\Music\\Project_Media',
+    expect(mediaFolderMembers(rendered, 'C:\\Music\\song_Media')).toEqual({
+      mediaFolder: 'C:\\Music\\song_Media',
+    });
+    // A save to a path this server was given, after which no folder was found, has a reason of its own.
+    expect(mediaFolderMembers(rendered, null, 'media_folder_not_found')).toEqual({
+      mediaFolder: null,
+      nullReasons: { ui: 'no_editor_window', history: 'capability_missing', mediaFolder: 'media_folder_not_found' },
     });
   });
 
@@ -233,6 +281,110 @@ describe('opentune_save_project', () => {
   });
 });
 
+/**
+ * The mediaFolder of a save to a path this server was given is the folder found on the file system after the write:
+ * the protocol version on the wire does not tell a build of 1.0.0-rc.9 (<name>_Media) from one of 1.0.0-rc.8 (the
+ * Project_Media that all the project files of a directory share).
+ */
+describe('the mediaFolder of a save to a path the call gave', () => {
+  const saveAsFresh = async (prepare: (file: string) => void, files?: ProjectFs) => {
+    const { ctx, mock } = await setup(files === undefined ? {} : { files });
+    const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true });
+    const file = need(ids, 'fresh');
+    prepare(file);
+    return { file, result: body(await save(ctx, { mode: 'save_as', path: file })) };
+  };
+  const reasons = (result: Record<string, unknown>) => result.nullReasons as Record<string, unknown> | undefined;
+
+  it('names <name>_Media when that is the folder OpenTune made (specification 1.0.0-rc.9)', async () => {
+    const { file, result } = await saveAsFresh((f) => {
+      makeFolder(mediaFolderOf(f));
+    });
+    expect(result.mediaFolder).toBe(mediaFolderOf(file));
+    expect(reasons(result)?.mediaFolder).toBeUndefined();
+  });
+
+  it('names the shared Project_Media when that is the folder OpenTune made (specification 1.0.0-rc.8)', async () => {
+    const { file, result } = await saveAsFresh((f) => {
+      makeFolder(sharedMediaFolderOf(f));
+    });
+    expect(result.mediaFolder).toBe(sharedMediaFolderOf(file));
+    expect(reasons(result)?.mediaFolder).toBeUndefined();
+    // The fixed sentence is the same for both layouts: it is not built from what was found.
+    expect(result.summary).toContain(MEDIA_COPY);
+    expect(result.summary).not.toContain(sharedMediaFolderOf(file));
+  });
+
+  it('prefers <name>_Media when both folders are there', async () => {
+    const { file, result } = await saveAsFresh((f) => {
+      makeFolder(sharedMediaFolderOf(f));
+      makeFolder(mediaFolderOf(f));
+    });
+    expect(result.mediaFolder).toBe(mediaFolderOf(file));
+    expect(reasons(result)?.mediaFolder).toBeUndefined();
+  });
+
+  it('is null with the reason media_folder_not_found when neither folder is there, and the save still worked', async () => {
+    const { file, result } = await saveAsFresh(() => undefined);
+    expect(result.mediaFolder).toBeNull();
+    expect(result.nullReasons).toEqual({ mediaFolder: 'media_folder_not_found', oldVersion: 'no_previous_file' });
+    expect(result.summary).toContain(MEDIA_COPY);
+    expect(result).toMatchObject({ path: file, job: { kind: 'projectSave', state: 'succeeded' } });
+    expect(fs.existsSync(file)).toBe(true);
+  });
+
+  it('does not take a regular file of that name for the folder', async () => {
+    const { result } = await saveAsFresh((f) => {
+      fs.writeFileSync(mediaFolderOf(f), 'not a folder');
+      fs.writeFileSync(sharedMediaFolderOf(f), 'not a folder');
+    });
+    expect(result.mediaFolder).toBeNull();
+    expect(reasons(result)?.mediaFolder).toBe('media_folder_not_found');
+  });
+
+  it('counts a folder it cannot look into as not there, and never turns a save that worked into an error', async () => {
+    const looked: string[] = [];
+    const denied: ProjectFs = {
+      ...nodeProjectFs,
+      list: (dir) => {
+        looked.push(path.basename(dir));
+        return Promise.reject(Object.assign(new Error('denied'), { code: 'EACCES' }));
+      },
+    };
+    const { file, result } = await saveAsFresh((f) => {
+      makeFolder(mediaFolderOf(f));
+    }, denied);
+    // Both places were tried, the own folder first.
+    expect(looked).toEqual([`${path.parse(file).name}_Media`, 'Project_Media']);
+    expect(result.mediaFolder).toBeNull();
+    expect(reasons(result)?.mediaFolder).toBe('media_folder_not_found');
+    expect(result).toMatchObject({ path: file, job: { kind: 'projectSave', state: 'succeeded' } });
+  });
+
+  it('looks at the folders of the file for the overwrite tool as well, whichever layout it finds', async () => {
+    const { ctx, mock } = await setup();
+    const ids = mock.given({ files: [...FILES], clips: [clip()] });
+    const existing = need(ids, 'existing');
+    makeFolder(sharedMediaFolderOf(existing));
+    const result = body(await overwriteProject(ctx, { path: existing, confirm: true, ...wait }));
+    expect(result.mediaFolder).toBe(sharedMediaFolderOf(existing));
+    expect(reasons(result)?.mediaFolder).toBeUndefined();
+  });
+
+  it('keeps null with project_path_not_given for a save to the project file itself, even with a folder there', async () => {
+    const { ctx, mock } = await setup();
+    const ids = mock.given({ files: [...FILES], clips: [clip()], dirty: true, projectFile: 'existing' });
+    const existing = need(ids, 'existing');
+    // The path of the file is only OpenTune's to know, so the call names no folder, whatever is next to the file.
+    makeFolder(mediaFolderOf(existing));
+    makeFolder(sharedMediaFolderOf(existing));
+    const result = body(await save(ctx, { mode: 'save' }));
+    expect(result.path).toBe(existing);
+    expect(result.mediaFolder).toBeNull();
+    expect(reasons(result)?.mediaFolder).toBe('project_path_not_given');
+  });
+});
+
 describe('opentune_save_project_overwrite', () => {
   it('needs confirm and starts nothing without it', async () => {
     const { ctx, mock } = await setup();
@@ -250,6 +402,7 @@ describe('opentune_save_project_overwrite', () => {
     const { ctx, mock } = await setup();
     const ids = mock.given({ files: [...FILES], clips: [clip()] });
     const before = fs.readFileSync(need(ids, 'existing'), 'utf8');
+    makeFolder(mediaFolderOf(need(ids, 'existing')));
     const result = body(await overwriteProject(ctx, { path: need(ids, 'existing'), confirm: true, ...wait }));
     expect(result.summary).toMatch(
       /^opentune_save_project_overwrite: OVERWROTE another existing project file at the user's request/,

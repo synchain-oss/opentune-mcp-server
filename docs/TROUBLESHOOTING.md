@@ -46,13 +46,20 @@ within 30 seconds counts here too. Save your work, quit OpenTune, and start it a
 an API build with the option yourself). `opentune_launch` starts nothing while such a process runs, and this server
 never closes OpenTune.
 
+The server finds such a process by its name: `OpenTune.exe` on Windows, `OpenTune` on macOS (the executable inside the
+app bundle, which the official app and the test build share). So on macOS the official OpenTune.app counts, and so does
+the test build when it was opened by double-clicking `OpenTune-ctl.app`, which starts it without the control API. Quit
+it and start the test build with `OpenTune-AI.command`, or with `opentune_launch`.
+
 ### Status NOT_RUNNING
 
 The configured OpenTune build has the control API, but it is not running. `opentune_launch` starts it (see
 [Starting OpenTune](#starting-opentune)); you can also start it yourself with `--control-api`.
 
 With `reason` `launch_exited`, the OpenTune that `opentune_launch` started exited before its control API became
-available. Start it by hand to see what happens, and run `opentune-mcp doctor`.
+available. Start it by hand to see what happens, and run `opentune-mcp doctor`. On macOS, a test build that Gatekeeper
+blocks can end like this, or never announce itself (`launch_timeout`); see
+[macOS: first start blocked by Gatekeeper](#macos-first-start-blocked-by-gatekeeper).
 
 With `processes: null` and `nullReasons.processes` set to `not_listable` (in this state, `NO_API_BUILD` or
 `NOT_INSTALLED`), the server could not list the running processes, so an OpenTune without the control API may still
@@ -65,6 +72,11 @@ be running. `opentune_launch` then starts nothing until the user confirms that n
 (`reason`: `manifest_missing`, `manifest_too_large`, `manifest_invalid` or `protocol_mismatch`). The file must be a
 UTF-8 JSON object of at most 8 KiB whose `protocolMajors` lists 1; other members are ignored. An official OpenTune release, which has no control API, lands here too. Configure a build with
 the control API. `opentune_launch` never starts such an executable.
+
+On macOS, with `manifest_missing`: the test build keeps `opentune-control.json` out of the app bundle (a file inside
+`OpenTune-ctl.app/Contents/MacOS` would break the signature of the app), next to `OpenTune-AI.command` in the folder you
+unpacked. So `OPENTUNE_MCP_OPENTUNE_PATH` must name `OpenTune-AI.command`, not the executable inside the app.
+`opentune-mcp doctor` says so when it sees such a path (`OT_OPENTUNE_PATH`).
 
 ### Status NOT_INSTALLED
 
@@ -93,6 +105,12 @@ also starts nothing (error [OPENTUNE_NOT_AVAILABLE](#error-opentune_not_availabl
 `process_list_unavailable`). `allow_second_instance: true` is not idempotent: every call with it starts one more
 instance once the earlier starts are done, so use it only once per consent. It never ends a process, also not after a
 timeout.
+
+On macOS the configured program is `OpenTune-AI.command` of the test build. The server starts that file directly, in
+its folder, with the same options and arguments. The script is started without a terminal, so it replaces itself with
+OpenTune (`exec`): the process the server started, and records in `launching`, is OpenTune itself. The folder of the
+script is the working directory; the official app is not used for that, because OpenTune finds the installed models by
+the path of the app (see [OT_MODELS_MISSING](#doctor-ot_models_missing)).
 
 ## Errors
 
@@ -273,36 +291,46 @@ the control API has started once. `OPENTUNE_MCP_DISCOVERY_DIR` overrides it.
 ### Doctor OT_OPENTUNE_PATH
 
 `OPENTUNE_MCP_OPENTUNE_PATH` must be the absolute path of the OpenTune executable of a build with the control API,
-with an `opentune-control.json` next to it.
+with an `opentune-control.json` next to it. On macOS the test build keeps that file out of the app bundle (a file
+inside it would break the signature), so it sits next to `OpenTune-AI.command` in the folder that holds
+`OpenTune-ctl.app`: point the variable at `OpenTune-AI.command`, not at the executable inside the app. When the
+variable names the executable inside an app bundle and the manifest is missing, the message says so.
 
 ### Doctor OT_NO_OFFICIAL_INSTALL
 
-Whether an official OpenTune installation is present (Windows only): the server reads the uninstall entries in the
-registry, then looks in the usual install folders. Not finding one is a warning, not an error. The installation is
-never started by this server; an OpenTune that `opentune_launch` starts runs with it as working directory, so that a
-build without a models folder of its own finds the installed models. Without an installation the working directory is
-the folder of the configured executable.
+Whether an official OpenTune installation is present (Windows and macOS). On Windows the server reads the uninstall
+entries in the registry, then looks in the usual install folders. On macOS it looks for `/Applications/OpenTune.app`
+and reads the version from its `Info.plist` (`CFBundleShortVersionString`); nothing is started or installed. Not
+finding one is a warning, not an error. The installation is never started by this server. On Windows, an OpenTune that
+`opentune_launch` starts runs with the installation as working directory, so that a build without a models folder of
+its own finds the installed models; without an installation, and always on macOS, the working directory is the folder
+of the configured executable. On macOS the test build contains no models and takes them from the official app, so
+install the official OpenTune for macOS (1.8.0 or later) in `/Applications` before you start the test build.
 
 ### Doctor OT_VERSION_UNSUPPORTED
 
-The version of the official OpenTune installation (read from its uninstall entry; Windows only) must be 1.7.9 or
-later. Older: update OpenTune from the official release page. `warn` with "Not checked" means no installation was
-found or the check does not apply on this system; `warn` with "Cannot tell" means the installation does not report a
-version.
+The version of the official OpenTune installation (read from its uninstall entry on Windows, from `Info.plist` on
+macOS) must be 1.7.9 or later on Windows and 1.8.0 or later on macOS (the first official macOS release). Older:
+update OpenTune from the official release page. `warn` with "Not checked" means no installation was found or the check
+does not apply on this system; `warn` with "Cannot tell" means the installation does not report a version.
 
 ### Doctor OT_MODELS_MISSING
 
-The official installation needs these files, none of them empty: `fcpe.onnx`, and `GAME\bd2dur.onnx`,
-`GAME\dur2bd.onnx`, `GAME\encoder.onnx`, `GAME\estimator.onnx`, `GAME\segmenter.onnx`. OpenTune 1.8 and later keeps
-them in `%ProgramData%\OpenTune\Models`; 1.7.x keeps them in the `models` folder of its install folder. The check only
-looks at existence and size, never at the content. When it fails, the message names the folder it looked in and the
-files that are missing: run the official installer again (or repair the installation) so that it restores the models.
-When the installed version is unknown, both folders are tried and the result is a warning.
+The official installation needs this file, not empty: `fcpe.onnx`. (The note segmentation models in the `GAME` folder
+are not checked: the code of OpenTune 1.8.2 does not use them and later official versions do not ship them.) On
+Windows, OpenTune 1.8 and later keeps it in `%ProgramData%\OpenTune\Models`; 1.7.x keeps it in the `models` folder of
+its install folder. On macOS the check follows the search order of the official app and uses the first of these
+folders that exists: `/Applications/OpenTune.app/Contents/Resources/models`, `/Applications/OpenTune/models`,
+`/Library/Application Support/OpenTune/models`. The check only looks at existence and size, never at the content. When
+it fails, the message names the folder it looked in and the files that are missing: run the official installer again
+(or repair the installation) so that it restores the models; on macOS, install the official app again. When the
+installed version is unknown on Windows, both folders are tried and the result is a warning.
 
 ### Doctor OT_SIDECAR_INCOMPLETE
 
-A test build comes as a zip with a `SHA256SUMS` file (lines of `<sha256>  <relative path>`) next to the executable.
-`fail` means a file it lists is missing or its hash differs (the message names it), or the list cannot be read.
+A test build comes as a zip with a `SHA256SUMS` file (lines of `<sha256>  <relative path>`) next to the executable (on
+macOS, next to `OpenTune-AI.command` in the folder that holds the app; the paths in the list include the app
+folder). `fail` means a file it lists is missing or its hash differs (the message names it), or the list cannot be read.
 Delete the folder and unpack the whole zip again into an empty folder; do not copy single files over an older build.
 `warn` ("Cannot verify") means there is no `SHA256SUMS`, which is normal for an executable you built yourself, and
 the folder cannot be checked.
@@ -311,7 +339,9 @@ the folder cannot be checked.
 
 A `models` folder next to the executable is found before the installed models. A test build does not ship one, so
 rename or delete it unless you put it there on purpose; the message says whether it holds all the required model
-files.
+files. On macOS the check also looks at `Contents/Resources/models` of the app bundle the executable is in, and at
+the `models` folders of every `.app` in the folder of the configured file, because the app bundle is searched before
+the models of the official app.
 
 ### Doctor OT_D3D12_NOT_COPIED
 
@@ -325,6 +355,34 @@ to CPU) and copy it again from the official installation. `D3D12SDKLayers.dll` i
 delete it if it is there.
 "Cannot tell" means the `d3d12` entry of `opentune-control.json` lists no files or has a hash that is not 64
 hexadecimal characters, so nothing could be checked: unpack the test build again.
+
+On macOS this check always reports `pass` with the text "Not applicable": the Direct3D 12 runtime is a Windows
+component, so there is nothing to copy.
+
+## macOS: first start blocked by Gatekeeper
+
+The macOS test build is signed ad hoc and is not notarized, so Gatekeeper may refuse the first start: macOS says that
+`OpenTune-AI.command` or `OpenTune-ctl.app` "cannot be opened because the developer cannot be verified" or "is
+damaged", or `opentune_launch` returns `NOT_RUNNING` with reason `launch_exited` (the process ended right after the
+start, because nothing could answer the dialog). This is expected for a downloaded, unsigned build and is not a fault
+of this server, which never starts anything but the file you configured and never changes its attributes.
+
+1. Unpack the zip into a folder you own (for example in your home folder) and keep the files together:
+   `OpenTune-AI.command`, `opentune-control.json`, `SHA256SUMS` and `OpenTune-ctl.app`. Do not move the app out of the
+   folder.
+2. Allow the start once, by hand: in Finder, Control-click `OpenTune-AI.command`, choose Open and confirm. On macOS 15
+   and later that shortcut is gone: try to open the file once, then open System Settings > Privacy & Security, scroll
+   to the message about the blocked item and choose Open Anyway. The same applies if macOS blocks `OpenTune-ctl.app`
+   afterwards. (The official OpenTune from the release page is a different app and is not affected.)
+3. As an alternative, if you trust the download (compare it with the `SHA256SUMS` file of the release first), remove
+   the quarantine attribute of the unpacked folder yourself: `xattr -dr com.apple.quarantine <the folder>`. This
+   server never runs that command.
+4. Start the test build once by hand to see that it opens, then run `opentune-mcp doctor` and ask the assistant to
+   start OpenTune again. Point `OPENTUNE_MCP_OPENTUNE_PATH` at `OpenTune-AI.command` (see
+   [Doctor OT_OPENTUNE_PATH](#doctor-ot_opentune_path)).
+
+The test build needs macOS 13.3 or later on Apple silicon, and the official OpenTune 1.8.0 or later in
+`/Applications` (see [Doctor OT_NO_OFFICIAL_INSTALL](#doctor-ot_no_official_install)).
 
 ## Claude Code mcp add fails in PowerShell
 
@@ -355,7 +413,10 @@ reason `capability_missing`, which does not mean that no dialog is open.
 
 `opentune_get_settings` (section `processing`) shows the rendering priority and the backend OpenTune uses now
 (`processing.backend`). With `gpuFirst` OpenTune tries the GPU each time the vocoder loads and falls back to the CPU
-without a word when that fails, so the GPU is not guaranteed. When the priority is `gpuFirst`, the backend is `cpu` and
+when that fails, so the GPU is not guaranteed. An OpenTune that implements specification 1.0.0-rc.9 says so when it
+happens right after a change: the result of a `prefs.set` call that changed the priority to `gpuFirst` and ended with
+the backend `cpu` carries the warning `BACKEND_FALLBACK` (`data`: `requested`, `actual`), which
+`opentune_set_settings` passes on. An older OpenTune says nothing. When the priority is `gpuFirst`, the backend is `cpu` and
 the vocoder is loaded (`processing.vocoderReady` is true), the summary says so; a vocoder that is not loaded can still
 report the backend from before, so nothing is concluded from it. To see why, read the log: `opentune_get_settings` with
 sections `["log"]` and `log_lines` 30 shows
@@ -391,41 +452,50 @@ within the call; and the preference itself in the `processing` section of `opent
 ## Autosave copies and old versions
 
 Both folders sit next to the project file and are named after it without `.otproj`. `opentune_save_project` with
-`mode: autosave` writes `<name>.autosave/<name>-autosave-0001.otproj`, `-0002` and so on, and keeps the newest 50; it
+`mode: autosave` writes `<name>.autosave/<name>-autosave-0001.otproj`, `-0002` and so on, and keeps the newest 10; it
 never touches the project file, the unsaved-changes mark or the list of recent projects, and writes only inside `<name>.autosave` (the copy and the
-`Project_Media` folder with its audio: OpenTune replaces an older audio file of the same name in such a folder, which is
-why the copies get a folder of their own and cannot replace the audio of another project). Every save that replaces a
+folder with its audio, `<name>-autosave-0001_Media` and so on: OpenTune names the audio folder of a project file after
+the file, so in a build that implements specification 1.0.0-rc.9 every copy gets a folder of its own and none can replace the audio of another project). For the same
+reason every copy holds a complete set of the project's audio, so the space taken by `<name>.autosave` is about the
+size of the audio times up to 10; the server deletes the media folder of a copy together with the copy when it rolls the
+copy away (see below). A build that implements the earlier specification (the test builds `synchain-test/v1.8.0-ctl.2` and `ctl.3`) does not give a copy a folder of its own: it puts the audio of all the copies into one shared folder, `<name>.autosave/Project_Media`, where a file of the same name is replaced and which the server never deletes. The protocol version on the wire does not tell the builds apart, so after a copy is written the server looks for its folder: `autosave.mediaFolder` is the folder of the copy when it exists, else the shared `Project_Media` (the summary then says that every copy shares it), else null with `nullReasons.mediaFolder` `media_folder_not_found`. A deleted copy that has no folder of its own is not a failure; `autosave.audioFoldersCouldNotRemove` counts the deleted copies whose own folder could not be deleted (the summary then says "The audio folders of N deleted copies could not be deleted."), apart from `autosave.couldNotRemove`, which counts the copies that could not be deleted. Every save that replaces a
 project file first copies the old file into `<name>.oldversion/<name>-<YYYYMMDD-HHMMSS>.otproj` (local time, `-2`, `-3`
 when the second is taken) and keeps the newest 10; when the newest old version already holds exactly the bytes of the
 file to be replaced (a save right after a save that changed nothing), no new copy is made and the result says so
 (`oldVersion.reused`). The server deletes only regular files in these two folders whose names match these patterns:
-such a file counts as a copy or an old version and is deleted once it is beyond the newest 50 or 10, whoever put it
-there. Folders, links, files with any other name, the `Project_Media` folders (the one that OpenTune fills inside
-`<name>.autosave`, and the one this server fills inside `<name>.oldversion`, see below) and the files of other projects
-are never touched. If OpenTune refuses the save, or reports that it changed nothing (`executed` is `false`, or the
+such a file counts as a copy or an old version and is deleted once it is beyond the newest 10, whoever put it
+there. When it deletes a copy, it deletes the media folder of that copy too: the one folder whose name is the name of
+the copy without `.otproj` plus `_Media`, and only the regular files directly in it (a sub-folder or a link in it stays,
+and so does the folder then); a copy that could not be deleted keeps its folder. Other folders, links, files with any
+other name, the media folders of the copies that stay, a media folder that belongs to no copy, the media folder this
+server fills inside `<name>.oldversion` (see below) and the files of other projects are never touched. If OpenTune refuses the save, or reports that it changed nothing (`executed` is `false`, or the
 refusal `confirm_required` of a different existing file), the project file is as it was, so the old version that was
 just made is deleted again (an old version that was only reused is never deleted). When the save fails in any other way,
 the old version is kept, because the project file may already have been partly written: it is then the way back. An
-empty `<name>.oldversion` folder can remain after a refused save; the server never deletes folders. To get earlier work
+empty `<name>.oldversion` folder can remain after a refused save; the only folders the server deletes are the media
+folders of the autosave copies it rolls away. To get earlier work
 back, open the wanted file with `opentune_open_project`.
 
-An autosave copy or an old version names its audio relative to the folder it is in, so it finds the audio only in the
-`Project_Media` folder inside its own folder. A copy in `<name>.autosave` has one, which OpenTune fills. For an old
+An autosave copy or an old version names its audio relative to the folder it is in, so it finds the audio only in a
+media folder inside its own folder. A copy in `<name>.autosave` has one, which OpenTune fills. For an old
 version, the server fills it: whenever an old version is made (or an existing one is reused), and before the save runs,
-it copies the regular files of the `Project_Media` folder next to the file being replaced into
-`<name>.oldversion/Project_Media`. It follows OpenTune's own rule for that folder: a file is copied only when it is
-missing there or older than its source; a newer file is never overwritten, nothing is deleted, and links and
-sub-folders are skipped. With the audio there, an old version still opens after the original audio files (for example in
-a downloads folder) were deleted. If the file being replaced has no `Project_Media` folder, nothing is done.
+it copies the regular files of the media folder next to the file being replaced into the folder of the same name inside
+`<name>.oldversion`. OpenTune names the media folder of a project file after it, `<name>_Media`. A project file that an
+earlier OpenTune saved names its audio in a shared folder `Project_Media` instead; where there is no `<name>_Media`
+folder, the server copies that one, into `<name>.oldversion/Project_Media`. The rule of the server is: a file is copied
+only when it is missing there or older than its source; a newer file is never overwritten, nothing is deleted, and links
+and sub-folders are skipped. With the audio there, an old version still opens after the original audio files (for
+example in a downloads folder) were deleted. If the file being replaced has no media folder, nothing is done.
 
-What is copied is the whole `Project_Media` folder, not only the audio that this project uses: telling which files a
-project uses would mean reading the project file, which this server does not do. That folder is shared by all the
-project files in the same directory, so the audio of the other projects there is copied too, and each project file has
-an `<name>.oldversion/Project_Media` of its own: with several project files in one directory, the space taken multiplies
-by their number. Keep one project per folder to avoid that. The rolling of old versions never touches this folder, so it
-only grows, and it can hold audio of other projects; delete it by hand if the old versions are no longer needed. As in
-the `Project_Media` folder next to the project, a file there is replaced by a newer source file of the same name, so an
-older old version then finds the newer audio under that name.
+What is copied is the whole media folder, not only the audio that this project uses: telling which files a
+project uses would mean reading the project file, which this server does not do. A `<name>_Media` folder holds the audio
+of its project file alone, so nothing of other projects comes along. The `Project_Media` folder of an earlier OpenTune
+is shared by all the project files in the same directory, so the audio of the other projects there is copied too, and
+each project file has an `<name>.oldversion/Project_Media` of its own: with several project files in one directory, the
+space taken multiplies by their number. Keep one project per folder to avoid that. The rolling of old versions never
+touches the media folder there, so it only grows; delete it by hand if the old versions are no longer needed. A file
+there is replaced by a newer source file of the same name, so an older old version then finds the newer audio under that
+name.
 
 The copy has a time limit of 15 seconds, so that the first save of a project with a lot of audio does not hold the save
 up. The time is checked between files, so a single very large file can still take longer. When the limit is reached, the
@@ -439,7 +509,7 @@ If some audio could not be copied (a full or read-only disk, or a file that is i
 `oldVersion.media.timedOut` is `false` unless the time ran out as well. The result then carries a warning line (code
 `OLD_VERSION_MEDIA_NOT_COPIED`, `source: server`; it is the same line for a failure and for the time limit, with one
 sentence for each) and a sentence in the summary, and `oldVersion.media.notCopied` lists the files (paths such as
-`Project_Media/1.wav`; `Project_Media` itself when the whole folder could not be read or made; `notCopiedCount` has the
+`<name>_Media/1.wav`; the name of the media folder itself when the whole folder could not be read or made; `notCopiedCount` has the
 full count). That old version may not find its audio once the original audio files are gone. Fix the cause (free space,
 close the program that holds the file) and save again: the missing files are copied then. `oldVersion.media.copied`
 counts the files that were copied by this save.

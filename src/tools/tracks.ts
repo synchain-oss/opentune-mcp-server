@@ -250,7 +250,7 @@ export const setTracksTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): duplicates a track with its clips (op duplicate, into the first hidden ' +
     'slot; clone = full copies, share = same contents; fails if that slot holds clips), shows hidden track slots ' +
-    '(reveal; view state, not saved), and sets mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB): those ' +
+    '(reveal; saved with the project, no undo), and sets mute, solo, volume (db, or linear 0..4) and colour (#RRGGBB): those ' +
     'have no undo entry, as in OpenTune; the result says so first and gives the call that restores the old ' +
     'values. Track ids are positions. Ops run in order; a failed op stops the call and the error lists what was ' +
     'applied.',

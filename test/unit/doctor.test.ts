@@ -131,7 +131,7 @@ describe('doctor', () => {
     );
   });
 
-  it('reports the official installation on Windows only, and its absence as a warning', async () => {
+  it('reports the official installation on Windows and macOS, and its absence as a warning', async () => {
     const base = { ...setup(), platform: 'win32' as const };
     const dir = `${base.home}\\Programs\\OpenTune`;
     const found = await runDoctor({
@@ -169,7 +169,7 @@ describe('doctor', () => {
     });
     expect(byId(elsewhere, 'OT_NO_OFFICIAL_INSTALL')).toMatchObject({
       status: 'warn',
-      message: expect.stringMatching(/^Not checked: .+ on Windows only\.$/) as unknown,
+      message: expect.stringMatching(/^Not checked: .+ on Windows and macOS only\.$/) as unknown,
     });
     expect(asked).toBe(false);
   });

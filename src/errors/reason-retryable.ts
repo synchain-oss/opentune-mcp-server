@@ -19,6 +19,7 @@ export const REASON_RETRYABLE: Readonly<Record<string, boolean>> = Object.freeze
   'INVALID_ARGUMENT/nothing_to_export': false,
   'NOT_READY/export_dry_stretched': false,
   'NOT_READY/export_stretch_dropped': true,
+  'NOT_READY/export_wait_timeout': true,
   'ANALYSIS_FAILED/timing_analysis_failed': false,
   'NOT_READY/timing_analysis_timeout': true,
   'UNSUPPORTED/no_editor_window': false,
