@@ -1,0 +1,156 @@
+{
+  "description": "The first save to a new place by a build of the earlier specification: the audio is in the Project_Media folder that all the project files of the directory share, which mediaFolder names; the fixed sentence about the media folder is the same.",
+  "tool": "opentune_save_project",
+  "input": {
+    "mode": "save_as",
+    "path": "<tmp-3>/earlier.otproj",
+    "wait_seconds": 10
+  },
+  "result": {
+    "summary": "opentune_save_project: wrote a new project file (path in path); no existing file was replaced, and from now on it is the project's file. OpenTune also copies the audio the project uses into a media folder next to the project file: a folder named after it with _Media added, or in a build that implements an earlier specification the Project_Media folder that all the project files of the directory share, where a file of the same name is replaced. The project is no longer marked as changed. Not stored in the project file: the undo and redo history, global preferences.",
+    "applied": true,
+    "noOp": false,
+    "dryRun": false,
+    "undo": {
+      "undoable": false,
+      "reason": "no_upstream_undo",
+      "revert": null
+    },
+    "lines": [
+      {
+        "kind": "warning",
+        "code": "IRREVERSIBLE",
+        "text": "This change can be neither undone nor reverted by any request of the protocol.",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      },
+      {
+        "kind": "warning",
+        "code": "NOT_SAVED_IN_PROJECT",
+        "text": "The change is not saved in the project file.",
+        "subject": null,
+        "data": {
+          "items": [
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      },
+      {
+        "kind": "revert",
+        "text": "Not undoable (OpenTune has no undo for this). No request of the protocol can restore the previous state.",
+        "revert": null,
+        "restore": null
+      }
+    ],
+    "revisionDiff": {
+      "arrangement": null,
+      "trackState": null,
+      "contents": []
+    },
+    "tokens": {
+      "arrangementRevision": "a1",
+      "contents": [],
+      "placements": []
+    },
+    "dirty": {
+      "before": false,
+      "after": false
+    },
+    "ui": {
+      "workspace": "arrangement",
+      "pianoRollContentId": null,
+      "activeTrackId": 0,
+      "selectedPlacementIds": [],
+      "visibleTrackCount": 4
+    },
+    "sideEffects": {},
+    "warnings": [
+      {
+        "code": "IRREVERSIBLE",
+        "subject": {
+          "singleton": "project"
+        },
+        "data": null
+      },
+      {
+        "code": "NOT_SAVED_IN_PROJECT",
+        "subject": null,
+        "data": {
+          "items": [
+            "undoHistory",
+            "preferences"
+          ]
+        }
+      }
+    ],
+    "job": {
+      "jobId": "j:01234567:10",
+      "kind": "projectSave",
+      "state": "succeeded"
+    },
+    "path": "<tmp-3>/earlier.otproj",
+    "sizeBytes": "<size>",
+    "changes": [
+      {
+        "entity": "project",
+        "ref": {
+          "singleton": "project"
+        },
+        "label": "Project",
+        "fields": {
+          "path": {
+            "before": "<tmp-2>/existing.otproj",
+            "after": "<tmp-3>/earlier.otproj",
+            "unit": null
+          }
+        }
+      }
+    ],
+    "created": [],
+    "removed": [],
+    "idMap": [],
+    "uiEffects": [
+      {
+        "surface": "window title",
+        "effect": "changed project",
+        "target": "project",
+        "visibleNow": false,
+        "howToSee": "Look at the window title."
+      }
+    ],
+    "changeTable": {
+      "rows": [
+        {
+          "kind": "changed",
+          "entity": "project",
+          "label": "Project",
+          "ref": {
+            "singleton": "project"
+          },
+          "fields": [
+            {
+              "field": "path",
+              "before": "<tmp-2>/existing.otproj",
+              "after": "<tmp-3>/earlier.otproj",
+              "unit": null
+            }
+          ]
+        }
+      ],
+      "omittedChangeCount": 0
+    },
+    "notSavedInProject": [
+      "undoHistory",
+      "preferences"
+    ],
+    "mediaFolder": "<tmp-3>/Project_Media",
+    "oldVersion": null,
+    "nullReasons": {
+      "oldVersion": "no_previous_file"
+    },
+    "requestedPath": "<tmp-3>/earlier.otproj"
+  }
+}

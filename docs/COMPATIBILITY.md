@@ -40,8 +40,13 @@ as far as the text of `rc.8` and the builds show:
   the folder of the copy and then for the shared one: `autosave.mediaFolder` names the one it finds, the summary says
   that a shared folder is shared by every copy, replaces files of the same name and is not deleted by the server, and
   when neither exists `mediaFolder` is null with the reason `media_folder_not_found`. Deleting a rolled copy deletes its
-  own folder when it has one; having none is not an error. The sentence of a save names both layouts. The old versions
-  copy `<name>_Media`, else `Project_Media` (see [Autosave copies and old versions](TROUBLESHOOTING.md#autosave-copies-and-old-versions)).
+  own folder when it has one; having none is not an error. The sentence of a save names both layouts. The
+  `mediaFolder` of the result of `save_as` and of the overwrite tool is likewise the folder found after the write:
+  `<name>_Media` next to the file, else the `Project_Media` next to it, else null with the reason
+  `media_folder_not_found` (a folder that cannot be looked into counts as not there, and the save is still reported as
+  done); a save to the project's own file names no folder (null, reason `project_path_not_given`), because only
+  OpenTune knows that path. The old versions copy `<name>_Media`, else `Project_Media` (see
+  [Autosave copies and old versions](TROUBLESHOOTING.md#autosave-copies-and-old-versions)).
 - **Showing a track (`opentune_set_tracks`, op `reveal`, OTCP `track.add`).** The tool description says "saved with
   the project, no undo", which is the `rc.9` behaviour. An `rc.8` build treats the number of visible tracks as view
   state: it returns the warning `NOT_PERSISTED` and the undo reason `not_persisted_state`, sends no `IRREVERSIBLE`, and
