@@ -23,6 +23,7 @@ import {
   nextAutosaveNumber,
   nodeProjectFs,
   oldVersionsToDelete,
+  rollAutosaves,
   type FolderEntry,
   type ProjectFs,
 } from '../../src/files/project-folders.js';
@@ -1127,4 +1128,132 @@ describe('the newest old version and the comparison of two files', () => {
     );
     await expect(nodeProjectFs.sameContent(a, path.join(t.dir, 'missing.bin'))).rejects.toThrow();
   });
+});
+
+/**
+ * removeMediaFolder is the only place in this module that deletes files inside a folder, so what it does with a link
+ * is tested on the real file system: a link is not followed and not deleted, and what it points to is never touched.
+ * A link to a folder is a junction on Windows (it needs no special right) and a symbolic link elsewhere; a link to a
+ * file is a symbolic link, which Windows lets an account create only with developer mode or administrator rights.
+ */
+describe('removeMediaFolder and links', () => {
+  /** Whether this account can make a symbolic link to a file (the condition of the tests that need one). */
+  function canLinkFiles(): boolean {
+    const t = tempDir();
+    try {
+      const target = path.join(t.dir, 'target.wav');
+      fs.writeFileSync(target, 'audio');
+      fs.symlinkSync(target, path.join(t.dir, 'link.wav'), 'file');
+      return true;
+    } catch {
+      return false;
+    } finally {
+      t.remove();
+    }
+  }
+  const fileLinks = canLinkFiles();
+  const isLink = (file: string) => fs.lstatSync(file).isSymbolicLink();
+  /** A folder with two audio files that is not a media folder: the target of a link. */
+  function outside(root: string): string {
+    const dir = path.join(root, 'outside');
+    populate(dir, ['a.wav', 'b.wav']);
+    return dir;
+  }
+
+  it('does not follow or delete a media folder that is a link to another folder', async () => {
+    const t = tempDir();
+    cleanup.push(t.remove);
+    const target = outside(t.dir);
+    const link = path.join(t.dir, 'song-autosave-0001_Media');
+    fs.symlinkSync(target, link, 'junction');
+
+    await nodeProjectFs.removeMediaFolder(link);
+
+    // Nothing was deleted: the link is still a link, and the files it points to are as they were.
+    expect(isLink(link)).toBe(true);
+    expect(names(target)).toEqual(['a.wav', 'b.wav']);
+    expect(fs.readFileSync(path.join(target, 'a.wav'), 'utf8')).toBe('content of a.wav');
+    expect(names(link)).toEqual(['a.wav', 'b.wav']);
+  });
+
+  it('rolls a copy away without following the link that is its media folder, and counts no failure', async () => {
+    const t = tempDir();
+    cleanup.push(t.remove);
+    const folders = ProjectFolders.of(path.join(t.dir, 'song.otproj'), process.platform);
+    expect(folders).not.toBeNull();
+    if (folders === null) return;
+    const copies = Array.from({ length: AUTOSAVE_KEEP + 1 }, (_, i) => autosaveName('song', 1 + i));
+    populate(folders.autosaveDir, copies);
+    const target = outside(t.dir);
+    const link = folders.autosaveMediaDirOf(autosaveName('song', 1));
+    fs.symlinkSync(target, link, 'junction');
+
+    // The oldest copy is deleted. Its media folder is a link: nothing is done to it, which is not a failure.
+    expect(await rollAutosaves(nodeProjectFs, folders)).toEqual({ removed: 1, failed: 0, foldersFailed: 0 });
+    expect(fs.existsSync(path.join(folders.autosaveDir, autosaveName('song', 1)))).toBe(false);
+    expect(isLink(link)).toBe(true);
+    expect(names(target)).toEqual(['a.wav', 'b.wav']);
+  });
+
+  it('keeps a link to a folder inside a media folder and its target, and fails when it cannot remove the folder', async () => {
+    const t = tempDir();
+    cleanup.push(t.remove);
+    const target = outside(t.dir);
+    const dir = path.join(t.dir, 'song-autosave-0001_Media');
+    populate(dir, ['1.wav']);
+    const link = path.join(dir, 'folder-link');
+    fs.symlinkSync(target, link, 'junction');
+
+    await expect(nodeProjectFs.removeMediaFolder(dir)).rejects.toThrow();
+
+    // The regular file went, as for a sub-folder; the link is not followed or deleted, and neither is its target.
+    expect(names(dir)).toEqual(['folder-link']);
+    expect(isLink(link)).toBe(true);
+    expect(names(target)).toEqual(['a.wav', 'b.wav']);
+  });
+
+  it.skipIf(!fileLinks)(
+    'keeps a link to a file inside a media folder and the file it points to, and fails when it cannot remove the folder',
+    async () => {
+      const t = tempDir();
+      cleanup.push(t.remove);
+      const external = path.join(t.dir, 'external.wav');
+      fs.writeFileSync(external, 'audio outside');
+      const dir = path.join(t.dir, 'song-autosave-0001_Media');
+      populate(dir, ['1.wav']);
+      const link = path.join(dir, 'external-link.wav');
+      fs.symlinkSync(external, link, 'file');
+
+      await expect(nodeProjectFs.removeMediaFolder(dir)).rejects.toThrow();
+
+      // The link is not a regular file, so it is not deleted, and rmdir cannot remove a folder that still holds it.
+      expect(names(dir)).toEqual(['external-link.wav']);
+      expect(isLink(link)).toBe(true);
+      expect(fs.readFileSync(external, 'utf8')).toBe('audio outside');
+    },
+  );
+
+  it.skipIf(!fileLinks)(
+    'counts the media folder that still holds a link as one that could not be deleted (the caller counts, not the call)',
+    async () => {
+      const t = tempDir();
+      cleanup.push(t.remove);
+      const folders = ProjectFolders.of(path.join(t.dir, 'song.otproj'), process.platform);
+      expect(folders).not.toBeNull();
+      if (folders === null) return;
+      const copies = Array.from({ length: AUTOSAVE_KEEP + 1 }, (_, i) => autosaveName('song', 1 + i));
+      populate(folders.autosaveDir, copies);
+      const external = path.join(t.dir, 'external.wav');
+      fs.writeFileSync(external, 'audio outside');
+      const dir = folders.autosaveMediaDirOf(autosaveName('song', 1));
+      populate(dir, ['1.wav']);
+      fs.symlinkSync(external, path.join(dir, 'external-link.wav'), 'file');
+
+      // The copy is deleted and its folder is not: rollAutosaves counts the folder, and the copy is not a failure.
+      expect(await rollAutosaves(nodeProjectFs, folders)).toEqual({ removed: 1, failed: 0, foldersFailed: 1 });
+      expect(fs.existsSync(path.join(folders.autosaveDir, autosaveName('song', 1)))).toBe(false);
+      expect(names(dir)).toEqual(['external-link.wav']);
+      expect(fs.readFileSync(external, 'utf8')).toBe('audio outside');
+    },
+  );
 });

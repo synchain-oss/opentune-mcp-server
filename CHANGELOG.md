@@ -54,7 +54,10 @@ media folder to show up in real results.
   protocol version on the wire cannot tell the two apart, so the tool looks at the file system after it has written a
   copy: `mediaFolder` is the folder of the copy when it exists, else the shared `Project_Media` (the summary then says
   that every copy shares it, that a file of the same name is replaced and that the server does not delete it), else
-  null with the reason `media_folder_not_found`. The fixed sentence of the other save modes names both layouts.
+  null with the reason `media_folder_not_found`. The fixed sentence of the other save modes names both layouts, and
+  the `mediaFolder` of the result of `save_as` and of `opentune_save_project_overwrite` is found the same way after the
+  write: `<name>_Media`, else the `Project_Media` next to the file, else null with the reason `media_folder_not_found`
+  (a save to the project's own file still names no folder: `project_path_not_given`).
 - `opentune_save_project` with `mode: autosave` keeps the newest 10 copies instead of 50, and when it rolls a copy
   away it deletes the media folder of that copy with it: the one folder whose path is computed from the name of the
   copy (`<copy name>_Media`), its regular files and then the folder, never a pattern. A copy that could not be deleted

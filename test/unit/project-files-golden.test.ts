@@ -76,11 +76,16 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     files: [
       { bind: 'fresh', kind: 'absent', extension: '.otproj' },
       { bind: 'existing', kind: 'project', durationSec: 3 },
+      { bind: 'earlier', kind: 'absent', extension: '.otproj' },
     ],
     clips: [clip()],
     dirty: true,
   });
-  const folders = [path.dirname(need(ids, 'fresh')), path.dirname(need(ids, 'existing'))];
+  const folders = [
+    path.dirname(need(ids, 'fresh')),
+    path.dirname(need(ids, 'existing')),
+    path.dirname(need(ids, 'earlier')),
+  ];
   // A file system that cannot copy audio, for the scenario in which the audio of an old version is not complete.
   const noAudioCopy: ProjectFs = {
     ...nodeProjectFs,
@@ -121,6 +126,9 @@ async function scenarios(): Promise<Record<string, Scenario>> {
       result: neutral(result, folders),
     };
   };
+  // The mock writes no audio folder; the server looks for it after the write, so the folder that a build of specification
+  // 1.0.0-rc.9 makes at a save (named after the file) is made here, before the save.
+  mkdirSync(path.join(path.dirname(need(ids, 'fresh')), `${path.parse(need(ids, 'fresh')).name}_Media`));
   await run(
     'save-as-new-file',
     'The first save to a new place: a new file is written, and the audio is copied next to it.',
@@ -157,6 +165,9 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     'opentune_save_project',
     { mode: 'save', wait_seconds: 10 },
   );
+  // OpenTune names the media folder of a project file after it; it is made before the save, as for the first save.
+  const media = path.join(path.dirname(need(ids, 'existing')), `${path.parse(need(ids, 'existing')).name}_Media`);
+  mkdirSync(media);
   await run(
     'save-overwrite-other-file',
     'Replacing another project file: destructive, the replaced file is kept as an old version next to it, and the audio is copied next to it too.',
@@ -164,9 +175,6 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     { path: need(ids, 'existing'), confirm: true, wait_seconds: 10 },
   );
   // The project file is now the one that was replaced, and has audio next to it.
-  // OpenTune names the media folder of a project file after it.
-  const media = path.join(path.dirname(need(ids, 'existing')), `${path.parse(need(ids, 'existing')).name}_Media`);
-  mkdirSync(media);
   writeFileSync(path.join(media, '1.wav'), 'audio');
   await run(
     'save-copies-audio-for-old-version',
@@ -189,6 +197,17 @@ async function scenarios(): Promise<Record<string, Scenario>> {
     'opentune_save_project',
     { mode: 'save', wait_seconds: 10 },
     slow,
+  );
+  // A build of the earlier specification (1.0.0-rc.8) keeps the audio of all the project files of a directory in one
+  // folder, Project_Media, next to them; the protocol version on the wire does not tell it from the build above.
+  const shared = path.join(path.dirname(need(ids, 'earlier')), 'Project_Media');
+  mkdirSync(shared);
+  writeFileSync(path.join(shared, '1.wav'), 'audio');
+  await run(
+    'save-as-shared-media-folder',
+    'The first save to a new place by a build of the earlier specification: the audio is in the Project_Media folder that all the project files of the directory share, which mediaFolder names; the fixed sentence about the media folder is the same.',
+    'opentune_save_project',
+    { mode: 'save_as', path: need(ids, 'earlier'), wait_seconds: 10 },
   );
   return out;
 }
@@ -216,6 +235,7 @@ describe('project save tool result golden snapshots', () => {
     const all = JSON.stringify(await scenarios());
     expect(all).toContain('<tmp-1>/fresh_Media');
     expect(all).toContain('<tmp-2>/existing_Media');
+    expect(all).toContain('"mediaFolder":"<tmp-3>/Project_Media"');
     expect(all).toContain('.autosave/fresh-autosave-0001_Media');
     expect(all).toContain('.autosave/Project_Media');
     expect(all).toContain('.oldversion/');

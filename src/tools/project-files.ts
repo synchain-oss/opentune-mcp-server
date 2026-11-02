@@ -36,7 +36,7 @@ import {
   type RolledAutosaves,
 } from '../files/project-folders.js';
 import type { Json, OtcpSession } from '../otcp/client.js';
-import { resolvePath, splitPath, systemOf, type PathSystem } from '../paths/index.js';
+import { resolvePath, systemOf, type PathSystem } from '../paths/index.js';
 import { isObject } from '../render/changes.js';
 import { writeBody, writeOutcome } from '../render/index.js';
 import { revertPlan } from '../render/revert.js';
@@ -97,37 +97,54 @@ const consentStep = (message: string): NextStep => ({ actor: 'user', message });
  * (the file name without .otproj followed by _Media) and no other project file shares it; an earlier build uses one
  * folder, Project_Media, for every project file of the directory, so a file of the same name in it is replaced. The
  * protocol version on the wire does not tell the two apart, so the sentence says both and is fixed: it is not built
- * from anything the result holds.
+ * from anything the result holds. The member `mediaFolder` is the one that was found on the file system after the
+ * write (findSavedMedia).
  */
 const MEDIA_COPY =
   'OpenTune also copies the audio the project uses into a media folder next to the project file: a folder named after ' +
   'it with _Media added, or in a build that implements an earlier specification the Project_Media folder that all the ' +
   'project files of the directory share, where a file of the same name is replaced.';
-/** The suffix of the media folder of a project file. */
-const MEDIA_SUFFIX = '_Media';
+/** Why `mediaFolder` of a save result is null: the path of the file is not known to this server, or no folder was found. */
+type MediaFolderReason = 'project_path_not_given' | 'media_folder_not_found';
 
 /**
- * The media folder of a project file this server was told the path of (save_as and overwrite, whose path it checked
- * itself); null for a save to the project's current file, whose path only OpenTune knows.
+ * Looks for the media folder of a project file this server was told the path of (save_as and overwrite, whose path it
+ * checked itself), after the save wrote it: `<name>_Media` next to it first (specification 1.0.0-rc.9), then the
+ * Project_Media of a build of 1.0.0-rc.8, which every project file of the directory shares. The protocol version on the
+ * wire cannot tell the two layouts apart, so the answer is read from the file system, as for an autosave copy. A folder
+ * that cannot be read counts as not there: a probe that fails never turns a save that worked into an error. Null when
+ * neither folder is there.
  */
-function mediaFolderOf(file: string | null, platform: NodeJS.Platform): string | null {
-  if (file === null) return null;
-  const { dir, stem, sep } = splitPath(file, systemOf(platform));
-  return `${dir}${sep}${stem}${MEDIA_SUFFIX}`;
+async function findSavedMedia(ops: ProjectFs, platform: NodeJS.Platform, file: string): Promise<string | null> {
+  const folders = ProjectFolders.of(file, platform);
+  if (folders === null) return null;
+  for (const dir of [folders.media.dir, folders.legacyMedia.dir]) {
+    try {
+      if ((await ops.list(dir)) !== null) return dir;
+    } catch {
+      // Not readable: not found.
+    }
+  }
+  return null;
 }
 
 /**
- * The members of a save result that give the media folder: `mediaFolder`, and when it is null, its reason. The write
- * envelope may carry nullReasons of its own (for members of the envelope that are null); they stay, and the reason of
- * the member this server adds is put next to them, so that no null member of the result loses its reason.
+ * The members of a save result that give the media folder: `mediaFolder`, and when it is null, its reason (by default
+ * that the file is the project's current one, whose path only OpenTune knows). The write envelope may carry nullReasons
+ * of its own (for members of the envelope that are null); they stay, and the reason of the member this server adds is
+ * put next to them, so that no null member of the result loses its reason.
  */
-export function mediaFolderMembers(rendered: Json, media: string | null): Json {
+export function mediaFolderMembers(
+  rendered: Json,
+  media: string | null,
+  reason: MediaFolderReason = 'project_path_not_given',
+): Json {
   if (media !== null) return { mediaFolder: media };
   return {
     mediaFolder: null,
     nullReasons: {
       ...(isObject(rendered.nullReasons) ? rendered.nullReasons : {}),
-      mediaFolder: 'project_path_not_given',
+      mediaFolder: reason,
     },
   };
 }
@@ -597,8 +614,14 @@ async function runSave(ctx: ToolContext, instanceId: string | undefined, wait: n
     // The first save to a place says at once that the audio is copied there; a save to the project's own file
     // says it after the facts of the save.
     const toNewPlace = save.method === 'project.saveAs';
-    const media = mediaFolderOf(save.requested, ctx.platform);
-    const mediaMembers = mediaFolderMembers(rendered, media);
+    // The folder is the one found on the file system after the write; a save to the project's own file names no path
+    // this server knows, so there is nothing to look at.
+    const media = save.requested === null ? null : await findSavedMedia(ops, ctx.platform, save.requested);
+    const mediaMembers = mediaFolderMembers(
+      rendered,
+      media,
+      save.requested === null ? 'project_path_not_given' : 'media_folder_not_found',
+    );
     const reasons: Json = {
       ...(isObject(mediaMembers.nullReasons) ? mediaMembers.nullReasons : {}),
       ...(kept === null ? { oldVersion: 'no_previous_file' } : {}),
