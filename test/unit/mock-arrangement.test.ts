@@ -107,10 +107,10 @@ describe('arrangement.edit', () => {
     expect(noop).toMatchObject({ applied: true, noOp: true, changes: [], dirty: { before: false, after: false } });
   });
 
-  it('splits at an analysis frame, merges again with the revert recipe, and refuses to undo either', async () => {
+  it('splits at an analysis frame, merges again with the revert recipe, and refuses to undo either (a server of 1.0.0)', async () => {
     const session = await sessions.open();
     const { mock, ok, fails } = session;
-    const ids = mock.given({ clips: [clip({ startTimelineSec: 1, durationSec: 4 })] });
+    const ids = mock.given({ splitMergeUndo: false, clips: [clip({ startTimelineSec: 1, durationSec: 4 })] });
     const split = await ok('arrangement.edit', {
       expectedArrangementRevision: await arrangementRevision(session),
       ops: [{ op: 'split', placementId: ids['clip.placementId'], atTimelineSec: 2.504 }],
@@ -131,10 +131,62 @@ describe('arrangement.edit', () => {
     expect(merged.removed).toHaveLength(2);
   });
 
+  it('splits and merges as one undo step each, and undo and redo give the clips back with the same ids (the reference implementation)', async () => {
+    const session = await sessions.open();
+    const { mock, ok } = session;
+    const ids = mock.given({ clips: [clip({ startTimelineSec: 1, durationSec: 4 })] });
+    const original = ids['clip.placementId'];
+    const split = await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'split', placementId: original, atTimelineSec: 2.504 }],
+    });
+    expect(split.undo).toMatchObject({ undoable: true, undoId: expect.any(String) as string, steps: 1 });
+    expect((split.undo as { revert?: unknown }).revert).toBeUndefined();
+    expect(codes(split)).toEqual(['SPLIT_SNAPPED']);
+    const parts = mock.snapshot().placements.map((p) => p.id);
+    expect(parts).toHaveLength(2);
+
+    const undoId = (split.undo as { undoId: string }).undoId;
+    const undone = await ok('edit.undo', { expectedUndoId: undoId });
+    expect(undone).toMatchObject({ applied: true, noOp: false });
+    expect(mock.snapshot().placements.map((p) => p.id)).toEqual([original]);
+    const redone = await revert(session, undone);
+    expect(redone).toMatchObject({ applied: true, noOp: false });
+    expect(mock.snapshot().placements.map((p) => p.id)).toEqual(parts);
+
+    const [left, right] = parts;
+    const merged = await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'merge', leadingPlacementId: left, trailingPlacementId: right }],
+    });
+    expect(merged.undo).toMatchObject({ undoable: true, undoId: expect.any(String) as string, steps: 1 });
+    expect(codes(merged)).toEqual([]);
+    expect(mock.snapshot().placements).toHaveLength(1);
+    await ok('edit.undo', { expectedUndoId: (merged.undo as { undoId: string }).undoId });
+    expect(mock.snapshot().placements.map((p) => p.id)).toEqual(parts);
+  });
+
+  it('reports a delete as undoable on request, and still refuses to undo it', async () => {
+    const session = await sessions.open();
+    const { mock, ok, fails } = session;
+    mock.setDeleteReportsUndoable(true);
+    const ids = mock.given({ clips: [clip({ startTimelineSec: 1, durationSec: 4 })] });
+    const removed = await ok('arrangement.edit', {
+      expectedArrangementRevision: await arrangementRevision(session),
+      ops: [{ op: 'delete', placementIds: [ids['clip.placementId']] }],
+      confirm: true,
+    });
+    expect(removed.undo).toMatchObject({ undoable: true, undoId: expect.any(String) as string });
+    const refusal = await fails('edit.undo', { expectedUndoId: (removed.undo as { undoId: string }).undoId });
+    expect(refusal.data).toMatchObject({ kind: 'UNSUPPORTED', reason: 'undo_unsafe_build' });
+    expect(mock.snapshot().placements).toHaveLength(0);
+  });
+
   it('limits the fades of both parts of a split, says so, and gives them back with the merge recipe', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;
     const ids = mock.given({
+      splitMergeUndo: false,
       clips: [clip({ startTimelineSec: 0, durationSec: 4, fadeInSec: 1.5, fadeOutSec: 1.5 })],
     });
     const before = mock.snapshot();
@@ -182,7 +234,7 @@ describe('arrangement.edit', () => {
   it('gives no merge recipe and warns of an irreversible merge when the former boundary is not on an analysis frame', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;
-    const ids = mock.given({ clips: [clip({ startTimelineSec: 0, durationSec: 4 })] });
+    const ids = mock.given({ splitMergeUndo: false, clips: [clip({ startTimelineSec: 0, durationSec: 4 })] });
     const split = await ok('arrangement.edit', {
       expectedArrangementRevision: await arrangementRevision(session),
       ops: [{ op: 'split', placementId: ids['clip.placementId'], atTimelineSec: 1 }],

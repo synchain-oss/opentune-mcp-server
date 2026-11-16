@@ -52,6 +52,11 @@ export interface GivenHistoryEntry {
 
 export interface GivenState {
   readonly editingScheme?: string;
+  /**
+   * Whether OpenTune undoes a clip split and merge (PROTOCOL.md section 15.4 rule 8). The mock's default is that it
+   * does, as the reference implementation does since specification 1.1.0; `false` is a server that follows 1.0.0.
+   */
+  readonly splitMergeUndo?: boolean;
   readonly dirty?: boolean;
   readonly clips?: readonly GivenClip[];
   /** Every track slot that no clip of `clips` is on holds one more clip. */
@@ -104,6 +109,7 @@ export interface GivenDialog {
 /** The members of a vector's `given` that this module establishes. */
 export const WORLD_GIVEN_MEMBERS = [
   'editingScheme',
+  'splitMergeUndo',
   'dirty',
   'clips',
   'clipOnEveryTrack',
@@ -226,7 +232,22 @@ function buildHistory(
     const stale = moved || (item.laterTrackDeletedAfter === true && item.origin === 'ui');
     let undoPatch: Patch | null = null;
     let redoPatch: Patch | null = null;
-    if (!moved && item.action !== 'clipSplit') {
+    const splitUndoable = item.action === 'clipSplit' && world.splitMergeUndo;
+    if (splitUndoable && !moved && direction === 'undo') {
+      // The clip is one part of a split that was made in the UI: undoing the entry takes it away and puts back the clip
+      // it was cut from, which has a placementId of its own. A redo entry of this kind changes nothing here.
+      const original = world.addPlacement({
+        trackId: placement.trackId,
+        content: placement.content,
+        name: placement.name,
+        startTimelineSec: placement.startTimelineSec,
+        durationSec: placement.durationSec,
+        clipInContentSec: placement.clipInContentSec,
+      });
+      world.placements.delete(original.serial);
+      undoPatch = { swap: { remove: [placement], revive: [original] } };
+      redoPatch = { swap: { remove: [original], revive: [placement] } };
+    } else if (!moved && item.action !== 'clipSplit') {
       // Walking away from the present: undo entries go back in time, redo entries forward.
       const now = current(placement);
       const there = perturbed(item.action, direction === 'undo' ? 'older' : 'newer', now.snap, now.startTimelineSec);
@@ -251,7 +272,7 @@ function buildHistory(
       undoPatch,
       redoPatch,
       possiblyStale: stale,
-      unsafe: item.action === 'clipSplit',
+      unsafe: item.action === 'clipSplit' && !world.splitMergeUndo,
       ...(item.action === 'noteEdit' || item.action === 'pitchShift' ? {} : { tracks: [placement.trackId] }),
     };
     return entry;
@@ -282,6 +303,7 @@ function buildHistory(
 export function applyGiven(world: World, files: WorkFiles, given: GivenState): Record<string, string> {
   const bindings: Record<string, string> = {};
   if (given.editingScheme !== undefined) world.editingScheme = given.editingScheme;
+  if (given.splitMergeUndo !== undefined) world.splitMergeUndo = given.splitMergeUndo;
   const byBind = new Map<string, PlacementRec>();
   for (const clip of given.clips ?? []) byBind.set(clip.bind, createClip(world, files, clip, bindings));
   if (given.clipOnEveryTrack === true) {

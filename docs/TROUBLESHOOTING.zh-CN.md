@@ -86,11 +86,11 @@ OpenTune 正在关闭。先检查状态,再做别的。
 
 ### Error NOT_FOUND
 
-对象已不存在,或其 id 已过期(打开工程后 id 会变)。请重新读取状态。已结束的任务保留 30 分钟。
+对象已不存在,或其 id 已过期(打开工程后 id 会变)。请重新读取状态。已结束的任务保留 30 分钟。原因 `content_unavailable`(规范 `1.1.0`,已合入的上游代码)表示导出的某个片段在导出期间被删除,`track_not_found` 表示 OpenTune 执行修改时那个轨道槽已经没有了;请重新读取工程,用剩下的内容再试。
 
 ### Error NOT_READY
 
-OpenTune 仍在分析音频或生成音符。请等待后重试。原因 `f0_failed` 与 `f0_empty` 不会恢复:该片段无法编辑。
+OpenTune 仍在分析音频或生成音符。请等待后重试。原因 `f0_failed` 与 `f0_empty` 不会恢复:该片段无法编辑。`export_wait_timeout` 只来自限制导出等待时间的 OpenTune 构建(测试版);已合入的上游代码不设等待上限,所以请给任务设你自己的上限(`opentune_get_job`)。它没有某个片段的渲染时会立即以 `render_unavailable` 失败,该错误被标为不可重试(不要原样重复调用):请检查片段,之后重新开始的导出若仍同样失败,请告诉用户。
 
 ### Error ANALYSIS_FAILED
 
@@ -98,16 +98,15 @@ OpenTune 无法分析这段音频的音高。
 
 ### Error RENDER_FAILED
 
-OpenTune 无法渲染修正后的音频,自动重试一次后仍然失败。
+OpenTune 无法渲染修正后的音频,自动重试一次后仍然失败。原因 `stretch_failed`(已合入的上游代码)表示导出时无法重建某个片段的拉伸音频;没有写入任何文件,稍后再导出可能成功。
 
 ### Error MODEL_UNAVAILABLE
 
 OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`。
 
 修改声码器权重或渲染优先级(`opentune_set_settings`)时有两个原因:OpenTune 用一个任务应用这类修改,并等到声码器重新就绪。
-两种情况下 OpenTune 都会撤回这些改动,结果里会写明。`vocoder_not_ready`(可重试):等待上限到了,声码器仍然忙;稍等片刻再调用,
-若反复出现,运行 `opentune-mcp doctor`。`vocoder_load_failed`(不可重试):声码器无法加载新的权重或后端,例如权重文件损坏或不兼容;
-原来的设置已经恢复,再次发送同一个值没有用。请告诉用户,并用 `opentune-mcp doctor` 检查模型。
+声码器不接受新值时任务怎么处理取决于 OpenTune 构建,所以不要假定其中一种:请读取设置(`opentune_get_settings`)看哪些值生效,并看错误里的 `executed`。测试版在两种情况下都会撤回这些改动,结果里会写明。`vocoder_not_ready`(可重试):等待上限到了,声码器仍然忙;稍等片刻再调用,
+若反复出现,运行 `opentune-mcp doctor`。已合入的上游代码没有等待上限,不会发这个原因。`vocoder_load_failed`(不可重试):声码器无法加载新的权重或后端,例如权重文件损坏或不兼容;再次发送同一个值没有用。测试版会恢复原来的设置;已合入的上游代码保留新值(这时错误里带一个 `committed_before_failure` 结果,其中有恢复原值的调用),所以请告诉用户哪些值在生效,并用 `opentune-mcp doctor` 检查模型。已合入的上游代码还有两个原因:`vocoder_weight_rejected` 与 `backend_change_rejected` 表示 OpenTune 拒绝排入这次修改(不可重试);值保持原样,除非 `executed` 说明调用的另一部分被保留了。
 
 ### Error REVISION_CONFLICT
 
@@ -119,7 +118,7 @@ OpenTune 需要的模型或推理后端缺失。请运行 `opentune-mcp doctor`�
 
 ### Error UNSAVED_CHANGES
 
-该请求会丢弃未保存的改动。请问用户是保存还是丢弃。`opentune_quit` 给出这个错误是有意的:OpenTune 窗口的关闭按钮不会询问就直接退出,而这个工具不会。agent 先用 `opentune_save_project` 写一个自动副本(`autosave`;从未保存过的工程没有文件,写不了副本),再问用户:是正式保存(`save`;从未保存过的工程用 `save_as`)后再调用 `opentune_quit`,还是放弃这些改动;只有用户明确同意丢掉改动时,才带 `discard_unsaved: true` 调用。`opentune_open_project` 给出同样的错误,处理方式相同。
+该请求会丢弃未保存的改动。请问用户是保存还是丢弃。`opentune_quit` 给出这个错误是有意的:测试版里 OpenTune 窗口的关闭按钮不会询问就直接退出,而这个工具不会(已合入的上游代码的窗口会询问,但工具不依赖这一点)。agent 先用 `opentune_save_project` 写一个自动副本(`autosave`;从未保存过的工程没有文件,写不了副本),再问用户:是正式保存(`save`;从未保存过的工程用 `save_as`)后再调用 `opentune_quit`,还是放弃这些改动;只有用户明确同意丢掉改动时,才带 `discard_unsaved: true` 调用。`opentune_open_project` 给出同样的错误,处理方式相同。
 
 ### Error ALREADY_EXISTS
 
@@ -143,7 +142,7 @@ OpenTune 在截止时间之前没有开始处理该请求。没有任何改动;�
 
 ### Error UNSUPPORTED
 
-OpenTune 或该构建不提供这个操作。原因为 `capability_missing` 时,`detail` 指出缺少的能力;原因为 `no_editor_window` 时,OpenTune 是在没有编辑器窗口的情况下运行的,带窗口启动 OpenTune Standalone 后再试;原因为 `job_not_cancellable` 时,任务会继续,可以用 `opentune_get_job` 跟踪。`opentune_manage_ui` 的 op `switch_view` 需要能力 `ui.workspace`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请在 OpenTune 窗口里切换视图(走带栏里的编曲视图与钢琴卷帘按钮),或改用较新的测试构建。`opentune_quit` 需要能力 `app.quit`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请先用 `opentune_save_project` 写一个自动副本(`mode: autosave`),问用户是否正式保存工程,再请用户关闭 OpenTune 窗口(窗口关闭时不会询问未保存的改动)。`opentune_save_project` 的 `mode: autosave` 需要能力 `project.copy`,规范 `1.0.0-rc.8` 之前的测试构建没有它:不会写任何副本;请在用户想保住成果时提醒他保存工程,或改用较新的测试构建。
+OpenTune 或该构建不提供这个操作。原因为 `capability_missing` 时,`detail` 指出缺少的能力;原因为 `no_editor_window` 时,OpenTune 是在没有编辑器窗口的情况下运行的,带窗口启动 OpenTune Standalone 后再试(已合入的上游代码对轨道编辑、走带、撤销与重做也会给出它,这些在测试版里无窗口也能用);原因为 `undo_unsafe_build` 时,OpenTune 无法安全地撤销最上面的一步:删除片段,在测试版上还有拆分或合并片段;请告诉用户,不要强制;原因为 `job_not_cancellable` 时,任务会继续,可以用 `opentune_get_job` 跟踪。`opentune_manage_ui` 的 op `switch_view` 需要能力 `ui.workspace`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请在 OpenTune 窗口里切换视图(走带栏里的编曲视图与钢琴卷帘按钮),或改用较新的测试构建。`opentune_quit` 需要能力 `app.quit`,规范 `1.0.0-rc.7` 之前的测试构建没有它:请先用 `opentune_save_project` 写一个自动副本(`mode: autosave`),问用户是否正式保存工程,再请用户关闭 OpenTune 窗口(较旧的 OpenTune 构建里窗口关闭时不会询问未保存的改动)。`opentune_save_project` 的 `mode: autosave` 需要能力 `project.copy`,规范 `1.0.0-rc.8` 之前的测试构建没有它:不会写任何副本;请在用户想保住成果时提醒他保存工程,或改用较新的测试构建。
 
 ### Error INTERNAL
 

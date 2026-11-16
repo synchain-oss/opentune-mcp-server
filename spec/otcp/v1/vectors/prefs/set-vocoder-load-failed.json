@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "prefs/set-vocoder-load-failed",
   "type": "scenario",
-  "description": "How job.get reports a prefsApply job whose vocoder could not load the new weight (for example a corrupt or incompatible weight file): MODEL_UNAVAILABLE(vocoder_load_failed), not retryable. The command for the vocoder had finished but the vocoder was not ready, so the job did not wait for its limit; it took its changes back at once, executed is false and prefs.get still reports the previous weight (PROTOCOL.md section 12.7 rule 5). No request can make a weight fail to load, so the job is a precondition and this vector shows the form of the error.",
+  "description": "How job.get reports a prefsApply job whose vocoder could not load the new weight (for example a corrupt or incompatible weight file): MODEL_UNAVAILABLE(vocoder_load_failed), not retryable. The command for the vocoder had finished but the vocoder was not ready, so the job did not wait for its limit. A server of 1.0.0 took its changes back at once (executed false, prefs.get reports the previous weight); since 1.1 a server may keep the new values (executed true when the job changed a preference or the backend, and the previous weight is not in effect), so the vector checks that executed is a boolean and that prefs.get reports a weight, not which (PROTOCOL.md section 12.7 rule 5). No request can make a weight fail to load, so the job is a precondition and this vector shows the form of the error.",
   "capability": "prefs.write",
   "extraCapabilities": [
     "jobs.v1"
@@ -85,7 +85,9 @@
                 "detail": {
                   "$any": "string"
                 },
-                "executed": false
+                "executed": {
+                  "$any": "boolean"
+                }
               }
             }
           }
@@ -106,7 +108,9 @@
         "id": 2,
         "result": {
           "processing": {
-            "vocoderWeight": "hifigan.onnx"
+            "vocoderWeight": {
+              "$any": "string"
+            }
           }
         }
       }

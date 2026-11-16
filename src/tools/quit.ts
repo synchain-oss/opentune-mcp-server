@@ -87,7 +87,8 @@ function cannotQuit(missing: ToolError): ToolError {
       message:
         'This OpenTune build cannot be closed by request. If the project has a file, write a copy first with ' +
         'opentune_save_project (mode autosave) and ask the user whether to save the project file before they close ' +
-        'the OpenTune window themselves. Closing the window does not ask about unsaved changes.',
+        'the OpenTune window themselves. Older OpenTune builds close the window without asking about unsaved changes, ' +
+        'so do not rely on the window to ask.',
     },
   });
 }
@@ -123,6 +124,15 @@ async function waitForExit(ctx: ToolContext, instanceId: string, limitMs: number
   }
 }
 
+/**
+ * An OpenTune window that asks about unsaved changes (the current one does; older ones close without asking) can ask
+ * after the answer, when the project changed again between the check and the close. The application then keeps
+ * running with the control interface stopped, although the result said quitting: true (PROTOCOL.md section 20.2).
+ */
+const ASKING =
+  'The OpenTune window may also be asking the user about changes made since the check (the user answers it there); ' +
+  'until then OpenTune keeps running with its control interface stopped.';
+
 /** The summary: what happened to the application and to the unsaved work first, then what the agent may do. */
 function summaryOf(discarded: boolean, watch: ExitWatch, waitedMs: number, hasPath: boolean): string {
   const seconds = String(Math.round(waitedMs / 1000));
@@ -141,6 +151,7 @@ function summaryOf(discarded: boolean, watch: ExitWatch, waitedMs: number, hasPa
   }
   const rest = [
     watch.exited === true ? '' : 'Check opentune_get_status before assuming it is closed.',
+    watch.exited === false ? ASKING : '',
     hasPath ? 'The project file is at the path in projectPath.' : 'The project had no file: it was never saved.',
     'To work again, start OpenTune with opentune_launch.',
   ].filter((sentence) => sentence !== '');
@@ -203,7 +214,7 @@ export const quitTool = defineTool({
   title: 'Quit OpenTune',
   description:
     "OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has " +
-    'exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES. Then ' +
+    'exited. It never closes silently over unsaved changes: it fails with UNSAVED_CHANGES. Then ' +
     'write a copy with opentune_save_project (mode autosave) and ask the user to save or to give the changes up; ' +
     'pass discard_unsaved: true only when the user explicitly agreed to lose them (cannot be undone). Refuses ' +
     'while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune ' +

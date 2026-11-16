@@ -106,7 +106,7 @@ OTCP capabilities: `session.v1`. OTCP methods: `session.hello`, `session.info`.
 
 **Quit OpenTune**: changes state, destructive, idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has exited. Unlike the window, it never closes silently over unsaved changes: it fails with UNSAVED_CHANGES. Then write a copy with opentune_save_project (mode autosave) and ask the user to save or to give the changes up; pass discard_unsaved: true only when the user explicitly agreed to lose them (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune again with opentune_launch.
+OpenTune (audio vocal pitch editor): closes OpenTune like the window's close button and waits until it has exited. It never closes silently over unsaved changes: it fails with UNSAVED_CHANGES. Then write a copy with opentune_save_project (mode autosave) and ask the user to save or to give the changes up; pass discard_unsaved: true only when the user explicitly agreed to lose them (cannot be undone). Refuses while a dialog is open or a job runs. Use when the user says they are done, not for a pause. Start OpenTune again with opentune_launch.
 
 OTCP capabilities: `app.quit`. OTCP methods: `app.quit`.
 
@@ -175,7 +175,7 @@ OTCP capabilities: `edit.v1`, `read.v1`. OTCP methods: `content.editNotes`, `con
 
 **Undo the top OpenTune step**: changes state, not destructive, not idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): undoes the step on top of the undo history, but only if it is the step undo_id names; otherwise UNDO_CONFLICT, and then ask the user (the history has changed). Only edits that reported an undo id can be undone. A step that changes nothing still uses up the undo step and marks the project changed (UNDO_NO_EFFECT). Clip split, merge and delete cannot be undone safely in some builds (undo_unsafe_build). The result gives the opentune_redo call that takes this back.
+OpenTune (audio vocal pitch editor): undoes the step on top of the undo history, but only if it is the step undo_id names; otherwise UNDO_CONFLICT, and then ask the user (the history has changed). Only edits that reported an undo id can be undone. A step that changes nothing still uses up the undo step and marks the project changed (UNDO_NO_EFFECT). A clip delete, and on older builds a split or merge, cannot be undone safely (undo_unsafe_build). The result gives the opentune_redo call that takes this back.
 
 OTCP capabilities: `history.v1`. OTCP methods: `edit.undo`.
 
@@ -291,7 +291,7 @@ OTCP capabilities: `read.v1`. OTCP methods: `content.getDetails`, `project.get`.
 
 **Get OpenTune settings**: read-only, not destructive, idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, experimental features, language, onboarding shown, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only.
+OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, pitch model, experimental features, language, onboarding shown, accessibility mode if reported, options: the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log (OpenTune log lines; only when asked). Default: all but log. Read-only.
 
 OTCP capabilities: `session.v1`, `read.v1`, `audio.device`. OTCP methods: `session.info`, `prefs.get`, `audio.get`, `app.getLog`.
 
@@ -381,7 +381,7 @@ OTCP capabilities: `project.io`, `jobs.v1`. OTCP methods: `project.open`, `job.g
 
 **Edit OpenTune clips on the timeline**: changes state, destructive, not idempotent, closed world.
 
-OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, fade run in order as one undo step. split, merge, delete and copy each go alone in a call and cannot be undone (the first three by an OpenTune defect): do one when the user named the clip or time, else ask first; delete needs confirm. dry_run previews (not copy). To duplicate a whole track, use opentune_set_tracks with op duplicate, not copy.
+OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain (at most +12.04 dB), fade run in order as one undo step. split, merge, delete and copy each go alone in a call. delete and copy cannot be undone; split and merge cannot on some OpenTune builds, and the result says. Do one when the user named the clip or time, else ask first; delete needs confirm. dry_run previews (not copy). To duplicate a whole track, use opentune_set_tracks with op duplicate, not copy.
 
 OTCP capabilities: `arrangement.v1`. OTCP methods: `arrangement.edit`, `arrangement.copy`.
 

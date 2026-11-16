@@ -145,7 +145,10 @@ function clipOp(raw: unknown): ClipOp | null {
   }
 }
 
-/** The ops OpenTune cannot undo (PROTOCOL.md section 15.4 rule 1). */
+/**
+ * The ops OpenTune cannot undo: always a delete, and a split or merge on the builds that have the defect (PROTOCOL.md
+ * section 15.4 rules 1 and 8). A recipe for them waits for the user's consent whichever build it comes from.
+ */
 const NOT_UNDOABLE = new Set(['split', 'merge', 'delete']);
 
 /**

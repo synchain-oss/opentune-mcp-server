@@ -79,15 +79,19 @@ async function scenarios(): Promise<Record<string, Scenario>> {
   await run('trim-fades', 'A trim that shortens the fades: FADES_RECLAMPED, and the undo step restores them.', {
     ops: [{ op: 'trim', clip: a, edge: 'end', to_timeline_sec: 1.5 }],
   });
-  await run('split-dry-run', 'A preview of a split: the first sentence says applying it cannot be undone.', {
+  await run('split-dry-run', 'A preview of a split: it cannot tell whether the build can undo it, and says so.', {
     ops: [{ op: 'split', clip: c, at_timeline_sec: 11.504 }],
     dry_run: true,
   });
-  const split = await run('split', 'A split: the first sentence says it cannot be undone, and why.', {
-    ops: [{ op: 'split', clip: c, at_timeline_sec: 11.504 }],
-  });
+  const split = await run(
+    'split',
+    'A split on a build that can undo it: the undo step is given as with any undoable edit.',
+    {
+      ops: [{ op: 'split', clip: c, at_timeline_sec: 11.504 }],
+    },
+  );
   const [left, right] = (split.clip_ids as { created: string[] }).created;
-  await run('merge', 'Merging the two parts again: cannot be undone either.', {
+  await run('merge', 'Merging the two parts again on such a build: undoable as one step as well.', {
     ops: [{ op: 'merge', leading_clip: left, trailing_clip: right }],
   });
   await run('split-out-of-range', 'A split outside the clip: an error with a next step.', {
@@ -151,6 +155,33 @@ async function scenarios(): Promise<Record<string, Scenario>> {
   await run('copy-duplicate-clips', 'A copy that names the same clip twice: it is copied once.', {
     ops: [{ op: 'copy', clips: [b, b], mode: 'full', to_track_id: 3, start_timeline_sec: 20 }],
   });
+  // A build with the undo defect for a split and a merge (the behaviour of specification 1.0.0), and a build that
+  // reports a delete as undoable although edit.undo refuses its entry (PROTOCOL.md section 15.4 rules 1 and 8).
+  const older = mock.given({
+    splitMergeUndo: false,
+    dirty: false,
+    clips: [clip({ bind: 'd', startTimelineSec: 0, durationSec: 4 })],
+  });
+  const oldSplit = await run(
+    'split-undo-defect',
+    'A split on a build with the undo defect: the first sentence says it cannot be undone, and why.',
+    { ops: [{ op: 'split', clip: older['d.placementId'] ?? '', at_timeline_sec: 1.504 }] },
+  );
+  const [oldLeft, oldRight] = (oldSplit.clip_ids as { created: string[] }).created;
+  const oldMerge = await run(
+    'merge-undo-defect',
+    'Merging the two parts again on such a build: cannot be undone either.',
+    { ops: [{ op: 'merge', leading_clip: oldLeft, trailing_clip: oldRight }] },
+  );
+  mock.setDeleteReportsUndoable(true);
+  await run(
+    'delete-reported-undoable',
+    'A delete that the build reports as undoable: it is rendered as irreversible, and its undo id is not offered.',
+    {
+      ops: [{ op: 'delete', clips: [(oldMerge.clip_ids as { created: string[] }).created[0] ?? ''] }],
+      confirm: true,
+    },
+  );
   return out;
 }
 

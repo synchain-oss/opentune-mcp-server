@@ -2838,9 +2838,9 @@ export async function runEffects(config: EffectsConfig, hooks: EffectsHooks = {}
         if (Math.abs(now.targetMidi - wanted) > (REPORTED_FIELD_EPSILON.targetMidi ?? READBACK_EPSILON)) {
           problems.push(`the note's target reads back ${String(now.targetMidi)}, expected ${String(wanted)}`);
         }
-        if (Math.abs(now.offsetCents) > (REPORTED_FIELD_EPSILON.offsetCents ?? READBACK_EPSILON)) {
-          problems.push(`the note's offsetCents reads back ${String(now.offsetCents)}, expected 0`);
-        }
+        // How the target splits into the base pitch and offsetCents is not part of the contract: a server that follows
+        // 1.0.0 sets offsetCents to 0, and since 1.1 a server may keep the base pitch and report the difference there
+        // (PROTOCOL.md section 2.1 rule 4). Only the target is compared.
         await settle();
         const down = measure(await exportWet(`${name}: snapped`), new Map([[index, 0]]));
         problems.push(...down.problems.map((p) => `snapped: ${p}`));

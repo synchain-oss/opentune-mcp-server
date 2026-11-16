@@ -1,0 +1,74 @@
+{
+  "$schema": "../../schemas/vector.schema.json",
+  "id": "edit/undo-ui-split",
+  "type": "request",
+  "description": "The OpenTune UI made the top entry, a clip split, on a server whose OpenTune undoes a clip split (PROTOCOL.md section 15.4 rule 8). Its history entry is safe, and the end user asked for the undo, so force applies it, assigns an undoId and returns edit.redo as its revert recipe (section 15.3). The vector edit/undo-unsafe-build shows the same request on a server that follows 1.0.0.",
+  "capability": "history.v1",
+  "since": "1.0",
+  "method": "edit.undo",
+  "session": "authenticated",
+  "given": {
+    "splitMergeUndo": true,
+    "clips": [
+      {
+        "bind": "clip",
+        "trackId": 0,
+        "startTimelineSec": 2,
+        "durationSec": 6,
+        "analysis": "ready"
+      }
+    ],
+    "history": {
+      "undo": [
+        {
+          "origin": "ui",
+          "action": "clipSplit",
+          "clip": "clip"
+        }
+      ],
+      "redo": []
+    }
+  },
+  "request": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "method": "edit.undo",
+    "params": {
+      "force": true
+    }
+  },
+  "response": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "applied": true,
+      "noOp": false,
+      "undo": {
+        "undoable": false,
+        "reason": "ui_parity",
+        "revert": {
+          "method": "edit.redo",
+          "params": {
+            "expectedUndoId": {
+              "$capture": "uiUndoId",
+              "$any": "string"
+            }
+          }
+        }
+      },
+      "warnings": [],
+      "entry": {
+        "undoId": {
+          "$ref": "uiUndoId"
+        },
+        "description": {
+          "$any": "string"
+        },
+        "origin": "ui",
+        "possiblyStale": false,
+        "unsafe": false
+      }
+    }
+  },
+  "connectionAfter": "open"
+}

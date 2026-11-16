@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "content/edit-notes-snap-to-scale",
   "type": "request",
-  "description": "snapToScale to C major on all notes. Notes 0 (64, E) and 1 (69, A) are already in the scale and do not change; note 2 (69.3) moves to the nearest scale pitch, 69.",
+  "description": "snapToScale to C major on all notes. Notes 0 (64, E) and 1 (69, A) are already in the scale and do not change; note 2 (69.3) moves to the nearest scale pitch, 69. The vector checks targetMidi only: a server may keep the base pitch and report the difference in offsetCents (PROTOCOL.md section 2.1 rule 4), and changes lists the members that changed as a subset.",
   "capability": "edit.v1",
   "since": "1.0",
   "method": "content.editNotes",

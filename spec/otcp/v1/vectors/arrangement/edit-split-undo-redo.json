@@ -1,0 +1,429 @@
+{
+  "$schema": "../../schemas/vector.schema.json",
+  "id": "arrangement/edit-split-undo-redo",
+  "type": "scenario",
+  "description": "A split through arrangement.edit is recorded as safe on a server whose OpenTune undoes a clip split (PROTOCOL.md section 15.4 rule 8). edit.getHistory reports unsafe false; edit.undo puts the original clip back with its original placementId and takes the two parts away; edit.redo revives the two parts with the placementIds they had and takes the original away. A dry-run edit of a clip is the probe of whether the clip exists: it succeeds for a clip that exists and fails with NOT_FOUND(unknown_handle) for one that does not.",
+  "capability": "arrangement.v1",
+  "extraCapabilities": [
+    "history.v1"
+  ],
+  "since": "1.0",
+  "session": "authenticated",
+  "given": {
+    "splitMergeUndo": true,
+    "clips": [
+      {
+        "bind": "clip",
+        "trackId": 0,
+        "startTimelineSec": 2,
+        "durationSec": 6,
+        "analysis": "ready"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": {
+            "$ref": "runner.arrangementRevision"
+          },
+          "ops": [
+            {
+              "op": "split",
+              "placementId": {
+                "$ref": "clip.placementId"
+              },
+              "atTimelineSec": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "applied": true,
+          "created": [
+            {
+              "entity": "placement",
+              "ref": {
+                "placementId": {
+                  "$capture": "left",
+                  "$any": "string"
+                }
+              },
+              "label": {
+                "$any": true
+              }
+            },
+            {
+              "entity": "placement",
+              "ref": {
+                "placementId": {
+                  "$capture": "right",
+                  "$any": "string"
+                }
+              },
+              "label": {
+                "$any": true
+              }
+            }
+          ],
+          "removed": [
+            {
+              "entity": "placement",
+              "ref": {
+                "placementId": {
+                  "$ref": "clip.placementId"
+                }
+              },
+              "label": {
+                "$any": true
+              }
+            }
+          ],
+          "undo": {
+            "undoable": true,
+            "undoId": {
+              "$capture": "splitUndoId",
+              "$any": "string"
+            },
+            "description": {
+              "$any": "string"
+            },
+            "innerActions": {
+              "$any": "array"
+            },
+            "steps": 1
+          },
+          "warnings": []
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "edit.getHistory",
+        "params": {}
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "history": {
+            "undoTop": {
+              "undoId": {
+                "$ref": "splitUndoId"
+              },
+              "origin": "control",
+              "possiblyStale": false,
+              "unsafe": false
+            }
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "method": "edit.undo",
+        "params": {
+          "expectedUndoId": {
+            "$ref": "splitUndoId"
+          }
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 3,
+        "result": {
+          "applied": true,
+          "noOp": false,
+          "warnings": [],
+          "tokens": {
+            "arrangementRevision": {
+              "$capture": "afterUndo",
+              "$any": "string"
+            }
+          },
+          "entry": {
+            "undoId": {
+              "$ref": "splitUndoId"
+            },
+            "origin": "control",
+            "possiblyStale": false,
+            "unsafe": false
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": {
+            "$ref": "afterUndo"
+          },
+          "dryRun": true,
+          "ops": [
+            {
+              "op": "setGain",
+              "placementId": {
+                "$ref": "clip.placementId"
+              },
+              "gainDb": -3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 4,
+        "result": {
+          "applied": false,
+          "dryRun": true
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": {
+            "$ref": "afterUndo"
+          },
+          "dryRun": true,
+          "ops": [
+            {
+              "op": "setGain",
+              "placementId": {
+                "$ref": "left"
+              },
+              "gainDb": -3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 5,
+        "error": {
+          "code": -32000,
+          "message": "NOT_FOUND",
+          "data": {
+            "kind": "NOT_FOUND",
+            "reason": "unknown_handle",
+            "retryable": false,
+            "detail": {
+              "$any": "string"
+            },
+            "executed": false
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": {
+            "$ref": "afterUndo"
+          },
+          "dryRun": true,
+          "ops": [
+            {
+              "op": "setGain",
+              "placementId": {
+                "$ref": "right"
+              },
+              "gainDb": -3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 6,
+        "error": {
+          "code": -32000,
+          "message": "NOT_FOUND",
+          "data": {
+            "kind": "NOT_FOUND",
+            "reason": "unknown_handle",
+            "retryable": false,
+            "detail": {
+              "$any": "string"
+            },
+            "executed": false
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "method": "edit.redo",
+        "params": {
+          "expectedUndoId": {
+            "$ref": "splitUndoId"
+          }
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 7,
+        "result": {
+          "applied": true,
+          "noOp": false,
+          "warnings": [],
+          "tokens": {
+            "arrangementRevision": {
+              "$capture": "afterRedo",
+              "$any": "string"
+            }
+          },
+          "entry": {
+            "undoId": {
+              "$ref": "splitUndoId"
+            },
+            "origin": "control",
+            "possiblyStale": false,
+            "unsafe": false
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": {
+            "$ref": "afterRedo"
+          },
+          "dryRun": true,
+          "ops": [
+            {
+              "op": "setGain",
+              "placementId": {
+                "$ref": "left"
+              },
+              "gainDb": -3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 8,
+        "result": {
+          "applied": false,
+          "dryRun": true
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": {
+            "$ref": "afterRedo"
+          },
+          "dryRun": true,
+          "ops": [
+            {
+              "op": "setGain",
+              "placementId": {
+                "$ref": "right"
+              },
+              "gainDb": -3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 9,
+        "result": {
+          "applied": false,
+          "dryRun": true
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": {
+            "$ref": "afterRedo"
+          },
+          "dryRun": true,
+          "ops": [
+            {
+              "op": "setGain",
+              "placementId": {
+                "$ref": "clip.placementId"
+              },
+              "gainDb": -3
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 10,
+        "error": {
+          "code": -32000,
+          "message": "NOT_FOUND",
+          "data": {
+            "kind": "NOT_FOUND",
+            "reason": "unknown_handle",
+            "retryable": false,
+            "detail": {
+              "$any": "string"
+            },
+            "executed": false
+          }
+        }
+      }
+    }
+  ]
+}

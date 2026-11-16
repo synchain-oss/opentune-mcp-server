@@ -367,7 +367,7 @@ const JOB_MEMBER_TEXT: readonly (readonly [member: string, text: string])[] = [
     'vocoderWeight',
     'a new vocoder weight makes every content render again once it has loaded, and not at all if it cannot be loaded',
   ],
-  ['renderingPriority', 'a new rendering priority makes the vocoder load again and renders no content again'],
+  ['renderingPriority', 'a new rendering priority makes the vocoder load again and normally renders no content again'],
 ];
 
 /**
@@ -405,6 +405,25 @@ function combined(results: readonly Rendered[]): Outcome {
       results: results.map((result) => ({ method: result.method, ...result.body })),
     },
   };
+}
+
+/**
+ * A failed settings job that carries the write result of what it committed: a server that keeps the new values when
+ * the vocoder does not take them (PROTOCOL.md section 12.7 rule 5) fails the job with executed true and the result,
+ * whose revert line puts the previous values back. It is rendered next to the error, so the agent sees what stayed
+ * instead of assuming a rollback. A failed job without a usable result (a server that took its changes back, or a job
+ * that failed before it changed anything) is left as it is.
+ */
+function withCommitted(
+  failure: Extract<Outcome, { ok: false }>,
+  step: Step,
+  job: Json,
+): Extract<Outcome, { ok: false }> {
+  if (step.method !== 'prefs.set' || !isObject(job.result)) return failure;
+  // The vocoder did not take the new values, so no render is certain: the wording is that of a weight that has not loaded.
+  const committed = writeOutcome(job.result, renderContext(step.method, job.result, false));
+  if (!committed.ok) return failure;
+  return { ...failure, context: { ...failure.context, committed_before_failure: committed.body } };
 }
 
 /** Runs every group in order; the first failure stops the call and carries what the earlier ones applied. */
@@ -472,7 +491,7 @@ async function runSteps(
       };
     }
     const state = jobState(job);
-    if (state === 'failed') return stop(jobFailure(job));
+    if (state === 'failed') return stop(withCommitted(jobFailure(job), step, job));
     if (state === 'cancelled') {
       const outcome = writeOutcome(job.result, renderContext(step.method, job.result, false));
       results.push({
