@@ -75,7 +75,8 @@ as specification `1.0.0` says, so this server keeps working with them.
 
 Specification `1.1.0` (not released yet) describes the merged code besides the test builds. **It has not been verified
 against a real build of the upstream code**: the text was written from its source, and the mock of this repository
-follows the text. Where the two kinds of server differ, the server reads what the result says and does not guess from
+follows it only in part (by default: the undo of split and merge and the accessibility member; the rest is behind test
+hooks or not modelled). Where the two kinds of server differ, the server reads what the result says and does not guess from
 the version, which is `1.0` on both. What a client may notice, as far as the text of `1.1.0` says:
 
 - **Clip split and merge can be undone.** The result then carries an undo id (the tool says so), and

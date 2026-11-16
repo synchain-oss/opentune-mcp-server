@@ -190,7 +190,7 @@ export function planRequest(args: EditArrangementArgs): Request | Outcome {
     if (op.op === 'gain' && op.gain_db > MAX_CLIP_GAIN_DB) {
       return invalid(
         `${at(index)}.gain_db: ${String(op.gain_db)} dB is above the limit of +${String(MAX_CLIP_GAIN_DB)} dB (4 times the ` +
-          'original level), the largest gain that OpenTune offers; send a gain of at most that, and lower the ' +
+          'original level), the largest gain that OpenTune offers; send a gain of at most that, and raise the ' +
           'track volume with opentune_set_tracks if the clip still needs to be louder',
         'gain_out_of_range',
       );

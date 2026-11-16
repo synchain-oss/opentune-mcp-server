@@ -112,8 +112,11 @@ which has not been verified against a real build. The package version does not c
 
 - Clip split and merge: the result decides. On a server that reports them as undoable (the merged upstream code) they get
   an undo line and an undo id; on a test build they are still reported as not undoable first. A clip delete is always
-  rendered as irreversible, whatever `undo` says, and its undo id is never offered. The mock follows the merged code by
-  default and keeps the old behaviour behind a flag (and a test).
+  rendered as irreversible, whatever `undo` says, and its undo id is never offered. By default the mock follows the merged
+  code in the undo of split and merge and in the accessibility member only; the rest of the merged behaviour (a failed
+  settings job that keeps its values, the wider editor-window list, a pitch shift that changes the revision, a delete
+  reported as undoable) is behind test hooks and off by default, and the new export reasons are not modelled (see
+  `docs/contract-changes/20261116-upstream-merged.md`).
 - `opentune_edit_arrangement` refuses `gain_db` above +12.04 dB (4 times the original level) before it sends anything,
   with an error that names the limit; the merged code applies any value as given, a server of `1.0.0` clamped it.
 - A failed settings job (`vocoder_load_failed`, `vocoder_weight_rejected`, `backend_change_rejected`) no longer claims that

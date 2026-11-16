@@ -95,7 +95,6 @@ const LOOPBACK = '127.0.0.1';
 const PROTOCOL = '1.0';
 const PROTOCOL_MAJORS: readonly number[] = [1];
 const PROTOCOL_VERSION_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
-/** The methods that act through the OpenTune editor window (PROTOCOL.md section 7 rule 6). */
 /**
  * The writes that the reference implementation also refuses without an editor window since specification 1.1.0
  * (PROTOCOL.md section 7 rule 6), because the editor carries out the change.
@@ -109,6 +108,7 @@ const NO_EDITOR_WIDE_METHODS: ReadonlySet<string> = new Set([
   'edit.redo',
 ]);
 
+/** The methods that act through the OpenTune editor window (PROTOCOL.md section 7 rule 6). */
 const NO_EDITOR_METHODS: ReadonlySet<string> = new Set([
   'ui.getState',
   'ui.dismiss',

@@ -599,7 +599,8 @@ describe('the largest clip gain', () => {
     expect(error).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'gain_out_of_range', executed: false });
     expect(error?.detail).toContain('ops[0].gain_db');
     expect(error?.detail).toContain('limit of +12.04 dB');
-    expect(error?.detail).toContain('opentune_set_tracks');
+    expect(error?.detail).toContain('raise the track volume with opentune_set_tracks');
+    expect(error?.detail).not.toContain('lower');
     expect(refusal(200)).toMatchObject({ reason: 'gain_out_of_range' });
   });
 
