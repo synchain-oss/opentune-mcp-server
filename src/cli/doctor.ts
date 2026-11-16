@@ -9,11 +9,13 @@
 import { readdir } from 'node:fs/promises';
 import path from 'node:path';
 
+import { currentRecord, identityOf, pairingFor, type PairingStatus } from '../compat/pairing.js';
 import { resolveDiscoveryDir } from '../discovery/dir.js';
 import { DISCOVERY_FILE_RE, parseDiscoveryFile, readDiscoveryBytes } from '../discovery/file.js';
 import { troubleshootingUrl } from '../errors/next-step.js';
 import { OPENTUNE_PATH_ENV, checkLaunchConfig, configuredOpentunePath, isWsl } from '../launch/config.js';
 import { MAC_APP, type InstallDetector, type OfficialInstall } from '../launch/install.js';
+import { cleanDetail } from '../sanitize/untrusted.js';
 import { SERVER_NAME, VERSION } from '../version.js';
 import {
   MIN_OFFICIAL_VERSION_MACOS,
@@ -40,6 +42,7 @@ export const DOCTOR_CHECK_IDS: readonly string[] = [
   'OT_NODE_VERSION',
   'OT_WSL_RUNTIME',
   'OT_DISCOVERY_DIR',
+  'OT_BUILD_PAIRING',
   'OT_OPENTUNE_PATH',
   'OT_NO_OFFICIAL_INSTALL',
   'OT_VERSION_UNSUPPORTED',
@@ -108,6 +111,67 @@ async function discoveryCheck(deps: DoctorDeps): Promise<CheckResult> {
   }
   const count = `${String(names.length)} discovery file(s)`;
   return result(id, 'pass', [`${dir.dir} is readable (${dir.source}); ${count}.`, ...lines].join('\n'));
+}
+
+/** What a build reports as text for the doctor: printable ASCII, quoted, and cut short. */
+const shown = (value: string | null): string => (value === null ? 'none' : JSON.stringify(cleanDetail(value, 80)));
+
+const PAIRING_LINE: Readonly<Record<PairingStatus, string>> = {
+  tested: 'one of the builds this version was checked with',
+  listed_not_verified: 'listed for this version, not yet verified against a real build',
+  not_listed: 'NOT in the list of builds this version was checked with; it may still work',
+  unidentified: 'reports neither a commit nor a tag, so it cannot be compared with the list',
+};
+
+/**
+ * The OpenTune instances that announced themselves, against the builds this version of the server was checked with
+ * (compatibility.json). Reads the discovery files like OT_DISCOVERY_DIR does and starts nothing. A build that is not
+ * listed is a warning: the server works with whatever the build reports.
+ */
+async function buildPairingCheck(deps: DoctorDeps): Promise<CheckResult> {
+  const id = 'OT_BUILD_PAIRING';
+  const dir = resolveDiscoveryDir(deps.env, deps.platform, deps.home);
+  const names = dir.ok
+    ? await readdir(dir.dir).then(
+        (all) => all.filter((n) => DISCOVERY_FILE_RE.test(n)).sort(),
+        () => [] as string[],
+      )
+    : [];
+  const lines: string[] = [];
+  let unlisted = false;
+  for (const name of names) {
+    const bytes = dir.ok ? await readDiscoveryBytes(path.join(dir.dir, name)) : null;
+    const parsed = bytes === null ? null : parseDiscoveryFile(name, bytes);
+    if (!parsed?.ok) continue;
+    const identity = identityOf(parsed.entry);
+    const { status } = pairingFor(identity);
+    unlisted ||= status === 'not_listed' || status === 'unidentified';
+    const commit = /^0{40}$/.test(identity.commit) ? 'unknown' : identity.commit.slice(0, 12);
+    lines.push(
+      `${name}: OpenTune ${shown(identity.appVersion)}, commit ${commit}, tag ${shown(identity.tag)}, build tag ${shown(identity.buildTag)}: ${PAIRING_LINE[status]}`,
+    );
+  }
+  if (lines.length === 0)
+    return result(
+      id,
+      'pass',
+      'Not checked: no OpenTune with the control API has announced itself, so there is no running build to compare. Start OpenTune and run the doctor again.',
+    );
+  const record = currentRecord().server;
+  const head = `Compared with the builds ${record === 'unreleased' ? 'this (not yet released) version' : `version ${record}`} of the server was checked with:`;
+  return result(
+    id,
+    unlisted ? 'warn' : 'pass',
+    [
+      head,
+      ...lines,
+      ...(unlisted
+        ? [
+            'A build that is not listed is a warning, not an error: the server keeps working with it. See docs/COMPATIBILITY.md for the builds that go with each version.',
+          ]
+        : []),
+    ].join('\n'),
+  );
 }
 
 /** The folder that holds an app bundle, for a path of the form `<folder>/<name>.app/Contents/MacOS/<executable>`. */
@@ -233,6 +297,7 @@ export async function runDoctor(deps: DoctorDeps): Promise<CheckResult[]> {
     node,
     wsl,
     await discoveryCheck(deps),
+    await buildPairingCheck(deps),
     await opentunePathCheck(deps),
     officialInstallCheck(deps, install),
     outcome('OT_VERSION_UNSUPPORTED', versionCheck(install, deps.platform)),

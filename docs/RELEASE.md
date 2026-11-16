@@ -35,17 +35,43 @@ Every file comes with a `.sha256` file, and the release notes list the same dige
 ## Making a release
 
 1. Bump `version` in `package.json` (and `package-lock.json`), `mcpb/manifest.json` and
-   `plugins/opentune/.claude-plugin/plugin.json` to the same value, and add the release to `CHANGELOG.md`. Run
-   `npm run gates`.
+   `plugins/opentune/.claude-plugin/plugin.json` to the same value, and add the release to `CHANGELOG.md`. Name the
+   OpenTune builds of the release in `compatibility.json` (see [Which OpenTune build goes with this
+   release](#which-opentune-build-goes-with-this-release)). Run `npm run gates`.
 2. Promote the change to `dev` and then to `prod` as usual, through reviewed pull requests.
 3. Optional dry run: start `release.yml` by hand (`workflow_dispatch`) on the branch. It runs the full CI, builds the
    four packages and the notes, checks the notes for AI attribution, and uploads everything as a workflow artifact
    for seven days. A dry run never creates a release and never writes to the repository.
 4. The maintainer tags the `prod` commit `v<version>` and pushes the tag. `release.yml` checks that the tag names the
-   package version and is on `prod`, runs the full CI through `workflow_call`, builds the packages, checks every
-   `.sha256`, and creates a **draft** release with the four packages, their `.sha256` files and the generated notes.
+   package version and is on `prod`, runs the full CI through `workflow_call`, checks that `compatibility.json` has a
+   record for the version, builds the packages, checks every `.sha256`, and creates a **draft** release with the four
+   packages, their `.sha256` files and the generated notes (which open with "Works with OpenTune").
 5. The maintainer reviews the draft and publishes it. Only then does the marketplace serve the new plugin. Publishing
    the npm package is a separate, approved step and not part of `release.yml` yet.
+
+### Which OpenTune build goes with this release
+
+Every release says which OpenTune build it goes with, so that nobody runs it with a build it was never checked with.
+The one record is [`compatibility.json`](../compatibility.json): one entry per server version, oldest first, and the
+entry of the release being prepared last, named `unreleased`. An entry gives the OTCP specification and the builds
+(test build tag, upstream commit, or official release) with `verified: true` when the server was run against a real
+build, and `verified: false` for "listed, not yet verified". Three things are made from it:
+
+- the version table of `docs/COMPATIBILITY.md` and the "Which OpenTune build to use" box of `README.md` and
+  `README.zh-CN.md` (generated blocks between `BEGIN GENERATED` and `END GENERATED` comments; `npm run compat:update`
+  rewrites them, `npm run compat:check` fails when they differ, and a unit test does the same);
+- the "Works with OpenTune" section at the top of the release notes (`scripts/release-assets.mjs notes`);
+- the check of `opentune_get_status` and `opentune-mcp doctor`, which compares the running build with the record of the
+  version of the server itself, or with `unreleased` when that version has no record yet (the file is bundled into the
+  server).
+
+To prepare a release, change `unreleased` into the new version number (and the builds it was checked with), run
+`npm run compat:update`, and commit the file together with the regenerated blocks. `release.yml` stops before it builds
+anything when `compatibility.json` has no record for the version of `package.json`, or when a generated block is out of
+date, so a release cannot go out without saying which OpenTune it goes with. After the release, add a new `unreleased`
+record for the next one. The `note` of an entry is plain text in English (printable ASCII, no `|`, at most 300
+characters): it goes into a table. Releases that were made before this file existed have their records written from
+what they shipped with; their release notes are edited by hand (`gh release edit`) by a maintainer.
 
 ### Pre-releases, patches on an older line, and re-runs
 

@@ -67,6 +67,12 @@ jobs:
             echo "::error::tag $TAG is not on prod"
             exit 1
           fi
+      # compatibility.json 必须有这个版本的记录（它决定 Release 正文开头的 "Works with OpenTune" 一节，也是
+      # README 与 docs/COMPATIBILITY.md 里生成块的来源）；没有记录就在出包之前失败，不留下没写配对 OpenTune 的 Release。
+      - name: The version has a compatibility record, and the generated docs match it
+        run: |
+          node scripts/compat.mjs release-section > /dev/null
+          node scripts/compat.mjs check
       # 插件、MCPB、skills zip 由 scripts/release-assets.mjs 生成，并核对四个产物的版本与文件清单；
       # 插件的 plugin.json、MCPB manifest 与 package.json 版本不一致时组装即失败。
       - name: Build the packages

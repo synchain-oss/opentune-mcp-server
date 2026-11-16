@@ -11,7 +11,11 @@ export take, see [How long to wait](COMPATIBILITY.md#how-long-to-wait).
 
 OpenTune runs with the control API and this server verified it. With several instances running, pass `instance_id` to
 the other tools; the server never picks one on its own. A dialog that is open in the OpenTune window blocks every write
-operation; then the result carries `blockedBy`, see [First launch dialog](#first-launch-dialog).
+operation; then the result carries `blockedBy`, see [First launch dialog](#first-launch-dialog). Each instance also
+carries `build` (what the build reports about its source) and `pairing` (whether it is one of the builds this version
+of the server was checked with, taken from the discovery file; `instanceVerified` says whether `session.hello` confirmed
+the instance behind it); a build that is not in the list adds an entry to `warnings` for a `READY` instance, which is a
+warning and never a refusal, see [Checking the build you run](COMPATIBILITY.md#checking-the-build-you-run).
 
 ### Status NOT_READY
 
@@ -300,6 +304,19 @@ Inside WSL the server cannot reach OpenTune on Windows; run it with Windows Node
 
 The directory where OpenTune announces running instances must be readable. It does not exist until an OpenTune with
 the control API has started once. `OPENTUNE_MCP_DISCOVERY_DIR` overrides it.
+
+### Doctor OT_BUILD_PAIRING
+
+Compares the OpenTune that is running with the builds this version of the server was checked with (the record of
+`compatibility.json` for the version of the server, or `unreleased` while a version is being prepared; the table in [COMPATIBILITY.md](COMPATIBILITY.md#which-opentune-build-goes-with-which-server)). It reads the
+discovery files, like `OT_DISCOVERY_DIR`, so a file left behind by an OpenTune that crashed is listed too, and it starts
+nothing. `pass` with "Not checked" means that no OpenTune with the control API has announced itself: start it and run the
+doctor again. A line per instance gives the version, the commit, the tag and the label that the build reports (printable
+ASCII, cut short), and says whether it is one of the builds that were checked, or listed and not yet verified (both
+`pass`), or not in the list or without a commit and a tag (`warn`). A warning is not an error: the server keeps working
+with that build, and each tool reads what the build says. If something fails in a way that makes no sense, use a build
+from the list; how a build is recognised is in
+[Checking the build you run](COMPATIBILITY.md#checking-the-build-you-run).
 
 ### Doctor OT_OPENTUNE_PATH
 

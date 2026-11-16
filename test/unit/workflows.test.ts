@@ -312,6 +312,16 @@ describe('release.yml', () => {
     expect(build).toMatch(/node scripts\/release-assets\.mjs build --out "\$ASSETS"/);
     expect(build).toMatch(/node scripts\/check-attribution\.mjs "\$RELEASE\/notes\.md"/);
   });
+
+  it('fails before it builds anything when the version has no compatibility record or the generated docs are stale', () => {
+    const build = jobs.get('build') ?? '';
+    const record = build.indexOf('node scripts/compat.mjs release-section');
+    expect(record).toBeGreaterThan(-1);
+    expect(record).toBeLessThan(build.indexOf('node scripts/release-assets.mjs build'));
+    expect(build).toMatch(/node scripts\/compat\.mjs check/);
+    // The notes themselves come from the same record, so a missing one also stops the notes step.
+    expect(build.indexOf('node scripts/release-assets.mjs notes')).toBeGreaterThan(record);
+  });
 });
 
 /** The `|` block under `header` as text, without the block's own indentation. */
