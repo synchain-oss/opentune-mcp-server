@@ -27,9 +27,8 @@ list may work, but nobody has checked it with that version of the server.
 
 | Server                       | OTCP specification    | OpenTune build                                                                                                                           | Verified | Notes                                                                                                        |
 | ---------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
-| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.3` (Windows x64, macOS Apple silicon)                                                               | yes      | Behaves as specification 1.0.0 says (rc.8).                                                                  |
-| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.2` (Windows x64)                                                                                    | yes      | Behaves as specification 1.0.0 says (rc.8).                                                                  |
-| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.1` (Windows x64)                                                                                    | yes      | Older than this server (rc.3): tools that need a capability it lacks answer UNSUPPORTED.                     |
+| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.3` (Windows x64, macOS Apple silicon)                                                               | not yet  | Verified with 0.2.0; this version has not been run against a real build yet, re-checked before release.      |
+| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.2` (Windows x64)                                                                                    | not yet  | Verified with 0.2.0; this version has not been run against a real build yet, re-checked before release.      |
 | unreleased (this repository) | `1.1.0`, not released | Upstream OpenTune, branch `standalone` at `86bf698`, built with the control API switched on (CMake option `OPENTUNE_ENABLE_CONTROL_API`) | not yet  | Described by specification 1.1.0, which was written from this source. Not yet verified against a real build. |
 | 0.2.0                        | `1.0.0-rc.8`          | Test build `synchain-test/v1.8.0-ctl.3` (Windows x64, macOS Apple silicon)                                                               | yes      | The same OpenTune and control interface as ctl.2, with a macOS package added (Apple silicon, not notarized). |
 | 0.2.0                        | `1.0.0-rc.8`          | Test build `synchain-test/v1.8.0-ctl.2` (Windows x64)                                                                                    | yes      | Implements specification 1.0.0-rc.8.                                                                         |
@@ -124,12 +123,17 @@ The record of the change, with the files it touches and how old and new clients 
 ## Checking the build you run
 
 `opentune_get_status` and `opentune-mcp doctor` (check `OT_BUILD_PAIRING`) say which OpenTune build is running and
-whether it is one of the builds that this version of the server was checked with, which is the newest record of
-[`compatibility.json`](../compatibility.json) (the table above). Both read what the build reports about itself: its
-`appVersion`, the commit it was built from (`build.commit`), the tag of that commit (`build.tag`) and its distribution
-label (`buildTag`), taken from the discovery file that the build writes and from `session.hello` and `session.info`.
-In `opentune_get_status` they are `instances[].build` and `instances[].pairing`; a build that is not listed also adds an
-entry to `warnings` with a next step that points here.
+whether it is one of the builds that this version of the server was checked with: the record of
+[`compatibility.json`](../compatibility.json) for the version of the server itself (the table above), or the record
+named `unreleased` while a version is being prepared and has none. Both take what the build says about itself from the
+discovery file that the build writes: its `appVersion`, the commit it was built from (`build.commit`), the tag of that
+commit (`build.tag`) and its distribution label (`buildTag`). Nothing confirms those members: `session.hello` checks
+only the `serverProof`, the `instanceId` and the `pid` of the instance behind the file, not what the file says about its
+source. In `opentune_get_status` they are `instances[].build` and `instances[].pairing`. For an instance that is
+`READY`, `session.hello` confirmed the instance (`pairing.instanceVerified` is `true`), and a build that is not listed
+also adds an entry to `warnings` with a next step that points here. For any other instance, `instanceVerified` is
+`false`, the pairing comes from the file alone (which may be one that a crashed OpenTune left behind), and no warning is
+made for it.
 
 A build is recognised by its commit (the table lists them) or by a tag that equals its `build.tag` or its `buildTag`.
 The version alone never identifies a build: every test build reports `1.8.0`, and a build of upstream between two

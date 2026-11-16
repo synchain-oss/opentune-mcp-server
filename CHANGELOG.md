@@ -29,13 +29,15 @@ which has not been verified against a real build. The package version does not c
   unit test and `npm run compat:check` fail when they differ) and the "Works with OpenTune" section at the top of the
   release notes; `release.yml` stops before it builds anything when the version has no record. The records of `0.1.0`
   (`synchain-test/v1.8.0-ctl.1`) and `0.2.0` (`ctl.2`, `ctl.3`) are written from what they shipped with, and the one for
-  this version lists `ctl.1` to `ctl.3` and upstream `standalone` at `86bf698` (built with the control API on), the last
-  not yet verified against a real build. `docs/RELEASE.md` describes the step.
+  this version (`unreleased` until it is released) lists `ctl.2`, `ctl.3` and upstream `standalone` at `86bf698` (built
+  with the control API on), all three not yet verified against this version; a `ctl.1` user gets the warning. A
+  bundle compares a running build with the record of its own version, and with `unreleased` only when it has none. `docs/RELEASE.md` describes the step.
 - `opentune_get_status` and `opentune-mcp doctor` (new check `OT_BUILD_PAIRING`) report which build is running (`appVersion`,
-  `build.commit`, `build.tag`, `buildTag`, read from the discovery file) and whether it is one of the builds this version
-  was checked with. A build is recognised by its commit or a tag, never by the version alone. One that is not listed, or
+  `build.commit`, `build.tag`, `buildTag`, read from the discovery file, which nothing confirms: `session.hello` checks
+  the instance, not these members) and whether it is one of the builds this version was checked with. A build is recognised by its commit or a tag, never by the version alone. One that is not listed, or
   that reports neither a commit nor a tag, adds a warning (`BUILD_NOT_LISTED`, `BUILD_NOT_IDENTIFIED`) with a next step
-  that points to `docs/COMPATIBILITY.md`; the state stays `READY` and nothing is refused. No tool description changed.
+  that points to `docs/COMPATIBILITY.md` when the instance is `READY`; the pairing of any other instance is marked
+  `instanceVerified: false` and makes no warning. The state stays `READY` and nothing is refused. No tool description changed.
 - Two warnings, with a mock that produces them, rendering templates and golden files. `BACKEND_FALLBACK` (`data`:
   `requested`, `actual`) is carried by the job result of `prefs.set` when the call changed the rendering priority to
   `gpuFirst` and the backend in use is `cpu`. `ASIO_RATE_NOT_RESTORED` (subject `{"singleton":"audioDevice"}`, `data`:

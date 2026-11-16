@@ -15,11 +15,10 @@ OpenTune MCP Server is an open-source project led by [Synchain](https://www.sync
 
 <!-- BEGIN GENERATED compatibility:box (from compatibility.json; run npm run compat:update) -->
 
-> **Which OpenTune build to use.** This version of the server (not released yet) is checked with these OpenTune builds:
+> **Which OpenTune build to use.** This version of the server (not released yet) goes with these OpenTune builds; each is checked again before the release:
 >
-> - Test build [`synchain-test/v1.8.0-ctl.3`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.3) (Windows x64, macOS Apple silicon): checked.
-> - Test build [`synchain-test/v1.8.0-ctl.2`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.2) (Windows x64): checked.
-> - Test build [`synchain-test/v1.8.0-ctl.1`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.1) (Windows x64): checked.
+> - Test build [`synchain-test/v1.8.0-ctl.3`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.3) (Windows x64, macOS Apple silicon): listed, not yet verified against a real build.
+> - Test build [`synchain-test/v1.8.0-ctl.2`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.2) (Windows x64): listed, not yet verified against a real build.
 > - Upstream OpenTune, branch `standalone` at `86bf698`, built with the control API switched on (CMake option `OPENTUNE_ENABLE_CONTROL_API`): listed, not yet verified against a real build.
 >
 > Any other build is not covered: it may work, but nobody has checked it. An official OpenTune release without the control API does not work. `opentune_get_status` and `opentune-mcp doctor` tell you which build is running and whether it is listed. Details: [Compatibility](docs/COMPATIBILITY.md#which-opentune-build-goes-with-which-server).

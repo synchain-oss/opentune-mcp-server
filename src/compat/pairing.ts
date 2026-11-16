@@ -3,8 +3,10 @@
 
 // Which OpenTune builds this version of the server was checked with, and whether a running build is one of them.
 // The list is compatibility.json (bundled into the server; docs/COMPATIBILITY.md and the README box are generated
-// from the same file). A running build is recognised by what it reports about itself in the discovery file and in
-// session.hello / session.info: the commit it was built from (`build.commit`) or a tag (`build.tag`, `buildTag`).
+// from the same file). A running build is recognised by what it says about itself in the discovery file that it writes:
+// the commit it was built from (`build.commit`) or a tag (`build.tag`, `buildTag`). Nothing else checks those members:
+// session.hello confirms only the serverProof, the instanceId and the pid of the instance, so the identity is what the
+// file claims, and a result for an instance that session.hello did not confirm says so.
 // The version alone never identifies a build: a build of the source between two releases reports the version of
 // the next one, and every test build reports the version it was based on.
 //
@@ -16,6 +18,7 @@ import compatibilityFile from '../../compatibility.json' with { type: 'json' };
 import type { DiscoveryEntry } from '../discovery/file.js';
 import { compatibilityUrl } from '../errors/next-step.js';
 import type { NextStep } from '../errors/tool-error.js';
+import { VERSION } from '../version.js';
 
 export interface ListedBuild {
   readonly kind: 'testBuild' | 'official' | 'upstreamSource';
@@ -44,11 +47,23 @@ export const RECORDS: readonly CompatibilityRecord[] = (
   compatibilityFile as unknown as { readonly records: readonly CompatibilityRecord[] }
 ).records;
 
-/** The record this build of the server is checked against: the newest one (the release process names it). */
-export function currentRecord(records: readonly CompatibilityRecord[] = RECORDS): CompatibilityRecord {
-  const newest = records[records.length - 1];
-  if (newest === undefined) throw new Error('compatibility.json has no records');
-  return newest;
+/** The name of the record of the version that is being prepared. */
+export const UNRELEASED = 'unreleased';
+
+/**
+ * The record this build of the server is compared with: the one for its own version, so that a released bundle always
+ * uses what its release was checked with, even when the file has newer records; only when there is none (a version
+ * that is being prepared), the record named "unreleased". The release check (release.yml) refuses a version that has
+ * no record, and a unit test checks that the bundled file has one, so the error below cannot reach a user.
+ */
+export function currentRecord(
+  records: readonly CompatibilityRecord[] = RECORDS,
+  version: string = VERSION,
+): CompatibilityRecord {
+  const record = records.find((r) => r.server === version) ?? records.find((r) => r.server === UNRELEASED);
+  if (record === undefined)
+    throw new Error(`compatibility.json has no record for version ${version} and no "${UNRELEASED}" record`);
+  return record;
 }
 
 /** What a running OpenTune reports about its build. */
@@ -62,7 +77,10 @@ export interface BuildIdentity {
 
 const nonEmpty = (s: string | null): string | null => (s === null || s === '' ? null : s);
 
-/** The identity in a discovery file (checked against the schema, and verified against the instance by session.hello). */
+/**
+ * The identity a discovery file claims: checked against the schema, but not against the build. session.hello confirms
+ * the instance behind the file (serverProof, instanceId, pid), not what the file says about its source.
+ */
 export function identityOf(entry: DiscoveryEntry): BuildIdentity {
   return {
     appVersion: entry.appVersion,
@@ -147,7 +165,7 @@ const STEPS: Readonly<Partial<Record<PairingStatus, NextStep>>> = {
 const shortRef = (build: ListedBuild): string =>
   build.tag ?? build.version ?? (build.commit === undefined ? build.kind : build.commit.slice(0, 7));
 
-/** Compares a running build with the builds of `record` (the newest by default). */
+/** Compares a running build with the builds of `record` (the one of this version of the server by default). */
 export function pairingFor(identity: BuildIdentity, record: CompatibilityRecord = currentRecord()): Pairing {
   const found = matchBuild(identity, record.opentune);
   let status: PairingStatus;
@@ -168,6 +186,33 @@ export function pairingFor(identity: BuildIdentity, record: CompatibilityRecord 
     message: PAIRING_TEXT[status],
     ...(step === undefined ? {} : { nextStep: step }),
     ...(status === 'tested' ? {} : { url: compatibilityUrl(URL_ANCHOR) }),
+  };
+}
+
+/** The pairing of one instance in a status result. */
+export type InstancePairing = Pairing & {
+  /**
+   * True when session.hello confirmed the instance behind the discovery file (its serverProof, instanceId and pid). The
+   * build it is compared by comes from that file in both cases: the instance does not confirm it.
+   */
+  readonly instanceVerified: boolean;
+};
+
+const UNCONFIRMED =
+  ' This comes from the discovery file alone: the instance has not been confirmed, so it may be a file left behind.';
+
+/**
+ * `pairing` for an instance of a status result. An instance that was not confirmed gets no next step and no link (no
+ * warning is made for it) and says that the file is all there is to go by.
+ */
+export function forInstance(pairing: Pairing, instanceVerified: boolean): InstancePairing {
+  if (instanceVerified) return { ...pairing, instanceVerified };
+  return {
+    status: pairing.status,
+    record: pairing.record,
+    listed: pairing.listed,
+    message: pairing.message + UNCONFIRMED,
+    instanceVerified,
   };
 }
 

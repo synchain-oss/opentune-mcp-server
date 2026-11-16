@@ -46,7 +46,10 @@ export const PLATFORM_NAMES = {
   'macos-arm64': { en: 'macOS Apple silicon', zh: 'macOS Apple 芯片' },
 };
 
-const SEMVER = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/;
+// Semantic Versioning 2.0.0 without build metadata: x.y.z, or x.y.z-rc.1 (a pre-release, which release.yml accepts for a
+// tag such as v1.2.0-rc.1). Identifiers are separated by dots; a number has no leading zero.
+const IDENTIFIER = '(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)';
+const SEMVER = new RegExp(`^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)(?:-(${IDENTIFIER}(?:\\.${IDENTIFIER})*))?$`);
 const TEST_TAG = /^synchain-test\/v\d+\.\d+\.\d+-ctl\.\d+$/;
 const COMMIT = /^[0-9a-f]{7,40}$/;
 // Printable ASCII only, and no pipe: the text goes into Markdown tables that Prettier pads by character count.
@@ -58,10 +61,27 @@ const RECORD_KEYS = ['server', 'spec', 'specReleased', 'runtimeCheck', 'opentune
 const isObject = (v) => typeof v === 'object' && v !== null && !Array.isArray(v);
 const plain = (v, max) => typeof v === 'string' && v.length <= max && PLAIN.test(v) && !v.includes('|');
 
-function compareVersions(a, b) {
-  const [x, y] = [a, b].map((v) => v.split('.').map(Number));
-  for (let i = 0; i < 3; i++) if (x[i] !== y[i]) return x[i] - y[i];
-  return 0;
+/**
+ * Orders two versions the way Semantic Versioning does: the numbers first, and a pre-release before the release it
+ * leads up to (1.2.0-rc.1 < 1.2.0); pre-release identifiers one by one, a number before a name, numbers by value,
+ * names by their characters, and a shorter list before a longer one that starts the same (rc < rc.1).
+ */
+export function compareVersions(a, b) {
+  const [x, y] = [a, b].map((v) => SEMVER.exec(v));
+  if (x === null || y === null) throw new Error(`not a version: ${x === null ? a : b}`);
+  for (let i = 1; i <= 3; i++) if (x[i] !== y[i]) return Number(x[i]) - Number(y[i]);
+  const [pa, pb] = [x[4], y[4]];
+  if (pa === undefined || pb === undefined) return pa === pb ? 0 : pa === undefined ? 1 : -1;
+  const [ia, ib] = [pa.split('.'), pb.split('.')];
+  for (let i = 0; i < Math.min(ia.length, ib.length); i++) {
+    const [u, v] = [ia[i], ib[i]];
+    if (u === v) continue;
+    const [numberU, numberV] = [/^\d+$/.test(u), /^\d+$/.test(v)];
+    if (numberU && numberV) return Number(u) - Number(v);
+    if (numberU !== numberV) return numberU ? -1 : 1;
+    return u < v ? -1 : 1;
+  }
+  return ia.length - ib.length;
 }
 
 function entryProblems(e, where) {
@@ -87,7 +107,8 @@ function entryProblems(e, where) {
     if (e.commit === undefined) bad('commit is required');
   }
   if (e.kind === 'official') {
-    if (!(typeof e.version === 'string' && SEMVER.test(e.version))) bad('version must be x.y.z');
+    if (!(typeof e.version === 'string' && SEMVER.test(e.version)))
+      bad('version must be x.y.z, or x.y.z-rc.1 for a pre-release');
     if (e.tag !== undefined && !(plain(e.tag, 100) && !/[\s`]/.test(e.tag))) bad('tag must be a plain tag name');
     if (e.tag === undefined && e.commit === undefined)
       bad('tag or commit is required: the version alone does not identify a build');
@@ -129,7 +150,7 @@ export function validateCompatibility(data) {
       if (!RECORD_KEYS.includes(key)) problems.push(`${where}: unknown member ${key}`);
     const server = record.server;
     if (!(typeof server === 'string' && (SEMVER.test(server) || server === UNRELEASED))) {
-      problems.push(`${where}: server must be x.y.z or "${UNRELEASED}"`);
+      problems.push(`${where}: server must be x.y.z (x.y.z-rc.1 for a pre-release) or "${UNRELEASED}"`);
     } else {
       if (previous === UNRELEASED) problems.push(`${where}: "${UNRELEASED}" must be the last record`);
       if (
@@ -251,7 +272,7 @@ const BOX = {
     title: 'Which OpenTune build to use.',
     intro: (record) =>
       record.server === UNRELEASED
-        ? 'This version of the server (not released yet) is checked with these OpenTune builds:'
+        ? 'This version of the server (not released yet) goes with these OpenTune builds; each is checked again before the release:'
         : `OpenTune MCP Server ${record.server} is checked with these OpenTune builds:`,
     outro: (record) =>
       'Any other build is not covered: it may work, but nobody has checked it. An official OpenTune release without the control API does not work.' +
@@ -264,7 +285,7 @@ const BOX = {
     title: '该用哪个 OpenTune 构建。',
     intro: (record) =>
       record.server === UNRELEASED
-        ? '本版本的服务(尚未发布)用下列 OpenTune 构建检查过:'
+        ? '本版本的服务(尚未发布)配套下列 OpenTune 构建;发布前会逐个重新检查:'
         : `OpenTune MCP Server ${record.server} 用下列 OpenTune 构建检查过:`,
     outro: (record) =>
       '其他构建不在覆盖范围内:可能能用,但没有人检查过。没有控制接口的官方 OpenTune 发布版不能用。' +

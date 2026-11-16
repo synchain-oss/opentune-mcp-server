@@ -10,7 +10,7 @@
 
 ### Status READY
 
-OpenTune 带着控制接口在运行,并且本服务已验证过它。有多个实例在运行时,给其他工具传 `instance_id`;服务从不自己挑选实例。OpenTune 窗口里开着对话框时,所有写操作都会被挡住;这时结果里会带 `blockedBy`,见 [First launch dialog](#first-launch-dialog)。每个实例还带有 `build`(该构建自己报告的源码信息)和 `pairing`(它是不是本版本服务检查过的构建之一);不在清单里的构建会在 `warnings` 里加一条,那只是警告,从不拒绝工作,见 [Checking the build you run](COMPATIBILITY.md#checking-the-build-you-run)(英文)。
+OpenTune 带着控制接口在运行,并且本服务已验证过它。有多个实例在运行时,给其他工具传 `instance_id`;服务从不自己挑选实例。OpenTune 窗口里开着对话框时,所有写操作都会被挡住;这时结果里会带 `blockedBy`,见 [First launch dialog](#first-launch-dialog)。每个实例还带有 `build`(该构建自己报告的源码信息)和 `pairing`(它是不是本版本服务检查过的构建之一,依据的是发现文件;`instanceVerified` 表示 `session.hello` 是否确认了该文件背后的实例);不在清单里的构建在实例为 READY 时会在 `warnings` 里加一条,那只是警告,从不拒绝工作,见 [Checking the build you run](COMPATIBILITY.md#checking-the-build-you-run)(英文)。
 
 ### Status NOT_READY
 
@@ -196,7 +196,7 @@ OpenTune 宣告运行中实例的目录必须可读。在带控制接口的 Open
 
 ### Doctor OT_BUILD_PAIRING
 
-把正在运行的 OpenTune 与本版本服务检查过的构建对照(`compatibility.json` 的最新一条记录,即 [COMPATIBILITY.md](COMPATIBILITY.md#which-opentune-build-goes-with-which-server)(英文)里的表)。它像 `OT_DISCOVERY_DIR` 一样读取发现文件,所以崩溃的 OpenTune 留下的文件也会列出来;它不启动任何东西。`pass` 且写着 "Not checked" 表示还没有带控制接口的 OpenTune 宣告自己:请先启动它再运行 doctor。每个实例一行,给出该构建报告的版本、提交、标签和发行标签(只显示可打印 ASCII,过长会截断),并说明它是检查过的构建之一、已列出但尚未验证(两者都是 `pass`),还是不在清单里或既没有提交也没有标签(`warn`)。警告不是错误:服务照常与该构建工作,每个工具读的都是构建自己报告的内容。如果出现说不通的失败,请改用清单里的构建;如何识别一个构建见 [Checking the build you run](COMPATIBILITY.md#checking-the-build-you-run)(英文)。
+把正在运行的 OpenTune 与本版本服务检查过的构建对照(`compatibility.json` 里本服务版本自己的那条记录,版本尚未发布时用 `unreleased` 那条,即 [COMPATIBILITY.md](COMPATIBILITY.md#which-opentune-build-goes-with-which-server)(英文)里的表)。它像 `OT_DISCOVERY_DIR` 一样读取发现文件,所以崩溃的 OpenTune 留下的文件也会列出来;它不启动任何东西。`pass` 且写着 "Not checked" 表示还没有带控制接口的 OpenTune 宣告自己:请先启动它再运行 doctor。每个实例一行,给出该构建报告的版本、提交、标签和发行标签(只显示可打印 ASCII,过长会截断),并说明它是检查过的构建之一、已列出但尚未验证(两者都是 `pass`),还是不在清单里或既没有提交也没有标签(`warn`)。警告不是错误:服务照常与该构建工作,每个工具读的都是构建自己报告的内容。如果出现说不通的失败,请改用清单里的构建;如何识别一个构建见 [Checking the build you run](COMPATIBILITY.md#checking-the-build-you-run)(英文)。
 
 ### Doctor OT_OPENTUNE_PATH
 

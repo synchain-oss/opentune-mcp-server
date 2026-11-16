@@ -13,6 +13,7 @@ import { describe, expect, it } from 'vitest';
 import { checkText, loadPatterns } from '../../scripts/check-attribution.mjs';
 import {
   UNRELEASED,
+  compareVersions,
   generatedBlocks,
   parseCompatibility,
   recordFor,
@@ -36,6 +37,7 @@ import {
 } from '../../src/compat/pairing.js';
 import { discoveryContent } from '../support/context.js';
 import { parseDiscoveryFile } from '../../src/discovery/file.js';
+import { VERSION } from '../../src/version.js';
 import { REPO } from '../support/plugin-tree.js';
 
 const read = (file: string) => readFileSync(path.join(REPO, file), 'utf8');
@@ -101,11 +103,12 @@ describe('compatibility.json', () => {
     expect(recordFor(data, pkg.version) !== null || servers.at(-1) === UNRELEASED).toBe(true);
   });
 
-  it('lists the test builds and the upstream source as the card says', () => {
+  it('lists the builds of each record: the version being prepared has not been run against a real build yet', () => {
+    // ctl.1 is not in the list of the version being prepared (the 0.2.0 record does not have it either), and nothing in
+    // it is verified until this version has been run against a real build.
     expect(record(data, UNRELEASED).opentune.map((e) => [e.kind, e.tag ?? e.commit?.slice(0, 7), e.verified])).toEqual([
-      ['testBuild', 'synchain-test/v1.8.0-ctl.3', true],
-      ['testBuild', 'synchain-test/v1.8.0-ctl.2', true],
-      ['testBuild', 'synchain-test/v1.8.0-ctl.1', true],
+      ['testBuild', 'synchain-test/v1.8.0-ctl.3', false],
+      ['testBuild', 'synchain-test/v1.8.0-ctl.2', false],
       ['upstreamSource', '86bf698', false],
     ]);
     const tagsOf = (server: string) =>
@@ -169,6 +172,81 @@ describe('compatibility.json', () => {
   });
 });
 
+describe('versions of the server', () => {
+  // The order of the Semantic Versioning specification (item 11), with a release in between.
+  const ordered = [
+    '0.2.0',
+    '1.2.0-alpha',
+    '1.2.0-alpha.1',
+    '1.2.0-alpha.beta',
+    '1.2.0-beta',
+    '1.2.0-beta.2',
+    '1.2.0-beta.11',
+    '1.2.0-rc.1',
+    '1.2.0',
+    '1.10.0-rc.1',
+  ];
+
+  it('are ordered as Semantic Versioning orders them: a pre-release comes before its release', () => {
+    for (const [i, a] of ordered.entries())
+      for (const [j, b] of ordered.entries())
+        expect(Math.sign(compareVersions(a, b)), `${a} ${b}`).toBe(Math.sign(i - j));
+    expect(compareVersions('1.2.0-rc.1', '1.2.0')).toBeLessThan(0);
+  });
+
+  /** The file with a record for `servers` (each a copy of the record of 0.2.0) added before "unreleased". */
+  const withRecords = (...servers: string[]): string => {
+    const d = clone();
+    const copy = record(d, '0.2.0');
+    d.records.splice(d.records.length - 1, 0, ...servers.map((server) => ({ ...structuredClone(copy), server })));
+    return JSON.stringify(d);
+  };
+
+  it('can be a pre-release: a file with such a record is read, rendered and tabled', () => {
+    const file = parseCompatibility(withRecords('1.2.0-rc.1', '1.2.0')) as Data;
+    expect(file.records.map((r) => r.server)).toEqual(['0.1.0', '0.2.0', '1.2.0-rc.1', '1.2.0', UNRELEASED]);
+    const en = renderReleaseSection(file, '1.2.0-rc.1');
+    expect(en).toContain('OpenTune MCP Server 1.2.0-rc.1 (OTCP specification `1.0.0-rc.8`)');
+    expect(en).not.toContain('1.2.0 (OTCP');
+    expect(renderReleaseSection(file, '1.2.0-rc.1', 'zh')).toContain('OpenTune MCP Server 1.2.0-rc.1(OTCP 规范');
+    expect(renderTable(file)).toContain('| 1.2.0-rc.1 ');
+    // The records are still found by their exact version: the release is not the pre-release.
+    expect(recordFor(file, '1.2.0')).not.toBe(recordFor(file, '1.2.0-rc.1'));
+    expect(currentRecord(file.records as unknown as readonly CompatibilityRecord[], '1.2.0-rc.1').server).toBe(
+      '1.2.0-rc.1',
+    );
+  });
+
+  /** Reads the file; throws when it is not valid. */
+  const read_ = (text: string): void => {
+    parseCompatibility(text);
+  };
+
+  it('must still be newer than the record before: a pre-release does not follow its release', () => {
+    expect(() => {
+      read_(withRecords('1.2.0', '1.2.0-rc.1'));
+    }).toThrow('is not newer');
+    expect(() => {
+      read_(withRecords('1.2.0-rc.2', '1.2.0-rc.10'));
+    }).not.toThrow();
+    expect(() => {
+      read_(withRecords('1.2.0-rc.10', '1.2.0-rc.2'));
+    }).toThrow('is not newer');
+    expect(() => {
+      read_(withRecords('1.2.0-rc.1', '1.2.0-rc.1'));
+    }).toThrow('appears twice');
+  });
+
+  it.each(['1.2.0-', '1.2.0-01', '1.2.0-rc..1', '1.2.0+build.5', 'v1.2.0', '1.2', 'latest'])(
+    'cannot be %s',
+    (server) => {
+      expect(() => {
+        read_(withRecords(server));
+      }).toThrow('server must be x.y.z');
+    },
+  );
+});
+
 describe('the generated documents', () => {
   const blocks = generatedBlocks(data);
 
@@ -215,11 +293,14 @@ describe('the generated documents', () => {
     expect(() => replaceBlock('no markers here', 'table', 'x')).toThrow('the generated block "table" is missing');
   });
 
-  it('put every test build and the upstream commit into the table and the boxes', () => {
+  it('put every test build and the upstream commit into the table, and those of the newest record into the boxes', () => {
     const table = renderTable(data);
-    for (const text of [table, renderReadmeBox(data, 'en'), renderReadmeBox(data, 'zh')]) {
-      for (const tag of ['ctl.1', 'ctl.2', 'ctl.3']) expect(text).toContain(`synchain-test/v1.8.0-${tag}`);
-      expect(text).toContain('86bf698');
+    for (const tag of ['ctl.1', 'ctl.2', 'ctl.3']) expect(table).toContain(`synchain-test/v1.8.0-${tag}`);
+    expect(table).toContain('86bf698');
+    for (const box of [renderReadmeBox(data, 'en'), renderReadmeBox(data, 'zh')]) {
+      for (const tag of ['ctl.2', 'ctl.3']) expect(box).toContain(`synchain-test/v1.8.0-${tag}`);
+      expect(box).toContain('86bf698');
+      expect(box).not.toContain('ctl.1');
     }
     expect(table).toContain('0.1.0');
     expect(table).toContain('unreleased (this repository)');
@@ -290,38 +371,63 @@ describe('the release notes section', () => {
 });
 
 describe('recognising a running build', () => {
-  const current = currentRecord();
+  const unreleased = recordFor(data, UNRELEASED) as CompatibilityRecord;
+  const released = recordFor(data, '0.2.0') as CompatibilityRecord;
 
-  it('uses the newest record of the file that is bundled, which has the check at run time', () => {
-    expect(current.server).toBe(data.records.at(-1)?.server);
-    expect(current.runtimeCheck).toBe(true);
+  it('uses the record of its own version, and "unreleased" only when the version has none', () => {
     expect(RECORDS).toEqual(data.records);
+    // The bundle of a release compares with what that release was checked with, although the file has newer records.
+    expect(currentRecord(RECORDS, '0.1.0').server).toBe('0.1.0');
+    expect(currentRecord(RECORDS, '0.2.0').server).toBe('0.2.0');
+    expect(currentRecord(RECORDS, '0.3.0').server).toBe(UNRELEASED);
+    // So a build of ctl.3 is one this release was checked with, and not one that 0.1.0 was.
+    expect(pairingFor(CTL3, currentRecord(RECORDS, '0.2.0'))).toMatchObject({ status: 'tested', record: '0.2.0' });
+    expect(pairingFor(CTL3, currentRecord(RECORDS, '0.1.0'))).toMatchObject({ status: 'not_listed', record: '0.1.0' });
+    // The version of this package: its own record when it has one, "unreleased" when it has none.
+    expect(VERSION).toBe(pkg.version);
+    expect(currentRecord().server).toBe(recordFor(data, pkg.version) === null ? UNRELEASED : pkg.version);
+    expect(unreleased.runtimeCheck).toBe(true);
+  });
+
+  it('cannot go on without a record: there is neither one for the version nor "unreleased"', () => {
+    const withoutNext = RECORDS.filter((r) => r.server !== UNRELEASED);
+    expect(() => currentRecord(withoutNext, '0.3.0')).toThrow('has no record for version 0.3.0');
   });
 
   it('knows the test builds by commit, and by a tag in either field', () => {
-    expect(pairingFor(CTL3)).toMatchObject({
+    expect(pairingFor(CTL3, released)).toMatchObject({
       status: 'tested',
       listed: { ref: 'synchain-test/v1.8.0-ctl.3', matchedBy: 'commit' },
     });
-    expect(pairingFor({ ...CTL3, commit: '0'.repeat(40) })).toMatchObject({
+    expect(pairingFor({ ...CTL3, commit: '0'.repeat(40) }, released)).toMatchObject({
       status: 'tested',
       listed: { matchedBy: 'tag' },
     });
     expect(
-      pairingFor({ ...CTL3, commit: '0'.repeat(40), tag: null, buildTag: 'synchain-test/v1.8.0-ctl.2' }),
+      pairingFor({ ...CTL3, commit: '0'.repeat(40), tag: null, buildTag: 'synchain-test/v1.8.0-ctl.2' }, released),
     ).toMatchObject({
       status: 'tested',
       listed: { ref: 'synchain-test/v1.8.0-ctl.2', matchedBy: 'tag' },
     });
     const ctl2 = { ...CTL3, commit: '3d35a246e99db7b6017ebc5bf64713adad63c633', tag: null };
-    expect(pairingFor(ctl2).listed?.ref).toBe('synchain-test/v1.8.0-ctl.2');
+    expect(pairingFor(ctl2, released).listed?.ref).toBe('synchain-test/v1.8.0-ctl.2');
+  });
+
+  it('lists the test builds of the version being prepared as not yet verified, and warns about ctl.1', () => {
+    expect(pairingFor(CTL3, unreleased)).toMatchObject({ status: 'listed_not_verified', record: UNRELEASED });
+    expect(pairingFor(CTL3, unreleased).nextStep).toBeUndefined();
+    const ctl1 = { ...CTL3, commit: 'a050fae3206845bfeacc120eebef7e20c85f35b3', tag: 'synchain-test/v1.8.0-ctl.1' };
+    const pairing = pairingFor(ctl1, unreleased);
+    expect(pairing).toMatchObject({ status: 'not_listed', listed: null });
+    expect(pairingWarning('c'.repeat(32), pairing)).toMatchObject({ code: 'BUILD_NOT_LISTED' });
+    expect(pairing.url).toMatch(/COMPATIBILITY\.md#checking-the-build-you-run$/);
   });
 
   it('lists the upstream build (a commit, no tag, no label) as listed and not verified, without a warning', () => {
-    const pairing = pairingFor(UPSTREAM);
+    const pairing = pairingFor(UPSTREAM, unreleased);
     expect(pairing).toMatchObject({
       status: 'listed_not_verified',
-      record: current.server,
+      record: UNRELEASED,
       listed: { kind: 'upstreamSource', ref: '86bf698', verified: false, matchedBy: 'commit' },
       message: PAIRING_TEXT.listed_not_verified,
     });
@@ -360,7 +466,6 @@ describe('recognising a running build', () => {
   });
 
   it('compares with the record of a release: the upstream build is not in the one of 0.2.0', () => {
-    const released = recordFor(data, '0.2.0') as CompatibilityRecord;
     expect(pairingFor(UPSTREAM, released)).toMatchObject({ status: 'not_listed', record: '0.2.0' });
     expect(pairingFor(CTL3, released).status).toBe('tested');
     const old = recordFor(data, '0.1.0') as CompatibilityRecord;

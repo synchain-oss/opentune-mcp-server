@@ -13,8 +13,9 @@ OpenTune runs with the control API and this server verified it. With several ins
 the other tools; the server never picks one on its own. A dialog that is open in the OpenTune window blocks every write
 operation; then the result carries `blockedBy`, see [First launch dialog](#first-launch-dialog). Each instance also
 carries `build` (what the build reports about its source) and `pairing` (whether it is one of the builds this version
-of the server was checked with); a build that is not in the list adds an entry to `warnings`, which is a warning and
-never a refusal, see [Checking the build you run](COMPATIBILITY.md#checking-the-build-you-run).
+of the server was checked with, taken from the discovery file; `instanceVerified` says whether `session.hello` confirmed
+the instance behind it); a build that is not in the list adds an entry to `warnings` for a `READY` instance, which is a
+warning and never a refusal, see [Checking the build you run](COMPATIBILITY.md#checking-the-build-you-run).
 
 ### Status NOT_READY
 
@@ -306,8 +307,8 @@ the control API has started once. `OPENTUNE_MCP_DISCOVERY_DIR` overrides it.
 
 ### Doctor OT_BUILD_PAIRING
 
-Compares the OpenTune that is running with the builds this version of the server was checked with (the newest record of
-`compatibility.json`, the table in [COMPATIBILITY.md](COMPATIBILITY.md#which-opentune-build-goes-with-which-server)). It reads the
+Compares the OpenTune that is running with the builds this version of the server was checked with (the record of
+`compatibility.json` for the version of the server, or `unreleased` while a version is being prepared; the table in [COMPATIBILITY.md](COMPATIBILITY.md#which-opentune-build-goes-with-which-server)). It reads the
 discovery files, like `OT_DISCOVERY_DIR`, so a file left behind by an OpenTune that crashed is listed too, and it starts
 nothing. `pass` with "Not checked" means that no OpenTune with the control API has announced itself: start it and run the
 doctor again. A line per instance gives the version, the commit, the tag and the label that the build reports (printable

@@ -7,9 +7,11 @@
 // and that have not announced themselves yet, other OpenTune processes without a discovery file,
 // and finally the configured executable. Starting OpenTune is opentune_launch's job.
 //
-// Every announced instance also carries `build` (what the build reports about its source) and `pairing` (whether it is
-// one of the builds this version of the server was checked with, src/compat/pairing.ts); a build that is not listed
-// adds an entry to `warnings`. A warning only: the state and its next step stay as they are.
+// Every announced instance also carries `build` (what its discovery file says about the source of the build; session.hello
+// does not check that) and `pairing` (whether that is one of the builds this version of the server was checked with,
+// src/compat/pairing.ts). A READY instance, whose serverProof, instanceId and pid session.hello confirmed, adds an entry
+// to `warnings` when its build is not listed; any other instance is marked `instanceVerified: false` and makes no
+// warning, because nothing says the file belongs to a live instance. A warning only: the state and its next step stay.
 //
 // A ready instance is also asked what its window shows (ui.getState, capability ui.bridge): the first-run
 // welcome page and any dialog make OpenTune refuse every write (BUSY modal_open). Said here, the agent closes
@@ -17,7 +19,7 @@
 
 import { z } from 'zod';
 
-import { identityOf, pairingFor, pairingWarning } from '../compat/pairing.js';
+import { forInstance, identityOf, pairingFor, pairingWarning, type InstancePairing } from '../compat/pairing.js';
 import type { DiscoveryEntry } from '../discovery/file.js';
 import { troubleshootingUrl } from '../errors/next-step.js';
 import { OtcpError, type NextStep } from '../errors/tool-error.js';
@@ -211,11 +213,15 @@ const pick = (value: unknown, keys: readonly string[]): Json | null => {
   return Object.fromEntries(keys.filter((key) => key in source).map((key) => [key, source[key]]));
 };
 
+type InstanceResult = Json & { state: StatusState; pairing: InstancePairing };
+
 /** What one instance reports; strings from OpenTune appear only as values. */
-async function instanceStatus(ctx: ToolContext, entry: DiscoveryEntry): Promise<Json & { state: StatusState }> {
-  // What the build says about itself and whether it is one this server version was checked with (a warning only).
+async function instanceStatus(ctx: ToolContext, entry: DiscoveryEntry): Promise<InstanceResult> {
+  // What the discovery file says about the build and whether that is one this server version was checked with. Until
+  // session.hello confirms the instance the pairing is marked as not verified; only a READY instance gets a warning.
   const identity = identityOf(entry);
-  const base = { ...instanceSummary(entry), build: identity, pairing: pairingFor(identity) };
+  const pairing = pairingFor(identity);
+  const base = { ...instanceSummary(entry), build: identity, pairing: forInstance(pairing, false) };
   if (!entry.protocolMajors.includes(PROTOCOL_MAJOR)) {
     return { ...base, state: 'PROTOCOL_MISMATCH', reason: 'major_not_served', protocolMajors: entry.protocolMajors };
   }
@@ -229,6 +235,7 @@ async function instanceStatus(ctx: ToolContext, entry: DiscoveryEntry): Promise<
   const block = await windowBlock(session);
   const ready = {
     ...base,
+    pairing: forInstance(pairing, true),
     state: 'READY' as const,
     reason: null,
     protocol: session.hello.protocol,
@@ -305,8 +312,10 @@ export async function getStatus(ctx: ToolContext, instanceId: string | undefined
       entries = [chosen.entry];
     }
     const instances = await Promise.all(entries.map((entry) => instanceStatus(ctx, entry)));
-    const warnings = entries.flatMap((entry) => {
-      const warning = pairingWarning(entry.instanceId, pairingFor(identityOf(entry)));
+    // Only a READY instance (confirmed by session.hello) is warned about; the pairing is the one of the instance entry.
+    const warnings = entries.flatMap((entry, i) => {
+      const instance = instances[i];
+      const warning = instance?.state === 'READY' ? pairingWarning(entry.instanceId, instance.pairing) : null;
       return warning === null ? [] : [warning];
     });
     const readyCount = instances.filter((i) => i.state === 'READY').length;

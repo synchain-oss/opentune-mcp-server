@@ -15,11 +15,10 @@ OpenTune MCP Server 是由 [Synchain](https://www.synchain.ca) 主导的开源�
 
 <!-- BEGIN GENERATED compatibility:box (from compatibility.json; run npm run compat:update) -->
 
-> **该用哪个 OpenTune 构建。** 本版本的服务(尚未发布)用下列 OpenTune 构建检查过:
+> **该用哪个 OpenTune 构建。** 本版本的服务(尚未发布)配套下列 OpenTune 构建;发布前会逐个重新检查:
 >
-> - 测试版 [`synchain-test/v1.8.0-ctl.3`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.3)(Windows x64、macOS Apple 芯片):已验证。
-> - 测试版 [`synchain-test/v1.8.0-ctl.2`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.2)(Windows x64):已验证。
-> - 测试版 [`synchain-test/v1.8.0-ctl.1`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.1)(Windows x64):已验证。
+> - 测试版 [`synchain-test/v1.8.0-ctl.3`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.3)(Windows x64、macOS Apple 芯片):已列出,尚未在真实构建上验证。
+> - 测试版 [`synchain-test/v1.8.0-ctl.2`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.2)(Windows x64):已列出,尚未在真实构建上验证。
 > - 上游 OpenTune 的 `standalone` 分支,提交 `86bf698`,打开控制接口后构建(CMake 选项 `OPENTUNE_ENABLE_CONTROL_API`):已列出,尚未在真实构建上验证。
 >
 > 其他构建不在覆盖范围内:可能能用,但没有人检查过。没有控制接口的官方 OpenTune 发布版不能用。`opentune_get_status` 与 `opentune-mcp doctor` 会告诉你正在运行的是哪个构建、它是否在清单里。详见[兼容性说明](docs/COMPATIBILITY.md#which-opentune-build-goes-with-which-server)。

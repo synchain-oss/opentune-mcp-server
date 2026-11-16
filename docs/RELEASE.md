@@ -61,8 +61,9 @@ build, and `verified: false` for "listed, not yet verified". Three things are ma
   `README.zh-CN.md` (generated blocks between `BEGIN GENERATED` and `END GENERATED` comments; `npm run compat:update`
   rewrites them, `npm run compat:check` fails when they differ, and a unit test does the same);
 - the "Works with OpenTune" section at the top of the release notes (`scripts/release-assets.mjs notes`);
-- the check of `opentune_get_status` and `opentune-mcp doctor`, which compares the running build with the newest
-  record (the file is bundled into the server).
+- the check of `opentune_get_status` and `opentune-mcp doctor`, which compares the running build with the record of the
+  version of the server itself, or with `unreleased` when that version has no record yet (the file is bundled into the
+  server).
 
 To prepare a release, change `unreleased` into the new version number (and the builds it was checked with), run
 `npm run compat:update`, and commit the file together with the regenerated blocks. `release.yml` stops before it builds

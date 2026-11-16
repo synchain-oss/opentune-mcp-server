@@ -7,15 +7,28 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runDoctor, type DoctorDeps } from '../../src/cli/doctor.js';
-import { currentRecord } from '../../src/compat/pairing.js';
+import { OtcpError } from '../../src/errors/tool-error.js';
 import type { DiscoveryEntry } from '../../src/discovery/file.js';
 import { OtcpSession } from '../../src/otcp/client.js';
 import { getStatus } from '../../src/tools/status.js';
 import { discoveryContent, tempDir, testContext } from '../support/context.js';
 import type { Outcome } from '../../src/tools/registry.js';
+
+// The version of the bundle decides which record a build is compared with (src/compat/pairing.ts). The tests set it:
+// 0.2.0 has a record of its own; a version without one (a release being prepared) is compared with "unreleased".
+const bundle = vi.hoisted(() => ({ version: '9.9.9' }));
+vi.mock('../../src/version.js', () => ({
+  SERVER_NAME: 'opentune-mcp',
+  get VERSION() {
+    return bundle.version;
+  },
+}));
+beforeEach(() => {
+  bundle.version = '9.9.9';
+});
 
 const cleanup: (() => unknown)[] = [];
 afterEach(async () => {
@@ -38,7 +51,7 @@ const UNKNOWN = { appVersion: '1.8.2', build: { commit: '0'.repeat(40), tag: nul
 const OTHER = { appVersion: '1.9.0', build: { commit: 'c'.repeat(40), tag: null }, buildTag: null };
 
 /** A status result over one instance per override, each announced by its own discovery file. */
-async function statusOf(overrides: Record<string, unknown>[]) {
+async function statusOf(overrides: Record<string, unknown>[], open?: (entry: DiscoveryEntry) => Promise<OtcpSession>) {
   const t = tempDir();
   cleanup.push(t.remove);
   overrides.forEach((o, i) => {
@@ -48,19 +61,21 @@ async function statusOf(overrides: Record<string, unknown>[]) {
     );
   });
   const ctx = testContext(t.dir, {
-    open: (entry: DiscoveryEntry) =>
-      Promise.resolve({
-        closed: false,
-        hello: {
-          protocol: '1.0',
-          instanceId: entry.instanceId,
-          pid: entry.pid,
-          appVersion: entry.appVersion,
-          capabilities: ['session.v1'],
-        },
-        call: () => Promise.resolve({ appVersion: entry.appVersion }),
-        close: () => undefined,
-      } as unknown as OtcpSession),
+    open:
+      open ??
+      ((entry: DiscoveryEntry) =>
+        Promise.resolve({
+          closed: false,
+          hello: {
+            protocol: '1.0',
+            instanceId: entry.instanceId,
+            pid: entry.pid,
+            appVersion: entry.appVersion,
+            capabilities: ['session.v1'],
+          },
+          call: () => Promise.resolve({ appVersion: entry.appVersion }),
+          close: () => undefined,
+        } as unknown as OtcpSession)),
   });
   cleanup.push(() => {
     ctx.instances.close();
@@ -70,24 +85,59 @@ async function statusOf(overrides: Record<string, unknown>[]) {
   return outcome.body as unknown as {
     state: string;
     nextStep: { message: string };
-    instances: { build: unknown; pairing: { status: string; nextStep?: { actor: string; message: string } } }[];
+    instances: {
+      instanceId: string;
+      state: string;
+      build: unknown;
+      pairing: {
+        status: string;
+        instanceVerified: boolean;
+        message: string;
+        nextStep?: { actor: string; message: string };
+        url?: string;
+      };
+    }[];
     warnings?: { code: string; instanceId: string; nextStep: { message: string }; url: string }[];
   };
 }
 
 describe('opentune_get_status: the build that is running', () => {
   it('reports what the build says about itself and that a test build was checked', async () => {
+    bundle.version = '0.2.0';
     const body = await statusOf([CTL3]);
     expect(body.state).toBe('READY');
     expect(body.instances[0]).toMatchObject({
       build: { appVersion: '1.8.0', commit: CTL3.build.commit, tag: 'synchain-test/v1.8.0-ctl.3', buildTag: null },
       pairing: {
         status: 'tested',
-        record: currentRecord().server,
+        record: '0.2.0',
+        instanceVerified: true,
         listed: { kind: 'testBuild', ref: 'synchain-test/v1.8.0-ctl.3', verified: true, matchedBy: 'commit' },
       },
     });
     expect(body.warnings).toBeUndefined();
+  });
+
+  it('compares a release with its own record, not with the newest: upstream is not in the list of 0.2.0', async () => {
+    bundle.version = '0.2.0';
+    const body = await statusOf([UPSTREAM]);
+    expect(body.instances[0]?.pairing).toMatchObject({ status: 'not_listed', record: '0.2.0' });
+    expect(body.warnings?.map((w) => w.code)).toEqual(['BUILD_NOT_LISTED']);
+  });
+
+  it('lists the test builds of the version being prepared as not yet verified; ctl.1 gets the warning', async () => {
+    const ctl3 = await statusOf([CTL3]);
+    expect(ctl3.instances[0]?.pairing).toMatchObject({ status: 'listed_not_verified', record: 'unreleased' });
+    expect(ctl3.warnings).toBeUndefined();
+    const ctl1 = {
+      appVersion: '1.8.0',
+      build: { commit: 'a050fae3206845bfeacc120eebef7e20c85f35b3', tag: 'synchain-test/v1.8.0-ctl.1' },
+      buildTag: null,
+    };
+    const body = await statusOf([ctl1]);
+    expect(body.state).toBe('READY');
+    expect(body.warnings?.map((w) => w.code)).toEqual(['BUILD_NOT_LISTED']);
+    expect(body.warnings?.[0]?.nextStep.message).toContain('docs/COMPATIBILITY.md');
   });
 
   it('lists a build of upstream at the listed commit as listed and not verified, without a warning', async () => {
@@ -125,9 +175,42 @@ describe('opentune_get_status: the build that is running', () => {
   });
 
   it('judges each instance on its own and names the one a warning is about', async () => {
+    bundle.version = '0.2.0';
     const body = await statusOf([CTL3, OTHER]);
     expect(body.instances.map((i) => i.pairing.status)).toEqual(['tested', 'not_listed']);
     expect(body.warnings).toHaveLength(1);
+  });
+
+  it('marks the pairing of an instance that session.hello did not confirm, and makes no warning for it', async () => {
+    // The build is what the discovery file says; for an instance that is not READY nothing says the file is alive.
+    const mismatch = await statusOf([{ ...OTHER, protocolMajors: [2] }]);
+    expect(mismatch.state).toBe('PROTOCOL_MISMATCH');
+    expect(mismatch.instances[0]?.pairing).toMatchObject({ status: 'not_listed', instanceVerified: false });
+    expect(mismatch.instances[0]?.pairing.message).toContain('discovery file alone');
+    expect(mismatch.instances[0]?.pairing.nextStep).toBeUndefined();
+    expect(mismatch.instances[0]?.pairing.url).toBeUndefined();
+    expect(mismatch.warnings).toBeUndefined();
+    const refused = await statusOf([OTHER], () =>
+      Promise.reject(
+        new OtcpError({ kind: 'AUTH_FAILED', reason: null, retryable: false, detail: 'denied', executed: false }),
+      ),
+    );
+    expect(refused.state).toBe('NOT_READY');
+    expect(refused.instances[0]?.pairing).toMatchObject({ status: 'not_listed', instanceVerified: false });
+    expect(refused.warnings).toBeUndefined();
+    // A confirmed instance is marked as such, and the warning is made from the pairing of that entry.
+    const ready = await statusOf([OTHER]);
+    expect(ready.instances[0]?.pairing).toMatchObject({ instanceVerified: true, status: 'not_listed' });
+    expect(ready.warnings?.map((w) => w.instanceId)).toEqual([ready.instances[0]?.instanceId]);
+  });
+
+  it('warns for the READY instance only when others are not confirmed', async () => {
+    const body = await statusOf([OTHER, { ...OTHER, protocolMajors: [2] }]);
+    expect(body.instances.map((i) => [i.state, i.pairing.instanceVerified])).toEqual([
+      ['READY', true],
+      ['PROTOCOL_MISMATCH', false],
+    ]);
+    expect(body.warnings?.map((w) => w.instanceId)).toEqual([body.instances[0]?.instanceId]);
   });
 
   it('keeps a label that reads as an instruction as a value of the build, not in any sentence', async () => {
@@ -168,19 +251,30 @@ describe('opentune-mcp doctor: OT_BUILD_PAIRING', () => {
     });
   });
 
-  it('passes for a build that was checked and for one that is listed and not verified', async () => {
+  it('passes for a build that was checked with the version of the server, which has a record of its own', async () => {
+    bundle.version = '0.2.0';
+    const deps = setup();
+    announce(deps, 301, CTL3);
+    const result = await check(deps);
+    expect(result?.status).toBe('pass');
+    expect(result?.message).toContain('Compared with the builds version 0.2.0 of the server was checked with');
+    expect(result?.message).toContain(
+      '301.json: OpenTune "1.8.0", commit 54dbed255210, tag "synchain-test/v1.8.0-ctl.3"',
+    );
+    expect(result?.message).toContain('one of the builds this version was checked with');
+  });
+
+  it('passes for builds that are listed and not verified, which is all of them for the version being prepared', async () => {
     const deps = setup();
     announce(deps, 301, CTL3);
     announce(deps, 302, UPSTREAM);
     const result = await check(deps);
     expect(result?.status).toBe('pass');
-    expect(result?.message).toContain(
-      '301.json: OpenTune "1.8.0", commit 54dbed255210, tag "synchain-test/v1.8.0-ctl.3"',
-    );
-    expect(result?.message).toContain('one of the builds this version was checked with');
+    expect(result?.message).toContain('this (not yet released) version');
     expect(result?.message).toContain('302.json: OpenTune "1.8.2", commit 86bf69880051, tag none');
     expect(result?.message).toContain('not yet verified against a real build');
     expect(result?.message).not.toContain('NOT in the list');
+    expect(result?.message).not.toContain('one of the builds this version was checked with');
   });
 
   it('warns, never fails, for a build that is not listed, and points to COMPATIBILITY', async () => {
