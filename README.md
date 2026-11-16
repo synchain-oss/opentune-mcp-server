@@ -13,6 +13,19 @@
 
 OpenTune MCP Server is an open-source project led by [Synchain](https://www.synchain.ca), released under the [MIT License](LICENSE). It is a separate program that talks to OpenTune; it is not part of OpenTune itself.
 
+<!-- BEGIN GENERATED compatibility:box (from compatibility.json; run npm run compat:update) -->
+
+> **Which OpenTune build to use.** This version of the server (not released yet) is checked with these OpenTune builds:
+>
+> - Test build [`synchain-test/v1.8.0-ctl.3`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.3) (Windows x64, macOS Apple silicon): checked.
+> - Test build [`synchain-test/v1.8.0-ctl.2`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.2) (Windows x64): checked.
+> - Test build [`synchain-test/v1.8.0-ctl.1`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.1) (Windows x64): checked.
+> - Upstream OpenTune, branch `standalone` at `86bf698`, built with the control API switched on (CMake option `OPENTUNE_ENABLE_CONTROL_API`): listed, not yet verified against a real build.
+>
+> Any other build is not covered: it may work, but nobody has checked it. An official OpenTune release without the control API does not work. `opentune_get_status` and `opentune-mcp doctor` tell you which build is running and whether it is listed. Details: [Compatibility](docs/COMPATIBILITY.md#which-opentune-build-goes-with-which-server).
+
+<!-- END GENERATED compatibility:box -->
+
 ## Status
 
 > **Early release (0.2.0).** The npm package [`@synchain/opentune-mcp`](https://www.npmjs.com/package/@synchain/opentune-mcp), the Claude Code plugin and the MCPB package are published; see [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases). The control API was merged into upstream OpenTune on 2026-11-16 ([YuFeng926/OpenTune#52](https://github.com/YuFeng926/OpenTune/pull/52)), but it is off by default (CMake option `OPENTUNE_ENABLE_CONTROL_API`) and no official OpenTune release includes it yet (the latest is 1.8.2). Until one does, the server still needs an unofficial build of OpenTune, and the existing [test builds](https://github.com/synchain-oss/OpenTune/releases) of the fork are the ones that are known to work. The fork is no longer maintained and publishes no new test builds; the existing ones stay available. Specification `1.1.0` of the protocol (`spec/otcp/v1/`, not released yet) also describes the behaviour of the merged upstream code, which has not been verified against a real build yet. Tool names are now fixed; a renamed tool keeps its old name, marked deprecated, for one minor version.

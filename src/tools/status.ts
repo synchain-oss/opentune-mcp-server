@@ -7,12 +7,17 @@
 // and that have not announced themselves yet, other OpenTune processes without a discovery file,
 // and finally the configured executable. Starting OpenTune is opentune_launch's job.
 //
+// Every announced instance also carries `build` (what the build reports about its source) and `pairing` (whether it is
+// one of the builds this version of the server was checked with, src/compat/pairing.ts); a build that is not listed
+// adds an entry to `warnings`. A warning only: the state and its next step stay as they are.
+//
 // A ready instance is also asked what its window shows (ui.getState, capability ui.bridge): the first-run
 // welcome page and any dialog make OpenTune refuse every write (BUSY modal_open). Said here, the agent closes
 // it before the first write instead of meeting the refusal there. A failed read leaves READY as it is.
 
 import { z } from 'zod';
 
+import { identityOf, pairingFor, pairingWarning } from '../compat/pairing.js';
 import type { DiscoveryEntry } from '../discovery/file.js';
 import { troubleshootingUrl } from '../errors/next-step.js';
 import { OtcpError, type NextStep } from '../errors/tool-error.js';
@@ -208,7 +213,9 @@ const pick = (value: unknown, keys: readonly string[]): Json | null => {
 
 /** What one instance reports; strings from OpenTune appear only as values. */
 async function instanceStatus(ctx: ToolContext, entry: DiscoveryEntry): Promise<Json & { state: StatusState }> {
-  const base = instanceSummary(entry);
+  // What the build says about itself and whether it is one this server version was checked with (a warning only).
+  const identity = identityOf(entry);
+  const base = { ...instanceSummary(entry), build: identity, pairing: pairingFor(identity) };
   if (!entry.protocolMajors.includes(PROTOCOL_MAJOR)) {
     return { ...base, state: 'PROTOCOL_MISMATCH', reason: 'major_not_served', protocolMajors: entry.protocolMajors };
   }
@@ -298,6 +305,10 @@ export async function getStatus(ctx: ToolContext, instanceId: string | undefined
       entries = [chosen.entry];
     }
     const instances = await Promise.all(entries.map((entry) => instanceStatus(ctx, entry)));
+    const warnings = entries.flatMap((entry) => {
+      const warning = pairingWarning(entry.instanceId, pairingFor(identityOf(entry)));
+      return warning === null ? [] : [warning];
+    });
     const readyCount = instances.filter((i) => i.state === 'READY').length;
     const first = readyCount > 0 ? instances.find((i) => i.state === 'READY') : instances[0];
     const state = first?.state ?? 'NOT_READY';
@@ -329,7 +340,12 @@ export async function getStatus(ctx: ToolContext, instanceId: string | undefined
     return status(
       state,
       reason,
-      { ...extra, instances, ...(words === null ? {} : { blockedBy: blocked }) },
+      {
+        ...extra,
+        instances,
+        ...(words === null ? {} : { blockedBy: blocked }),
+        ...(warnings.length === 0 ? {} : { warnings }),
+      },
       summary === STATUS_TEXT[state].summary ? undefined : summary,
       words?.step,
     );

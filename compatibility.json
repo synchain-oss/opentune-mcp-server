@@ -1,0 +1,87 @@
+{
+  "schema": 1,
+  "records": [
+    {
+      "server": "0.1.0",
+      "spec": "1.0.0-rc.3",
+      "opentune": [
+        {
+          "kind": "testBuild",
+          "tag": "synchain-test/v1.8.0-ctl.1",
+          "commit": "a050fae3206845bfeacc120eebef7e20c85f35b3",
+          "appVersion": "1.8.0",
+          "platforms": ["windows-x64"],
+          "verified": true,
+          "note": "The test build this release was made with. It implements specification 1.0.0-rc.3."
+        }
+      ]
+    },
+    {
+      "server": "0.2.0",
+      "spec": "1.0.0-rc.8",
+      "opentune": [
+        {
+          "kind": "testBuild",
+          "tag": "synchain-test/v1.8.0-ctl.3",
+          "commit": "54dbed2552105c18af4de64e957940ae52bc6d45",
+          "appVersion": "1.8.0",
+          "platforms": ["windows-x64", "macos-arm64"],
+          "verified": true,
+          "note": "The same OpenTune and control interface as ctl.2, with a macOS package added (Apple silicon, not notarized)."
+        },
+        {
+          "kind": "testBuild",
+          "tag": "synchain-test/v1.8.0-ctl.2",
+          "commit": "3d35a246e99db7b6017ebc5bf64713adad63c633",
+          "appVersion": "1.8.0",
+          "platforms": ["windows-x64"],
+          "verified": true,
+          "note": "Implements specification 1.0.0-rc.8."
+        }
+      ]
+    },
+    {
+      "server": "unreleased",
+      "spec": "1.1.0",
+      "specReleased": false,
+      "runtimeCheck": true,
+      "opentune": [
+        {
+          "kind": "testBuild",
+          "tag": "synchain-test/v1.8.0-ctl.3",
+          "commit": "54dbed2552105c18af4de64e957940ae52bc6d45",
+          "appVersion": "1.8.0",
+          "platforms": ["windows-x64", "macos-arm64"],
+          "verified": true,
+          "note": "Behaves as specification 1.0.0 says (rc.8)."
+        },
+        {
+          "kind": "testBuild",
+          "tag": "synchain-test/v1.8.0-ctl.2",
+          "commit": "3d35a246e99db7b6017ebc5bf64713adad63c633",
+          "appVersion": "1.8.0",
+          "platforms": ["windows-x64"],
+          "verified": true,
+          "note": "Behaves as specification 1.0.0 says (rc.8)."
+        },
+        {
+          "kind": "testBuild",
+          "tag": "synchain-test/v1.8.0-ctl.1",
+          "commit": "a050fae3206845bfeacc120eebef7e20c85f35b3",
+          "appVersion": "1.8.0",
+          "platforms": ["windows-x64"],
+          "verified": true,
+          "note": "Older than this server (rc.3): tools that need a capability it lacks answer UNSUPPORTED."
+        },
+        {
+          "kind": "upstreamSource",
+          "branch": "standalone",
+          "commit": "86bf69880051f69a9a3b8d66315aff71bdddd53e",
+          "appVersion": "1.8.2",
+          "verified": false,
+          "note": "Described by specification 1.1.0, which was written from this source. Not yet verified against a real build."
+        }
+      ]
+    }
+  ]
+}

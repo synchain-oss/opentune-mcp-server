@@ -16,6 +16,13 @@ export function troubleshootingUrl(anchor: string): string {
   return `${DOCS}#${anchor}`;
 }
 
+const COMPATIBILITY_DOCS = 'https://github.com/synchain-oss/opentune-mcp-server/blob/prod/docs/COMPATIBILITY.md';
+
+/** Link to a section of docs/COMPATIBILITY.md (the list of OpenTune builds that go with each server version). */
+export function compatibilityUrl(anchor: string): string {
+  return `${COMPATIBILITY_DOCS}#${anchor}`;
+}
+
 const STATUS: NextStep = { actor: 'agent', tool: 'opentune_get_status', message: '' };
 const agent = (message: string): NextStep => ({ actor: 'agent', message });
 const user = (message: string): NextStep => ({ actor: 'user', message });

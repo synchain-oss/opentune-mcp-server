@@ -13,6 +13,19 @@
 
 OpenTune MCP Server 是由 [Synchain](https://www.synchain.ca) 主导的开源项目,以 [MIT 许可证](LICENSE) 发布。它是一个与 OpenTune 通信的独立程序,不是 OpenTune 本身的一部分。
 
+<!-- BEGIN GENERATED compatibility:box (from compatibility.json; run npm run compat:update) -->
+
+> **该用哪个 OpenTune 构建。** 本版本的服务(尚未发布)用下列 OpenTune 构建检查过:
+>
+> - 测试版 [`synchain-test/v1.8.0-ctl.3`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.3)(Windows x64、macOS Apple 芯片):已验证。
+> - 测试版 [`synchain-test/v1.8.0-ctl.2`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.2)(Windows x64):已验证。
+> - 测试版 [`synchain-test/v1.8.0-ctl.1`](https://github.com/synchain-oss/OpenTune/releases/tag/synchain-test/v1.8.0-ctl.1)(Windows x64):已验证。
+> - 上游 OpenTune 的 `standalone` 分支,提交 `86bf698`,打开控制接口后构建(CMake 选项 `OPENTUNE_ENABLE_CONTROL_API`):已列出,尚未在真实构建上验证。
+>
+> 其他构建不在覆盖范围内:可能能用,但没有人检查过。没有控制接口的官方 OpenTune 发布版不能用。`opentune_get_status` 与 `opentune-mcp doctor` 会告诉你正在运行的是哪个构建、它是否在清单里。详见[兼容性说明](docs/COMPATIBILITY.md#which-opentune-build-goes-with-which-server)。
+
+<!-- END GENERATED compatibility:box -->
+
 ## 状态
 
 > **早期版本(0.2.0)。** npm 包 [`@synchain/opentune-mcp`](https://www.npmjs.com/package/@synchain/opentune-mcp)、Claude Code 插件与 MCPB 包都已发布,见 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases)。控制接口已于 2026-11-16 合入上游 OpenTune([YuFeng926/OpenTune#52](https://github.com/YuFeng926/OpenTune/pull/52)),但默认关闭(CMake 选项 `OPENTUNE_ENABLE_CONTROL_API`),目前没有任何官方 OpenTune 发布版包含它(最新为 1.8.2)。在有发布版包含它之前,本服务仍然需要非官方构建的 OpenTune,已知能用的是 fork 的现有[测试版](https://github.com/synchain-oss/OpenTune/releases)。该 fork 不再维护,也不会再发布新的测试版;已有的测试版继续保留。协议规范 `1.1.0`(`spec/otcp/v1/`,尚未发布)同时描述了已合入上游代码的行为,这部分还没有在真实构建上验证过。工具名称从现在起固定;确需改名时,旧名以 deprecated 形式保留一个 minor 版本。

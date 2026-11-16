@@ -16,14 +16,26 @@ SPDX-License-Identifier: MIT
 | Node.js                        | 22 or later                                                                                                                                                                                                                                                                                     | Not needed for the MCPB package.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
 | Operating system               | Windows x64; macOS on Apple silicon (13.3 or later), pre-release                                                                                                                                                                                                                                | macOS needs the macOS test build (`ctl.3` or later; not notarized, see [Gatekeeper](TROUBLESHOOTING.md#macos-first-start-blocked-by-gatekeeper)). Intel Macs and Linux: not supported. WSL: run the server with Windows Node.js.                                                                                                                                                                                                                                                                                                         |
 
-The unofficial OpenTune build that matches each release of this server:
+### Which OpenTune build goes with which server
 
-| Server                       | OTCP specification    | Unofficial OpenTune build                                                                                                            |
-| ---------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| 0.2.0                        | `1.0.0-rc.8`          | `synchain-test/v1.8.0-ctl.2`                                                                                                         |
-| 0.2.0                        | `1.0.0-rc.8`          | `synchain-test/v1.8.0-ctl.3`                                                                                                         |
-| 0.1.0                        | `1.0.0-rc.3`          | `synchain-test/v1.8.0-ctl.1`                                                                                                         |
-| unreleased (this repository) | `1.1.0`, not released | upstream OpenTune, branch `standalone` at `86bf698`, built with `OPENTUNE_ENABLE_CONTROL_API`: not yet verified against a real build |
+Every release of this server is checked with the OpenTune builds below, and the release notes of each version name the
+ones that go with it. The list is generated from [`compatibility.json`](../compatibility.json), which is also what the
+check at run time reads (see [Checking the build you run](#checking-the-build-you-run)). A build that is not in the
+list may work, but nobody has checked it with that version of the server.
+
+<!-- BEGIN GENERATED compatibility:table (from compatibility.json; run npm run compat:update) -->
+
+| Server                       | OTCP specification    | OpenTune build                                                                                                                           | Verified | Notes                                                                                                        |
+| ---------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.3` (Windows x64, macOS Apple silicon)                                                               | yes      | Behaves as specification 1.0.0 says (rc.8).                                                                  |
+| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.2` (Windows x64)                                                                                    | yes      | Behaves as specification 1.0.0 says (rc.8).                                                                  |
+| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.1` (Windows x64)                                                                                    | yes      | Older than this server (rc.3): tools that need a capability it lacks answer UNSUPPORTED.                     |
+| unreleased (this repository) | `1.1.0`, not released | Upstream OpenTune, branch `standalone` at `86bf698`, built with the control API switched on (CMake option `OPENTUNE_ENABLE_CONTROL_API`) | not yet  | Described by specification 1.1.0, which was written from this source. Not yet verified against a real build. |
+| 0.2.0                        | `1.0.0-rc.8`          | Test build `synchain-test/v1.8.0-ctl.3` (Windows x64, macOS Apple silicon)                                                               | yes      | The same OpenTune and control interface as ctl.2, with a macOS package added (Apple silicon, not notarized). |
+| 0.2.0                        | `1.0.0-rc.8`          | Test build `synchain-test/v1.8.0-ctl.2` (Windows x64)                                                                                    | yes      | Implements specification 1.0.0-rc.8.                                                                         |
+| 0.1.0                        | `1.0.0-rc.3`          | Test build `synchain-test/v1.8.0-ctl.1` (Windows x64)                                                                                    | yes      | The test build this release was made with. It implements specification 1.0.0-rc.3.                           |
+
+<!-- END GENERATED compatibility:table -->
 
 `synchain-test/v1.8.0-ctl.3` is the same OpenTune with the same control interface as `ctl.2`; it adds a macOS
 package (Apple silicon, signed ad hoc), which this server supports (see the operating system above and
@@ -108,6 +120,33 @@ the version, which is `1.0` on both. What a client may notice, as far as the tex
 
 The record of the change, with the files it touches and how old and new clients and servers work together, is
 [contract-changes/20261116-upstream-merged.md](contract-changes/20261116-upstream-merged.md).
+
+## Checking the build you run
+
+`opentune_get_status` and `opentune-mcp doctor` (check `OT_BUILD_PAIRING`) say which OpenTune build is running and
+whether it is one of the builds that this version of the server was checked with, which is the newest record of
+[`compatibility.json`](../compatibility.json) (the table above). Both read what the build reports about itself: its
+`appVersion`, the commit it was built from (`build.commit`), the tag of that commit (`build.tag`) and its distribution
+label (`buildTag`), taken from the discovery file that the build writes and from `session.hello` and `session.info`.
+In `opentune_get_status` they are `instances[].build` and `instances[].pairing`; a build that is not listed also adds an
+entry to `warnings` with a next step that points here.
+
+A build is recognised by its commit (the table lists them) or by a tag that equals its `build.tag` or its `buildTag`.
+The version alone never identifies a build: every test build reports `1.8.0`, and a build of upstream between two
+releases reports the version of the next one. A build made from a git checkout reports its commit; one made from a
+source archive reports a commit of 40 zeros and no tag, so it cannot be recognised.
+
+| `pairing.status`      | What it says                                                               | Warning                                                    |
+| --------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `tested`              | Listed, and this version of the server was run against a real build of it. | No.                                                        |
+| `listed_not_verified` | Listed, but not yet verified against a real build (the column "Verified"). | No; the result says so.                                    |
+| `not_listed`          | The build reports a commit or a tag that is not in the list.               | Yes: `BUILD_NOT_LISTED`; `OT_BUILD_PAIRING` is `warn`.     |
+| `unidentified`        | The build reports neither a commit nor a tag, so it cannot be compared.    | Yes: `BUILD_NOT_IDENTIFIED`; `OT_BUILD_PAIRING` is `warn`. |
+
+It is a warning and never a refusal: the state stays `READY`, every tool works, and each tool reads what the build says
+instead of guessing from a version. The warning is there so that a failure that makes no sense can be traced to the
+build first; the fix is to use a build from the list. The check compares text that the build reports; a name or label
+that reads like an instruction is shown as a value and nothing more.
 
 ## How long to wait
 

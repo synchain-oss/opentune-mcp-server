@@ -16,6 +16,8 @@
     "allowJs": true,
     "checkJs": false,
     "strict": true,
+    // src/compat/pairing.ts imports compatibility.json, which the bundle inlines.
+    "resolveJsonModule": true,
     "noEmit": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
