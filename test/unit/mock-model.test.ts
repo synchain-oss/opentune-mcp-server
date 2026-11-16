@@ -154,9 +154,10 @@ describe('undo history', () => {
     expect(undone.tokens).toMatchObject({ placements: [{ placementId: ids['clip.placementId'] }] });
   });
 
-  it('refuses an unsafe entry on top, with force too, and shows it in the history', async () => {
+  it('refuses an unsafe entry on top, with force too, and shows it in the history (a server of 1.0.0 for a split)', async () => {
     const { mock, ok, fails } = await sessions.open();
     mock.given({
+      splitMergeUndo: false,
       clips: [clip()],
       history: {
         undo: [

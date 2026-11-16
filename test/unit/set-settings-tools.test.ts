@@ -576,7 +576,7 @@ describe('opentune_set_settings: vocoder weight, rendering priority and pitch mo
 
     const priority = body(await setSettings(ctx, { processing: { rendering_priority: 'cpuFirst' }, wait_seconds: 0 }));
     expect(priority.summary).toContain(
-      'a new rendering priority makes the vocoder load again and renders no content again; ' +
+      'a new rendering priority makes the vocoder load again and normally renders no content again; ' +
         "the job's result holds the previous values",
     );
     expect(priority.summary).not.toContain('generate notes');
@@ -731,6 +731,54 @@ describe('opentune_set_settings: vocoder weight, rendering priority and pitch mo
     expect(error.nextStep.message).toMatch(/opentune-mcp doctor/);
     mock.setVocoderFault(null);
     expect(await processingOf(ctx)).toMatchObject({ vocoderWeight: 'hifigan.onnx' });
+  });
+
+  it('fails with vocoder_load_failed on a server that keeps the new values, and shows what stayed', async () => {
+    const { mock, ctx } = await withMock();
+    mock.given({ clips: [clip()] });
+    mock.setPrefsFailure('keep');
+    mock.setVocoderFault('loadFails');
+    const outcome = await setSettings(ctx, {
+      processing: { vocoder_weight: 'hifigan_coulin9.onnx' },
+      wait_seconds: 10,
+    });
+    const error = failure(outcome);
+    expect(error).toMatchObject({
+      kind: 'MODEL_UNAVAILABLE',
+      reason: 'vocoder_load_failed',
+      retryable: false,
+      // The server changed a preference before the vocoder failed, so the call did something.
+      executed: true,
+    });
+    // The text does not claim a rollback: it sends the agent to read the settings.
+    expect(error.nextStep.actor).toBe('user');
+    expect(error.nextStep.message).toContain('opentune_get_settings');
+    expect(error.nextStep.message).toMatch(/put the previous settings back or kept the new ones/);
+    // The write result of what was committed is carried next to the error, with the way to put the values back.
+    expect(outcome.ok).toBe(false);
+    const context = (outcome as { context?: Record<string, unknown> }).context;
+    const committed = context?.committed_before_failure as { summary: string; lines: { kind: string }[] } | undefined;
+    expect(committed?.summary).toContain('changed 1 preference');
+    expect(committed?.summary).toContain('not at all if it cannot be loaded');
+    expect(committed?.lines.some((line) => line.kind === 'revert')).toBe(true);
+    mock.setVocoderFault(null);
+    // The new weight is in effect: nothing was taken back.
+    expect(await processingOf(ctx)).toMatchObject({ vocoderWeight: 'hifigan_coulin9.onnx' });
+  });
+
+  it('does not wait with a limit on a server that keeps the new values, and never answers vocoder_not_ready', async () => {
+    const { mock, ctx } = await withMock({ vocoder: { waitLimitMs: 40 } });
+    mock.given({ clips: [clip()] });
+    mock.setPrefsFailure('keep');
+    mock.setVocoderFault('stuck');
+    const outcome = await setSettings(ctx, {
+      processing: { vocoder_weight: 'hifigan_coulin9.onnx' },
+      wait_seconds: 0.3,
+    });
+    // The job is still running when the wait of the tool ends: no failure, and the job is named.
+    const result = body(outcome);
+    expect(result.summary).toContain('Follow it with opentune_get_job');
+    mock.setVocoderFault(null);
   });
 
   it('asks for jobs.v1 before it sends a member that a job applies, and changes nothing without it', async () => {

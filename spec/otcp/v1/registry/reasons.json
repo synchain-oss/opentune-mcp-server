@@ -168,7 +168,8 @@
       "code": "export_wait_timeout",
       "scope": "NOT_READY",
       "since": "1.0",
-      "description": "An export waited the maximum time for analysis and rendering to settle and gave up. Rendering includes the render blocks that OpenTune has set aside for a delayed retry: an export does not start while any is left, and one that cannot be drained within the wait fails with this reason. Retryable: a new export waits again."
+      "notEmittedSince": "1.1.0",
+      "description": "An export waited the maximum time for analysis and rendering to settle and gave up. Rendering includes the render blocks that OpenTune has set aside for a delayed retry: an export does not start while any is left, and one that cannot be drained within the wait fails with this reason. Retryable: a new export waits again. Since specification 1.1.0 a server MAY have no limit for the wait and never send this reason: the reference implementation does not (PROTOCOL.md section 19 rule 12)."
     },
     {
       "code": "f0_failed",
@@ -288,7 +289,7 @@
       "code": "export_in_progress",
       "scope": "BUSY",
       "since": "1.0",
-      "description": "An export (from the UI or from this API) holds the export lock."
+      "description": "An export (from the UI or from this API) is in progress."
     },
     {
       "code": "project_operation",
@@ -367,7 +368,7 @@
       "code": "undo_unsafe_build",
       "scope": "UNSUPPORTED",
       "since": "1.0",
-      "description": "The top undo (or redo) entry is a clip split, merge or delete, which OpenTune cannot undo correctly; this API refuses to apply it."
+      "description": "The top undo (or redo) entry is one that OpenTune cannot undo correctly, which is always a clip delete and, on a server whose OpenTune has the defect for them (every server that follows 1.0.0), a clip split or merge; this API refuses to apply it (PROTOCOL.md section 15.4)."
     },
     {
       "code": "upstream_absent",
@@ -610,7 +611,8 @@
       "code": "export_stretch_dropped",
       "scope": "NOT_READY",
       "since": "1.0",
-      "description": "The time-stretched audio of a content whose time grid is not the identity was asked for repeatedly while the export waited and was still not built at the content's current state. Retryable: a new export asks for it again."
+      "notEmittedSince": "1.1.0",
+      "description": "The time-stretched audio of a content whose time grid is not the identity was asked for repeatedly while the export waited and was still not built at the content's current state. Retryable: a new export asks for it again. Since specification 1.1.0 a server MAY never give up on the stretched audio and never send this reason: the reference implementation does not (PROTOCOL.md section 19 rule 12)."
     },
     {
       "code": "timing_analysis_failed",
@@ -655,13 +657,56 @@
       "code": "vocoder_not_ready",
       "scope": "MODEL_UNAVAILABLE",
       "since": "1.0",
-      "description": "The vocoder was still busy (loading) when the wait limit of the prefsApply job passed after a change of the vocoder weight or the rendering priority; the implementation defines the limit. The job took its changes back (executed is true only where a preference that another write changed meanwhile kept that write's value, PROTOCOL.md section 12.7). Retryable: a new request waits for the vocoder again."
+      "notEmittedSince": "1.1.0",
+      "description": "The vocoder was still busy (loading) when the wait limit of the prefsApply job passed after a change of the vocoder weight or the rendering priority; the implementation defines the limit. The job took its changes back (executed is true only where a preference that another write changed meanwhile kept that write's value, PROTOCOL.md section 12.7). Retryable: a new request waits for the vocoder again. Since specification 1.1.0 a server MAY have no wait limit and never send this reason: the reference implementation does not (PROTOCOL.md section 12.7 rule 5)."
     },
     {
       "code": "vocoder_load_failed",
       "scope": "MODEL_UNAVAILABLE",
       "since": "1.0",
-      "description": "The command to change the vocoder weight or the rendering priority was carried out, but the vocoder did not become ready, because it could not load the new weight or backend (for example a corrupt or incompatible weight file). The prefsApply job did not wait for its wait limit: it took its changes back at once (executed is true only where a preference that another write changed meanwhile kept that write's value, PROTOCOL.md section 12.7). Not retryable: the same request fails the same way until the weight file or the installation changes."
+      "description": "The command to change the vocoder weight or the rendering priority was carried out, but the vocoder did not become ready, because it could not load the new weight or backend (for example a corrupt or incompatible weight file). The prefsApply job did not wait for its wait limit. A server that follows 1.0.0 took its changes back at once (executed is true only where a preference that another write changed meanwhile kept that write's value, PROTOCOL.md section 12.7). Since specification 1.1.0 a server MAY keep the new values instead, as the reference implementation does: executed is then true when the job changed a preference or the backend, and the previous values are not in effect. A client reads executed and prefs.get and does not assume either. Not retryable: the same request fails the same way until the weight file or the installation changes."
+    },
+    {
+      "code": "content_unavailable",
+      "scope": "NOT_FOUND",
+      "since": "1.0",
+      "description": "A content of an export is no longer available, for example because its clip was removed while the export job waited. Added in specification 1.1.0: servers that follow 1.0.0 end such a job with REVISION_CONFLICT(changed_during_export) or INVALID_ARGUMENT(nothing_to_export). Not retryable: the content is gone."
+    },
+    {
+      "code": "render_unavailable",
+      "scope": "NOT_READY",
+      "since": "1.0",
+      "description": "A content of an export needs a render, and OpenTune has none, cannot build one, or built one that did not settle (PROTOCOL.md section 19 rule 12). Added in specification 1.1.0. Not retryable: the reference implementation sets retryable to false for it, as it does for f0_failed (the kind NOT_READY is otherwise retryable), so a client reads retryable and not the kind."
+    },
+    {
+      "code": "stretch_failed",
+      "scope": "RENDER_FAILED",
+      "since": "1.0",
+      "description": "Rebuilding the time-stretched audio of a content whose time grid is not the identity failed during an export (PROTOCOL.md section 19 rule 12). Added in specification 1.1.0. Not retryable: the same export fails again until the content changes."
+    },
+    {
+      "code": "editor_unavailable",
+      "scope": "INTERNAL",
+      "since": "1.0",
+      "description": "The OpenTune editor that the operation needs was gone when the operation reached it; an import job that finds the editor gone ends with it. Added in specification 1.1.0. Not retryable: the application is shutting down or has no editor."
+    },
+    {
+      "code": "track_not_found",
+      "scope": "NOT_FOUND",
+      "since": "1.0",
+      "description": "A track slot that the request named does not exist when the editor carries out the command (a race with the editor, after the request was checked). Added in specification 1.1.0. Not retryable: the same request names the same slot."
+    },
+    {
+      "code": "vocoder_weight_rejected",
+      "scope": "MODEL_UNAVAILABLE",
+      "since": "1.0",
+      "description": "OpenTune refused to queue the change of the vocoder weight that prefs.set asked for, so the change was not made; the call, or the prefsApply job that it started, fails with this reason. Added in specification 1.1.0. executed is true only when the pitch model changed in the same call and its previous selection could not be restored, so that the new pitch model stays. Not retryable: the same request is refused again."
+    },
+    {
+      "code": "backend_change_rejected",
+      "scope": "MODEL_UNAVAILABLE",
+      "since": "1.0",
+      "description": "OpenTune refused to queue the change of the rendering priority that prefs.set asked for, so the backend did not change; the call, or the prefsApply job that it started, fails with this reason. Added in specification 1.1.0, with the same executed rule as vocoder_weight_rejected. Not retryable: the same request is refused again."
     }
   ]
 }

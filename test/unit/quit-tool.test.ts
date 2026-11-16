@@ -195,7 +195,7 @@ describe('opentune_quit', () => {
       expect(error.nextStep.actor).toBe('user');
       expect(error.nextStep.message).toMatch(/write a copy first.*mode autosave.*close the OpenTune window themselves/);
       expect(error.nextStep.message).toContain('ask the user whether to save the project file');
-      expect(error.nextStep.message).toContain('does not ask about unsaved changes');
+      expect(error.nextStep.message).toContain('without asking about unsaved changes');
       // Nothing was sent that could have closed it.
       expect(mock.quitRequested).toBe(false);
       expect(fs.existsSync(mock.discoveryPath)).toBe(true);
@@ -280,6 +280,8 @@ describe('opentune_quit', () => {
       );
       expect(first).not.toMatch(/closed\./);
       expect(rest.join(' ')).toContain('Check opentune_get_status before assuming it is closed.');
+      // A window that asks about changes made since the check keeps OpenTune running (PROTOCOL.md section 20.2 rule 3).
+      expect(rest.join(' ')).toContain('may also be asking the user about changes made since the check');
       // The instance is still listed, so only the tool itself drops the connection it held; the scan would not.
       expect(closes()).toBe(1);
     }, 15_000);

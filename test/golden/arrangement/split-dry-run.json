@@ -1,5 +1,5 @@
 {
-  "description": "A preview of a split: the first sentence says applying it cannot be undone.",
+  "description": "A preview of a split: it cannot tell whether the build can undo it, and says so.",
   "input": {
     "ops": [
       {
@@ -12,7 +12,7 @@
     "expected_revision": "<arrangement_revision>"
   },
   "result": {
-    "summary": "opentune_edit_arrangement: dry run, nothing was changed; applying this split cannot be undone (OpenTune cannot undo a clip split, merge or delete), so apply it only when the user asked for this step and named the clip or time, and ask first otherwise. It would change 1 placement. Warnings: SPLIT_SNAPPED.",
+    "summary": "opentune_edit_arrangement: dry run, nothing was changed; whether this split can be undone depends on the OpenTune build (the result of the real call says), so apply it only when the user asked for this step and named the clip or time, and ask first otherwise. It would change 1 placement. Warnings: SPLIT_SNAPPED.",
     "applied": false,
     "noOp": false,
     "dryRun": true,

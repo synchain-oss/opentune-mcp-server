@@ -376,6 +376,27 @@ export async function runWaveBBoundary(config: SmokeConfig, hooks: WaveBBoundary
     return problems;
   };
 
+  /**
+   * The undo member of a split or a merge (PROTOCOL.md section 15.4 rule 8): a build that can undo them reports
+   * undoable true with an undoId and no defect warning; a build with the defect reports the defect. Either is
+   * correct, and the entry on top of the history is checked to match: edit.undo is refused only for the defect.
+   */
+  const splitMergeUndoProblems = async (label: string, envelope: Json): Promise<string[]> => {
+    const undo = envelope.undo;
+    if (isObject(undo) && undo.undoable === true) {
+      const problems: string[] = [];
+      if (typeof undo.undoId !== 'string') problems.push(`${label}: undoable, but without an undoId`);
+      if (warningCodes(envelope).includes('UPSTREAM_UNDO_DEFECT')) {
+        problems.push(`${label}: undoable, but the warning UPSTREAM_UNDO_DEFECT is present`);
+      }
+      const top = await historyTop();
+      if (top === null) problems.push(`${label}: the history has no entry on top`);
+      else if (top.unsafe === true) problems.push(`${label}: undoable, but the entry on top is flagged unsafe`);
+      return problems;
+    }
+    return [...notUndoableProblems(label, envelope), ...(await undoRefusedProblems(label))];
+  };
+
   /** edit.undo on the entry the write left on top must be refused; nothing may change. */
   const undoRefusedProblems = async (label: string): Promise<string[]> => {
     const problems: string[] = [];
@@ -609,7 +630,7 @@ export async function runWaveBBoundary(config: SmokeConfig, hooks: WaveBBoundary
       expectedArrangementRevision: state.arrangementRevision,
       ops: [{ op: 'split', placementId: a.placementId, atTimelineSec: whole.startTimelineSec + whole.durationSec / 2 }],
     });
-    problems.push(...notUndoableProblems('split', split), ...(await undoRefusedProblems('split')));
+    problems.push(...(await splitMergeUndoProblems('split', split)));
     state = await readProject(need());
     const parts = state.placements
       .filter((p) => p.trackId === whole.trackId)
@@ -623,7 +644,7 @@ export async function runWaveBBoundary(config: SmokeConfig, hooks: WaveBBoundary
         expectedArrangementRevision: state.arrangementRevision,
         ops: [{ op: 'merge', leadingPlacementId: leading.placementId, trailingPlacementId: trailing.placementId }],
       });
-      problems.push(...notUndoableProblems('merge', merge), ...(await undoRefusedProblems('merge')));
+      problems.push(...(await splitMergeUndoProblems('merge', merge)));
     }
     state = await readProject(need());
     const doomed = clip('c');
@@ -643,7 +664,11 @@ export async function runWaveBBoundary(config: SmokeConfig, hooks: WaveBBoundary
     if (state.placements.length - 1 !== (await readProject(need())).placements.length) {
       problems.push('delete did not remove exactly one clip');
     }
-    return finish('structural undo', problems, 'split, merge and delete: undo defect reported, edit.undo refused each');
+    return finish(
+      'structural undo',
+      problems,
+      'split and merge: undone by edit.undo or reported with the undo defect and refused, as the build does; delete: undo defect reported, edit.undo refused',
+    );
   });
 
   // ---------------------------------------------------------------------------------------------

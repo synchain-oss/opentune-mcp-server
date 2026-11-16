@@ -233,6 +233,32 @@ export function differences(a: Json, b: Json, at = ''): string[] {
 const codesOf = (envelope: Json): string[] =>
   listOf(envelope.warnings).flatMap((warning) => (typeof warning.code === 'string' ? [warning.code] : []));
 
+/**
+ * The undo member of a split or a merge. Whether OpenTune can undo them depends on the build (PROTOCOL.md section
+ * 15.4 rule 8): a build that can reports undoable true with an undoId and no defect warning; a build with the defect
+ * reports undoable false, reason upstream_undo_defect, the warning and a revert recipe. Either is correct.
+ */
+function splitMergeUndoProblems(label: string, envelope: Json): string[] {
+  const undo = isObject(envelope.undo) ? envelope.undo : null;
+  const codes = codesOf(envelope);
+  if (undo === null) return [`${label}: the result carries no undo descriptor`];
+  if (undo.undoable === true) {
+    return [
+      ...(typeof undo.undoId === 'string' ? [] : [`${label}: undoable, but without an undoId`]),
+      ...(codes.includes('UPSTREAM_UNDO_DEFECT')
+        ? [`${label}: undoable, but the warning UPSTREAM_UNDO_DEFECT is present`]
+        : []),
+    ];
+  }
+  return [
+    ...(undo.reason === 'upstream_undo_defect'
+      ? []
+      : [`${label}: undo.reason is ${String(undo.reason)}, expected upstream_undo_defect`]),
+    ...(codes.includes('UPSTREAM_UNDO_DEFECT') ? [] : [`${label}: no UPSTREAM_UNDO_DEFECT warning`]),
+    ...(isObject(undo.revert) ? [] : [`${label}: not undoable and without a revert recipe`]),
+  ];
+}
+
 const firstSentence = (summary: string): string => summary.split(/(?<=\.)\s/)[0] ?? summary;
 
 const schemaPath = (method: string, part: 'result' | 'jobResult'): string =>
@@ -3059,7 +3085,8 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
     // A merge makes new clip and content ids (idMap relation merge), so the clip to delete is found by
     // the merged clip's id, not by the content the import made.
     let doomedClipId = clipId;
-    // split: OpenTune cannot undo it, and the result says so; its revert merges the clips again.
+    // split: a build with the undo defect cannot undo it and says so, and its revert merges the clips again; a build
+    // that can undo it gives an undo id (rule 8): the clips are then merged by an explicit merge.
     const project = await t.reads.project();
     const clip = placementOfContent(project, contentId);
     if (clip === undefined) throw new Error('the clip of the imported content is not in the project');
@@ -3074,40 +3101,51 @@ export async function runWaveBTour(config: SmokeConfig, hooks: WaveBTourHooks = 
         ops: [{ op: 'split', placementId: clipId, atTimelineSec: at }],
       },
       restore: 'none',
-      expect: {
-        applied: true,
-        noOp: false,
-        undoable: false,
-        undoReason: 'upstream_undo_defect',
-        revert: 'present',
-        warnings: ['UPSTREAM_UNDO_DEFECT'],
-      },
+      expect: { applied: true, noOp: false },
     });
     collect('arrangement.edit (split)', problems, split);
-    const splitRevert = isObject(split.envelope.undo) ? split.envelope.undo.revert : null;
-    if (!isObject(splitRevert)) {
-      problems.push('the split gives no revert recipe');
+    problems.push(...splitMergeUndoProblems('split', split.envelope));
+    const splitUndo = isObject(split.envelope.undo) ? split.envelope.undo : null;
+    const splitRevert = splitUndo?.undoable === false ? splitUndo.revert : null;
+    const parts = listOf(member(split.envelope, 'created', 'the split result')).filter(
+      (item) => item.entity === 'placement' && isObject(item.ref) && typeof item.ref.placementId === 'string',
+    );
+    const mergeParams: Json | null = isObject(splitRevert)
+      ? isObject(splitRevert.params)
+        ? { ...splitRevert.params }
+        : null
+      : parts.length === 2 && isObject(parts[0]?.ref) && isObject(parts[1]?.ref)
+        ? {
+            expectedArrangementRevision: arrangementOf(await t.reads.project()),
+            ops: [
+              {
+                op: 'merge',
+                leadingPlacementId: parts[0].ref.placementId,
+                trailingPlacementId: parts[1].ref.placementId,
+              },
+            ],
+          }
+        : null;
+    if (mergeParams === null) {
+      problems.push(
+        isObject(splitRevert)
+          ? 'the revert of the split carries no params'
+          : 'the split gives no revert recipe and lists no two created clips to merge',
+      );
     } else {
-      const ops = isObject(splitRevert.params) ? splitRevert.params.ops : undefined;
+      const ops = mergeParams.ops;
       const first = Array.isArray(ops) && isObject(ops[0]) ? ops[0] : undefined;
-      if (first?.op !== 'merge') problems.push('the revert of the split is not a merge call');
-      else if (!isObject(splitRevert.params)) problems.push('the revert of the split carries no params');
+      if (first?.op !== 'merge') problems.push('the call that takes the split back is not a merge call');
       else {
         const merged = await t.write({
           step: 'arrangement.edit (merge, the revert of the split)',
           method: 'arrangement.edit',
-          params: { ...splitRevert.params },
+          params: mergeParams,
           restore: 'none',
-          expect: {
-            applied: true,
-            noOp: false,
-            undoable: false,
-            undoReason: 'upstream_undo_defect',
-            revert: 'present',
-            warnings: ['UPSTREAM_UNDO_DEFECT'],
-          },
+          expect: { applied: true, noOp: false },
         });
         collect('arrangement.edit (merge)', problems, merged);
+        problems.push(...splitMergeUndoProblems('merge', merged.envelope));
         const joined = listOf(member(merged.envelope, 'created', 'the result')).find(
           (item) => item.entity === 'placement',
         );

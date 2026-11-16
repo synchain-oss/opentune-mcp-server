@@ -1,0 +1,195 @@
+{
+  "$schema": "../../schemas/vector.schema.json",
+  "id": "arrangement/edit-split-merge-undoable",
+  "type": "scenario",
+  "description": "op merge joins the two clips a split made, on a server whose OpenTune undoes a clip split and merge (PROTOCOL.md section 15.4 rule 8): the result reports the merge as undoable, with an undoId, no UPSTREAM_UNDO_DEFECT and no revert recipe. The vector arrangement/edit-split-merge shows the same calls on a server that follows 1.0.0.",
+  "capability": "arrangement.v1",
+  "since": "1.0",
+  "session": "authenticated",
+  "given": {
+    "splitMergeUndo": true,
+    "dirty": false,
+    "clips": [
+      {
+        "bind": "clip",
+        "trackId": 0,
+        "startTimelineSec": 2,
+        "durationSec": 6,
+        "analysis": "ready"
+      }
+    ]
+  },
+  "steps": [
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": {
+            "$ref": "runner.arrangementRevision"
+          },
+          "ops": [
+            {
+              "op": "split",
+              "placementId": {
+                "$ref": "clip.placementId"
+              },
+              "atTimelineSec": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "result": {
+          "applied": true,
+          "created": [
+            {
+              "entity": "placement",
+              "ref": {
+                "placementId": {
+                  "$capture": "left",
+                  "$any": "string"
+                }
+              },
+              "label": {
+                "$any": true
+              }
+            },
+            {
+              "entity": "placement",
+              "ref": {
+                "placementId": {
+                  "$capture": "right",
+                  "$any": "string"
+                }
+              },
+              "label": {
+                "$any": true
+              }
+            }
+          ],
+          "tokens": {
+            "arrangementRevision": {
+              "$capture": "afterSplit",
+              "$any": "string"
+            }
+          }
+        }
+      }
+    },
+    {
+      "send": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "method": "arrangement.edit",
+        "params": {
+          "expectedArrangementRevision": {
+            "$ref": "afterSplit"
+          },
+          "ops": [
+            {
+              "op": "merge",
+              "leadingPlacementId": {
+                "$ref": "left"
+              },
+              "trailingPlacementId": {
+                "$ref": "right"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "expect": {
+        "jsonrpc": "2.0",
+        "id": 2,
+        "result": {
+          "applied": true,
+          "noOp": false,
+          "removed": [
+            {
+              "entity": "placement",
+              "ref": {
+                "placementId": {
+                  "$ref": "left"
+                }
+              },
+              "label": {
+                "$any": true
+              }
+            },
+            {
+              "entity": "placement",
+              "ref": {
+                "placementId": {
+                  "$ref": "right"
+                }
+              },
+              "label": {
+                "$any": true
+              }
+            }
+          ],
+          "created": [
+            {
+              "entity": "placement",
+              "ref": {
+                "placementId": {
+                  "$any": "string"
+                }
+              },
+              "label": {
+                "$any": true
+              }
+            }
+          ],
+          "idMap": [
+            {
+              "entity": "placement",
+              "relation": "merge",
+              "from": [
+                {
+                  "placementId": {
+                    "$ref": "left"
+                  }
+                },
+                {
+                  "placementId": {
+                    "$ref": "right"
+                  }
+                }
+              ],
+              "to": [
+                {
+                  "placementId": {
+                    "$any": "string"
+                  }
+                }
+              ]
+            }
+          ],
+          "undo": {
+            "undoable": true,
+            "undoId": {
+              "$any": "string"
+            },
+            "description": {
+              "$any": "string"
+            },
+            "innerActions": {
+              "$any": "array"
+            },
+            "steps": 1
+          },
+          "warnings": []
+        }
+      }
+    }
+  ]
+}

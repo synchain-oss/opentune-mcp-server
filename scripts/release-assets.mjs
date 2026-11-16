@@ -11,13 +11,15 @@
 //          tarball in <dir> (npm pack --pack-destination <dir>); writes the other three packages
 //          and a .sha256 file for each of the four, and fails on any other file in <dir>
 //        node scripts/release-assets.mjs notes --dir <dir>   prints the release notes (Markdown)
-//          for the packages in <dir>
+//          for the packages in <dir>; they open with the "Works with OpenTune" section of the version's
+//          record in compatibility.json, and the command fails when the version has no record
 
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { loadCompatibility, renderReleaseSection } from './compat.mjs';
 import { packMcpb } from './mcpb.mjs';
 import { PLUGIN_ZIP, assemblePlugin } from './plugin.mjs';
 import { writeSkillsZip } from './skills-zip.mjs';
@@ -87,10 +89,12 @@ export async function readDigests(dir) {
 }
 
 /**
- * Release notes for `version` with the given digests (name -> sha256). Only fixed text, the
- * version and the digests: nothing from commit messages or pull requests is copied in.
+ * Release notes for `version` with the given digests (name -> sha256) and the parsed compatibility.json. Only fixed
+ * text, the version, the digests and the record of the version in compatibility.json: nothing from commit messages or
+ * pull requests is copied in. Throws when the version has no record in compatibility.json.
  */
-export function releaseNotes(version, digests) {
+export function releaseNotes(version, digests, compatibility) {
+  const works = renderReleaseSection(compatibility, version);
   const names = assetNames(version);
   const row = (name, what) => {
     const digest = digests.get(name);
@@ -98,6 +102,8 @@ export function releaseNotes(version, digests) {
     return `| \`${name}\` | ${what} | \`${digest}\` |`;
   };
   const lines = [
+    works,
+    '',
     `OpenTune MCP Server (by Synchain) ${version}. The four packages below are built from this tag and all carry version ${version}.`,
     '',
     '| File | What it is | sha256 |',
@@ -139,7 +145,7 @@ if (isMain) {
       for (const [name, digest] of digests) process.stdout.write(`${digest}  ${name}\n`);
     } else if (command === 'notes' && flag === '--dir' && dir) {
       const version = String(JSON.parse(await fs.readFile(path.join(ROOT, 'package.json'), 'utf8')).version);
-      process.stdout.write(releaseNotes(version, await readDigests(path.resolve(dir))));
+      process.stdout.write(releaseNotes(version, await readDigests(path.resolve(dir)), await loadCompatibility(ROOT)));
     } else {
       process.stderr.write('usage: node scripts/release-assets.mjs build --out <dir> | notes --dir <dir>\n');
       process.exitCode = 2;

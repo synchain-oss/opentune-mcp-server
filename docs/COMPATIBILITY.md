@@ -7,22 +7,34 @@ SPDX-License-Identifier: MIT
 
 ## Versions
 
-| Part                           | Version                                                                                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| ------------------------------ | ----------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Official OpenTune installation | 1.7.9 or newer (macOS: 1.8.0 or newer)                                                          | The oldest version supported; on macOS the first official release, 1.8.0, installed as `/Applications/OpenTune.app`. The side-car smoke test (the test build started next to an official installation) passes in CI with 1.7.9 in its default folder, 1.8.1 in its default folder and 1.8.1 in a custom folder.                                                                                                                                                                                                                          |
-| Models                         | From the official installation                                                                  | The test build contains no models and no Direct3D 12 runtime. 1.7.9 must be installed in its default folder, because it keeps its models in its install folder; 1.8.1 keeps them in `%ProgramData%\OpenTune\Models`, so it can be installed anywhere. On macOS the test build uses the models of the official app, searched in the order of that app (`Contents/Resources/models` of the app, `/Applications/OpenTune/models`, `/Library/Application Support/OpenTune/models`). `opentune-mcp doctor` checks this (`OT_MODELS_MISSING`). |
-| OpenTune build                 | An unofficial test build from [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) | An official OpenTune release has no control API and is reported as `NO_API_BUILD`. The test build has `opentune-control.json` next to `OpenTune.exe`, listing `protocolMajors` 1; on macOS it is next to `OpenTune-AI.command`, which is the file to configure.                                                                                                                                                                                                                                                                          |
-| OTCP specification             | `1.0.0` (wire version `1.0`, protocol major 1)                                                  | The specification in `spec/otcp/v1/` of this repository. The test build and this server must both support protocol major 1; otherwise the status is `PROTOCOL_MISMATCH`.                                                                                                                                                                                                                                                                                                                                                                 |
-| Node.js                        | 22 or later                                                                                     | Not needed for the MCPB package.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| Operating system               | Windows x64; macOS on Apple silicon (13.3 or later), pre-release                                | macOS needs the macOS test build (`ctl.3` or later; not notarized, see [Gatekeeper](TROUBLESHOOTING.md#macos-first-start-blocked-by-gatekeeper)). Intel Macs and Linux: not supported. WSL: run the server with Windows Node.js.                                                                                                                                                                                                                                                                                                         |
+| Part                           | Version                                                                                                                                                                                                                                                                                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Official OpenTune installation | 1.7.9 or newer (macOS: 1.8.0 or newer)                                                                                                                                                                                                                                                          | The oldest version supported; on macOS the first official release, 1.8.0, installed as `/Applications/OpenTune.app`. The side-car smoke test (the test build started next to an official installation) passes in CI with 1.7.9 in its default folder, 1.8.1 in its default folder and 1.8.1 in a custom folder.                                                                                                                                                                                                                          |
+| Models                         | From the official installation                                                                                                                                                                                                                                                                  | The test build contains no models and no Direct3D 12 runtime. 1.7.9 must be installed in its default folder, because it keeps its models in its install folder; 1.8.1 keeps them in `%ProgramData%\OpenTune\Models`, so it can be installed anywhere. On macOS the test build uses the models of the official app, searched in the order of that app (`Contents/Resources/models` of the app, `/Applications/OpenTune/models`, `/Library/Application Support/OpenTune/models`). `opentune-mcp doctor` checks this (`OT_MODELS_MISSING`). |
+| OpenTune build                 | An unofficial build with the control API: a test build from [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) (the fork is no longer maintained and publishes no new builds; the ones that exist stay), or a build of upstream OpenTune made with `OPENTUNE_ENABLE_CONTROL_API` | An official OpenTune release has no control API (the control API merged upstream on 2026-11-16 is in none yet; the latest release is 1.8.2) and is reported as `NO_API_BUILD`. The test build has `opentune-control.json` next to `OpenTune.exe`, listing `protocolMajors` 1; on macOS it is next to `OpenTune-AI.command`, which is the file to configure.                                                                                                                                                                              |
+| OTCP specification             | `1.1.0`, not released yet; the last release is `1.0.0` (wire version `1.0`, protocol major 1)                                                                                                                                                                                                   | The specification in `spec/otcp/v1/` of this repository. It describes both what a server that follows `1.0.0` does (the test builds) and the behaviour of the merged upstream code, which differs in places that the specification marks as "since 1.1". The test build and this server must both support protocol major 1; otherwise the status is `PROTOCOL_MISMATCH`.                                                                                                                                                                 |
+| Node.js                        | 22 or later                                                                                                                                                                                                                                                                                     | Not needed for the MCPB package.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Operating system               | Windows x64; macOS on Apple silicon (13.3 or later), pre-release                                                                                                                                                                                                                                | macOS needs the macOS test build (`ctl.3` or later; not notarized, see [Gatekeeper](TROUBLESHOOTING.md#macos-first-start-blocked-by-gatekeeper)). Intel Macs and Linux: not supported. WSL: run the server with Windows Node.js.                                                                                                                                                                                                                                                                                                         |
 
-The unofficial OpenTune test build that matches each release of this server:
+### Which OpenTune build goes with which server
 
-| Server | OTCP specification | Unofficial OpenTune test build |
-| ------ | ------------------ | ------------------------------ |
-| 0.2.0  | `1.0.0-rc.8`       | `synchain-test/v1.8.0-ctl.2`   |
-| 0.2.0  | `1.0.0-rc.8`       | `synchain-test/v1.8.0-ctl.3`   |
-| 0.1.0  | `1.0.0-rc.3`       | `synchain-test/v1.8.0-ctl.1`   |
+Every release of this server is checked with the OpenTune builds below, and the release notes of each version name the
+ones that go with it. The list is generated from [`compatibility.json`](../compatibility.json), which is also what the
+check at run time reads (see [Checking the build you run](#checking-the-build-you-run)). A build that is not in the
+list may work, but nobody has checked it with that version of the server.
+
+<!-- BEGIN GENERATED compatibility:table (from compatibility.json; run npm run compat:update) -->
+
+| Server                       | OTCP specification    | OpenTune build                                                                                                                           | Verified | Notes                                                                                                        |
+| ---------------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------------------------------------------------------------ |
+| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.3` (Windows x64, macOS Apple silicon)                                                               | not yet  | Verified with 0.2.0; this version has not been run against a real build yet, re-checked before release.      |
+| unreleased (this repository) | `1.1.0`, not released | Test build `synchain-test/v1.8.0-ctl.2` (Windows x64)                                                                                    | not yet  | Verified with 0.2.0; this version has not been run against a real build yet, re-checked before release.      |
+| unreleased (this repository) | `1.1.0`, not released | Upstream OpenTune, branch `standalone` at `86bf698`, built with the control API switched on (CMake option `OPENTUNE_ENABLE_CONTROL_API`) | not yet  | Described by specification 1.1.0, which was written from this source. Not yet verified against a real build. |
+| 0.2.0                        | `1.0.0-rc.8`          | Test build `synchain-test/v1.8.0-ctl.3` (Windows x64, macOS Apple silicon)                                                               | yes      | The same OpenTune and control interface as ctl.2, with a macOS package added (Apple silicon, not notarized). |
+| 0.2.0                        | `1.0.0-rc.8`          | Test build `synchain-test/v1.8.0-ctl.2` (Windows x64)                                                                                    | yes      | Implements specification 1.0.0-rc.8.                                                                         |
+| 0.1.0                        | `1.0.0-rc.3`          | Test build `synchain-test/v1.8.0-ctl.1` (Windows x64)                                                                                    | yes      | The test build this release was made with. It implements specification 1.0.0-rc.3.                           |
+
+<!-- END GENERATED compatibility:table -->
 
 `synchain-test/v1.8.0-ctl.3` is the same OpenTune with the same control interface as `ctl.2`; it adds a macOS
 package (Apple silicon, signed ad hoc), which this server supports (see the operating system above and
@@ -63,6 +75,82 @@ as far as the text of `rc.8` and the builds show:
 - **`NOT_READY(export_wait_timeout)` for render blocks waiting for a delayed retry.** Only an `rc.9` build waits for
   them before an export and fails the export when they cannot be drained; the text of `rc.8` does not say that an
   export waits for them. The reason itself (analysis or rendering did not settle) exists in both.
+
+## Upstream OpenTune with the control API
+
+The control API was merged into upstream OpenTune on 2026-11-16 ([YuFeng926/OpenTune#52](https://github.com/YuFeng926/OpenTune/pull/52)).
+It is off by default (CMake option `OPENTUNE_ENABLE_CONTROL_API`) and no official release includes it yet (the latest is
+1.8.2), so a build that has it is still unofficial. The fork [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune)
+is no longer maintained and publishes no new test builds; `synchain-test/v1.8.0-ctl.1` to `ctl.3` stay, and they behave
+as specification `1.0.0` says, so this server keeps working with them.
+
+Specification `1.1.0` (not released yet) describes the merged code besides the test builds. **It has not been verified
+against a real build of the upstream code**: the text was written from its source, and the mock of this repository
+follows it only in part (by default: the undo of split and merge and the accessibility member; the rest is behind test
+hooks or not modelled). Where the two kinds of server differ, the server reads what the result says and does not guess from
+the version, which is `1.0` on both. What a client may notice, as far as the text of `1.1.0` says:
+
+- **Clip split and merge can be undone.** The result then carries an undo id (the tool says so), and
+  `opentune_undo` takes it back. On a test build they cannot be undone and the result says that first. A clip
+  delete is irreversible on both: the merged code may report an undo step for it that `edit.undo` still refuses, and
+  `opentune_edit_arrangement` never presents it as a way back.
+- **A failed settings job may keep its values.** On a test build, `MODEL_UNAVAILABLE(vocoder_load_failed)` and
+  `vocoder_not_ready` mean the job took its changes back; the merged code has no wait limit (it never sends
+  `vocoder_not_ready`) and keeps the new values when the vocoder cannot load them, so after such an error read the
+  settings (`opentune_get_settings`) to see which values are in effect. Two reasons are new: `vocoder_weight_rejected`
+  and `backend_change_rejected` (OpenTune refused to queue the change).
+- **Export has no wait limit** in the merged code (no `export_wait_timeout` and no `export_stretch_dropped`); an export
+  that cannot go on fails at once with `content_unavailable`, `render_unavailable` or `stretch_failed`. Use a limit of
+  your own when you wait for a job.
+- **Clip gain is not limited by OpenTune.** `opentune_edit_arrangement` refuses a gain above +12.04 dB (4 times the
+  original level, the limit that a server of `1.0.0` clamped to, which mirrors the range of the track volume knob)
+  before it sends anything, so the result is the same on both kinds of server.
+- **A pitch shift can change the clip revision.** The tools take the next revision from the result of a write; a
+  revision read before the shift can be stale afterwards.
+- **`snapToScale` can leave an offset.** The target note is the same; how it splits into the base pitch and
+  `offsetCents` is not part of the contract.
+- **More writes can need an editor window.** In a window-less run the merged code also refuses track edits, transport,
+  undo and redo with `UNSUPPORTED(no_editor_window)`.
+- **`opentune_get_settings` shows `accessibilityModeEnabled`** when the build reports it (the member is left out
+  otherwise). `opentune_set_settings` does not set it.
+- **The window asks about unsaved changes** when it is closed. `opentune_quit` still refuses with
+  `UNSAVED_CHANGES` unless the user agreed to lose them; a window that asks after the result can keep OpenTune running
+  with its control interface stopped.
+
+The record of the change, with the files it touches and how old and new clients and servers work together, is
+[contract-changes/20261116-upstream-merged.md](contract-changes/20261116-upstream-merged.md).
+
+## Checking the build you run
+
+`opentune_get_status` and `opentune-mcp doctor` (check `OT_BUILD_PAIRING`) say which OpenTune build is running and
+whether it is one of the builds that this version of the server was checked with: the record of
+[`compatibility.json`](../compatibility.json) for the version of the server itself (the table above), or the record
+named `unreleased` while a version is being prepared and has none. Both take what the build says about itself from the
+discovery file that the build writes: its `appVersion`, the commit it was built from (`build.commit`), the tag of that
+commit (`build.tag`) and its distribution label (`buildTag`). Nothing confirms those members: `session.hello` checks
+only the `serverProof`, the `instanceId` and the `pid` of the instance behind the file, not what the file says about its
+source. In `opentune_get_status` they are `instances[].build` and `instances[].pairing`. For an instance that is
+`READY`, `session.hello` confirmed the instance (`pairing.instanceVerified` is `true`), and a build that is not listed
+also adds an entry to `warnings` with a next step that points here. For any other instance, `instanceVerified` is
+`false`, the pairing comes from the file alone (which may be one that a crashed OpenTune left behind), and no warning is
+made for it.
+
+A build is recognised by its commit (the table lists them) or by a tag that equals its `build.tag` or its `buildTag`.
+The version alone never identifies a build: every test build reports `1.8.0`, and a build of upstream between two
+releases reports the version of the next one. A build made from a git checkout reports its commit; one made from a
+source archive reports a commit of 40 zeros and no tag, so it cannot be recognised.
+
+| `pairing.status`      | What it says                                                               | Warning                                                    |
+| --------------------- | -------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `tested`              | Listed, and this version of the server was run against a real build of it. | No.                                                        |
+| `listed_not_verified` | Listed, but not yet verified against a real build (the column "Verified"). | No; the result says so.                                    |
+| `not_listed`          | The build reports a commit or a tag that is not in the list.               | Yes: `BUILD_NOT_LISTED`; `OT_BUILD_PAIRING` is `warn`.     |
+| `unidentified`        | The build reports neither a commit nor a tag, so it cannot be compared.    | Yes: `BUILD_NOT_IDENTIFIED`; `OT_BUILD_PAIRING` is `warn`. |
+
+It is a warning and never a refusal: the state stays `READY`, every tool works, and each tool reads what the build says
+instead of guessing from a version. The warning is there so that a failure that makes no sense can be traced to the
+build first; the fix is to use a build from the list. The check compares text that the build reports; a name or label
+that reads like an instruction is shown as a value and nothing more.
 
 ## How long to wait
 
@@ -167,10 +255,13 @@ A call that changes the editing scheme, the vocoder weight or the rendering prio
 follows for `wait_seconds` like any other job. After a new vocoder weight the result says whether the clips render
 again now (the vocoder was ready before the call, so the job waited for the weight to load) or after the weight has
 loaded (it was not ready before the call, so the job did not wait, or that could not be read). Two
-failures are specific to these jobs, and in both OpenTune takes the changes back: `MODEL_UNAVAILABLE(vocoder_not_ready)`
-(the vocoder stayed busy past OpenTune's wait limit; call again) and `MODEL_UNAVAILABLE(vocoder_load_failed)` (it could
-not load the new weight or backend; this does not go away by calling again, see
-[Error MODEL_UNAVAILABLE](TROUBLESHOOTING.md#error-model_unavailable)).
+failures are specific to these jobs: `MODEL_UNAVAILABLE(vocoder_not_ready)` (the vocoder stayed busy past OpenTune's wait
+limit; call again) and `MODEL_UNAVAILABLE(vocoder_load_failed)` (it could not load the new weight or backend; this does
+not go away by calling again, see [Error MODEL_UNAVAILABLE](TROUBLESHOOTING.md#error-model_unavailable)). On a test
+build OpenTune takes the changes back in both; the merged upstream code has no wait limit and keeps the new values after
+`vocoder_load_failed`, so read the settings to see which values are in effect (see
+[Upstream OpenTune with the control API](#upstream-opentune-with-the-control-api)). `opentune_get_settings` also shows the
+accessibility mode (`accessibilityModeEnabled`) when the build reports it; `opentune_set_settings` does not set it.
 
 What a test build of `1.0.0-rc.5` does, since both versions have the wire version `1.0` and the tools decide by
 capabilities, not by version:

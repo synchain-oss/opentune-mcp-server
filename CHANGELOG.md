@@ -8,13 +8,36 @@ versioned separately and has its own changelog.
 
 ## [Unreleased]
 
-The OTCP specification in `spec/otcp/v1/` is now `1.0.0`, released with the text of `1.0.0-rc.9`. The server in this repository does not change what it
+The OTCP specification in `spec/otcp/v1/` was released as `1.0.0` with the text of `1.0.0-rc.9`. The server in this repository does not change what it
 sends to OpenTune; the specification, its mock and the text of the results do. A test build that implements `rc.9`
 (the fork has to follow; see `docs/contract-changes/20261031-spec-rc9.md`) is needed for the new warnings and the new
 media folder to show up in real results.
 
+The control API was merged into upstream OpenTune on 2026-11-16 (YuFeng926/OpenTune#52). It is off by default (CMake
+option `OPENTUNE_ENABLE_CONTROL_API`) and no official release includes it yet (the latest is 1.8.2), so a build that has it is still
+unofficial. The fork is no longer maintained and publishes no new test builds; the existing ones stay. The OTCP
+specification in `spec/otcp/v1/` is now `1.1.0` (not released, no tag): it also describes the behaviour of the merged code,
+which has not been verified against a real build. The package version does not change. The record of the change is
+`docs/contract-changes/20261116-upstream-merged.md`.
+
 ### Added
 
+- Every release says which OpenTune build it goes with. `compatibility.json` (new, at the root) is the one record, a
+  list per server version of the OpenTune builds it was checked with (test build tags, upstream commits, official
+  releases), each marked verified or "listed, not yet verified against a real build". From it are generated the version
+  table of `docs/COMPATIBILITY.md`, the "Which OpenTune build to use" box of both READMEs (`npm run compat:update`; a
+  unit test and `npm run compat:check` fail when they differ) and the "Works with OpenTune" section at the top of the
+  release notes; `release.yml` stops before it builds anything when the version has no record. The records of `0.1.0`
+  (`synchain-test/v1.8.0-ctl.1`) and `0.2.0` (`ctl.2`, `ctl.3`) are written from what they shipped with, and the one for
+  this version (`unreleased` until it is released) lists `ctl.2`, `ctl.3` and upstream `standalone` at `86bf698` (built
+  with the control API on), all three not yet verified against this version; a `ctl.1` user gets the warning. A
+  bundle compares a running build with the record of its own version, and with `unreleased` only when it has none. `docs/RELEASE.md` describes the step.
+- `opentune_get_status` and `opentune-mcp doctor` (new check `OT_BUILD_PAIRING`) report which build is running (`appVersion`,
+  `build.commit`, `build.tag`, `buildTag`, read from the discovery file, which nothing confirms: `session.hello` checks
+  the instance, not these members) and whether it is one of the builds this version was checked with. A build is recognised by its commit or a tag, never by the version alone. One that is not listed, or
+  that reports neither a commit nor a tag, adds a warning (`BUILD_NOT_LISTED`, `BUILD_NOT_IDENTIFIED`) with a next step
+  that points to `docs/COMPATIBILITY.md` when the instance is `READY`; the pairing of any other instance is marked
+  `instanceVerified: false` and makes no warning. The state stays `READY` and nothing is refused. No tool description changed.
 - Two warnings, with a mock that produces them, rendering templates and golden files. `BACKEND_FALLBACK` (`data`:
   `requested`, `actual`) is carried by the job result of `prefs.set` when the call changed the rendering priority to
   `gpuFirst` and the backend in use is `cpu`. `ASIO_RATE_NOT_RESTORED` (subject `{"singleton":"audioDevice"}`, `data`:
@@ -102,6 +125,24 @@ media folder to show up in real results.
   tracks are shown" is missing from the file. `project.open` restores the stored number, reports the tracks it showed
   as `tracksRevealed`, and leaves the project without unsaved changes. The mock follows
   (`docs/contract-changes/20261031-spec-rc9.md`).
+
+- Clip split and merge: the result decides. On a server that reports them as undoable (the merged upstream code) they get
+  an undo line and an undo id; on a test build they are still reported as not undoable first. A clip delete is always
+  rendered as irreversible, whatever `undo` says, and its undo id is never offered. By default the mock follows the merged
+  code in the undo of split and merge and in the accessibility member only; the rest of the merged behaviour (a failed
+  settings job that keeps its values, the wider editor-window list, a pitch shift that changes the revision, a delete
+  reported as undoable) is behind test hooks and off by default, and the new export reasons are not modelled (see
+  `docs/contract-changes/20261116-upstream-merged.md`).
+- `opentune_edit_arrangement` refuses `gain_db` above +12.04 dB (4 times the original level) before it sends anything,
+  with an error that names the limit; the merged code applies any value as given, a server of `1.0.0` clamped it.
+- A failed settings job (`vocoder_load_failed`, `vocoder_weight_rejected`, `backend_change_rejected`) no longer claims that
+  OpenTune took the changes back: the next step is to read the settings and `executed`, and the error carries what the job
+  committed (`committed_before_failure`). The retryability table has the new reasons; the entries of reasons that the merged
+  code no longer sends stay.
+- `opentune_get_settings` shows `accessibilityModeEnabled` when `prefs.get` reports it. `opentune_set_settings` does not set it.
+- README, `docs/COMPATIBILITY.md` (a row for upstream `standalone` at `86bf698`, not yet verified against a real build),
+  `docs/TROUBLESHOOTING.md` and its Chinese version, `docs/features.md` and its Chinese version, and the workflow skill
+  describe the new status and the two behaviours.
 
 ## [0.2.0] - 2026-10-29
 

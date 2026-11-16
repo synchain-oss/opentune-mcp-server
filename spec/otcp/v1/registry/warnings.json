@@ -81,7 +81,7 @@
     {
       "code": "CLAMPED",
       "since": "1.0",
-      "description": "A requested value was outside the allowed range and was limited. data holds the field, the requested and the applied value."
+      "description": "A requested value was outside the allowed range and was limited. data holds the field, the requested and the applied value. Since specification 1.1.0 a server MAY apply a clip gain as given instead of limiting it (arrangement.edit, op setGain); the reference implementation does."
     },
     {
       "code": "REPLACES_ALL_NOTES",
@@ -101,7 +101,7 @@
     {
       "code": "UPSTREAM_UNDO_DEFECT",
       "since": "1.0",
-      "description": "OpenTune pushed an undo entry for this change, but undoing it does not restore the previous state (a known OpenTune defect). Do not rely on undo for this change."
+      "description": "OpenTune pushed an undo entry for this change, but undoing it does not restore the previous state (a known OpenTune defect). Do not rely on undo for this change. A clip delete carries it; a clip split or merge carries it on a server that follows 1.0.0, and since specification 1.1.0 a server whose OpenTune undoes them does not send it for them (PROTOCOL.md section 15.4 rule 8). The reference implementation sends it for no change, although it still refuses to undo a clip delete, so a client treats a delete as irreversible whatever the result says (section 15.4 rule 1)."
     },
     {
       "code": "SELECTION_GENERATED_NOTES",
@@ -152,7 +152,8 @@
     {
       "code": "IMPORT_COMMIT_REPEATED",
       "since": "1.0",
-      "description": "OpenTune refused to commit an imported clip because the clip id it handed out was already used by a clip of the project (which can happen after a project was opened), so the import committed the clip again until it was accepted. The clip was imported; the same import from the OpenTune UI would have failed. subject: the imported placement; data.repeatCount: how many commits were repeated."
+      "notEmittedSince": "1.1.0",
+      "description": "OpenTune refused to commit an imported clip because the clip id it handed out was already used by a clip of the project (which can happen after a project was opened), so the import committed the clip again until it was accepted. The clip was imported; the same import from the OpenTune UI would have failed. subject: the imported placement; data.repeatCount: how many commits were repeated. Since specification 1.1.0 a server MAY never send it: the reference implementation does not."
     },
     {
       "code": "BACKEND_FALLBACK",

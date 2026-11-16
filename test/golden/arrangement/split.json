@@ -1,5 +1,5 @@
 {
-  "description": "A split: the first sentence says it cannot be undone, and why.",
+  "description": "A split on a build that can undo it: the undo step is given as with any undoable edit.",
   "input": {
     "ops": [
       {
@@ -11,26 +11,18 @@
     "expected_revision": "<arrangement_revision>"
   },
   "result": {
-    "summary": "opentune_edit_arrangement: this split cannot be undone: OpenTune frees objects its own undo entry needs, so undoing a split makes its audio vanish from the timeline; opentune_undo refuses it, and the user should not undo it in the OpenTune window either; the revert line says how to put it back. Created 2 placements, removed 1 placement (destructive; not undoable: OpenTune cannot undo this reliably; can be restored with opentune_edit_arrangement only after the user explicitly agrees). Warnings: SPLIT_SNAPPED, UPSTREAM_UNDO_DEFECT.",
+    "summary": "opentune_edit_arrangement: created 2 placements, removed 1 placement (destructive). Undo it as one step with undoId u:01234567:3. Warnings: SPLIT_SNAPPED.",
     "applied": true,
     "noOp": false,
     "dryRun": false,
     "undo": {
-      "undoable": false,
-      "reason": "upstream_undo_defect",
-      "revert": {
-        "method": "arrangement.edit",
-        "params": {
-          "expectedArrangementRevision": "a34",
-          "ops": [
-            {
-              "op": "merge",
-              "leadingPlacementId": "p:01234567:0:4",
-              "trailingPlacementId": "p:01234567:0:5"
-            }
-          ]
-        }
-      }
+      "undoable": true,
+      "undoId": "u:01234567:3",
+      "description": "Split clip",
+      "innerActions": [
+        "splitClip"
+      ],
+      "steps": 1
     },
     "lines": [
       {
@@ -46,43 +38,10 @@
         }
       },
       {
-        "kind": "warning",
-        "code": "UPSTREAM_UNDO_DEFECT",
-        "text": "OpenTune cannot undo this change reliably: it frees objects its own undo entry needs.",
-        "subject": {
-          "placementId": "p:01234567:0:3"
-        },
-        "data": null
-      },
-      {
-        "kind": "revert",
-        "text": "Not undoable (OpenTune cannot undo this reliably). Only after the user explicitly agrees to restore it: call opentune_edit_arrangement with the arguments in restore, as they are.",
-        "revert": {
-          "method": "arrangement.edit",
-          "params": {
-            "expectedArrangementRevision": "a34",
-            "ops": [
-              {
-                "op": "merge",
-                "leadingPlacementId": "p:01234567:0:4",
-                "trailingPlacementId": "p:01234567:0:5"
-              }
-            ]
-          }
-        },
-        "restore": {
-          "tool": "opentune_edit_arrangement",
-          "arguments": {
-            "expected_revision": "ar1.YTM0",
-            "ops": [
-              {
-                "op": "merge",
-                "leading_clip": "p:01234567:0:4",
-                "trailing_clip": "p:01234567:0:5"
-              }
-            ]
-          }
-        }
+        "kind": "undo",
+        "text": "Undoable as one step: undo it with opentune_undo, undo_id u:01234567:3.",
+        "undoId": "u:01234567:3",
+        "description": "Split clip"
       }
     ],
     "revisionDiff": {
@@ -129,13 +88,6 @@
           "requestedTimelineSec": 11.504,
           "appliedTimelineSec": 11.5
         }
-      },
-      {
-        "code": "UPSTREAM_UNDO_DEFECT",
-        "subject": {
-          "placementId": "p:01234567:0:3"
-        },
-        "data": null
       }
     ],
     "job": null,

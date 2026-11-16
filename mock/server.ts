@@ -95,6 +95,19 @@ const LOOPBACK = '127.0.0.1';
 const PROTOCOL = '1.0';
 const PROTOCOL_MAJORS: readonly number[] = [1];
 const PROTOCOL_VERSION_RE = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
+/**
+ * The writes that the reference implementation also refuses without an editor window since specification 1.1.0
+ * (PROTOCOL.md section 7 rule 6), because the editor carries out the change.
+ */
+const NO_EDITOR_WIDE_METHODS: ReadonlySet<string> = new Set([
+  'track.set',
+  'transport.control',
+  'transport.setTempo',
+  'transport.setLoop',
+  'edit.undo',
+  'edit.redo',
+]);
+
 /** The methods that act through the OpenTune editor window (PROTOCOL.md section 7 rule 6). */
 const NO_EDITOR_METHODS: ReadonlySet<string> = new Set([
   'ui.getState',
@@ -216,7 +229,22 @@ export interface OtcpMock {
    * A window-less run (no OpenTune editor window): the methods that act through the editor window fail with
    * `UNSUPPORTED(no_editor_window)`, `executed` false, and change nothing (PROTOCOL.md section 7 rule 6).
    */
-  setNoEditor(on: boolean): void;
+  setNoEditor(on: boolean, scope?: 'ui' | 'all'): void;
+  /**
+   * What a prefsApply job does when the vocoder does not take the new values (PROTOCOL.md section 12.7 rule 5).
+   * `rollback` (the default) is a server that follows 1.0.0; `keep` is the reference implementation since 1.1: no wait
+   * limit, MODEL_UNAVAILABLE(vocoder_load_failed) at once, the new values stay and executed is true.
+   */
+  setPrefsFailure(mode: 'rollback' | 'keep'): void;
+  /**
+   * A clip delete reports `undo.undoable` true with an undoId and neither UPSTREAM_UNDO_DEFECT nor IRREVERSIBLE, while
+   * edit.undo still refuses its entry (PROTOCOL.md section 15.4 rule 1, known implementation behaviour).
+   */
+  setDeleteReportsUndoable(on: boolean): void;
+  /** The accessibility mode that prefs.get reports (since 1.1); null leaves the member out, as a server of 1.0.0 does. */
+  setAccessibilityMode(value: boolean | null): void;
+  /** A pitch shift also changes the revision token of the content, as the reference implementation does since 1.1. */
+  setPitchShiftChangesRevision(on: boolean): void;
   /**
    * Ends a job that `given.jobs` made (it runs for ever otherwise), as cancelled. Returns false for an unknown job, one
    * that has ended already, and one the mock drives itself.
@@ -429,7 +457,10 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
 
   /** A window-less run: a method that acts through the editor window fails (section 7 rule 6); true when it did. */
   const refusedNoEditor = (conn: Connection, id: RequestId, method: string): boolean => {
-    if (!world.noEditor || !NO_EDITOR_METHODS.has(method)) return false;
+    if (!world.noEditor) return false;
+    if (!NO_EDITOR_METHODS.has(method) && !(world.noEditorScope === 'all' && NO_EDITOR_WIDE_METHODS.has(method))) {
+      return false;
+    }
     reply(conn, id, {
       kind: 'UNSUPPORTED',
       reason: 'no_editor_window',
@@ -885,8 +916,21 @@ export async function startMock(options: MockOptions = {}): Promise<OtcpMock> {
       // Onboarding counts as shown only once the overlay has shown its choice; without it the flag is cleared.
       world.prefs.onboardingShown = choiceShown;
     },
-    setNoEditor(on) {
+    setNoEditor(on, scope = 'ui') {
       world.noEditor = on;
+      world.noEditorScope = scope;
+    },
+    setPrefsFailure(mode) {
+      world.prefsFailure = mode;
+    },
+    setDeleteReportsUndoable(on) {
+      world.deleteReportsUndoable = on;
+    },
+    setAccessibilityMode(value) {
+      world.accessibilityMode = value;
+    },
+    setPitchShiftChangesRevision(on) {
+      world.pitchShiftChangesRevision = on;
     },
     endJob(jobId) {
       return jobs.end(jobId);

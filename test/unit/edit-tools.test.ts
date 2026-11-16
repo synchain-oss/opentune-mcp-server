@@ -312,6 +312,34 @@ describe('opentune_set_clip', () => {
     expect(sent(env, 'content.setPitchShift')).toHaveLength(0);
   });
 
+  it('hands on the revision a pitch shift reports, for a server whose pitch shift changes the content revision', async () => {
+    const env = await setup();
+    env.mock.setPitchShiftChangesRevision(true);
+    const old = await env.revision();
+    const shifted = body(
+      await setClip(env.ctx, { clip: env.placement, expected_revision: old, pitch_shift: { semitones: 1, cents: 0 } }),
+    );
+    expect(shifted.applied).toBe(true);
+    const fresh = shifted.clip_revision as string;
+    expect(fresh).not.toBe(old);
+    // The revision of the result goes ahead; the one read before the shift is stale for the notes of the clip.
+    const stale = failure(
+      await editNotes(env.ctx, {
+        clip: env.placement,
+        expected_revision: old,
+        ops: [{ op: 'shiftCents', select: { indices: [0] }, delta_cents: 10 }],
+      }),
+    );
+    expect(stale).toMatchObject({ kind: 'REVISION_CONFLICT', reason: 'content_changed' });
+    body(
+      await editNotes(env.ctx, {
+        clip: env.placement,
+        expected_revision: fresh,
+        ops: [{ op: 'shiftCents', select: { indices: [0] }, delta_cents: 10 }],
+      }),
+    );
+  });
+
   it('does not conflict on a pitch shift whatever else changed', async () => {
     const env = await setup();
     const old = await env.revision();
@@ -902,7 +930,9 @@ describe('opentune_undo and opentune_redo', () => {
     expect(none).toMatchObject({ kind: 'UNDO_CONFLICT', reason: 'history_empty' });
     expect(none.nextStep.message).toContain('nothing to undo');
 
+    // A build with the undo defect for a split (specification 1.0.0): the entry is unsafe and refused.
     const unsafe = await setup({
+      splitMergeUndo: false,
       history: { undo: [{ bind: 'split', origin: 'control', action: 'clipSplit', clip: 'clip' }], redo: [] },
     });
     const unsafeId = unsafe.ids.split ?? 'u:00000000:1';
@@ -922,6 +952,16 @@ describe('opentune_undo and opentune_redo', () => {
     expect(noEffect.noOp).toBe(true);
     expect(noEffect.summary).toContain('the undo or redo step is used up');
     expect((noEffect.warnings as { code: string }[]).map((w) => w.code)).toContain('UNDO_NO_EFFECT');
+  });
+
+  it('undoes a split on a build that can, and takes it back with the redo recipe', async () => {
+    const env = await setup({
+      history: { undo: [{ bind: 'split', origin: 'control', action: 'clipSplit', clip: 'clip' }], redo: [] },
+    });
+    const splitId = env.ids.split ?? 'u:00000000:1';
+    const undone = body(await run(undoTool, env, { undo_id: splitId }));
+    expect(undone.applied).toBe(true);
+    expect(undone.noOp).toBe(false);
   });
 
   it('needs the history capability', async () => {

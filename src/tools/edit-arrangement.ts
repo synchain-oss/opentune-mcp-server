@@ -4,9 +4,12 @@
 // opentune_edit_arrangement: clip edits on the timeline, as OpenTune's arrangement view makes them
 // (OTCP arrangement.edit and arrangement.copy, capability arrangement.v1). Times are on the timeline
 // clock, in seconds. One call is one request: move, trim, gain and fade ops run in
-// order as one undo step; split, merge and delete go alone, because OpenTune cannot undo them (it
-// frees objects its own undo entry needs, PROTOCOL.md section 15.4 rule 1); copy goes alone,
-// because it has no undo entry at all and undoing the rest would not take it back. Only the
+// order as one undo step; split, merge and delete go alone, because OpenTune cannot undo a delete (it
+// frees objects its own undo entry needs, PROTOCOL.md section 15.4 rule 1) and, on the builds that have the
+// same defect for them, a split or a merge either; copy goes alone,
+// because it has no undo entry at all and undoing the rest would not take it back. Whether a split and a
+// merge can be undone is a property of the OpenTune build (rule 8): the result says, and nothing here assumes
+// it. A delete is always rendered as irreversible, whatever its undo member says. Only the
 // arrangement_revision is forwarded, so edits of notes, keys or pitch never conflict with a clip
 // edit. The whole request is checked here before anything is sent.
 
@@ -40,6 +43,15 @@ const CLIPS = z.array(CLIP).min(1).max(64);
 const SEC = z.number().min(0);
 // A whole number, checked in planRequest: z.int() would add the safe-integer bounds to the schema.
 const TRACK = z.number().min(0);
+
+/**
+ * The largest clip gain the tool sends: 4 times the original level, which is +12.04 dB. A server of 1.0.0 limited
+ * the clip gain to exactly this 4.0 (linear) and reported CLAMPED; the limit mirrors the range of the track volume
+ * knob of OpenTune's interface, 0 to 4. The reference implementation since 1.1 applies any finite value as given.
+ * The tool keeps to the old limit, so that the result is the same on both kinds of server. Rounded down at two
+ * decimals, so the value never exceeds 4.
+ */
+export const MAX_CLIP_GAIN_DB = 12.04;
 
 const OP = z.discriminatedUnion('op', [
   z.strictObject({
@@ -174,14 +186,28 @@ export function planRequest(args: EditArrangementArgs): Request | Outcome {
       );
     }
   }
+  for (const [index, op] of ops.entries()) {
+    if (op.op === 'gain' && op.gain_db > MAX_CLIP_GAIN_DB) {
+      return invalid(
+        `${at(index)}.gain_db: ${String(op.gain_db)} dB is above the limit of +${String(MAX_CLIP_GAIN_DB)} dB (4 times the ` +
+          'original level), the largest gain that OpenTune offers; send a gain of at most that, and raise the ' +
+          'track volume with opentune_set_tracks if the clip still needs to be louder',
+        'gain_out_of_range',
+      );
+    }
+  }
   const alone = ops.find((op) => op.op === 'copy' || STRUCTURAL.has(op.op));
   if (alone !== undefined && ops.length > 1) {
     return invalid(
       alone.op === 'copy'
         ? 'copy cannot be undone while the other ops are one undo step, so they cannot share a call: make two ' +
             'calls, copy alone in one and the other ops in the other, with the arrangement_revision of the first result'
-        : `${alone.op} cannot be undone, so it goes in a call of its own: send it alone and the other ops in another ` +
-            'call, with the arrangement_revision of the first result',
+        : alone.op === 'delete'
+          ? 'delete cannot be undone, so it goes in a call of its own: send it alone and the other ops in another ' +
+            'call, with the arrangement_revision of the first result'
+          : `${alone.op} goes in a call of its own, because not every OpenTune build can undo it and the other ops are ` +
+            'one undo step: send it alone and the other ops in another call, with the arrangement_revision of the ' +
+            'first result',
       'op_not_alone',
     );
   }
@@ -294,6 +320,30 @@ const UPSTREAM_DEFECT = (envelope: Json): boolean =>
   asList(envelope.warnings).some((w) => isObject(w) && w.code === 'UPSTREAM_UNDO_DEFECT');
 
 /**
+ * A delete is irreversible whatever the server reports (PROTOCOL.md section 15.4 rule 1): a server may report
+ * `undo.undoable` true with an undoId for it while edit.undo and edit.redo refuse that entry. The result is
+ * rendered as the specification says a delete is reported (not undoable, with UPSTREAM_UNDO_DEFECT and IRREVERSIBLE),
+ * so that no line presents the undoId as a way back. A result that already says so, a dry run and a result of
+ * another op are left as they are.
+ */
+export function deleteAsIrreversible(envelope: Json): Json {
+  const undo = isObject(envelope.undo) ? envelope.undo : null;
+  if (envelope.dryRun === true || undo?.undoable !== true) return envelope;
+  const warnings = asList(envelope.warnings);
+  const subject = asList(envelope.removed).find(
+    (item) => isObject(item) && item.entity === 'placement' && isObject(item.ref),
+  );
+  const subjectRef = isObject(subject) && isObject(subject.ref) ? subject.ref : null;
+  const add = (code: string): Json[] =>
+    warnings.some((w) => isObject(w) && w.code === code) ? [] : [{ code, subject: subjectRef, data: null }];
+  return {
+    ...envelope,
+    undo: { undoable: false, reason: 'upstream_undo_defect', revert: null },
+    warnings: [...warnings, ...add('UPSTREAM_UNDO_DEFECT'), ...add('IRREVERSIBLE')],
+  };
+}
+
+/**
  * How far a result that cannot be undone can be taken back: `final` when no request can restore it (an
  * IRREVERSIBLE warning, or a result that carries no recipe at all, or one that is not in the protocol
  * form), `restorable` when the result carries a recipe in the protocol form, and null when the change
@@ -334,9 +384,15 @@ const wayBack = (how: 'final' | 'restorable' | null): string =>
  */
 export function structuralLead(kind: string, envelope: Json): string | null {
   if (envelope.dryRun === true) {
-    const consent = kind === 'delete' ? ', and it needs confirm: true' : '';
+    if (kind === 'delete') {
+      return (
+        'applying this delete cannot be undone (OpenTune cannot undo a clip delete), and it needs confirm: true, so ' +
+        `apply it ${WHEN_TO_APPLY}`
+      );
+    }
+    // Whether a split or a merge can be undone depends on the OpenTune build, and a dry run does not say.
     return (
-      `applying this ${kind} cannot be undone (OpenTune cannot undo a clip split, merge or delete)${consent}, so ` +
+      `whether this ${kind} can be undone depends on the OpenTune build (the result of the real call says), so ` +
       `apply it ${WHEN_TO_APPLY}`
     );
   }
@@ -351,6 +407,7 @@ export function structuralLead(kind: string, envelope: Json): string | null {
       wayBack(reversibility(envelope))
     );
   }
+  // A split or a merge that the server reports as undoable is rendered as any undoable result (the undo line).
   const how = reversibility(envelope);
   if (how === null) return null;
   const consent = kind === 'delete' ? '; removing clips needs confirm: true' : '';
@@ -417,9 +474,12 @@ export async function editArrangement(ctx: ToolContext, args: EditArrangementArg
       const step = reason === null ? undefined : ERROR_STEPS[`${kind}/${reason}`];
       return { ok: false, error: fromOtcpError(error.data, step) };
     }
-    const outcome = writeOutcome(envelope, { tool: TOOL });
+    const kind = callKind(args.ops);
+    // A delete is irreversible whatever its undo member says: the undoId of a delete is never offered as a way back.
+    const shown = kind === 'delete' ? deleteAsIrreversible(envelope) : envelope;
+    const outcome = writeOutcome(shown, { tool: TOOL });
     if (!outcome.ok) return outcome;
-    return { ok: true, body: resultBody(outcome.body, envelope, callKind(args.ops)) };
+    return { ok: true, body: resultBody(outcome.body, shown, kind) };
   });
 }
 
@@ -427,11 +487,11 @@ export const editArrangementTool = defineTool({
   name: TOOL,
   title: 'Edit OpenTune clips on the timeline',
   description:
-    'OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain, ' +
-    'fade run in order as one undo step. split, merge, delete and copy each go alone ' +
-    'in a call and cannot be undone (the first three by an OpenTune defect): do one when the user named the ' +
-    'clip or time, else ask first; delete needs confirm. dry_run previews (not copy). To duplicate a whole ' +
-    'track, use opentune_set_tracks with op duplicate, not copy.',
+    'OpenTune (audio vocal pitch editor): edits clips on the timeline (timeline clock, seconds). move, trim, gain ' +
+    '(at most +12.04 dB), fade run in order as one undo step. split, merge, delete and copy each go alone in a ' +
+    'call. delete and copy cannot be undone; split and merge cannot on some OpenTune builds, and the result says. ' +
+    'Do one when the user named the clip or time, else ask first; delete needs confirm. dry_run previews (not ' +
+    'copy). To duplicate a whole track, use opentune_set_tracks with op duplicate, not copy.',
   inputSchema: z.strictObject({
     expected_revision: z
       .string()
@@ -444,7 +504,7 @@ export const editArrangementTool = defineTool({
     instance_id: INSTANCE_FIELD,
   }),
   outputSchema: WRITE_RESULT_OUTPUT,
-  // Destructive: delete can be neither undone nor restored, and split and merge cannot be undone either.
+  // Destructive: delete can be neither undone nor restored, and split and merge cannot be undone on some builds.
   annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
   capabilities: ['arrangement.v1'],
   otcpMethods: ['arrangement.edit', 'arrangement.copy'],

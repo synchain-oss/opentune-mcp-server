@@ -55,6 +55,9 @@ export function historyView(world: World) {
 
 interface Effect {
   changes: unknown[];
+  /** The clips a split or merge step brought back, and those it took away (the `created` and `removed` of the result). */
+  created: unknown[];
+  removed: unknown[];
   contents: ContentRec[];
   placements: PlacementRec[];
   /** Contents whose sound changes, so that rendering is queued again. */
@@ -63,7 +66,25 @@ interface Effect {
 
 /** Puts a patch back and describes what it changed (section 14.3). */
 function applyPatch(world: World, patch: Patch | null): Effect {
-  const effect: Effect = { changes: [], contents: [], placements: [], rerender: [] };
+  const effect: Effect = { changes: [], created: [], removed: [], contents: [], placements: [], rerender: [] };
+  const item = (placement: PlacementRec) => ({
+    entity: 'placement',
+    ref: { placementId: placement.id },
+    label: placementLabel(world, placement),
+  });
+  if (patch?.swap !== undefined) {
+    // The clips come back first, so that a content they share is never without a clip while the others go.
+    for (const placement of patch.swap.revive) {
+      world.revivePlacement(placement);
+      effect.created.push(item(placement));
+      effect.placements.push(placement);
+    }
+    for (const placement of patch.swap.remove) {
+      effect.removed.push(item(placement));
+      world.removePlacement(placement);
+    }
+    world.touchArrangement();
+  }
   if (patch?.content !== undefined) {
     const content = world.contents.get(patch.content.objectId);
     if (content !== undefined) restore(world, content, patch.content.snap, effect);
@@ -184,7 +205,7 @@ function step(kind: 'undo' | 'redo'): Handler {
       throw refuse(
         'UNSUPPORTED',
         'undo_unsafe_build',
-        `the top entry is a clip split, merge or delete, which is not ${kind === 'undo' ? 'undone' : 'redone'}`,
+        `the top entry is a clip delete (or, in a build that cannot undo them, a split or merge), which is not ${kind === 'undo' ? 'undone' : 'redone'}`,
       );
     }
     if (!force && top.possiblyStale && top.origin === 'control') {
@@ -214,6 +235,8 @@ function step(kind: 'undo' | 'redo'): Handler {
       applied: true,
       noOp,
       changes: noOp ? [] : effect.changes,
+      created: noOp ? [] : effect.created,
+      removed: noOp ? [] : effect.removed,
       diff,
       contents: effect.contents,
       placements: effect.placements,

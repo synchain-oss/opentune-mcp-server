@@ -387,6 +387,42 @@ function pushUnsafeEntry(world: World, action: string, description: string, inne
     tracks,
   });
   world.redoStack = [];
+  return seq;
+}
+
+/** The clips a split or merge step takes away and brings back, undoing it and redoing it (Patch.swap). */
+interface Swap {
+  readonly gone: PlacementRec[];
+  readonly made: PlacementRec[];
+}
+
+/**
+ * The entry of a split or merge that OpenTune undoes (PROTOCOL.md section 15.4 rule 8): undo takes the new clips away
+ * and brings the original ones back with their placementIds, redo does the reverse. Returns its undoId.
+ */
+function pushSwapEntry(
+  world: World,
+  action: string,
+  description: string,
+  innerAction: string,
+  tracks: number[],
+  { gone, made }: Swap,
+) {
+  const { seq, undoId } = world.nextUndoId();
+  world.undoStack.push({
+    seq,
+    origin: 'control',
+    action,
+    description,
+    innerActions: [innerAction],
+    undoPatch: { swap: { remove: made, revive: gone } },
+    redoPatch: { swap: { remove: gone, revive: made } },
+    possiblyStale: false,
+    unsafe: false,
+    tracks,
+  });
+  world.redoStack = [];
+  return undoId;
 }
 
 const clipItem = (placement: PlacementRec) => ({
@@ -495,7 +531,13 @@ function split(context: MethodContext, op: Op, dryRun: boolean) {
   const original = clipItem(placement);
   world.removePlacement(placement);
   world.touchArrangement();
-  pushUnsafeEntry(world, 'clipSplit', 'Split clip', 'splitClip', [placement.trackId]);
+  const undoId = world.splitMergeUndo
+    ? pushSwapEntry(world, 'clipSplit', 'Split clip', 'splitClip', [placement.trackId], {
+        gone: [placement],
+        made: [left, right],
+      })
+    : null;
+  if (undoId === null) pushUnsafeEntry(world, 'clipSplit', 'Split clip', 'splitClip', [placement.trackId]);
   world.markDirty();
   const diff = world.diff(before, world.capture());
   return envelope(world, {
@@ -514,19 +556,22 @@ function split(context: MethodContext, op: Op, dryRun: boolean) {
     diff,
     contents: [],
     placements: [left, right],
-    undo: {
-      undoable: false,
-      reason: 'upstream_undo_defect',
-      revert: {
-        method: 'arrangement.edit',
-        params: {
-          expectedArrangementRevision: world.arrangement,
-          ops: [{ op: 'merge', leadingPlacementId: left.id, trailingPlacementId: right.id }],
-        },
-      },
-    },
+    undo:
+      undoId === null
+        ? {
+            undoable: false,
+            reason: 'upstream_undo_defect',
+            revert: {
+              method: 'arrangement.edit',
+              params: {
+                expectedArrangementRevision: world.arrangement,
+                ops: [{ op: 'merge', leadingPlacementId: left.id, trailingPlacementId: right.id }],
+              },
+            },
+          }
+        : { undoable: true, undoId, description: 'Split clip', innerActions: ['splitClip'], steps: 1 },
     dirtyBefore,
-    warnings: [...warnings, warning('UPSTREAM_UNDO_DEFECT', subjectOf(placement))],
+    warnings: undoId === null ? [...warnings, warning('UPSTREAM_UNDO_DEFECT', subjectOf(placement))] : warnings,
   });
 }
 
@@ -615,7 +660,13 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
   world.removePlacement(leading);
   world.removePlacement(trailing);
   world.touchArrangement();
-  pushUnsafeEntry(world, 'clipMerge', 'Merge clips', 'mergeClips', [merged.trackId]);
+  const undoId = world.splitMergeUndo
+    ? pushSwapEntry(world, 'clipMerge', 'Merge clips', 'mergeClips', [merged.trackId], {
+        gone: [leading, trailing],
+        made: [merged],
+      })
+    : null;
+  if (undoId === null) pushUnsafeEntry(world, 'clipMerge', 'Merge clips', 'mergeClips', [merged.trackId]);
   world.markDirty();
   const diff = world.diff(before, world.capture());
   return envelope(world, {
@@ -634,24 +685,30 @@ function merge(context: MethodContext, op: Op, dryRun: boolean) {
     diff,
     contents: [],
     placements: [merged],
-    undo: {
-      undoable: false,
-      reason: 'upstream_undo_defect',
-      revert: splitsBack
+    undo:
+      undoId === null
         ? {
-            method: 'arrangement.edit',
-            params: {
-              expectedArrangementRevision: world.arrangement,
-              ops: [{ op: 'split', placementId: merged.id, atTimelineSec: boundary }],
-            },
+            undoable: false,
+            reason: 'upstream_undo_defect',
+            revert: splitsBack
+              ? {
+                  method: 'arrangement.edit',
+                  params: {
+                    expectedArrangementRevision: world.arrangement,
+                    ops: [{ op: 'split', placementId: merged.id, atTimelineSec: boundary }],
+                  },
+                }
+              : null,
           }
-        : null,
-    },
+        : { undoable: true, undoId, description: 'Merge clips', innerActions: ['mergeClips'], steps: 1 },
     dirtyBefore,
-    warnings: [
-      warning('UPSTREAM_UNDO_DEFECT', subjectOf(leading)),
-      ...(splitsBack ? [] : [warning('IRREVERSIBLE', subjectOf(leading))]),
-    ],
+    warnings:
+      undoId === null
+        ? [
+            warning('UPSTREAM_UNDO_DEFECT', subjectOf(leading)),
+            ...(splitsBack ? [] : [warning('IRREVERSIBLE', subjectOf(leading))]),
+          ]
+        : [],
   });
 }
 
@@ -687,7 +744,7 @@ function deleteClips(context: MethodContext, op: Op, params: Readonly<Record<str
   const tracks = [...new Set(doomed.map((p) => p.trackId))];
   for (const placement of doomed) world.removePlacement(placement);
   world.touchArrangement();
-  pushUnsafeEntry(world, 'clipDelete', 'Delete clips', 'deleteClips', tracks);
+  const deleteSeq = pushUnsafeEntry(world, 'clipDelete', 'Delete clips', 'deleteClips', tracks);
   world.markDirty();
   const diff = world.diff(before, world.capture());
   return envelope(world, {
@@ -696,12 +753,24 @@ function deleteClips(context: MethodContext, op: Op, params: Readonly<Record<str
     removed,
     diff,
     contents: [],
-    undo: { undoable: false, reason: 'upstream_undo_defect', revert: null },
+    // The known implementation behaviour (PROTOCOL.md section 15.4 rule 1): a server may report the delete as undoable
+    // although edit.undo refuses its entry. The undoId names that entry; it is not a way back.
+    undo: world.deleteReportsUndoable
+      ? {
+          undoable: true,
+          undoId: world.undoIdOf(deleteSeq),
+          description: 'Delete clips',
+          innerActions: ['deleteClips'],
+          steps: 1,
+        }
+      : { undoable: false, reason: 'upstream_undo_defect', revert: null },
     dirtyBefore,
-    warnings: [
-      warning('UPSTREAM_UNDO_DEFECT', doomed[0] === undefined ? null : subjectOf(doomed[0])),
-      warning('IRREVERSIBLE', doomed[0] === undefined ? null : subjectOf(doomed[0])),
-    ],
+    warnings: world.deleteReportsUndoable
+      ? []
+      : [
+          warning('UPSTREAM_UNDO_DEFECT', doomed[0] === undefined ? null : subjectOf(doomed[0])),
+          warning('IRREVERSIBLE', doomed[0] === undefined ? null : subjectOf(doomed[0])),
+        ],
   });
 }
 

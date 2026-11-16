@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "edit/undo-ok",
   "type": "scenario",
-  "description": "Undo of a pitch shift made through this API. The result describes the effect (semitones back from 2 to 0), creates no undo entry of its own and gives edit.redo with the same undoId as revert recipe.",
+  "description": "Undo of a pitch shift made through this API. The result describes the effect (semitones back from 2 to 0), creates no undo entry of its own and gives edit.redo with the same undoId as revert recipe. The revision token is only checked to be there: since 1.1 a pitch shift may change it (PROTOCOL.md section 10 rule 2).",
   "capability": "history.v1",
   "extraCapabilities": ["edit.v1"],
   "since": "1.0",
@@ -101,7 +101,7 @@
             "contents": [
               {
                 "contentId": { "$ref": "clip.contentId" },
-                "revision": { "$ref": "clip.revision" },
+                "revision": { "$any": "string" },
                 "gridRevision": { "$ref": "clip.gridRevision" },
                 "keyRevision": { "$ref": "clip.keyRevision" }
               }

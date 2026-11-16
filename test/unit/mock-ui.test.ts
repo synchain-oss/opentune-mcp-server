@@ -844,6 +844,31 @@ describe('a window-less run (no editor window)', () => {
     expect(await muted()).toBe(true);
   });
 
+  it('refuses the writes that the editor carries out as well in the wide scope (the reference implementation since 1.1)', async () => {
+    const session = await sessions.open();
+    const { mock, ok, fails } = session;
+    mock.given({ visibleTrackCount: 2, clips: [clip({ bind: 'a', trackId: 0 })] });
+    const before = await observed(session);
+    mock.setNoEditor(true, 'all');
+    for (const [method, params] of [
+      ['track.set', { tracks: [{ trackId: 0, muted: true }] }],
+      ['transport.control', { action: 'play' }],
+      ['transport.setTempo', { bpm: 100 }],
+      ['transport.setLoop', { enabled: false }],
+      ['edit.undo', { force: true }],
+      ['edit.redo', { force: true }],
+    ] as const) {
+      expect(await fails(method, params), method).toMatchObject({
+        data: { kind: 'UNSUPPORTED', reason: 'no_editor_window', executed: false },
+      });
+    }
+    // Reads and the methods that do not need the editor still work, and nothing changed.
+    expect(await ok('prefs.get')).toHaveProperty('onboardingShown');
+    expect(await observed(session)).toEqual(before);
+    mock.setNoEditor(false);
+    expect(await ok('track.set', { tracks: [{ trackId: 0, muted: true }] })).toMatchObject({ applied: true });
+  });
+
   it('works again with an editor window: the same selection that was refused is applied', async () => {
     const session = await sessions.open();
     const { mock, ok } = session;

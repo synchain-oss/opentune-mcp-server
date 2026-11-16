@@ -66,6 +66,49 @@ describe('error kinds', () => {
     );
   });
 
+  // The reasons that specification 1.1.0 added for what an agent can meet: who acts, whether the same call may be
+  // repeated, and the one sentence that tells the agent what to do. None of them is retryable; render_unavailable has
+  // the kind NOT_READY, which is retryable by default, and its entry overrides that.
+  it.each([
+    {
+      kind: 'MODEL_UNAVAILABLE',
+      reason: 'vocoder_weight_rejected',
+      actor: 'user',
+      phrases: [/refused to queue the change of the vocoder weight/, /opentune_get_settings/, /does not help/],
+    },
+    {
+      kind: 'MODEL_UNAVAILABLE',
+      reason: 'backend_change_rejected',
+      actor: 'user',
+      phrases: [/refused to queue the change of the rendering priority/, /opentune_get_settings/, /does not help/],
+    },
+    {
+      kind: 'NOT_READY',
+      reason: 'render_unavailable',
+      actor: 'agent',
+      phrases: [/nothing was written/, /do not repeat the call unchanged/, /opentune_get_project/],
+    },
+    {
+      kind: 'RENDER_FAILED',
+      reason: 'stretch_failed',
+      actor: 'user',
+      phrases: [/time-stretched audio/, /wrote nothing/, /Tell the user/],
+    },
+    {
+      kind: 'NOT_FOUND',
+      reason: 'content_unavailable',
+      actor: 'agent',
+      phrases: [/no longer in the project/, /opentune_get_project/, /export again/],
+    },
+  ] as const)('gives $kind($reason) its own step: actor $actor, not retryable', ({ kind, reason, actor, phrases }) => {
+    const step = kindStep(kind, reason);
+    expect(step.retryable).toBe(false);
+    expect(step.nextStep.actor).toBe(actor);
+    for (const phrase of phrases) expect(step.nextStep.message).toMatch(phrase);
+    // The step is the reason's own, not the default step of the kind.
+    expect(step.nextStep).not.toEqual(kindStep(kind, null).nextStep);
+  });
+
   it('tells the user to start OpenTune with its window for no_editor_window', () => {
     const noWindow = kindStep('UNSUPPORTED', 'no_editor_window');
     expect(noWindow.nextStep.actor).toBe('user');

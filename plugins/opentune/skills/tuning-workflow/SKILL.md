@@ -54,12 +54,15 @@ These tools edit the timeline around the vocal. Use them only when the user asks
 tuning.
 
 - `opentune_edit_arrangement`: `move`, `trim`, `gain` and `fade` run in order as one undo step;
-  preview them with `dry_run: true`. `split`, `merge`, `delete` and `copy` each go in a call of their own, and they
-  cannot be undone (OpenTune frees objects its own undo step needs). **Split, merge, delete or copy only when the user asked for
+  preview them with `dry_run: true`. `split`, `merge`, `delete` and `copy` each go in a call of their own. `delete` and
+  `copy` cannot be undone (OpenTune frees objects its own undo step needs); a `split` or `merge` cannot be undone on
+  some OpenTune builds for the same reason, and the result says which (an undo id, or a first sentence saying it cannot
+  be undone). **Split, merge, delete or copy only when the user asked for
   that step**, such as "cut the clip at 12 s"; then name the clips it will affect in your reply. If the user did not ask
   for it, or which clip is meant is unclear, ask once first. `delete` also needs `confirm: true`, which the user's own
   request for the deletion provides. Every call returns the new `arrangement_revision`: pass it to the next call. Never
-  undo a split, merge or delete, and do not suggest doing it in the OpenTune window either: it can make audio vanish.
+  undo a delete, and do not suggest doing it in the OpenTune window either: it can make audio vanish. Undo a split or
+  merge only with the undo id its result gave, and only when the user wants it back. `gain_db` is at most +12.04.
 - `opentune_set_tracks` changes mute, solo, volume, colour, hidden tracks and duplicates; `opentune_delete_track`
   cannot be undone and moves every later track down one position, so all old track ids change. Delete a track only when
   the user asked for that deletion, and then pass `confirm: true`; otherwise ask once first. The result lists how the

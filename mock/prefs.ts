@@ -225,6 +225,11 @@ function generatedNotesOf(result: Record<string, unknown>): string | null {
  * that is not ready although its command has ended could not load the new weight or backend: the job does not wait for
  * the limit and fails at once with MODEL_UNAVAILABLE(vocoder_load_failed). Notes that the switch to openDyne generated
  * cannot be taken back: a failed job keeps them, says so and reports executed true.
+ *
+ * With `World.prefsFailure` `keep` the job behaves as the reference implementation does since specification 1.1.0
+ * (PROTOCOL.md section 12.7 rule 5): it waits for the vocoder whether or not it was ready before, has no wait limit,
+ * and when the vocoder could not load the new values it fails at once with MODEL_UNAVAILABLE(vocoder_load_failed),
+ * keeps the new values, reports executed true and carries the write envelope of what it committed as its result.
  */
 function prefsApplyDriver(context: MethodContext): JobDriver {
   const { world } = context;
@@ -233,6 +238,7 @@ function prefsApplyDriver(context: MethodContext): JobDriver {
   let result: Record<string, unknown> = {};
   let generated: string | null = null;
   let deadline = 0;
+  const keeps = world.prefsFailure === 'keep';
   return () => {
     if (!started) {
       try {
@@ -244,7 +250,7 @@ function prefsApplyDriver(context: MethodContext): JobDriver {
         // well; that is intended: the later reconfiguration supersedes the earlier one, and both jobs end with it.
         const vocoderWasReady = world.vocoder.ready && !world.vocoder.reconfiguring;
         const changesVocoder = planned.some(({ setting }) => VOCODER_MEMBERS.includes(setting.name));
-        const waits = changesVocoder && vocoderWasReady;
+        const waits = changesVocoder && (keeps || vocoderWasReady);
         result = commit(context, planned);
         generated = generatedNotesOf(result);
         started = true;
@@ -262,6 +268,22 @@ function prefsApplyDriver(context: MethodContext): JobDriver {
     }
     if (world.vocoderSettled) return { done: { state: 'succeeded', result } };
     const loadFailed = world.vocoderLoadFailed;
+    if (keeps) {
+      // No wait limit: the job ends when the vocoder is ready or has failed to load, and it never takes anything back.
+      if (!loadFailed) return { next: VOCODER_POLL_MS };
+      return {
+        done: {
+          state: 'failed',
+          error: {
+            kind: 'MODEL_UNAVAILABLE',
+            reason: 'vocoder_load_failed',
+            detail: 'the vocoder could not load the new weight or backend; the new preferences are kept',
+            executed: true,
+          },
+          result,
+        },
+      };
+    }
     const left = deadline - world.now();
     if (!loadFailed && left > 0) return { next: Math.min(VOCODER_POLL_MS, left) };
     const kept = withdraw(context, planned);

@@ -13,7 +13,7 @@
     "expected_revision": "<arrangement_revision>"
   },
   "result": {
-    "summary": "opentune_edit_arrangement: dry run, nothing was changed; applying this delete cannot be undone (OpenTune cannot undo a clip split, merge or delete), and it needs confirm: true, so apply it only when the user asked for this step and named the clip or time, and ask first otherwise. It would remove 1 placement, 1 content (destructive).",
+    "summary": "opentune_edit_arrangement: dry run, nothing was changed; applying this delete cannot be undone (OpenTune cannot undo a clip delete), and it needs confirm: true, so apply it only when the user asked for this step and named the clip or time, and ask first otherwise. It would remove 1 placement, 1 content (destructive).",
     "applied": false,
     "noOp": false,
     "dryRun": true,
