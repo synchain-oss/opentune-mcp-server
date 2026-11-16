@@ -2,12 +2,13 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "arrangement/edit-split",
   "type": "request",
-  "description": "op split cuts a clip at 5 s, a frame boundary of its analysis, into two clips that replace it (removed, created, idMap relation split). OpenTune cannot undo a split (PROTOCOL.md section 15.4 rule 1): the server pushes the same undo entry as the UI and reports undo reason upstream_undo_defect with the warning UPSTREAM_UNDO_DEFECT. The revert recipe merges the two clips again.",
+  "description": "op split cuts a clip at 5 s, a frame boundary of its analysis, into two clips that replace it (removed, created, idMap relation split). On a server whose OpenTune cannot undo a clip split (a server of 1.0.0, PROTOCOL.md section 15.4 rules 1 and 8) the server pushes the same undo entry as the UI and reports undo reason upstream_undo_defect with the warning UPSTREAM_UNDO_DEFECT. The revert recipe merges the two clips again. The vector arrangement/edit-split-undoable shows the same call on a server that undoes it.",
   "capability": "arrangement.v1",
   "since": "1.0",
   "method": "arrangement.edit",
   "session": "authenticated",
   "given": {
+    "splitMergeUndo": false,
     "dirty": false,
     "clips": [
       {

@@ -386,6 +386,8 @@ export const readHandlers: Readonly<Record<string, Handler>> = {
     onboardingShown: world.prefs.onboardingShown,
     language: world.prefs.language,
     recentProjects: world.prefs.recentProjects.map((file) => ({ path: file, exists: fs.existsSync(file) })),
+    // Since 1.1; a server of 1.0.0 has no such member (World.accessibilityMode null).
+    ...(world.accessibilityMode === null ? {} : { accessibilityModeEnabled: world.accessibilityMode }),
   }),
 
   'app.getLog': ({ world, params, redact }) => {

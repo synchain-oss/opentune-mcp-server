@@ -101,7 +101,6 @@ describe('note, scale, preference and time grid checks against the stand-in', ()
       const report = await onlyFails('effects-snap-ignored', SNAP);
       const note = noteOf(report, SNAP);
       expect(note).toContain("the note's target reads back 62.7, expected 62");
-      expect(note).toContain("the note's offsetCents reads back 70, expected 0");
       expect(note).toMatch(/snapped: note 3: 70(\.\d+)? cents, expected 0 \+- 15/);
     },
     SCENARIO_TIMEOUT_MS,

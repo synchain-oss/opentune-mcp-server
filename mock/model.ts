@@ -192,6 +192,11 @@ export interface VocoderRec {
 
 /** The state an undo or redo step puts back. */
 export interface Patch {
+  /**
+   * A clip split or merge that OpenTune undoes (PROTOCOL.md section 15.4 rule 8): the clips the step takes away and
+   * the clips it brings back, which are the records themselves, so that they keep their original placementIds.
+   */
+  swap?: { remove: PlacementRec[]; revive: PlacementRec[] };
   /** Only the aspects in `snap` are put back; an aspect left out stays as it is. */
   content?: { objectId: number; snap: Partial<ContentSnap> };
   /** Only the properties in `state` are put back; a property left out stays as it is. */
@@ -348,9 +353,38 @@ export class World {
   readonly logLines: string[] = [];
   /** No OpenTune editor window exists, as in a window-less run: the methods that act through it refuse (PROTOCOL.md section 7 rule 6). */
   noEditor = false;
+  /** `all`: since 1.1 the writes in which the editor carries out the change refuse as well (mock/server.ts, NO_EDITOR_WIDE_METHODS). */
+  noEditorScope: 'ui' | 'all' = 'ui';
   readonly vocoder: VocoderRec = { ready: true, reconfiguring: false, commandPending: false };
   /** Test interface: the vocoder loads at the first render (setVocoderLoadOnDemand). */
   vocoderLoadOnDemand = false;
+  /**
+   * Whether OpenTune undoes a clip split and merge (PROTOCOL.md section 15.4 rule 8). The default follows the reference
+   * implementation since specification 1.1.0: both are undoable and keep their placementIds. A server that follows
+   * 1.0.0 reports them with upstream_undo_defect and refuses their entries; `given.splitMergeUndo` sets this.
+   */
+  splitMergeUndo = true;
+  /**
+   * Test interface: a clip delete reports `undo.undoable` true with an undoId, without UPSTREAM_UNDO_DEFECT and
+   * IRREVERSIBLE, while edit.undo still refuses its entry (PROTOCOL.md section 15.4 rule 1, known implementation
+   * behaviour). The default is the normative report.
+   */
+  deleteReportsUndoable = false;
+  /**
+   * Test interface: what a prefsApply job does when the vocoder does not take the new values (PROTOCOL.md section
+   * 12.7 rule 5). `rollback` (the default) is a server that follows 1.0.0: a wait limit, MODEL_UNAVAILABLE
+   * (vocoder_not_ready) and the changes taken back. `keep` is the reference implementation since 1.1: no wait limit,
+   * always waits for the vocoder, MODEL_UNAVAILABLE(vocoder_load_failed) at once and the new values stay.
+   */
+  prefsFailure: 'rollback' | 'keep' = 'rollback';
+  /**
+   * Test interface: a pitch shift (content.setPitchShift) also changes the `revision` token of the content, as the
+   * reference implementation does since 1.1 (PROTOCOL.md section 10 rule 2). Off by default: a server that follows 1.0.0
+   * leaves the revision as it was.
+   */
+  pitchShiftChangesRevision = false;
+  /** The root-level accessibility mode preference that prefs.get reports (since 1.1); null is a server of 1.0.0, which reports no such member. */
+  accessibilityMode: boolean | null = false;
   /**
    * Test interface (setGpuAvailable): whether the GPU can create the inference session. null: the mock reports no
    * backend, as before (processing.backend null, reason unavailable).
@@ -550,6 +584,14 @@ export class World {
       this.touchTrackState();
     }
     return revealed;
+  }
+
+  /** Puts a placement that was taken out back into the project, with its own placementId. */
+  revivePlacement(placement: PlacementRec): void {
+    this.placements.set(placement.serial, placement);
+    if (placement.trackId >= this.visibleTrackCount) this.setVisibleTrackCount(placement.trackId + 1);
+    placement.geometryHash = this.mint('h');
+    this.contents.set(placement.content.objectId, placement.content);
   }
 
   /** Takes a placement out of the project; its content goes with it when no other placement shows it. */

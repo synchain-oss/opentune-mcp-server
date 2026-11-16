@@ -2,12 +2,13 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "arrangement/edit-split-undo-refused",
   "type": "scenario",
-  "description": "After a split through this API, edit.getHistory shows the split's undo entry as unsafe, and edit.undo refuses it with UNSUPPORTED(undo_unsafe_build), because undoing it in OpenTune would remove the clips (PROTOCOL.md section 15.4 rule 1).",
+  "description": "On a server whose OpenTune cannot undo a clip split (a server of 1.0.0, PROTOCOL.md section 15.4 rules 1 and 8), after a split through this API edit.getHistory shows the split's undo entry as unsafe, and edit.undo refuses it with UNSUPPORTED(undo_unsafe_build), because undoing it in OpenTune would remove the clips. The vector arrangement/edit-split-undo-redo shows a server that undoes it.",
   "capability": "arrangement.v1",
   "extraCapabilities": ["history.v1"],
   "since": "1.0",
   "session": "authenticated",
   "given": {
+    "splitMergeUndo": false,
     "clips": [
       {
         "bind": "clip",

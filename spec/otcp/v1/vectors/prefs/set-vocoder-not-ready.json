@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "prefs/set-vocoder-not-ready",
   "type": "scenario",
-  "description": "How job.get reports a prefsApply job whose wait for the vocoder passed its limit: MODEL_UNAVAILABLE(vocoder_not_ready), retryable. The job took its changes back, so executed is false and prefs.get still reports the previous weight (PROTOCOL.md section 12.7 rule 5). The wait ends after a limit that the implementation chooses, which no vector can wait for, so the job is a precondition and this vector shows the form of the error.",
+  "description": "How job.get reports a prefsApply job whose wait for the vocoder passed its limit: MODEL_UNAVAILABLE(vocoder_not_ready), retryable. A server of 1.0.0 took its changes back, so executed is false and prefs.get reports the previous weight; since 1.1 a server may have no wait limit and never send this reason, and may keep the new values (PROTOCOL.md section 12.7 rule 5), so the vector checks that executed is a boolean and that prefs.get reports a weight, not which. The wait ends after a limit that the implementation chooses, which no vector can wait for, so the job is a precondition and this vector shows the form of the error.",
   "capability": "prefs.write",
   "extraCapabilities": ["jobs.v1"],
   "since": "1.0",
@@ -57,7 +57,7 @@
                 "reason": "vocoder_not_ready",
                 "retryable": true,
                 "detail": { "$any": "string" },
-                "executed": false
+                "executed": { "$any": "boolean" }
               }
             }
           }
@@ -77,7 +77,7 @@
         "jsonrpc": "2.0",
         "id": 2,
         "result": {
-          "processing": { "vocoderWeight": "hifigan.onnx" }
+          "processing": { "vocoderWeight": { "$any": "string" } }
         }
       }
     }

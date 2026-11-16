@@ -68,6 +68,11 @@ function mergeProcessing(
   const language = [info.language, prefs?.language].find((v): v is string => typeof v === 'string');
   merged.language = language ?? null;
   merged.onboardingShown = typeof prefs?.onboardingShown === 'boolean' ? prefs.onboardingShown : null;
+  // The accessibility mode is a root member of prefs.get since specification 1.1.0, and an optional one: a server of
+  // 1.0.0 does not report it, and then the member is left out, not null. opentune_set_settings does not set it (a server
+  // of 1.0.0 rejects the unknown param, and a new optional param needs a capability).
+  if (typeof prefs?.accessibilityModeEnabled === 'boolean')
+    merged.accessibilityModeEnabled = prefs.accessibilityModeEnabled;
   // The values opentune_set_settings accepts. Only prefs.get has them, and an instance of an earlier release
   // candidate of the specification does not report them: null with a reason, never an error.
   merged.options = isObject(prefsValues.options) ? withoutRetired(prefsValues.options) : null;
@@ -218,8 +223,8 @@ export const getSettingsTool = defineTool({
   description:
     'OpenTune (audio vocal pitch editor): reads the global settings of the installation, not of the project. ' +
     'sections: processing (A4 Hz, editing scheme, hybrid mode, vocoder weight and readiness, rendering priority, ' +
-    'pitch model, experimental features, language, onboarding shown, options: the ' +
-    'values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available ' +
+    'pitch model, experimental features, language, onboarding shown, accessibility mode if reported, options: ' +
+    'the values opentune_set_settings accepts), audio_device (device, sample rate Hz, buffer frames, available ' +
     'values; needs audio.device), recent (project paths), export_caps (import/export formats and limits), log ' +
     '(OpenTune log lines; only when asked). Default: all but log. Read-only.',
   inputSchema: z.strictObject({

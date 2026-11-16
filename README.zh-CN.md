@@ -15,12 +15,13 @@ OpenTune MCP Server 是由 [Synchain](https://www.synchain.ca) 主导的开源�
 
 ## 状态
 
-> **早期版本(0.2.0)。** npm 包 [`@synchain/opentune-mcp`](https://www.npmjs.com/package/@synchain/opentune-mcp)、Claude Code 插件与 MCPB 包都已发布,见 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases)。在官方 OpenTune 内置控制接口之前,本服务只能配合 OpenTune 的[非官方测试版](https://github.com/synchain-oss/OpenTune/releases)使用。工具名称从现在起固定;确需改名时,旧名以 deprecated 形式保留一个 minor 版本。
+> **早期版本(0.2.0)。** npm 包 [`@synchain/opentune-mcp`](https://www.npmjs.com/package/@synchain/opentune-mcp)、Claude Code 插件与 MCPB 包都已发布,见 [GitHub Releases](https://github.com/synchain-oss/opentune-mcp-server/releases)。控制接口已于 2026-11-16 合入上游 OpenTune([YuFeng926/OpenTune#52](https://github.com/YuFeng926/OpenTune/pull/52)),但默认关闭(CMake 选项 `OPENTUNE_ENABLE_CONTROL_API`),目前没有任何官方 OpenTune 发布版包含它(最新为 1.8.2)。在有发布版包含它之前,本服务仍然需要非官方构建的 OpenTune,已知能用的是 fork 的现有[测试版](https://github.com/synchain-oss/OpenTune/releases)。该 fork 不再维护,也不会再发布新的测试版;已有的测试版继续保留。协议规范 `1.1.0`(`spec/otcp/v1/`,尚未发布)同时描述了已合入上游代码的行为,这部分还没有在真实构建上验证过。工具名称从现在起固定;确需改名时,旧名以 deprecated 形式保留一个 minor 版本。
 
 | 环境 | 状态 |
 | --- | --- |
-| Windows x64,配合 [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) 的非官方 OpenTune 测试版(带控制接口) | 支持。 |
-| 官方 OpenTune 发布版(没有控制接口) | 不能用:`opentune_get_status` 报告 `NO_API_BUILD`。配置指向测试版、但实际开着的是官方 OpenTune 时,报告 `RUNNING_WITHOUT_API`。 |
+| Windows x64,配合 [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) 的非官方 OpenTune 测试版(带控制接口;已有的测试版继续保留,不再发布新的) | 支持。 |
+| 用 CMake 选项 `OPENTUNE_ENABLE_CONTROL_API` 打开后自行构建的上游 OpenTune | 预期可用,由规范 `1.1.0` 描述;还没有在真实构建上验证过。 |
+| 官方 OpenTune 发布版(已合入的控制接口尚未进入任何发布版,所以没有控制接口) | 不能用:`opentune_get_status` 报告 `NO_API_BUILD`。配置指向测试版、但实际开着的是官方 OpenTune 时,报告 `RUNNING_WITHOUT_API`。 |
 | Apple 芯片：配合 macOS 测试版（`synchain-test/v1.8.0-ctl.3` 起），需要 macOS 13.3 或更新 | 预发布阶段的支持。测试版没有经过公证(notarize),首次启动需要手动放行,见[排障](docs/TROUBLESHOOTING.zh-CN.md#macos-first-start-blocked-by-gatekeeper)。不支持 Intel 的 Mac。 |
 | Linux | 不支持:OpenTune 本身没有 Linux 版。 |
 | WSL | 服务必须用 Windows 上的 Node.js 运行,见 [WSL](#wsl)。 |
@@ -234,7 +235,7 @@ opentune-mcp  (本仓库,Node.js,MIT)
 ## 已知限制
 
 - **混合模式与小幅修正。** OpenTune 首选项里的「混合模式:小修用dsp,大修用声码器」(英文界面为 Hybrid Mode: Small corrections use DSP, large corrections use vocoder)默认开启。修正量中小于 75 音分的部分走 DSP 移调而不是声码器,这是 OpenTune 自身的设计,在真实人声上这种小修正可能几乎听不出来。想让小修正也明显生效,请在 OpenTune 首选项里关闭该项,或让 agent 用 `opentune_set_settings`(`processing.hybrid_mode`)来关;它是 OpenTune 的全局设置而不是工程设置,关掉之后一直保持关闭,直到有人再把它打开。见[混合模式](docs/TROUBLESHOOTING.zh-CN.md#hybrid-mode)。
-- **有些修改不能撤销。** 导入音频、改片段的调性和时间网格的 `seed` 不能撤销。拆分、合并、删除片段也不能撤销,这是 OpenTune 的缺陷(它释放了自己的撤销条目还要用的对象);复制片段和删除轨道同样不能撤销。静音、独奏、音量、颜色、速度、拍号和全局设置在 OpenTune 里没有撤销条目。结果会在第一句话里写明,破坏性的操作 agent 会先问你,有办法还原时结果还会给出恢复原状的调用。
+- **有些修改不能撤销。** 导入音频、改片段的调性和时间网格的 `seed` 不能撤销。删除片段不能撤销,这是 OpenTune 的缺陷(它释放了自己的撤销条目还要用的对象),即使某个构建为删除报告了撤销步骤,agent 也把删除当作不可撤销。拆分、合并片段在测试版上出于同一缺陷也不能撤销;已合入的上游代码被描述为可以撤销它们(还没有在真实构建上验证过),具体以结果为准。复制片段和删除轨道同样不能撤销。静音、独奏、音量、颜色、速度、拍号和全局设置在 OpenTune 里没有撤销条目。结果会在第一句话里写明,破坏性的操作 agent 会先问你,有办法还原时结果还会给出恢复原状的调用。
 - **OpenTune 自己没有自动保存。** OpenTune 不会自己保存,撤销历史也不会存进工程文件。所以 agent 会在每一步之后写一个工程的自动副本(工程文件旁的 `<工程名>.autosave`,保留最新的 10 个)。副本不会改动你的工程文件,所以 OpenTune 关闭或崩溃时副本里的内容还在,但工程文件只在你要求或同意时才更新。规范 `1.0.0-rc.8` 之前的测试构建写不了副本:这时请在想保住成果时让 agent 保存。
 - **`RUNNING_WITHOUT_API` 只做了人工核对。** 「运行着没开控制接口的官方 OpenTune」这一状态是人工验证的,没有自动化测试。
 - **源目录只读。** 不给 `path` 的导出会写在源文件旁。该目录只读时导出会报错,不会自动换目录。请指定一个可写的 `path`。
@@ -245,9 +246,9 @@ opentune-mcp  (本仓库,Node.js,MIT)
 ## 与 OpenTune 的关系
 
 - [OpenTune](https://github.com/YuFeng926/OpenTune) 是一款开源的 AI 修音软件。OpenTune 是 DAYA STUDIO 的项目,采用 AGPL-3.0 许可证,唯一的官方发布渠道是 [YuFeng926/OpenTune](https://github.com/YuFeng926/OpenTune)。
-- OpenTune 作者认可这一做法:我们在自己的 fork [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) 中开发控制接口,它是新增的代码,接口关闭时不改变 OpenTune 的行为;我们计划向上游项目提议合入。这不代表它成为 OpenTune 的官方功能,是否合入、如何合入由作者决定。
+- OpenTune 作者认可这一做法,控制接口已于 2026-11-16 合入上游 OpenTune([YuFeng926/OpenTune#52](https://github.com/YuFeng926/OpenTune/pull/52))。它是新增的代码,接口关闭时不改变 OpenTune 的行为:默认关闭(CMake 选项 `OPENTUNE_ENABLE_CONTROL_API`),目前没有官方发布版包含它(最新为 1.8.2),所以在有发布版包含它之前,它还不是能从发布版里拿到的 OpenTune 官方功能。我们最初在自己的 fork [synchain-oss/OpenTune](https://github.com/synchain-oss/OpenTune) 中开发它;该 fork 不再维护,也不会再发布新的测试版,已有的测试版继续保留。规范 `1.1.0` 同时描述了已合入上游代码的行为,这部分还没有在真实构建上验证过。
 - 本仓库不含 OpenTune 源码,也不含模型权重。
-- 在控制接口进入 OpenTune 官方发布版之前,打过补丁的构建是非官方测试版。它不含模型权重,使用你官方 OpenTune 安装里的模型。
+- 在控制接口进入 OpenTune 官方发布版之前,带控制接口的构建是非官方构建:现有的测试版之一,或用上游代码打开该选项后自行构建的版本。它不含模型权重,使用你官方 OpenTune 安装里的模型。
 - OpenTune MCP Server 是 Synchain 的项目,不是 OpenTune 或 DAYA STUDIO 的官方产品。
 
 ## 文档

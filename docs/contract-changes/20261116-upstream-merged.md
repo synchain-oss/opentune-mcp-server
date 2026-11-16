@@ -1,0 +1,127 @@
+# Contract change: the control API is merged upstream, specification 1.1.0
+
+- Date: 2026-11-16
+- Frozen surface: `spec/otcp/v1/**` (`PROTOCOL.md`, `README.md`, `CHANGELOG.md`, `SECURITY.md`, the method schemas, the
+  registries `reasons.json` and `warnings.json`, the schemas `common`, `registry` and `vector`, the vectors and their
+  README), `test/golden/**` (the tool catalogue and four write-envelope goldens, three new ones), `docs/reference.md`
+  and `mcpb/manifest.json` (both generated from the catalogue).
+- Specification version: `1.0.0` becomes `1.1.0` (CHANGELOG entry "1.1.0 - unreleased"; no tag `spec-v1.1.0`, the
+  maintainers set it). The wire version stays `1.0`. The package version of the server does not change.
+
+## Background
+
+The control API was merged into upstream OpenTune on 2026-11-16 (YuFeng926/OpenTune#52) and was then reworked by its
+author, who removed the copy of this specification and its tests from the repository. The maintainer agreed that the MCP
+server and the specification follow the code that was merged. The control API is off by default there (CMake option
+`OPENTUNE_ENABLE_CONTROL_API`) and no official release includes it yet (the latest is 1.8.2), so a client still needs an
+unofficial build. The fork is no longer maintained and publishes no new test builds; `synchain-test/v1.8.0-ctl.1` to
+`ctl.3` stay and behave as specification `1.0.0` says, so both kinds of server have to work.
+
+Specification `1.1.0` was written from the source of the merged code (`standalone` at `86bf698`) and from the notes of
+its author. **It has not been verified against a real build.** The mock follows the text only in part (see "What the mock models" below). Where the notes are the only
+source, the text is cautious (`MAY` for the server, `MUST NOT assume` for the client), and the vectors that depend on a
+behaviour name it in a precondition so that a runner that cannot establish it skips them.
+
+## Changes of meaning, recorded as a minor version
+
+By the rules of section 2 of the specification, a change of what a rule meant needs a new major version. The following
+changes would be major under those rules. They are recorded as a minor version, because the reference implementation
+already behaves this way and a second major version would split a protocol that has one implementation; the rules are
+loosened (`a server MAY ...`, and `a client MUST NOT assume ...`), not replaced. A client that did what `1.0.0` told it
+to do (read `undo`, `executed` and the warnings of a result, and take tokens from results) keeps working; one that
+assumed the old behaviour may not. Whether to keep this classification is the maintainers' decision.
+
+| Topic                              | Specification 1.0.0                                                 | Specification 1.1.0                                                                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Undo of a clip split and merge     | Never undoable (`upstream_undo_defect`, `IRREVERSIBLE`).            | A server MAY undo them; the result says so (`undo.undoable`, `undoId`), and `edit.undo` and `edit.redo` handle the entries. A client reads the result. |
+| A failed `prefs.set` job           | The job takes its changes back (`executed` false).                  | A server MAY keep the new values (`executed` true, `committed` write envelope on the failed job). A client reads `executed`, then `prefs.get`.         |
+| The wait of an export              | A limit of 120 s (`export_wait_timeout`, `export_stretch_dropped`). | A server MAY wait without a limit and fail at once (`content_unavailable`, `render_unavailable`, `stretch_failed`). A client uses its own limit.       |
+| Pitch shift and the revision token | `revision` does not change.                                         | A server MAY change it. A client takes tokens from results.                                                                                            |
+| `snapToScale` and `offsetCents`    | Ties break upwards, `offsetCents` is 0.                             | A server MAY keep the base pitch and set `offsetCents`. A client compares `targetMidi`.                                                                |
+| Methods that need an editor window | A fixed list.                                                       | A server MAY refuse also `track.set`, the transport methods, `edit.undo` and `edit.redo` with `UNSUPPORTED(no_editor_window)`.                         |
+| Clip gain (`setGain`)              | The server limits it and reports `CLAMPED`.                         | A server SHOULD limit it; the reference implementation applies any finite value as given.                                                              |
+
+A clip delete is a known difference between the text and the implementation, not a second allowed behaviour: the text
+keeps "not undoable, with `UPSTREAM_UNDO_DEFECT` and `IRREVERSIBLE`", and a note says that the reference implementation
+reports a delete as undoable while `edit.undo` and `edit.redo` still refuse the entry. A client treats a delete as
+irreversible whatever `undo` says.
+
+## Changes
+
+| File                                                                                                                                                                                                                                                                   | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `spec/otcp/v1/PROTOCOL.md`                                                                                                                                                                                                                                             | Status `1.1.0`; section 2.1 rule 4 (the wire version stays `1.0`); rules in sections 7, 10, 12.7, 13.2, 15.2 to 15.4, 19 and 20.2 loosened as in the table above.                                                                                                                                                                                                                                                                                                                                                        |
+| `spec/otcp/v1/README.md`, `CHANGELOG.md`, `SECURITY.md`                                                                                                                                                                                                                | Current version `1.1.0` (not released); the CHANGELOG entry says that it was not checked against a running build and which clauses are major under the 1.0 rules; `SECURITY.md` item 5 follows the undo of split and merge.                                                                                                                                                                                                                                                                                              |
+| `spec/otcp/v1/methods/*.schema.json` (`app.quit`, `arrangement.edit`, `content.editNotes`, `edit.undo`, `edit.redo`, `export.start`, `import.start`, `prefs.get`, `prefs.set`, `ui.getState`)                                                                          | Descriptions follow the loosened rules. `prefs.get` gains the optional root member `accessibilityModeEnabled` (boolean). `prefs.set` defines no parameter for it, because a server of `1.0.0` rejects an unknown parameter and a new optional parameter needs a capability (section 2.2 rule 1).                                                                                                                                                                                                                         |
+| `spec/otcp/v1/registry/reasons.json`                                                                                                                                                                                                                                   | Appended: `content_unavailable`, `render_unavailable`, `stretch_failed`, `editor_unavailable`, `track_not_found`, `vocoder_weight_rejected`, `backend_change_rejected` (all `since` `1.0`, wording says `1.1.0`). `export_wait_timeout`, `export_stretch_dropped` and `vocoder_not_ready` gain `notEmittedSince` `1.1.0`; nothing is removed.                                                                                                                                                                            |
+| `spec/otcp/v1/registry/warnings.json`                                                                                                                                                                                                                                  | `IMPORT_COMMIT_REPEATED` gains `notEmittedSince`; the texts of `CLAMPED` and `UPSTREAM_UNDO_DEFECT` follow the new rules.                                                                                                                                                                                                                                                                                                                                                                                                |
+| `spec/otcp/v1/schemas/registry.schema.json`, `vector.schema.json`, `common.schema.json`                                                                                                                                                                                | New optional registry member `notEmittedSince`; new vector precondition `given.splitMergeUndo`; `historyEntry.unsafe` description.                                                                                                                                                                                                                                                                                                                                                                                       |
+| `spec/otcp/v1/vectors/**`                                                                                                                                                                                                                                              | New: `arrangement/edit-split-undoable`, `edit-split-merge-undoable`, `edit-split-undo-redo`, `edit/undo-ui-split` (need `given.splitMergeUndo` true). Existing split and merge vectors name `false`. Changed to allow both behaviours: `app/quit-busy-export`, `content/edit-notes-busy-export`, `content/edit-notes-snap-to-scale`, `content/set-pitch-shift-ok`, `edit/undo-ok`, `edit/redo-ok`, `export/start-busy-export`, `prefs/set-vocoder-load-failed`, `prefs/set-vocoder-not-ready`, `edit/undo-unsafe-build`. |
+| `src/tools/edit-arrangement.ts`, `src/render/revert.ts`, `src/tools/history.ts`                                                                                                                                                                                        | A split or merge is rendered from the result (`undo`, warnings): undoable with an undo line on a server that reports it, otherwise as before. A delete is always rendered as irreversible and its undo id is never offered. `gain_db` above +12.04 dB (4 times the original level, the largest track volume of the interface) is refused before anything is sent, with an error that names the limit. The tool description and the undo tool describe both behaviours.                                                   |
+| `src/errors/next-step.ts`, `src/errors/reason-retryable.ts`                                                                                                                                                                                                            | A failed `prefs.set` job no longer claims that OpenTune took the changes back: the next step is to read the settings and `executed`. The retryability table follows the registry (new reasons; entries the reference implementation no longer sends are kept).                                                                                                                                                                                                                                                           |
+| `src/tools/settings.ts`, `src/tools/set-settings.ts`                                                                                                                                                                                                                   | `opentune_get_settings` shows `accessibilityModeEnabled` when the build reports it. `opentune_set_settings` does not set it. A failed `prefs.set` job that carries a write result puts it into the error context (`committed_before_failure`), rendered with the wording of a weight that has not loaded, so the agent sees what stayed and does not assume a rollback; the rendering-priority sentence says that a render normally does not follow.                                                                     |
+| `src/tools/quit.ts`                                                                                                                                                                                                                                                    | The unsupported message no longer says that closing the window never asks; when the exit was not seen, the summary adds that the window may be asking the user and that OpenTune keeps running with its interface stopped until then.                                                                                                                                                                                                                                                                                    |
+| `mock/*.ts`, `test/contract/exe-given.ts`                                                                                                                                                                                                                              | By default the mock follows the merged code in two things only: a clip split and merge are undoable (`splitMergeUndo`), and `prefs.get` reports the accessibility mode (`accessibilityMode`). The rest of the merged behaviour is behind test hooks (`prefsFailure`, `noEditorScope`, `pitchShiftChangesRevision`, `deleteReportsUndoable`) and stays at `1.0.0` by default; some is not modelled at all (see "What the mock models").                                                                                   |
+| `test/golden/tools-list.json`, `test/golden/arrangement/*.json`, `test/golden/track-tools/quit-unsupported.json`                                                                                                                                                       | Regenerated with `npm run catalog:update`; new goldens `split-undo-defect`, `merge-undo-defect` (the old behaviour, kept as a test) and `delete-reported-undoable`.                                                                                                                                                                                                                                                                                                                                                      |
+| `test/unit/**`, `test/e2e/wave-b-tour.ts`, `wave-b-boundary.ts`, `effects.ts`                                                                                                                                                                                          | Tests for both behaviours. The real-build scenarios accept either behaviour of split and merge; the gain step of the wave-B tour is unchanged and expects the older clamping (see `docs/real-opentune-testing.md`).                                                                                                                                                                                                                                                                                                      |
+| `docs/reference.md`, `mcpb/manifest.json`                                                                                                                                                                                                                              | Generated from the catalogue.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `README.md`, `README.zh-CN.md`, `docs/COMPATIBILITY.md`, `docs/TROUBLESHOOTING.md`, `docs/TROUBLESHOOTING.zh-CN.md`, `docs/features.md`, `docs/features.zh-CN.md`, `docs/real-opentune-testing.md`, `plugins/opentune/skills/tuning-workflow/SKILL.md`, `CHANGELOG.md` | Status text (merged upstream 2026-11-16, off by default, no official release yet, the fork is no longer maintained and publishes no new test builds, not verified against a real build); a compatibility row for upstream `standalone` at `86bf698`; undo wording; the rollback claims for failed settings jobs; the new reasons.                                                                                                                                                                                        |
+
+## Compatibility
+
+- **Old client, server of 1.0.0:** unchanged. The wire version is `1.0` on both sides and no method, parameter or
+  required member is added.
+- **Old client, server that follows 1.1.0:** a client written for `1.0.0` that follows the rules of `1.0.0` (read
+  `undo`, `executed` and the warnings; take tokens from results) works. A client that assumed that a split is never
+  undoable, that a failed settings job takes its changes back, that an export ends within 120 s or that a pitch shift
+  leaves `revision` alone may be wrong on such a server.
+- **New client (this server), server of 1.0.0 (the test builds `ctl.1` to `ctl.3`):** works as before. It renders split
+  and merge from the result, so it says that they cannot be undone on these builds. One request is refused on both kinds
+  of server for a reason that comes from the interface: a `gain_db` above +12.04 dB, which a server of `1.0.0` would have
+  clamped and reported as `CLAMPED`.
+- **New client, server that follows 1.1.0:** works as the text describes; this has not been verified against a real build.
+- **`accessibilityModeEnabled`:** `opentune_get_settings` shows it when `prefs.get` reports it and leaves it out
+  otherwise (a server of `1.0.0` never reports it). `opentune_set_settings` does not set it, because `prefs.set` defines
+  no parameter for it.
+- **Copy of the specification in the fork:** the fork's copy is locked by hash; it is not updated here. The fork is no
+  longer maintained.
+
+## Decisions and deferred items
+
+- **Classification.** The merged implementation reports wire version `1.0` and protocol major 1, so the specification
+  cannot move to `2.0`; the changes of meaning above stay in `1.1.0`, with the disclosure in the CHANGELOG entry and in
+  this document.
+- **Retryability of the new reasons.** None of them is retryable. `render_unavailable` has the kind `NOT_READY`, which
+  is retryable by default, and the reference implementation marks it not retryable explicitly, so the registry says
+  "Not retryable" and the server's table (`src/errors/reason-retryable.ts`) follows it. `content_unavailable` is
+  `NOT_FOUND` and `stretch_failed` is `RENDER_FAILED`.
+- **Clip gain limit.** +12.04 dB is 4.0 linear, exactly the limit that a server of `1.0.0` clamped to; it mirrors the
+  range of the track volume knob of OpenTune's interface. The tool refuses a larger value before it sends it, so the
+  result is the same on both kinds of server.
+- **`accessibilityModeEnabled` stays read-only.** `opentune_get_settings` shows it; `opentune_set_settings` does not set
+  it, although the reference implementation accepts it in `prefs.set`. Defining a parameter for it needs a capability
+  (section 2.2 rule 1), which a later specification card may add. Deferred.
+- **Runners for a real build.** The scenarios that run against a started OpenTune (`arrangement/edit-delete` of the
+  vectors, the delete check of the boundary scenario, the gain step of the wave-B tour) are left as they are: a build
+  that reports a delete as undoable, or applies a gain as given, fails them. They are adapted when they are first run
+  against an upstream build, after the author's next release.
+
+## What the mock models
+
+The mock does not follow the merged code across the board.
+
+- **Follows the merged code by default:** a clip split and merge are undoable and keep their placement ids
+  (`splitMergeUndo` is true; `given.splitMergeUndo` sets it), and `prefs.get` reports `accessibilityModeEnabled`
+  (`accessibilityMode` is false; null is a server of `1.0.0`, which reports no such member).
+- **Stays at the behaviour of `1.0.0` by default, with the merged behaviour behind a test hook:** a failed `prefs.set`
+  job takes its changes back (`prefsFailure` is `rollback`; `keep` is the merged behaviour); only the methods of the
+  window itself need an editor window (`noEditorScope` is `ui`; `all` is the merged behaviour); a pitch shift leaves
+  the revision token alone (`pitchShiftChangesRevision` is false); a clip delete is reported as not undoable
+  (`deleteReportsUndoable` is false; true is the behaviour that the reference implementation is known to have).
+- **Stays at `1.0.0`, no hook:** the export (`mock/export.ts`) keeps its wait limit of 120 s and sends
+  `export_wait_timeout`.
+- **Not modelled yet:** the mock never sends the reasons `content_unavailable`, `render_unavailable`,
+  `stretch_failed`, `editor_unavailable`, `track_not_found`, `vocoder_weight_rejected` or
+  `backend_change_rejected`. The next steps for the five that an agent can meet (`vocoder_weight_rejected`,
+  `backend_change_rejected`, `render_unavailable`, `stretch_failed`, `content_unavailable`) are covered by a unit
+  test of `src/errors/next-step.ts` only.

@@ -104,7 +104,7 @@ const revertLine = (out: Record<string, unknown>) => (out.lines as RevertLine[])
 
 describe('declaration', () => {
   it('is a destructive write tool, neither read-only nor idempotent, on arrangement.v1', () => {
-    // Destructive: delete can be neither undone nor restored, split and merge cannot be undone.
+    // Destructive: delete can be neither undone nor restored, split and merge cannot be undone on some builds.
     expect(editArrangementTool.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
@@ -117,8 +117,13 @@ describe('declaration', () => {
     expect(editArrangementTool.description).toMatch(/cannot be undone/);
     // A request that names the clip or the time is consent; the unclear and the unrequested are asked about first.
     expect(editArrangementTool.description).toMatch(
-      /do one when the user named the clip or time, else ask first; delete needs confirm/,
+      /Do one when the user named the clip or time, else ask first; delete needs confirm/,
     );
+    // Split and merge can be undone on some builds only, and the description says that the result tells which.
+    expect(editArrangementTool.description).toContain(
+      'delete and copy cannot be undone; split and merge cannot on some OpenTune builds, and the result says.',
+    );
+    expect(editArrangementTool.description).toContain('gain (at most +12.04 dB)');
     expect(editArrangementTool.description).toMatch(/timeline clock, seconds/);
     // Copying a clip range is not duplicating a track: the description points to the tool that duplicates a track.
     expect(editArrangementTool.description).toContain(
@@ -182,8 +187,8 @@ describe('every op against the mock', () => {
     expect(firstSentence(out.summary)).not.toContain('hidden tracks became visible');
   });
 
-  it('splits, reports the new clip ids, and merges them again with those ids', async () => {
-    const env = await setup();
+  it('splits, reports the new clip ids, and merges them again with those ids (a build with the undo defect)', async () => {
+    const env = await setup({ splitMergeUndo: false });
     const split = body(await editNow(env, { ops: [{ op: 'split', clip: id(env, 'b'), at_timeline_sec: 4 }] }));
     const created = (split.clip_ids as { created: string[]; removed: string[] }).created;
     expect(created).toHaveLength(2);
@@ -317,7 +322,12 @@ describe('what may share a call', () => {
     for (const op of structural) {
       const error = refusal([op, { op: 'fade', clip: B, fade_in_sec: 0.1 }]);
       expect(error.reason).toBe('op_not_alone');
-      expect(error.detail).toContain(`${op.op} cannot be undone, so it goes in a call of its own`);
+      // A delete cannot be undone on any build; a split or a merge cannot on some, so the text does not claim it.
+      expect(error.detail).toContain(
+        op.op === 'delete'
+          ? 'delete cannot be undone, so it goes in a call of its own'
+          : `${op.op} goes in a call of its own, because not every OpenTune build can undo it`,
+      );
     }
     expect(refusal([structural[0], structural[0]]).reason).toBe('op_not_alone');
   });
@@ -412,7 +422,7 @@ describe('dry_run', () => {
     const a = id(env, 'a');
     const ops = [
       { op: 'trim', clip: a, edge: 'end', to_timeline_sec: 1 },
-      { op: 'gain', clip: a, gain_db: 20 },
+      { op: 'gain', clip: a, gain_db: 12 },
       { op: 'move', clip: a, to_track_id: 1, start_timeline_sec: 1.5 },
     ];
     const revision = await env.revision();
@@ -425,7 +435,7 @@ describe('dry_run', () => {
     for (const member of ['changes', 'warnings', 'sideEffects', 'created', 'removed', 'changeTable'] as const) {
       expect(applied[member], member).toEqual(predicted[member]);
     }
-    expect(codes(applied)).toEqual(['FADES_RECLAMPED', 'CLAMPED', 'OVERLAPS_CLIP']);
+    expect(codes(applied)).toEqual(['FADES_RECLAMPED', 'OVERLAPS_CLIP']);
   });
 
   it('predicts a delete without confirm and the clips and content it would remove', async () => {
@@ -434,7 +444,7 @@ describe('dry_run', () => {
     const ops = [{ op: 'delete', clips: [id(env, 'b')] }];
     const predicted = body(await edit(env, { expected_revision: revision, ops, dry_run: true }));
     expect(firstSentence(predicted.summary)).toContain(
-      'applying this delete cannot be undone (OpenTune cannot undo a clip split, merge or delete), and it needs ' +
+      'applying this delete cannot be undone (OpenTune cannot undo a clip delete), and it needs ' +
         `confirm: true, so apply it ${WHEN}`,
     );
     expect(env.mock.snapshot().placements).toHaveLength(2);
@@ -443,12 +453,16 @@ describe('dry_run', () => {
     expect(applied.clip_ids).toEqual(predicted.clip_ids);
   });
 
-  it('predicts a split with the position it snaps to', async () => {
-    const env = await setup();
+  it('predicts a split with the position it snaps to (a build with the undo defect)', async () => {
+    const env = await setup({ splitMergeUndo: false });
     const revision = await env.revision();
     const ops = [{ op: 'split', clip: id(env, 'b'), at_timeline_sec: 3.004 }];
     const predicted = body(await edit(env, { expected_revision: revision, ops, dry_run: true }));
-    expect(firstSentence(predicted.summary)).toContain('applying this split cannot be undone');
+    // A preview cannot tell whether the build can undo the split, and does not say it cannot.
+    expect(firstSentence(predicted.summary)).toContain(
+      'whether this split can be undone depends on the OpenTune build',
+    );
+    expect(firstSentence(predicted.summary)).not.toContain('cannot be undone');
     const applied = body(await edit(env, { expected_revision: revision, ops }));
     expect(applied.warnings).toEqual(expect.arrayContaining(predicted.warnings as unknown[]));
     expect(firstSentence(applied.summary)).toContain(
@@ -459,8 +473,8 @@ describe('dry_run', () => {
 });
 
 describe('a split, merge or delete the user asked for', () => {
-  it('is done directly, and its first sentence names the undo defect and the way back', async () => {
-    const env = await setup();
+  it('is done directly, and its first sentence names the undo defect and the way back (a build with the defect)', async () => {
+    const env = await setup({ splitMergeUndo: false });
     const revision = await env.revision();
     // No preview and no question first: the user named the clip and the time.
     const split = body(
@@ -483,12 +497,132 @@ describe('a split, merge or delete the user asked for', () => {
     expect(structuralLead('merge', { dryRun: true })).toContain(`so apply it ${WHEN}`);
     expect(structuralLead('delete', { dryRun: true })).toContain(`needs confirm: true, so apply it ${WHEN}`);
     const text = editArrangementTool.description;
-    expect(text).toContain('do one when the user named the clip or time, else ask first');
+    expect(text).toContain('Do one when the user named the clip or time, else ask first');
     expect(text).not.toContain('ask the user first;');
     const properties = (
       z.toJSONSchema(editArrangementTool.inputSchema) as { properties: Record<string, { description?: string }> }
     ).properties;
     expect(properties.confirm?.description).toContain('when the user asked for the delete');
+  });
+});
+
+describe('split and merge on a build that can undo them', () => {
+  it('renders the undo step from the result, and opentune_undo takes the split and then the merge back', async () => {
+    const env = await setup();
+    const revision = await env.revision();
+    const split = body(
+      await edit(env, {
+        expected_revision: revision,
+        ops: [{ op: 'split', clip: id(env, 'b'), at_timeline_sec: 3.004 }],
+      }),
+    );
+    const lead = firstSentence(split.summary);
+    // Nothing in the result says it cannot be undone: the first sentence does not claim it, the undo line gives the id.
+    expect(lead).not.toContain('cannot be undone');
+    expect(split.summary).not.toContain('opentune_undo refuses it');
+    expect(codes(split)).toEqual(['SPLIT_SNAPPED']);
+    const undoLine = (split.lines as { kind: string; text: string; undoId?: string }[]).find((l) => l.kind === 'undo');
+    expect(undoLine?.text).toContain('Undoable as one step: undo it with opentune_undo, undo_id ');
+    expect(revertLine(split)).toBeUndefined();
+
+    const created = (split.clip_ids as { created: string[] }).created;
+    const merged = body(
+      await edit(env, {
+        expected_revision: split.arrangement_revision,
+        ops: [{ op: 'merge', leading_clip: created[0], trailing_clip: created[1] }],
+      }),
+    );
+    expect(firstSentence(merged.summary)).not.toContain('cannot be undone');
+    expect(env.mock.snapshot().placements).toHaveLength(2);
+
+    // Undo the merge, then the split: the clips come back with the ids they had.
+    const mergeUndo = (merged.undo as { undoId: string }).undoId;
+    body(await undoTool.run(undoTool.inputSchema.parse({ undo_id: mergeUndo }), env.ctx));
+    expect(
+      env.mock
+        .snapshot()
+        .placements.map((p) => p.id)
+        .sort(),
+    ).toEqual([id(env, 'a'), ...created].sort());
+    const splitUndo = (split.undo as { undoId: string }).undoId;
+    body(await undoTool.run(undoTool.inputSchema.parse({ undo_id: splitUndo }), env.ctx));
+    expect(
+      env.mock
+        .snapshot()
+        .placements.map((p) => p.id)
+        .sort(),
+    ).toEqual([id(env, 'a'), id(env, 'b')].sort());
+  });
+
+  it('keeps the wording of the defect when a build reports it, whichever build the tool met before', async () => {
+    const env = await setup({ splitMergeUndo: false });
+    const split = body(await editNow(env, { ops: [{ op: 'split', clip: id(env, 'b'), at_timeline_sec: 3.004 }] }));
+    expect(firstSentence(split.summary)).toContain('this split cannot be undone');
+    expect(split.undo).toMatchObject({ undoable: false, reason: 'upstream_undo_defect' });
+  });
+});
+
+describe('a delete that a build reports as undoable', () => {
+  it('is rendered as irreversible, and its undo id is never offered', async () => {
+    const env = await setup();
+    env.mock.setDeleteReportsUndoable(true);
+    const deleted = body(await editNow(env, { ops: [{ op: 'delete', clips: [id(env, 'a')] }], confirm: true }));
+    expect(firstSentence(deleted.summary)).toContain('this delete cannot be undone');
+    expect(firstSentence(deleted.summary)).toContain('no request can restore it either');
+    expect(deleted.undo).toEqual({ undoable: false, reason: 'upstream_undo_defect', revert: null });
+    expect(codes(deleted)).toEqual(['UPSTREAM_UNDO_DEFECT', 'IRREVERSIBLE']);
+    expect((deleted.lines as { kind: string }[]).some((l) => l.kind === 'undo')).toBe(false);
+    expect(JSON.stringify(deleted)).not.toMatch(/u:[0-9a-f]{8}:/);
+    expect(JSON.stringify(deleted)).not.toContain('Undoable as one step');
+    // The build refuses the entry all the same.
+    await expect(env.otcp('edit.undo', { force: true })).rejects.toMatchObject({
+      data: { kind: 'UNSUPPORTED', reason: 'undo_unsafe_build' },
+    });
+  });
+});
+
+describe('the largest clip gain', () => {
+  const A = 'p:01234567:0:1';
+  const REVISION = encodeArrangementRevision('a1');
+  const refusal = (gain: number) => {
+    const planned = planRequest(
+      editArrangementTool.inputSchema.parse({
+        expected_revision: REVISION,
+        ops: [{ op: 'gain', clip: A, gain_db: gain }],
+      }) as never,
+    );
+    return 'ok' in planned && !planned.ok ? planned.error : null;
+  };
+
+  it('refuses a gain above +12.04 dB before anything is sent, and names the limit', () => {
+    const error = refusal(12.05);
+    expect(error).toMatchObject({ kind: 'INVALID_ARGUMENT', reason: 'gain_out_of_range', executed: false });
+    expect(error?.detail).toContain('ops[0].gain_db');
+    expect(error?.detail).toContain('limit of +12.04 dB');
+    expect(error?.detail).toContain('raise the track volume with opentune_set_tracks');
+    expect(error?.detail).not.toContain('lower');
+    expect(refusal(200)).toMatchObject({ reason: 'gain_out_of_range' });
+  });
+
+  it('takes the limit itself, and every gain below it', () => {
+    expect(refusal(12.04)).toBeNull();
+    expect(refusal(0)).toBeNull();
+    expect(refusal(-60)).toBeNull();
+  });
+
+  it('sends nothing for a refused gain', async () => {
+    const env = await setup();
+    const out = await editNow(env, { ops: [{ op: 'gain', clip: id(env, 'a'), gain_db: 20 }] });
+    expect(failure(out)).toMatchObject({ reason: 'gain_out_of_range', executed: false });
+    expect(env.calls).toEqual(['project.get']);
+    expect(env.mock.snapshot().placements[0]?.gainLinear).toBe(1);
+  });
+
+  it('applies the limit as given: 4 times the original level, with no clamping', async () => {
+    const env = await setup();
+    const out = body(await editNow(env, { ops: [{ op: 'gain', clip: id(env, 'a'), gain_db: 12.04 }] }));
+    expect(codes(out)).not.toContain('CLAMPED');
+    expect(env.mock.snapshot().placements[0]?.gainLinear).toBeCloseTo(4, 2);
   });
 });
 

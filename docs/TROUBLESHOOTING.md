@@ -142,12 +142,17 @@ equals the current value but is no longer listed, for example when the weight fi
 ### Error NOT_FOUND
 
 The object no longer exists, or its id is out of date (ids change when a project is opened). Read the state again.
-Finished jobs are kept for 30 minutes.
+Finished jobs are kept for 30 minutes. The reason `content_unavailable` (specification `1.1.0`, the merged upstream
+code) means a clip of an export was removed while the export ran, and `track_not_found` that a track slot was gone when
+OpenTune carried out the change; read the project again and retry with what is left.
 
 ### Error NOT_READY
 
 OpenTune is still analysing the audio or generating notes. Wait and retry. Reasons `f0_failed` and `f0_empty` do not
-pass: the clip cannot be edited.
+pass: the clip cannot be edited. `export_wait_timeout` comes only from OpenTune builds that limit how long an export
+waits (the test builds); the merged upstream code waits without a limit, so give a job your own limit
+(`opentune_get_job`). Where it has no render of a clip it fails at once with `render_unavailable`, which is marked not
+retryable (do not repeat the call unchanged): check the clips, and tell the user if an export started later fails the same way.
 
 ### Error ANALYSIS_FAILED
 
@@ -155,19 +160,27 @@ OpenTune could not analyse the pitch of the audio.
 
 ### Error RENDER_FAILED
 
-OpenTune could not render the corrected audio, also after one automatic retry.
+OpenTune could not render the corrected audio, also after one automatic retry. The reason `stretch_failed` (the merged
+upstream code) means the time-stretched audio of a clip could not be rebuilt for an export; nothing was written, and
+exporting again later may work.
 
 ### Error MODEL_UNAVAILABLE
 
 A model or inference backend OpenTune needs is missing. Run `opentune-mcp doctor`.
 
 Two reasons come from a change of the vocoder weight or the rendering priority (`opentune_set_settings`), which
-OpenTune applies by a job that waits until the vocoder is ready again. In both cases OpenTune takes the changes back,
-and the result says so. `vocoder_not_ready` (retryable): the vocoder was still busy when OpenTune's wait limit passed;
-wait a little, then call again, and run `opentune-mcp doctor` if it keeps happening. `vocoder_load_failed` (not
-retryable): the vocoder could not load the new weight or backend, for example because the weight file is corrupt or
-incompatible; the previous settings are back, so sending the same value again does not help. Tell the user and check the
-models with `opentune-mcp doctor`.
+OpenTune applies by a job that waits until the vocoder is ready again. What the job does when the vocoder does not take
+the new values depends on the OpenTune build, so do not assume either behaviour: read the settings
+(`opentune_get_settings`) to see which values are in effect, and look at `executed` of the error. The test builds take
+the changes back in both cases and the result says so. `vocoder_not_ready` (retryable): the vocoder was still busy when
+OpenTune's wait limit passed; wait a little, then call again, and run `opentune-mcp doctor` if it keeps happening. The
+merged upstream code has no wait limit and never sends it. `vocoder_load_failed` (not retryable): the vocoder could not
+load the new weight or backend, for example because the weight file is corrupt or incompatible; sending the same value
+again does not help. The test builds put the previous settings back; the merged upstream code keeps the new values (the
+error then carries a `committed_before_failure` result with the call that restores the previous ones), so tell the user
+which values are in effect and check the models with `opentune-mcp doctor`. Two more reasons come from the merged
+upstream code: `vocoder_weight_rejected` and `backend_change_rejected` mean that OpenTune refused to queue the change
+(not retryable); the value stays as it was, except where `executed` says that another part of the call was kept.
 
 ### Error REVISION_CONFLICT
 
@@ -180,7 +193,7 @@ The undo history does not have the expected entry on top. Ask the user how to pr
 ### Error UNSAVED_CHANGES
 
 The request would discard unsaved changes. Ask the user whether to save or discard them. From `opentune_quit` the
-refusal is deliberate: the close button of the OpenTune window quits without asking, this tool does not. The agent writes a copy first with
+refusal is deliberate: the close button of the OpenTune window of the test builds quits without asking, this tool does not (the window of the merged upstream code asks, but the tool does not rely on that). The agent writes a copy first with
 `opentune_save_project` (mode `autosave`; a project that was never saved has no file for a copy) and then asks the user:
 save the project file (mode `save`, or `save_as` for a project that was never saved) and call `opentune_quit` again, or
 give the changes up. Only when the user explicitly agrees to lose the changes, call it with `discard_unsaved: true`.
@@ -221,7 +234,7 @@ read-only the export fails and the server does not choose another folder. Call `
 ### Error UNSUPPORTED
 
 OpenTune or this build does not offer the operation. With reason `capability_missing`, `detail` names the missing
-capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`. `opentune_manage_ui` with op `switch_view` needs the capability `ui.workspace`, which test builds before `1.0.0-rc.7` of the specification lack: switch the view in the OpenTune window (the arrangement view and piano roll buttons of the transport bar), or use a newer test build. `opentune_quit` needs the capability `app.quit`, which test builds before `1.0.0-rc.7` of the specification lack: write a copy with `opentune_save_project` (mode `autosave`), ask the user whether to save the project file, then ask the user to close the OpenTune window (the window closes without asking about unsaved changes). `opentune_save_project` with `mode: autosave` needs the capability `project.copy`, which test builds before `1.0.0-rc.8` of the specification lack: no copy is written; remind the user to save the project when they want to keep their work, or use a newer test build.
+capability; with `no_editor_window`, OpenTune is running without an editor window, so start OpenTune Standalone with its window and try again (the merged upstream code also gives it for track edits, transport, undo and redo, which work without a window on the test builds); with `undo_unsafe_build`, OpenTune cannot undo the top step safely: a clip delete, and on the test builds a clip split or merge; tell the user, do not force it; with `job_not_cancellable`, the job continues and can be followed with `opentune_get_job`. `opentune_manage_ui` with op `switch_view` needs the capability `ui.workspace`, which test builds before `1.0.0-rc.7` of the specification lack: switch the view in the OpenTune window (the arrangement view and piano roll buttons of the transport bar), or use a newer test build. `opentune_quit` needs the capability `app.quit`, which test builds before `1.0.0-rc.7` of the specification lack: write a copy with `opentune_save_project` (mode `autosave`), ask the user whether to save the project file, then ask the user to close the OpenTune window (on older OpenTune builds the window closes without asking about unsaved changes). `opentune_save_project` with `mode: autosave` needs the capability `project.copy`, which test builds before `1.0.0-rc.8` of the specification lack: no copy is written; remind the user to save the project when they want to keep their work, or use a newer test build.
 
 ### Error INTERNAL
 

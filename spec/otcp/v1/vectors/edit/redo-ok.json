@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "edit/redo-ok",
   "type": "scenario",
-  "description": "Redo of the undone pitch shift: semitones go from 0 to 2 again, and the revert recipe is edit.undo with the same undoId.",
+  "description": "Redo of the undone pitch shift: semitones go from 0 to 2 again, and the revert recipe is edit.undo with the same undoId. The revision token is only checked to be there: since 1.1 a pitch shift may change it (PROTOCOL.md section 10 rule 2).",
   "capability": "history.v1",
   "extraCapabilities": ["edit.v1"],
   "since": "1.0",
@@ -110,7 +110,7 @@
             "contents": [
               {
                 "contentId": { "$ref": "clip.contentId" },
-                "revision": { "$ref": "clip.revision" },
+                "revision": { "$any": "string" },
                 "gridRevision": { "$ref": "clip.gridRevision" },
                 "keyRevision": { "$ref": "clip.keyRevision" }
               }

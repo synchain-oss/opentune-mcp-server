@@ -4,7 +4,7 @@ OTCP is the local control interface built into OpenTune Standalone: JSON-RPC 2.0
 
 This directory is the complete specification of protocol major 1. It is licensed under the MIT License ([LICENSE](LICENSE)) so that it can be copied unchanged into any repository that implements it. Copies MUST be byte-identical; all files use UTF-8 without a byte order mark and LF line endings.
 
-Current version: `1.0.0` (see [CHANGELOG.md](CHANGELOG.md)).
+Current version: `1.1.0`, not released yet (the last release is `1.0.0`; see [CHANGELOG.md](CHANGELOG.md)). Specification `1.1.0` keeps the wire version `1.0` and describes both the servers that follow `1.0.0` and the reference implementation (PROTOCOL.md section 2.1 rule 4).
 
 ## Files
 

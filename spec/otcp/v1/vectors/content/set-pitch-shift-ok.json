@@ -2,7 +2,7 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "content/set-pitch-shift-ok",
   "type": "request",
-  "description": "A pitch shift of +2 semitones is one undo step. The key is not transposed with it (warning KEY_NOT_TRANSPOSED) and rendering is queued again. Only the pitchShift component of the revision vector changes; the tokens stay as they were.",
+  "description": "A pitch shift of +2 semitones is one undo step. The key is not transposed with it (warning KEY_NOT_TRANSPOSED) and rendering is queued again. Only the pitchShift component of the revision vector changes; the grid and key tokens stay as they were. A server that follows 1.0.0 leaves the revision token as it was as well; since 1.1 a server may change it (PROTOCOL.md section 10 rule 2), so the vector checks that the result reports one and not that it is the old one.",
   "capability": "edit.v1",
   "since": "1.0",
   "method": "content.setPitchShift",
@@ -73,7 +73,7 @@
         "contents": [
           {
             "contentId": { "$ref": "clip.contentId" },
-            "revision": { "$ref": "clip.revision" },
+            "revision": { "$any": "string" },
             "gridRevision": { "$ref": "clip.gridRevision" },
             "keyRevision": { "$ref": "clip.keyRevision" }
           }

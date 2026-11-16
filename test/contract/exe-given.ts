@@ -33,6 +33,7 @@ const MEMBER_REASONS: Readonly<Record<string, string>> = {
   jobs: 'no request makes a job of a given kind and state',
   withoutCapabilities: 'a started build cannot hide a capability it has',
   editingScheme: 'it would change the preferences of the machine',
+  splitMergeUndo: 'whether a clip split and merge are undoable is a property of the OpenTune build, not of the project',
   preferences: 'it would change the preferences of the machine',
   dialogs: 'no request opens a dialog',
   onboarding: 'no request starts or resets the first-run overlay',

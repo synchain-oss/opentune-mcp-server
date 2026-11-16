@@ -6,6 +6,7 @@
 // expected_revision of a write tool, untrusted strings and the output budget.
 
 import { afterEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { startMock, type OtcpMock } from '../../mock/server.js';
 import { decodeClipRevision } from '../../src/otcp/tokens.js';
@@ -13,6 +14,7 @@ import { getClipDetails, getClipDetailsTool, MAX_HANDLES } from '../../src/tools
 import { getNotes, OUTPUT_BUDGET } from '../../src/tools/notes.js';
 import { render, type Outcome } from '../../src/tools/registry.js';
 import { setClip } from '../../src/tools/set-clip.js';
+import { setSettingsTool } from '../../src/tools/set-settings.js';
 import { getSettings, getSettingsTool } from '../../src/tools/settings.js';
 import { tempDir, testContext, type TestContext } from '../support/context.js';
 import { clip, need } from '../support/mock-client.js';
@@ -350,6 +352,32 @@ describe('opentune_get_settings', () => {
     });
     expect(out).not.toHaveProperty('log');
     expect(out).not.toHaveProperty('asOf');
+  });
+
+  it('shows the accessibility mode when the instance reports it, and leaves the member out when it does not', async () => {
+    const reporting = await withMock();
+    reporting.mock.given({ clips: [clip()] });
+    reporting.mock.setAccessibilityMode(true);
+    const shown = body(await getSettings(reporting.ctx, { sections: ['processing'] }));
+    expect(shown.processing).toMatchObject({ accessibilityModeEnabled: true });
+    expect((shown.processing as Record<string, unknown>).nullReasons ?? {}).not.toHaveProperty(
+      'accessibilityModeEnabled',
+    );
+
+    // A server of 1.0.0 reports no such member: it is left out, not shown as null with a reason.
+    const older = await withMock();
+    older.mock.given({ clips: [clip()] });
+    older.mock.setAccessibilityMode(null);
+    const left = body(await getSettings(older.ctx, { sections: ['processing'] }));
+    expect(left.processing).not.toHaveProperty('accessibilityModeEnabled');
+    expect((left.processing as Record<string, unknown>).nullReasons ?? {}).not.toHaveProperty(
+      'accessibilityModeEnabled',
+    );
+  });
+
+  it('does not offer the accessibility mode to opentune_set_settings, which a server of 1.0.0 would reject', () => {
+    const schema = JSON.stringify(z.toJSONSchema(setSettingsTool.inputSchema));
+    expect(schema).not.toMatch(/accessibility/i);
   });
 
   it('returns only the sections asked for', async () => {

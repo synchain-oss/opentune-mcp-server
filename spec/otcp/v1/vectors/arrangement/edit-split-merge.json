@@ -2,11 +2,12 @@
   "$schema": "../../schemas/vector.schema.json",
   "id": "arrangement/edit-split-merge",
   "type": "scenario",
-  "description": "op merge joins the two clips a split made, as the split's revert recipe does. Merge has the same OpenTune undo defect as split (warning UPSTREAM_UNDO_DEFECT); its revert recipe splits the clip again at the former boundary.",
+  "description": "op merge joins the two clips a split made, as the split's revert recipe does. On a server whose OpenTune cannot undo a clip split and merge (a server of 1.0.0, PROTOCOL.md section 15.4 rule 8) merge has the same undo defect as split (warning UPSTREAM_UNDO_DEFECT); its revert recipe splits the clip again at the former boundary. The vector arrangement/edit-split-merge-undoable shows the same calls on a server that undoes them.",
   "capability": "arrangement.v1",
   "since": "1.0",
   "session": "authenticated",
   "given": {
+    "splitMergeUndo": false,
     "dirty": false,
     "clips": [
       {

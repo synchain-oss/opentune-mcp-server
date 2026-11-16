@@ -485,6 +485,7 @@ const setPitchShift: Handler = (context) => {
     mutate() {
       content.pitchShift = { semitones: wanted.semitones, cents: wanted.cents };
       world.touch(content, 'pitchShift');
+      if (world.pitchShiftChangesRevision) content.revision = world.mint('r');
     },
     undo: PITCH_SHIFT,
     rerender: true,

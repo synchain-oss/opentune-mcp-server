@@ -106,15 +106,29 @@ const REASONS: Readonly<Record<string, NextStep>> = {
       'nothing was changed. Read the offered values with opentune_get_settings (processing.options), then call ' +
       'again with one of them.',
   },
+  // Only older OpenTune builds send vocoder_not_ready (they limit the wait); the current one waits without a limit.
   'MODEL_UNAVAILABLE/vocoder_not_ready': agent(
-    'OpenTune was still loading its vocoder when the wait ended, so the job took its changes back (the detail ' +
-      'names a setting that another change kept, if any). Wait a little, then call again. If it keeps happening, ' +
-      'ask the user to check the models with "opentune-mcp doctor".',
-  ),
-  'MODEL_UNAVAILABLE/vocoder_load_failed': user(
-    'OpenTune could not load the new vocoder weight or backend and put the previous settings back, so retrying ' +
-      'the same value does not help. Tell the user; the weight file may be corrupt or incompatible. Ask them to ' +
+    'OpenTune was still loading its vocoder when the wait ended. The job normally took its changes back, but ' +
+      'read the settings with opentune_get_settings to see which values are in effect (the detail names a setting ' +
+      'that another change kept, if any). Wait a little, then call again. If it keeps happening, ask the user to ' +
       'check the models with "opentune-mcp doctor".',
+  ),
+  // Older builds put the previous settings back; the current one keeps the new values, so the error alone does not say
+  // which are in effect.
+  'MODEL_UNAVAILABLE/vocoder_load_failed': user(
+    'OpenTune could not load the new vocoder weight or backend, so retrying the same value does not help. Depending ' +
+      'on the OpenTune build it put the previous settings back or kept the new ones: read the settings with ' +
+      'opentune_get_settings to see which values are in effect, and tell the user. The weight file may be corrupt ' +
+      'or incompatible; ask them to check the models with "opentune-mcp doctor".',
+  ),
+  'MODEL_UNAVAILABLE/vocoder_weight_rejected': user(
+    'OpenTune refused to queue the change of the vocoder weight, so it was not made. Read the settings with ' +
+      'opentune_get_settings to see which values are in effect, and tell the user. Retrying the same value does not help.',
+  ),
+  'MODEL_UNAVAILABLE/backend_change_rejected': user(
+    'OpenTune refused to queue the change of the rendering priority, so the backend did not change. Read the ' +
+      'settings with opentune_get_settings to see which values are in effect, and tell the user. Retrying the same ' +
+      'value does not help.',
   ),
   'IO_ERROR/device_open_failed': user(
     'OpenTune could not open the audio device with the new setup and restored the previous one, so nothing changed. ' +
@@ -159,8 +173,22 @@ const REASONS: Readonly<Record<string, NextStep>> = {
       'track-colour dialog commits its colour), and closing a confirmation box cancels the action it asked about. ' +
       'Set accept_commit: true only after the user agrees.',
   ),
+  // Only older OpenTune builds limit the wait of an export; the current one waits without a limit.
   'NOT_READY/export_wait_timeout': agent(
     'Analysis or rendering did not settle in time and nothing was written. Wait for OpenTune to finish, then export again.',
+  ),
+  'NOT_READY/render_unavailable': agent(
+    'OpenTune had no render of a clip of this export and could not build one, so nothing was written. The error is ' +
+      'marked not retryable, so do not repeat the call unchanged: check the clips with opentune_get_project, and tell ' +
+      'the user if an export started later fails the same way.',
+  ),
+  'RENDER_FAILED/stretch_failed': user(
+    'OpenTune could not rebuild the time-stretched audio of a clip of this export and wrote nothing. Tell the ' +
+      'user; exporting again later may work.',
+  ),
+  'NOT_FOUND/content_unavailable': agent(
+    'A clip of this export is no longer in the project (it was removed while the export ran), and nothing was ' +
+      'written. Read the project with opentune_get_project, then export again with the clips that remain.',
   ),
   'ANALYSIS_FAILED/f0_failed': user(
     'Pitch analysis failed for a clip in this export. Tell the user; only if they agree to export it uncorrected, call again with allow_dry: true.',
@@ -186,13 +214,15 @@ const REASONS: Readonly<Record<string, NextStep>> = {
   'UNSUPPORTED/capability_missing': user(
     'This OpenTune build lacks the feature (see detail). Ask the user to update to a build that has it.',
   ),
+  // Older builds refuse only the methods that open or change the window; the current one refuses any write that the
+  // editor carries out (track edits, transport, undo and redo), so a write that worked before can fail with it.
   'UNSUPPORTED/no_editor_window': user(
     'OpenTune is running without an editor window. Ask the user to start OpenTune Standalone with its window and try again.',
   ),
   'UNDO_CONFLICT/history_empty': user('There is nothing to undo or redo here. Tell the user.'),
   'UNSUPPORTED/undo_unsafe_build': user(
-    'This OpenTune build cannot undo or redo the top step safely (a clip split, merge or delete). Tell the user; ' +
-      'they can decide in the OpenTune window. Do not force it.',
+    'This OpenTune build cannot undo or redo the top step safely (a clip delete, and on older builds a clip split ' +
+      'or merge). Tell the user; they can decide in the OpenTune window. Do not force it.',
   ),
   'UNSUPPORTED/job_not_cancellable': agent(
     'This job cannot be cancelled now; it continues. Follow it with opentune_get_job.',

@@ -237,6 +237,10 @@
           }
         },
         "editingScheme": { "enum": ["openTune", "openDyne"] },
+        "splitMergeUndo": {
+          "description": "Whether the server's OpenTune undoes a clip split and merge (PROTOCOL.md section 15.4 rule 8). true: it does, and both keep their placementIds; false: it does not, and the server reports them with upstream_undo_defect, as a server of 1.0.0 does. A vector that depends on the behaviour names it; a runner that cannot establish it skips the vector.",
+          "type": "boolean"
+        },
         "dirty": { "type": "boolean" },
         "clips": { "type": "array", "items": { "$ref": "#/$defs/givenClip" } },
         "clipOnEveryTrack": {
